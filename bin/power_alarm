@@ -1,0 +1,14 @@
+#!/usr/bin/python
+
+power_left = int(file('/sys/class/power_supply/BAT0/charge_now').read())
+power_total = int(file('/sys/class/power_supply/BAT0/charge_full').read())
+power = int((float(power_left) / power_total) * 100)
+
+if power > 20: alarm = None
+elif power < 5: alarm = 'batt_down.wav'
+elif power < 12: alarm = 'batt_low.wav'
+else: alarm = 'batt_warn.wav'
+
+if alarm:
+	import os
+	os.execlp('/usr/bin/aplay', 'aplay', '-q', '/home/fraggod/media/appz/%s'%alarm)
