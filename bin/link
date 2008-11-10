@@ -1,0 +1,21 @@
+#!/bin/sh
+
+HOST=$1
+HOST_LIST=~/.cFG/host_list
+
+LINE=`grep "[[:space:]]$HOST[[:space:]]*$" /etc/hosts`
+if [[ ! $LINE ]]; then
+ LINE=`grep $HOST $HOST_LIST`
+ if [[ ! $LINE ]]; then
+  echo "Error: Unknown host: $NAME"
+  exit 1
+ fi
+ HOST=`echo "$LINE" | awk '{print $2}'`
+ USER=`echo "$LINE" | awk '{print $3}'`
+ [[ ! $USER ]] && USER=fraggod
+else
+ [[ $LINE =~ '.gth' ]] && USER=mkfg
+ [[ $LINE =~ '.fg_core' ]] && USER=fraggod
+fi
+
+exec ssh -Y "$USER@$HOST"
