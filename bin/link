@@ -18,4 +18,9 @@ else
  [[ $LINE =~ '.fg_core' ]] && USER=fraggod
 fi
 
-exec ssh -Y "$USER@$HOST"
+if [[ $2 = '-p' ]]; then
+ false
+ while [[ $? -gt 0 ]]; do ssh -Y "$USER@$HOST"; done
+else
+ exec ssh -Y "$USER@$HOST"
+fi
