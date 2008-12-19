@@ -16,12 +16,14 @@ if not argz and not optz.list_hosts:
 from string import whitespace as spaces
 import re, os
 
-hosts = dict([(host, (ip, suffix)) for ip,fqhn,suffix,host in re.findall('([\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
+hosts = dict([(host, (ip, suffix, None)) for ip,fqhn,suffix,host in re.findall('([\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
 for line in open(os.path.expanduser('~/.cFG/host_list')).readlines():
 	alias,link = line.strip(spaces).split(' ', 1)
 	try: host,suffix = alias.rsplit('.', 1)
 	except ValueError: host,suffix = alias,None
-	hosts[host] = link,suffix
+	try: link,port = link.split(':', 1)
+	except ValueError: port = None
+	hosts[host] = link,suffix,port
 
 if optz.list_hosts:
 	sys.stdout.write(' '.join(hosts.keys()))
@@ -29,19 +31,20 @@ if optz.list_hosts:
 
 auth = dict([tuple(line.strip(spaces).split(' ', 1)) for line in open(os.path.expanduser('~/.cFG/host_auth')).readlines()])
 
-for host,(link,suffix) in hosts.iteritems():
-	try: hosts[host] = link, auth[suffix]
-	except KeyError: hosts[host] = link, None
+for host,(link,suffix,port) in hosts.iteritems():
+	try: hosts[host] = link, auth[suffix], port
+	except KeyError: hosts[host] = link, None, port
 
-try: host,auth = hosts[argz[0]]
+try: host,auth,port = hosts[argz[0]]
 except KeyError:
 	log.error('Unknown host specified')
 	sys.exit(1)
 
 from subprocess import Popen as exe
 while 1:
+	port = ['-p', str(port)] if port else []
 	err = exe(
-		['/usr/bin/ssh', '-Y', '%s@%s'%(auth,host) if auth else host],
+		['/usr/bin/ssh', '-Y', '%s@%s'%(auth,host) if auth else host] + port,
 		stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
 	).wait()
 	if not (optz.persist and err): break
