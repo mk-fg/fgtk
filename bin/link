@@ -7,7 +7,9 @@ from optparse import OptionParser
 parser = OptionParser(usage='%prog host')
 parser.add_option('-p', '--persist', action='store_true', dest='persist', help='try re-connecting until success')
 parser.add_option('-l', '--list-hosts', action='store_true', dest='list_hosts', help='do not connect anywhere, just list known hosts')
-(optz, argz) = parser.parse_args()
+parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=0.3, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
+parser.add_option('-w', '--wait', action='store', type='int', dest='wait', default=5, help='secs to wait for process to terminate on signal', metavar='SEC')
+optz,argz = parser.parse_args()
 
 if not argz and not optz.list_hosts:
 	log.error('No host specified')
@@ -16,12 +18,12 @@ if not argz and not optz.list_hosts:
 from string import whitespace as spaces
 import re, os
 
-hosts = dict([(host, (ip, suffix, None)) for ip,fqhn,suffix,host in re.findall('([\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
+hosts = dict([(host, (ip, suffix, None)) for ip,fqhn,suffix,host in re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
 for line in open(os.path.expanduser('~/.cFG/host_list')).readlines():
 	alias,link = line.strip(spaces).split(' ', 1)
 	try: host,suffix = alias.rsplit('.', 1)
 	except ValueError: host,suffix = alias,None
-	try: link,port = link.split(':', 1)
+	try: link,port = link.split('/', 1)
 	except ValueError: port = None
 	hosts[host] = link,suffix,port
 
@@ -40,11 +42,30 @@ except KeyError:
 	log.error('Unknown host specified')
 	sys.exit(1)
 
+
+from time import sleep
+import signal
+death_seq = 0 # Indicates that time to play it nice is over
+def key_int(sigid, frame):
+	global death_seq
+	if death_seq: return proc.send_signal(signal.SIGKILL)
+	else:
+		optz.persist = False # Just in case
+		proc.send_signal(signal.SIGINT)
+		while death_seq < optz.wait and proc.poll() == None:
+			sleep(optz.poll)
+			death_seq += optz.poll
+		proc.send_signal(signal.SIGTERM)
+signal.signal(signal.SIGINT, key_int)
+
+
 from subprocess import Popen as exe
 while 1:
 	port = ['-p', str(port)] if port else []
-	err = exe(
+	proc = exe(
 		['/usr/bin/ssh', '-Y', '%s@%s'%(auth,host) if auth else host] + port,
 		stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
-	).wait()
+	)
+	try: err = proc.wait()
+	except OSError: break # Caught signal
 	if not (optz.persist and err): break
