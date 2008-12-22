@@ -20,7 +20,9 @@ import re, os
 
 hosts = dict([(host, (ip, suffix, None)) for ip,fqhn,suffix,host in re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
 for line in open(os.path.expanduser('~/.cFG/host_list')).readlines():
-	alias,link = line.strip(spaces).split(' ', 1)
+	line = line.strip(spaces)
+	if not line or line.startswith('#'): continue
+	alias,link = line.split(' ', 1)
 	try: host,suffix = alias.rsplit('.', 1)
 	except ValueError: host,suffix = alias,None
 	try: link,port = link.split('/', 1)
