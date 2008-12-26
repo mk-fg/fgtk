@@ -61,13 +61,14 @@ def key_int(sigid, frame):
 signal.signal(signal.SIGINT, key_int)
 
 
-from subprocess import Popen as exe
-while 1:
-	port = ['-p', str(port)] if port else []
-	proc = exe(
-		['/usr/bin/ssh', '-Y', '%s@%s'%(auth,host) if auth else host] + port,
-		stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
-	)
-	try: err = proc.wait()
-	except OSError: break # Caught signal
-	if not (optz.persist and err): break
+line = ['/usr/bin/ssh', '-Y', '%s@%s'%(auth,host) if auth else host] + (['-p', str(port)] if port else [])
+if not optz.persist:
+	sys.stdout.flush()
+	os.execv(line[0], line)
+else:
+	from subprocess import Popen as exe
+	while 1:
+		proc = exe(line, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
+		try: err = proc.wait()
+		except OSError: break # Caught signal
+		if not err: break
