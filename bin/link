@@ -5,6 +5,7 @@ import sys
 
 from optparse import OptionParser
 parser = OptionParser(usage='%prog host')
+parser.add_option('-r', '--root', action='store_true', dest='root', help='try to log in as root user, regardless of cfg')
 parser.add_option('-p', '--persist', action='store_true', dest='persist', help='try re-connecting until success')
 parser.add_option('-l', '--list-hosts', action='store_true', dest='list_hosts', help='do not connect anywhere, just list known hosts')
 parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=0.3, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
@@ -39,7 +40,9 @@ for host,(link,suffix,port) in hosts.iteritems():
 	try: hosts[host] = link, auth[suffix], port
 	except KeyError: hosts[host] = link, None, port
 
-try: host,auth,port = hosts[argz[0]]
+try:
+	host,auth,port = hosts[argz[0]]
+	if optz.root: auth = 'root'
 except KeyError:
 	log.error('Unknown host specified')
 	sys.exit(1)
