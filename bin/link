@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import logging as log
 import sys
@@ -10,11 +10,9 @@ parser.add_option('-p', '--persist', action='store_true', dest='persist', help='
 parser.add_option('-l', '--list-hosts', action='store_true', dest='list_hosts', help='do not connect anywhere, just list known hosts')
 parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=0.3, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
 parser.add_option('-w', '--wait', action='store', type='int', dest='wait', default=5, help='secs to wait for process to terminate on signal', metavar='SEC')
-optz,argz = parser.parse_args()
+optz, argz = parser.parse_args()
 
-if not argz and not optz.list_hosts:
-	log.error('No host specified')
-	sys.exit(1)
+if not argz and not optz.list_hosts: parser.error('No host specified')
 
 from string import whitespace as spaces
 import re, os
