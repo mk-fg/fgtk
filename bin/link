@@ -8,7 +8,7 @@ parser = OptionParser(usage='%prog host')
 parser.add_option('-r', '--root', action='store_true', dest='root', help='try to log in as root user, regardless of cfg')
 parser.add_option('-p', '--persist', action='store_true', dest='persist', help='try re-connecting until success')
 parser.add_option('-l', '--list-hosts', action='store_true', dest='list_hosts', help='do not connect anywhere, just list known hosts')
-parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=0.3, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
+parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=1, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
 parser.add_option('-w', '--wait', action='store', type='int', dest='wait', default=5, help='secs to wait for process to terminate on signal', metavar='SEC')
 optz, argz = parser.parse_args()
 
@@ -73,3 +73,4 @@ else:
 		try: err = proc.wait()
 		except OSError: break # Caught signal
 		if not err: break
+		sleep(optz.poll)
