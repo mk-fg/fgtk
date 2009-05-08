@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 from optparse import OptionParser
 parser = OptionParser(usage='%prog host',
@@ -71,12 +72,12 @@ except KeyError:
 
 from time import sleep
 import signal
-death_seq = 0 # Indicates that time to play it nice is over
+death_seq = 0 # indicates that time to play it nice is over
 def key_int(sigid, frame):
 	global death_seq
 	if death_seq: return proc.send_signal(signal.SIGKILL)
 	else:
-		optz.persist = False # Just in case
+		optz.persist = False # just in case
 		proc.send_signal(signal.SIGINT)
 		while death_seq < optz.wait and proc.poll() == None:
 			sleep(optz.poll)
@@ -94,6 +95,6 @@ else:
 	while 1:
 		proc = exe(line, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
 		try: err = proc.wait()
-		except OSError: break # Caught signal
+		except OSError: break # caught signal
 		if not err: break
 		sleep(optz.poll)
