@@ -1,24 +1,43 @@
 #!/usr/bin/env python
 
-import logging as log
-import sys
-
 from optparse import OptionParser
-parser = OptionParser(usage='%prog host')
-parser.add_option('-r', '--root', action='store_true', dest='root', help='try to log in as root user, regardless of cfg')
-parser.add_option('-p', '--persist', action='store_true', dest='persist', help='try re-connecting until success')
-parser.add_option('-l', '--list-hosts', action='store_true', dest='list_hosts', help='do not connect anywhere, just list known hosts')
-parser.add_option('-n', '--poll-interval', action='store', type='int', dest='poll', default=1, help='secs to wait between polling to see if process was terminated by SIGINT', metavar='SEC')
-parser.add_option('-w', '--wait', action='store', type='int', dest='wait', default=5, help='secs to wait for process to terminate on signal', metavar='SEC')
+parser = OptionParser(usage='%prog host',
+	description='Connect to ssh channel with predefined settings')
+parser.add_option('-r', '--root',
+	action='store_true', dest='root',
+	help='try to log in as root user, regardless of cfg')
+parser.add_option('-p', '--persist',
+	action='store_true', dest='persist',
+	help='try re-connecting until success')
+parser.add_option('-l', '--list-hosts',
+	action='store_true', dest='list_hosts',
+	help='do not connect anywhere, just list known hosts')
+parser.add_option('-i', '--ip',
+	action='store_true', dest='ip',
+	help='connect to IP rather than the hostname')
+parser.add_option('-n', '--poll-interval',
+	action='store', dest='poll', type='int', default=1, metavar='SEC',
+	help='secs to wait between polling to see if process was terminated by SIGINT')
+parser.add_option('-w', '--wait',
+	action='store', type='int', dest='wait', default=5, metavar='SEC',
+	help='secs to wait for process to terminate on signal')
 optz, argz = parser.parse_args()
-
 if not argz and not optz.list_hosts: parser.error('No host specified')
 
-from string import whitespace as spaces
-import re, os
 
-hosts = dict([(host, (ip, suffix, None)) for ip,fqhn,suffix,host in re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$', open('/etc/hosts').read(), re.M)])
-for line in open(os.path.expanduser('~/.cFG/host_list')).readlines():
+from string import whitespace as spaces
+from fgc import log
+import re, os, sys
+
+log.cfg()
+
+hosts = dict([
+	(host, (ip if optz.ip else None, suffix, None)) # host, (ip,suffix,port); ip isn't needed if connecting to host
+	for ip,fqhn,suffix,host in
+		re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$',
+			open('/etc/hosts').read(), re.M)
+])
+for line in open(os.path.expanduser('~/.cFG/host_list')):
 	line = line.strip(spaces)
 	if not line or line.startswith('#'): continue
 	alias,link = line.split(' ', 1)
@@ -32,9 +51,13 @@ if optz.list_hosts:
 	sys.stdout.write(' '.join(hosts.keys()))
 	sys.exit()
 
-auth = dict([tuple(line.strip(spaces).split(' ', 1)) for line in open(os.path.expanduser('~/.cFG/host_auth')).readlines()])
+auth = dict([
+	tuple(line.strip(spaces).split(' ', 1))
+	for line in open(os.path.expanduser('~/.cFG/host_auth')).readlines()
+])
 
 for host,(link,suffix,port) in hosts.iteritems():
+	if not link: link = host
 	try: hosts[host] = link, auth[suffix], port
 	except KeyError: hosts[host] = link, None, port
 
