@@ -1,14 +1,32 @@
-#!/usr/bin/python
+#!/bin/sh
 
-power_left = int(file('/sys/class/power_supply/BAT0/charge_now').read())
-power_total = int(file('/sys/class/power_supply/BAT0/charge_full').read())
-power = int((float(power_left) / power_total) * 100)
+PW_FLAG=/tmp/i_dont_give_a_fuck
 
-if power > 20: alarm = None
-elif power < 5: alarm = 'batt_down.wav'
-elif power < 12: alarm = 'batt_low.wav'
-else: alarm = 'batt_warn.wav'
+cleanup() {
+ [[ -f "$PW_FLAG" ]] || return 0
+ rm -f "$PW_FLAG"
+ pkill wmpower
+ return 0
+}
 
-if alarm:
-	import os
-	os.execlp('/usr/bin/aplay', 'aplay', '-q', '/home/fraggod/media/appz/%s'%alarm)
+grep -e Charging -e Full /sys/class/power_supply/BAT0/status >/dev/null && \
+ cleanup && exit
+
+PW_LEFT=`cat /sys/class/power_supply/BAT0/charge_now`
+PW=`cat /sys/class/power_supply/BAT0/charge_full`
+PW=`echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc`
+PW=${PW#*.}
+
+[[ $PW -lt 12 ]] && (
+ aplay -q ~/media/appz/batt_down.wav
+ pgrep wmpower || ( setsid wmpower; xsendkeycode 201 0 ) >/dev/null 2>&1
+ true ) \
+|| [[ $PW -lt 17 ]] && aplay -q ~/media/appz/batt_warn.wav \
+|| [[ $PW -lt 25 ]] && aplay -q ~/media/appz/batt_low.wav \
+|| [[ -O "$PW_FLAG" ]] && cleanup && exit
+
+[[ ! -O "$PW_FLAG" && $PW -lt 6 ]] && \
+ xset dpms force on 2>/dev/null && \
+ zenity --warning --text="Battery charge level critical!!\nDo something about it NOW or...\ntouch $PW_FLAG"
+
+exit 0
