@@ -305,12 +305,15 @@ for line in optz.ln_list:
 			errz += 1
 			log.error('No link destination: {0} (source: {1})'.format(dst, src))
 			if optz.fix:
-				if ltype & T_SYM:
-					if ltype == T_RSYM: src = rel_src(src, dst)
-					sh.ln(src, dst)
-				elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
-				log.info('Corrected: {0} -> {1}'.format(src, dst))
-			continue # other checks need dst
+				try:
+					if ltype & T_SYM:
+						if ltype == T_RSYM: src = rel_src(src, dst)
+						sh.ln(src, dst)
+					elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
+				except sh.Error as err:
+					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
+				else: log.info('Corrected: {0} -> {1}'.format(src, dst))
+			continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
 
 		# Check if dst is the right type (symlink / reg file)
 		if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
