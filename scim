@@ -70,7 +70,7 @@ def merge_filter(stream):
 			continue
 		elif line.startswith('<<<<<<<'):
 			skip_flag = True
-			log.error('Merge-block detected on line %s'%ln)
+			log.error('Merge-block detected on line {0}'.format(ln))
 		if not skip_flag: yield line
 
 if optz.ln_list.startswith('/'):
@@ -130,23 +130,17 @@ def meta_set(path, meta):
 		meta, caps = meta.split('/', 1)
 		caps, acls = caps.split('/', 1)
 	except ValueError: pass
-	uid, gid, mode = meta.split(':')
-	mode = sh.mode(mode)
-	try:
-		try: sh.chown(path, uid, gid, resolve=True)
-		except KeyError:
-			log.error('No such id - {0}:{1} ({2})'.format(uid, gid, path))
-		sh.chmod(path, mode, deference=False)
-	except OSError:
-		log.error('Unable to set permissions {0} for path {1}'.format(meta, path))
-	if acls:
-		try: acl.rebase(acls, path, base=mode)
-		except OSError:
-			log.warn('Unable to set posix ACL {0!r} for path {1}'.format(acls, path))
-	if caps:
-		try: strcaps.set_file(caps.replace(';', ' '), path)
-		except OSError:
-			log.warn('Unable to set posix caps {0!r} for path {1}'%(caps, path))
+	uid, gid, smode = meta.split(':')
+	mode = sh.mode(smode)
+	# Privileges are restored sequentially, any error aborts the process
+	#  to avoid situations where suid bit or posix caps can be added to an
+	#  unprivileged binary (because uid/gid/mode/acl restoration failed)
+	try: sh.chown(path, uid, gid, resolve=True)
+	except KeyError:
+		raise OSError('No such id - {0}:{1} ({2})'.format(uid, gid, path))
+	sh.chmod(path, mode, deference=False)
+	if acls: acl.rebase(acls, path, base=mode)
+	if caps: strcaps.set_file(caps.replace(';', ' '), path)
 
 
 ## Init
@@ -183,14 +177,17 @@ for line in optz.meta_list:
 		errz += 1
 		log.error('Failed to stat path {0}: {1}'.format(node, err))
 		del srcz[node] # no stat - no meta
+		continue # no need to "fix" permissions here ;)
 	else:
 		if meta == fstat: continue
 		errz += 1
 		log.error('Invalid metadata for path {0}: {1} instead of {2}'.format(node, fstat, meta))
 
 	if optz.fix:
-		meta_set(path, meta)
-		log.info('Fixed metadata for path {0}'.format(node))
+		try: meta_set(path, meta)
+		except OSError as err:
+			log.warn('Unable to restore metadata ({0}) for path {1}: {2}'.format(meta, node, err))
+		else: log.info('Fixed metadata for path {0}'.format(node))
 
 
 ## Reverse check
@@ -205,8 +202,8 @@ for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
 	for seg in path.split(os.sep):
 		seg_path = sh.join(seg_path, seg)
 		if not seg_path.startswith(scim_path): continue
-		else: node = seg_path[len(scim_path):]
-		if node not in srcz:
+		else: node = seg_path[len(scim_path)+1:]
+		if node and node not in srcz:
 			errz += 1
 			meta = meta_get(path)
 			log.warn('Not in metadata-list: {0} ({1})'.format(node, meta))
@@ -217,7 +214,7 @@ if optz.fix and srcz_updates:
 	# Check metadata for list itself
 	try: meta = srcz[meta_list_path]
 	except KeyError: meta = srcz[meta_list_path] = 'root:wheel:600'
-	open(meta_list_path, 'w').write(''.join( '{0} {1}\n'%(path, meta)
+	open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
 		for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
 	meta_set(meta_list_path, meta)
 	log.info('Updated metadata ({0} changes)'.format(srcz_updates))
@@ -229,7 +226,7 @@ if optz.fix and srcz_updates:
 
 ## Helpers
 optz.cmd_diff = optz.cmd_diff.split()
-get_diff = lambda src,dst: Popen(optz.diff_cmd + [src, dst], stdout=PIPE).stdout.read()
+get_diff = lambda src,dst: Popen(optz.cmd_diff + [src, dst], stdout=PIPE).stdout.read()
 def show_diff(src, dst=None):
 	diff = get_diff(src, dst) if not dst is None else src
 	if diff:
