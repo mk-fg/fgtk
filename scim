@@ -177,6 +177,7 @@ for line in optz.meta_list:
 		errz += 1
 		log.error('Failed to stat path {0}: {1}'.format(node, err))
 		del srcz[node] # no stat - no meta
+		srcz_updates += 1
 		continue # no need to "fix" permissions here ;)
 	else:
 		if meta == fstat: continue
