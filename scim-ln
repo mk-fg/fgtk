@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+
+from optparse import OptionParser
+parser = OptionParser(usage='%prog [options] SRC1 SRC2 ... DST')
+
+parser.add_option('-a', '--register',
+	action='store_true', dest='register',
+	help='Do not create ref, just add it to registry.')
+parser.add_option('-f', '--force',
+	action='store_true', dest='force',
+	help='Dont interrupt operation on some non-critical errors.')
+parser.add_option('-t', '--no-tilda',
+	action='store_true', dest='no_tilda',
+	help='Do not replace current user home path with tilda.')
+
+parser.add_option('-c', '--catref',
+	action='store_true', dest='cr',
+	help='Create catref instead of symlink.')
+parser.add_option('-r', '--relative',
+	action='store_true', dest='rel',
+	help='Create relative symlink.')
+
+parser.add_option('-n', '--new-file',
+	action='store_true', dest='new',
+	help='Create links-list file, if necessary.')
+
+parser.add_option('--links-list',
+	action='store', dest='list',
+	type='str', metavar='NAME', default='.scim_links',
+	help='Either basename (which will be searched upwards from cwd) or full path of links-list file. Default: %default')
+
+optz,argz = parser.parse_args()
+
+
+import itertools as it, operator as op, functools as ft
+from fgc import sh
+import os, sys, logging
+
+logging.basicConfig()
+log = logging.getLogger(sys.argv[0])
+
+
+### Find scim-root
+if optz.list.startswith('/'):
+	scim_path, optz.list = scim_path.rsplit(os.sep, 1)
+else:
+	scim_path = os.getcwd()
+	while os.sep in scim_path and not os.path.exists(sh.join(scim_path, optz.list)):
+		scim_path = scim_path.rsplit(os.sep, 1)[0]
+	if os.sep not in scim_path:
+		parser.error('Unable to determine scim-path location')
+scim_real_path = scim_path # in case of symlink-rebase
+
+
+### Read existing links
+linkz_path = sh.join(scim_path, optz.list)
+if not os.path.exists(linkz_path):
+	if optz.new:
+		open(linkz_path, 'w')
+		log.warn('Created new linkz-file: {0}'.format(linkz_path))
+	else:
+		log.fatal('Linkz-file doesnt exists: {0}'.format(linkz_path))
+		sys.exit(1)
+
+linkz = list(filter(None, map(str.strip, open(linkz_path))))
+if linkz[0].split(' ', 1)[0] == '.': # rebase on symlinked path
+	scim_path = os.path.expanduser(linkz[0].rsplit(' ', 1)[-1])
+
+
+### Helpers
+def rel_src(src, dst):
+	src, dst = map(os.path.abspath, (src, dst))
+	dst = os.path.dirname(dst)
+	src, dst = map(lambda x: x.split(os.sep), (src, dst))
+	for i in range(min(len(dst), len(src))):
+		if dst[i] != src[i]: break
+		else: i +=1
+	return os.path.join(*([os.pardir] * (len(dst)-i) + src[i:]))
+
+if not optz.no_tilda:
+	import pwd
+	home_dir = pwd.getpwuid(os.getuid()).pw_dir.rstrip(os.sep)
+else: home_dir = None
+
+if optz.cr: aop = '>'
+elif optz.rel: aop = '+>'
+else: aop = '->'
+
+
+### Add new link(s)
+if argz:
+	if len(argz) == 1: srcz, dst = argz, os.getcwd()
+	else:
+		dst = sh.join( os.getcwd(),
+			os.path.abspath(argz.pop()).replace(scim_real_path, scim_path, 1) )
+		srcz = list(sh.join(os.getcwd(), src) for src in argz)
+
+	if os.path.isdir(dst):
+		dst = ft.partial(lambda src, dst: sh.join(dst, os.path.basename(src)), dst=dst)
+	elif len(srcz) != 1:
+		log.fatal('Cannot use multiple srcz w/ non-dir dst')
+		sys.exit(1)
+	else: dst = ft.partial(lambda src, dst: dst, dst=dst)
+
+	for src in srcz:
+		if os.path.islink(src):
+			if not optz.register:
+				log.error('{0} is a symlink already'.format(src))
+				continue
+		elif optz.register:
+			log.error('{0} is not a symlink'.format(src))
+			if not optz.force: continue
+
+		tgt = dst(src)
+		if tgt.startswith(scim_path): tgt = tgt.replace(scim_path + os.sep, '', 1)
+		elif tgt.startswith(scim_real_path): tgt = tgt.replace(scim_real_path + os.sep, '', 1)
+		link = ' '.join(( tgt, aop, src if not home_dir
+			or not src.startswith(home_dir) else src.replace(home_dir, '~', 1) ))
+
+		print(link)
+		if link not in linkz:
+			if os.path.exists(tgt):
+				if not optz.register:
+					log.error('Dst path exists: {0}'.format(tgt))
+					continue
+			elif optz.register:
+				log.error('Dst path does not exists: {0}'.format(tgt))
+				continue
+
+			if not optz.register:
+				if not optz.cr:
+					sh.mv(src, tgt)
+					if optz.rel:
+						tgt = rel_src(sh.join(scim_path, tgt), src)
+						if not os.path.exists(sh.join(os.path.dirname(src), tgt)): # sanity check
+							log.error('Failed to calculate correct relative path for {0}: {1}'.format(src, tgt))
+					sh.ln(tgt, src)
+				else:
+					sh.cp(src, tgt, attrz=True)
+			elif not os.path.samefile(src, tgt):
+				log.error( 'Link ({0}) target mismatch ({1} instead of {2})'\
+					.format(src, os.path.realpath(src), tgt) )
+				if not optz.force: continue
+
+			linkz.append(link)
+
+		else: log.warn('Link is already in place: {0}'.format(link))
+
+
+### Sort linkz-file contents
+linkz.sort()
+open(linkz_path, 'w').write('\n'.join(linkz) + '\n')

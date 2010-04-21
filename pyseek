@@ -1,0 +1,52 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from optparse import OptionParser
+parser = OptionParser(usage='%prog [options] [ FROM(MiB) TO(MiB) ... ] PATH',
+	description=('Stream given file from/to specified offset.'
+		' Limits can be omitted or specified as a single dash for bof/eof.'))
+parser.add_option('-c', '--chunk-size',
+	action='store', dest='bs', type='int', metavar='BYTES', default=8192,
+	help='Use atomic chunks of a given size for I/O.')
+parser.add_option('-f',
+	action='store', type='str',
+	dest='ch_from', metavar='MiB',
+	help='Read stream from this point. Ignored if pairs are given as args.')
+parser.add_option('-t',
+	action='store', type='str',
+	dest='ch_to', metavar='MiB',
+	help='Read stream to this point. Ignored if pairs are given as args.')
+optz,argz = parser.parse_args()
+
+
+M = 1024*1024
+
+import itertools as it, operator as op, functools as ft
+from cStringIO import StringIO as sio
+import os, sys
+
+src = len(argz) % 2
+if not src: parser.error('STDIN processing is not supported')
+if len(argz) >= 2:
+	chunks = list( (argz[arg], argz[arg+1])
+		for arg in xrange(0, len(argz) - src, 2) )
+else: chunks = [(optz.ch_from, optz.ch_to)]
+src = open(argz[-1]) if src else sys.stdin # not really ;)
+dst = sys.stdout # if not optz.buff else sio()
+
+def read(src, dst, chunks, bs):
+	for pos,to in chunks:
+		try: pos = int(pos)*M
+		except (TypeError, ValueError): pos = 0
+		try: to = int(to)*M
+		except (TypeError, ValueError): to = 0
+
+		src.seek(pos, os.SEEK_SET)
+		chunk = True
+		while chunk:
+			chunk = min(to - pos, bs) if to else bs
+			chunk = src.read(chunk)
+			dst.write(chunk)
+			pos += len(chunk)
+
+read(src, dst, chunks, optz.bs)

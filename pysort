@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from optparse import OptionParser
+parser = OptionParser(usage='%prog [options] [ [-b] FILE ]',
+	description='Sort contents of a file (or stdin) by specified field')
+parser.add_option('-d',
+	action='store', dest='sep',
+	type='str', metavar='STR',
+	help='field delimiter (default: spaces)')
+parser.add_option('-f',
+	action='store', dest='field',
+	type='int', metavar='NUM', default=1,
+	help='sort-by field number (default: 1)')
+parser.add_option('-n',
+	action='store_true', dest='numsort',
+	help='convert field value to integer (default: alpha-sort)')
+parser.add_option('-b',
+	action='store_true', dest='buff',
+	help='flush output back to file')
+optz, argz = parser.parse_args()
+
+if len(argz) > 1: parser.error('Need at most one argument')
+elif optz.buff and not argz: parser.error('Need FILE argument with -b')
+elif optz.sep == '': parser.error('Separator cannot be an empty string')
+
+
+import itertools as it, operator as op, functools as ft
+import os, sys
+
+if optz.numsort: fied_proc = int
+else: fied_proc = lambda x: x
+
+def sort_key(line):
+	try: return fied_proc(line[optz.field-1])
+	except (IndexError, ValueError): return None
+
+def out_filter(line):
+	return (optz.sep or ' ').join(line).rstrip('\r\n') + '\n'
+
+buff = ''.join(it.imap(out_filter, sorted(
+	it.imap(op.methodcaller('split', optz.sep), open(argz[0])),
+	key=sort_key )))
+
+dst = sys.stdout if not optz.buff else open(argz[0], 'wb')
+dst.write(buff)
+dst.flush()
