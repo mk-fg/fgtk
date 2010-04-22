@@ -297,90 +297,94 @@ for line in optz.ln_list:
 
 	# Check link source
 	if not os.path.exists(src):
+		errz += 1
 		log.error("Source doesn't exists: {0}".format(src))
 		log.warn('Uncorrectable error!')
-	else:
+		continue
 
-		# Common check if dst exists at all
-		if not os.path.lexists(dst):
-			errz += 1
-			log.error('No link destination: {0} (source: {1})'.format(dst, src))
-			if optz.fix:
-				try:
-					if ltype & T_SYM:
-						if ltype == T_RSYM: src = rel_src(src, dst)
-						sh.ln(src, dst)
-					elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
-				except sh.Error as err:
-					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
-				else: log.info('Corrected: {0} -> {1}'.format(src, dst))
-			continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
-
-		# Check if dst is the right type (symlink / reg file)
-		if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
-			errz += 1
-			if ltype & T_SYM: log.error('Not a symlink: {0}'.format(dst))
-			elif ltype & T_CR: log.error('Symlink in place of catref: {0}'.format(dst))
-			if not optz.fix: show_diff(src, dst) # might be empty or erroneus if catref is replaced by bogus link
-			else:
-				sh.cp_p(src, bak_path)
-				if not os.path.samefile(dst, src): sh.cp_cat(dst, src)
-				sh.rm(dst)
-				if ltype == T_RSYM: src = rel_src(src, dst)
-				if ltype & T_SYM: sh.ln(src, dst)
-				elif ltype & T_CR: sh.cp_p(src, dst)
-				log.info('Corrected: {0} < {1} {2}'.format(src, aop, dst))
-			continue # rest of the checks will be bogus anyway
-
-		# Check target (symlink)
-		if ltype & T_SYM:
-			if ltype == T_RSYM:
-				src = rel_src(src, dst)
-				dst_tgt = os.readlink(dst)
-			else: dst_tgt = os.path.realpath(dst)
-			if dst_tgt != src:
-				errz += 1
-				log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, dst_tgt, src))
-				if optz.fix:
-					sh.rm(dst)
+	# Common check if dst exists at all
+	if not os.path.lexists(dst):
+		errz += 1
+		log.error('No link destination: {0} (source: {1})'.format(dst, src))
+		if optz.fix:
+			try:
+				if ltype & T_SYM:
+					if ltype == T_RSYM: src = rel_src(src, dst)
 					sh.ln(src, dst)
-					log.info('Corrected: {0} -> {1}'.format(src, dst))
+				elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
+			except sh.Error as err:
+				log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
+			else: log.info('Corrected: {0} -> {1}'.format(src, dst))
+		continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
 
-		# Check permissions and content (catref)
-		elif ltype & T_CR:
-			cps = False # there's common fix to all these problems - sh.cp_stat
-			stat_src, stat_dst = os.stat(src), os.stat(dst)
-			if stat_src.st_uid != stat_dst.st_uid:
-				errz += 1
-				if not optz.fix:
-					log.error( 'Wrong UID: {0} - {1}, instead of {2}'\
-						.format(dst, sh.uname(stat_dst.st_uid), sh.uname(stat_src.st_uid)) )
-				else: cps = True
-			if stat_src.st_gid != stat_dst.st_gid:
-				errz += 1
-				if not optz.fix:
-					log.error( 'Wrong GID: {0} - {1}, instead of {2}'
-						.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
-				else: cps = True
-			stat_src, stat_dst = stat_src.st_mode & 0777, stat_dst.st_mode & 0777
-			if stat_src != stat_dst:
-				errz += 1
-				if not optz.fix:
-					log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_src), oct(stat_dst)))
-				else: cps = True
-			if cps:
-				try: sh.cp_stat(src, dst, attrz=True)
-				except OSError, err:
-					log.error('Unable to fix UID/GID/mode on {0}: {1}'.format(dst, err))
-				else: log.info('Corrected UID/GID/mode: {0}'.format(dst))
-			diff = get_diff(src, dst) # content diff
-			if diff:
-				errz += 1
-				log.error('Different content: {0}'.format(src))
-				if not optz.fix: show_diff(diff)
-				else:
-					sh.cp_cat(dst, src)
-					log.info('Corrected: {0} > {1}'.format(dst, src))
+	# Check if dst is the right type (symlink / reg file)
+	if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
+		errz += 1
+		if ltype & T_SYM: log.error('Not a symlink: {0}'.format(dst))
+		elif ltype & T_CR: log.error('Symlink in place of catref: {0}'.format(dst))
+		if not optz.fix:
+			if not ltype & T_CR: show_diff(src, dst)
+		else:
+			sh.cp_p(src, bak_path)
+			try:
+				if not os.path.samefile(dst, src): sh.cp_cat(dst, src)
+			except OSError: pass # broken symlink
+			sh.rm(dst)
+			if ltype == T_RSYM: src = rel_src(src, dst)
+			if ltype & T_SYM: sh.ln(src, dst)
+			elif ltype & T_CR: sh.cp_p(src, dst)
+			log.info('Corrected: {0} < {1} {2}'.format(src, aop, dst))
+		continue # rest of the checks will be bogus anyway
+
+	# Check target (symlink)
+	if ltype & T_SYM:
+		if ltype == T_RSYM:
+			src = rel_src(src, dst)
+			dst_tgt = os.readlink(dst)
+		else: dst_tgt = os.path.realpath(dst)
+		if dst_tgt != src:
+			errz += 1
+			log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, dst_tgt, src))
+			if optz.fix:
+				sh.rm(dst)
+				sh.ln(src, dst)
+				log.info('Corrected: {0} -> {1}'.format(src, dst))
+
+	# Check permissions and content (catref)
+	elif ltype & T_CR:
+		cps = False # there's common fix to all these problems - sh.cp_stat
+		stat_src, stat_dst = os.stat(src), os.stat(dst)
+		if stat_src.st_uid != stat_dst.st_uid:
+			errz += 1
+			if not optz.fix:
+				log.error( 'Wrong UID: {0} - {1}, instead of {2}'\
+					.format(dst, sh.uname(stat_dst.st_uid), sh.uname(stat_src.st_uid)) )
+			else: cps = True
+		if stat_src.st_gid != stat_dst.st_gid:
+			errz += 1
+			if not optz.fix:
+				log.error( 'Wrong GID: {0} - {1}, instead of {2}'
+					.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
+			else: cps = True
+		stat_src, stat_dst = stat_src.st_mode & 0777, stat_dst.st_mode & 0777
+		if stat_src != stat_dst:
+			errz += 1
+			if not optz.fix:
+				log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_src), oct(stat_dst)))
+			else: cps = True
+		if cps:
+			try: sh.cp_stat(src, dst, attrz=True)
+			except OSError, err:
+				log.error('Unable to fix UID/GID/mode on {0}: {1}'.format(dst, err))
+			else: log.info('Corrected UID/GID/mode: {0}'.format(dst))
+		diff = get_diff(src, dst) # content diff
+		if diff:
+			errz += 1
+			log.error('Different content: {0}'.format(src))
+			if not optz.fix: show_diff(diff)
+			else:
+				sh.cp_cat(dst, src)
+				log.info('Corrected: {0} > {1}'.format(dst, src))
 
 
 ## Reverse check that all files are listed in linkz, incorrectable
