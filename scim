@@ -155,6 +155,9 @@ optz.meta_exclude = map(re.compile, optz.meta_exclude)
 for line in optz.meta_list:
 	node, meta = line.rsplit(None, 1)
 
+	# Special check/(dirty)fix for absolute-path nodes
+	if node.startswith('/'): node = node[len(scim_path)+1:]
+
 	# Check if path should be dropped as excluded
 	if not optz.limit or errz <= optz.limit:
 		chk = False
@@ -166,6 +169,14 @@ for line in optz.meta_list:
 				srcz_updates += 1
 				break
 		if chk is True: continue
+
+	# Check if entry is duplicate
+	if node in srcz:
+		meta_diff = meta
+		if srcz[node] != meta: meta_diff += ' => {0}'.format(srcz[node])
+		log.warn( 'Duplicate metadata info for path {0} ({1}),'
+			' only the latest one will be used'.format(node, meta_diff) )
+		srcz_updates += 1
 
 	srcz[node] = meta
 
@@ -213,8 +224,9 @@ for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
 
 if optz.fix and srcz_updates:
 	# Check metadata for list itself
-	try: meta = srcz[meta_list_path]
-	except KeyError: meta = srcz[meta_list_path] = 'root:wheel:600'
+	meta_list_path_rel = meta_list_path[len(scim_path)+1:]
+	try: meta = srcz[meta_list_path_rel]
+	except KeyError: meta = srcz[meta_list_path_rel] = 'root:wheel:600'
 	open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
 		for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
 	meta_set(meta_list_path, meta)
