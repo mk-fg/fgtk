@@ -5,28 +5,35 @@ PW_FLAG=/tmp/i_dont_give_a_fuck
 cleanup() {
  [[ -f "$PW_FLAG" ]] || return 0
  rm -f "$PW_FLAG"
- pkill wmpower
  return 0
 }
 
-grep -e Charging -e Full /sys/class/power_supply/BAT0/status >/dev/null && \
+grep -e Charging -e Full\
+  /sys/class/power_supply/BAT0/status >/dev/null && \
  cleanup && exit
 
 PW_LEFT=`cat /sys/class/power_supply/BAT0/charge_now`
 PW=`cat /sys/class/power_supply/BAT0/charge_full`
 PW=`echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc`
 PW=${PW#*.}
+PW=${PW#0}
 
-[[ $PW -lt 12 ]] && (
- aplay -q ~/media/appz/batt_down.wav
- pgrep wmpower || ( setsid wmpower; xsendkeycode 201 0 ) >/dev/null 2>&1
- true ) \
-|| [[ $PW -lt 17 ]] && aplay -q ~/media/appz/batt_warn.wav \
-|| [[ $PW -lt 25 ]] && aplay -q ~/media/appz/batt_low.wav \
-|| [[ -O "$PW_FLAG" ]] && cleanup && exit
+if [[ $PW -lt 12 ]]; then aplay -q ~/media/appz/batt_down.wav
+else if [[ $PW -lt 17 ]]; then aplay -q ~/media/appz/batt_warn.wav
+ else if [[ $PW -lt 25 ]]; then aplay -q ~/media/appz/batt_low.wav
+  else if [[ -O "$PW_FLAG" ]]; then cleanup && exit; fi
+  fi
+ fi
+fi
 
-[[ ! -O "$PW_FLAG" && $PW -lt 6 ]] && \
- xset dpms force on 2>/dev/null && \
- zenity --warning --text="Battery charge level critical!!\nDo something about it NOW or...\ntouch $PW_FLAG"
+if [[ ! -O "$PW_FLAG" && $PW -lt 10 ]]; then
+ xset dpms force on 2>/dev/null
+ MSG=$(cat << EOF
+Battery charge level critical (${PW}%)!
+Do something about it NOW or touch $PW_FLAG
+EOF
+)
+ DISPLAY=:0 notify-send -u critical -i nwn "Low power alert" "$MSG"
+fi
 
 exit 0
