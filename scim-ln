@@ -113,10 +113,12 @@ if argz:
 			log.error('{0} is not a symlink'.format(src))
 			if not optz.force: continue
 
+		# Generate target-path, depending on whether last argument was a file or dir
 		tgt = dst(src)
-		if tgt.startswith(scim_path): tgt = tgt.replace(scim_path + os.sep, '', 1)
-		elif tgt.startswith(scim_real_path): tgt = tgt.replace(scim_real_path + os.sep, '', 1)
-		link = ' '.join(( tgt, aop, src if not home_dir
+		# Strip absolute path, so the link left part (source) will be relative to scim_path
+		if tgt.startswith(scim_path): tgt_rel = tgt.replace(scim_path + os.sep, '', 1)
+		elif tgt.startswith(scim_real_path): tgt_rel = tgt.replace(scim_real_path + os.sep, '', 1)
+		link = ' '.join(( tgt_rel, aop, src if not home_dir
 			or not src.startswith(home_dir) else src.replace(home_dir, '~', 1) ))
 
 		print(link)
@@ -136,6 +138,7 @@ if argz:
 						tgt = rel_src(sh.join(scim_path, tgt), src)
 						if not os.path.exists(sh.join(os.path.dirname(src), tgt)): # sanity check
 							log.error('Failed to calculate correct relative path for {0}: {1}'.format(src, tgt))
+							continue
 					sh.ln(tgt, src)
 				else:
 					sh.cp(src, tgt, attrz=True)
