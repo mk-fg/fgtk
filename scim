@@ -230,7 +230,8 @@ if optz.fix and srcz_updates:
 	open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
 		for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
 	meta_set(meta_list_path, meta)
-	log.info('Updated metadata ({0} changes)'.format(srcz_updates))
+	log.info( 'Updated metadata ({0} change{1})'\
+		.format(srcz_updates, 's' if srcz_updates != 1 else '') )
 
 
 
