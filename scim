@@ -10,10 +10,20 @@ parser.add_option('-f', '--fix',
 	help='Fix detected errors.'
 		' In case of links, its the update of a source from a destination or link-dst creation.'
 		' Metadata is restored from a list for known files, then list is updated with new/deleted ones.')
-parser.add_option('-l', '--limit',
+parser.add_option('-n', '--limit',
 	action='store', dest='limit',
 	type='int', metavar='NUM',
 	help='Process only given number of correctable errors from top of the file.')
+
+parser.add_option('-l', '--links',
+	action='store_true', dest='links',
+	help='Perform any links-manipulations.'
+		' Implied if none of --links or --meta specified explicitly.')
+parser.add_option('-m', '--meta',
+	action='store_true', dest='meta',
+	help='Perform any links-manipulations.'
+		' Implied if none of --links or --meta specified explicitly, except when user'
+		' has no ability to manipulate file ownership and meta_list does not exists.')
 
 parser.add_option('--links-list',
 	action='store', dest='ln_list',
@@ -95,6 +105,9 @@ for i in filter( lambda x: x.startswith('ln_')\
 		if i == 'meta_list': meta_list_path = dst # special case, 'cause it gets updated on --fix
 		setattr(optz, i, merge_filter(open(dst)) if os.path.exists(dst) else list())
 
+if not optz.meta and not optz.links:
+	optz.meta = optz.links = 'implicit' # not just "True", affects meta
+
 
 ### Common spool
 errz = 1
@@ -142,97 +155,104 @@ def meta_set(path, meta):
 	if acls: acl.rebase(acls, path, base=mode)
 	if caps: strcaps.set_file(caps.replace(';', ' '), path)
 
-
-## Init
-srcz = dict()
-srcz_updates = 0
-
 import re
 optz.meta_exclude = map(re.compile, optz.meta_exclude)
 
 
-## Straight check
-for line in optz.meta_list:
-	node, meta = line.rsplit(None, 1)
+def update_meta():
+	## Init
+	global errz, errz_critical
+	srcz = dict()
+	srcz_updates = 0
 
-	# Special check/(dirty)fix for absolute-path nodes
-	if node.startswith('/'): node = node[len(scim_path)+1:]
+	## Straight check
+	for line in optz.meta_list:
+		node, meta = line.rsplit(None, 1)
 
-	# Check if path should be dropped as excluded
-	if not optz.limit or errz <= optz.limit:
-		chk = False
-		for chk in optz.meta_exclude:
-			if chk.search(node):
-				errz += 1
-				log.error('Found metadata for excluded path {0} ({1})'.format(node, meta))
-				chk = True
-				srcz_updates += 1
-				break
-		if chk is True: continue
+		# Special check/(dirty)fix for absolute-path nodes
+		if node.startswith('/'): node = node[len(scim_path)+1:]
 
-	# Check if entry is duplicate
-	if node in srcz:
-		meta_diff = meta
-		if srcz[node] != meta: meta_diff += ' => {0}'.format(srcz[node])
-		log.warn( 'Duplicate metadata info for path {0} ({1}),'
-			' only the latest one will be used'.format(node, meta_diff) )
-		srcz_updates += 1
+		# Check if path should be dropped as excluded
+		if not optz.limit or errz <= optz.limit:
+			chk = False
+			for chk in optz.meta_exclude:
+				if chk.search(node):
+					errz += 1
+					log.error('Found metadata for excluded path {0} ({1})'.format(node, meta))
+					chk = True
+					srcz_updates += 1
+					break
+			if chk is True: continue
 
-	srcz[node] = meta
-
-	if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
-
-	path = sh.join(scim_path, node)
-	try: fstat = meta_get(path)
-	except OSError as err:
-		errz += 1
-		log.error('Failed to stat path {0}: {1}'.format(node, err))
-		del srcz[node] # no stat - no meta
-		srcz_updates += 1
-		continue # no need to "fix" permissions here ;)
-	else:
-		if meta == fstat: continue
-		errz += 1
-		log.error('Invalid metadata for path {0}: {1} instead of {2}'.format(node, fstat, meta))
-
-	if optz.fix:
-		try: meta_set(path, meta)
-		except OSError as err:
-			log.warn('Unable to restore metadata ({0}) for path {1}: {2}'.format(meta, node, err))
-		else: log.info('Fixed metadata for path {0}'.format(node))
-
-
-## Reverse check
-for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
-	if optz.limit and errz > optz.limit: continue
-
-	path = sh.join(scim_path, node)
-	if node in srcz: continue
-
-	# Check if all path parents are in srcz
-	seg_path = '/'
-	for seg in path.split(os.sep):
-		seg_path = sh.join(seg_path, seg)
-		if not seg_path.startswith(scim_path): continue
-		else: node = seg_path[len(scim_path)+1:]
-		if node and node not in srcz:
-			errz += 1
-			meta = meta_get(path)
-			log.warn('Not in metadata-list: {0} ({1})'.format(node, meta))
-			srcz[node] = meta
+		# Check if entry is duplicate
+		if node in srcz:
+			meta_diff = meta
+			if srcz[node] != meta: meta_diff += ' => {0}'.format(srcz[node])
+			log.warn( 'Duplicate metadata info for path {0} ({1}),'
+				' only the latest one will be used'.format(node, meta_diff) )
 			srcz_updates += 1
 
-if optz.fix and srcz_updates:
-	# Check metadata for list itself
-	meta_list_path_rel = meta_list_path[len(scim_path)+1:]
-	try: meta = srcz[meta_list_path_rel]
-	except KeyError: meta = srcz[meta_list_path_rel] = 'root:wheel:600'
-	open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
-		for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
-	meta_set(meta_list_path, meta)
-	log.info( 'Updated metadata ({0} change{1})'\
-		.format(srcz_updates, 's' if srcz_updates != 1 else '') )
+		srcz[node] = meta
 
+		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
+
+		path = sh.join(scim_path, node)
+		try: fstat = meta_get(path)
+		except OSError as err:
+			errz += 1
+			log.error('Failed to stat path {0}: {1}'.format(node, err))
+			del srcz[node] # no stat - no meta
+			srcz_updates += 1
+			continue # no need to "fix" permissions here ;)
+		else:
+			if meta == fstat: continue
+			errz += 1
+			log.error('Invalid metadata for path {0}: {1} instead of {2}'.format(node, fstat, meta))
+
+		if optz.fix:
+			try: meta_set(path, meta)
+			except OSError as err:
+				log.warn('Unable to restore metadata ({0}) for path {1}: {2}'.format(meta, node, err))
+			else: log.info('Fixed metadata for path {0}'.format(node))
+
+	## Reverse check
+	for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
+		if optz.limit and errz > optz.limit: continue
+
+		path = sh.join(scim_path, node)
+		if node in srcz: continue
+
+		# Check if all path parents are in srcz
+		seg_path = '/'
+		for seg in path.split(os.sep):
+			seg_path = sh.join(seg_path, seg)
+			if not seg_path.startswith(scim_path): continue
+			else: node = seg_path[len(scim_path)+1:]
+			if node and node not in srcz:
+				errz += 1
+				meta = meta_get(path)
+				log.warn('Not in metadata-list: {0} ({1})'.format(node, meta))
+				srcz[node] = meta
+				srcz_updates += 1
+
+	if optz.fix and srcz_updates:
+		# Check metadata for list itself
+		meta_list_path_rel = meta_list_path[len(scim_path)+1:]
+		try: meta = srcz[meta_list_path_rel]
+		except KeyError: meta = srcz[meta_list_path_rel] = 'root:wheel:600'
+		open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
+			for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
+		meta_set(meta_list_path, meta)
+		log.info( 'Updated metadata ({0} change{1})'\
+			.format(srcz_updates, 's' if srcz_updates != 1 else '') )
+
+
+if optz.meta:
+	if optz.meta is True: update_meta()
+	else: # implicit, skip metadata stuff for simple users if there's no list yet
+		from fgc.caps import get_process
+		can_chown = not os.geteuid() or 'cap_chown' in get_process(os.getpid()).effective
+		if can_chown or os.path.exists(meta_list_path): update_meta()
 
 
 
@@ -257,165 +277,167 @@ def rel_src(src, dst):
 		else: i +=1
 	return os.path.join(*([os.pardir] * (len(dst)-i) + src[i:]))
 
-
-## Init
 T_SYM = 1 # symlink
 T_RSYM = T_SYM | 2 # relative symlink
 T_CR = 4 # catref
 ops = {T_SYM: '->', T_RSYM: '+>', T_CR: '>'}
 
-srcz = set() # filled during straight check to be used in reverse check
 
+def update_links():
+	## Init
+	global errz, errz_critical
+	global scim_path # can change in case it's in links itself
+	srcz = set() # filled during straight check to be used in reverse check
 
-## Backups dir
-if optz.fix:
-	bak_path = '/tmp/scim-lnck.{0}'.format(os.getpid())
-	if os.path.exists(bak_path): sh.rr(bak_path)
-	sh.mkdir(bak_path)
+	## Backups dir
+	if optz.fix:
+		bak_path = '/tmp/scim-lnck.{0}'.format(os.getpid())
+		if os.path.exists(bak_path): sh.rr(bak_path)
+		sh.mkdir(bak_path)
 
+	## Straight check (all linkz are correct)
+	for line in optz.ln_list:
 
-## Straight check (all linkz are correct)
-for line in optz.ln_list:
+		## Critical error bail-out
+		if errz_critical is not False and errz > errz_critical:
+			log.fatal('Critical error, further checks skipped')
+			sys.exit()
+		else: errz_critical = False
 
-	## Critical error bail-out
-	if errz_critical is not False and errz > errz_critical:
-		log.fatal('Critical error, further checks skipped')
-		sys.exit()
-	else: errz_critical = False
-
-	## Get src, type, dst
-	for ltype, aop in ops.iteritems():
-		try: src,dst = line.split(' {0} '.format(aop))
-		except ValueError: pass
-		else: break
-	else:
-		log.error('Wrong link format: {0}'.format(line))
-		log.warn('Uncorrectable error!')
-		continue
-
-	## Expand relative paths
-	src = sh.join(scim_path, src)
-	dst = sh.join(scim_path, os.path.expanduser(dst))
-	if os.path.abspath(src) == os.path.abspath(scim_path):
-		scim_path = dst # rebase on symlinked path
-		errz_critical = errz # error here will lead to errors everywhere
-	else:
-		if os.path.isdir(src):
-			log.debug('Linked whole path (bad practice): {0}'.format(src))
-		srcz.add(src)
-
-	if optz.limit and errz > optz.limit: continue # just fill srcz set
-
-	## Check symlink / cat reference
-
-	# Check link source
-	if not os.path.exists(src):
-		errz += 1
-		log.error("Source doesn't exists: {0}".format(src))
-		log.warn('Uncorrectable error!')
-		continue
-
-	# Common check if dst exists at all
-	if not os.path.lexists(dst):
-		errz += 1
-		log.error('No link destination: {0} (source: {1})'.format(dst, src))
-		if optz.fix:
-			try:
-				if ltype & T_SYM:
-					if ltype == T_RSYM: src = rel_src(src, dst)
-					sh.ln(src, dst)
-				elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
-			except sh.Error as err:
-				log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
-			else: log.info('Corrected: {0} -> {1}'.format(src, dst))
-		continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
-
-	# Check if dst is the right type (symlink / reg file)
-	if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
-		errz += 1
-		if ltype & T_SYM: log.error('Not a symlink: {0}'.format(dst))
-		elif ltype & T_CR: log.error('Symlink in place of catref: {0}'.format(dst))
-		if not optz.fix:
-			if not ltype & T_CR: show_diff(src, dst)
+		## Get src, type, dst
+		for ltype, aop in ops.iteritems():
+			try: src,dst = line.split(' {0} '.format(aop))
+			except ValueError: pass
+			else: break
 		else:
-			sh.cp_p(src, bak_path)
-			try:
-				if not os.path.samefile(dst, src): sh.cp_cat(dst, src)
-			except OSError: pass # broken symlink
-			sh.rm(dst)
-			if ltype == T_RSYM: src = rel_src(src, dst)
-			if ltype & T_SYM: sh.ln(src, dst)
-			elif ltype & T_CR: sh.cp_p(src, dst)
-			log.info('Corrected: {0} < {1} {2}'.format(src, aop, dst))
-		continue # rest of the checks will be bogus anyway
+			log.error('Wrong link format: {0}'.format(line))
+			log.warn('Uncorrectable error!')
+			continue
 
-	# Check target (symlink)
-	if ltype & T_SYM:
-		if ltype == T_RSYM:
-			src = rel_src(src, dst)
-			dst_tgt = os.readlink(dst)
-		else: dst_tgt = os.path.realpath(dst)
-		if dst_tgt != src:
+		## Expand relative paths
+		src = sh.join(scim_path, src)
+		dst = sh.join(scim_path, os.path.expanduser(dst))
+		if os.path.abspath(src) == os.path.abspath(scim_path):
+			scim_path = dst # rebase on symlinked path
+			errz_critical = errz # error here will lead to errors everywhere
+		else:
+			if os.path.isdir(src):
+				log.debug('Linked whole path (bad practice): {0}'.format(src))
+			srcz.add(src)
+
+		if optz.limit and errz > optz.limit: continue # just fill srcz set
+
+		## Check symlink / cat reference
+
+		# Check link source
+		if not os.path.exists(src):
 			errz += 1
-			log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, dst_tgt, src))
+			log.error("Source doesn't exists: {0}".format(src))
+			log.warn('Uncorrectable error!')
+			continue
+
+		# Common check if dst exists at all
+		if not os.path.lexists(dst):
+			errz += 1
+			log.error('No link destination: {0} (source: {1})'.format(dst, src))
 			if optz.fix:
-				sh.rm(dst)
-				sh.ln(src, dst)
-				log.info('Corrected: {0} -> {1}'.format(src, dst))
+				try:
+					if ltype & T_SYM:
+						if ltype == T_RSYM: src = rel_src(src, dst)
+						sh.ln(src, dst)
+					elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
+				except sh.Error as err:
+					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
+				else: log.info('Corrected: {0} -> {1}'.format(src, dst))
+			continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
 
-	# Check permissions and content (catref)
-	elif ltype & T_CR:
-		cps = False # there's common fix to all these problems - sh.cp_stat
-		stat_src, stat_dst = os.stat(src), os.stat(dst)
-		if stat_src.st_uid != stat_dst.st_uid:
+		# Check if dst is the right type (symlink / reg file)
+		if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
 			errz += 1
+			if ltype & T_SYM: log.error('Not a symlink: {0}'.format(dst))
+			elif ltype & T_CR: log.error('Symlink in place of catref: {0}'.format(dst))
 			if not optz.fix:
-				log.error( 'Wrong UID: {0} - {1}, instead of {2}'\
-					.format(dst, sh.uname(stat_dst.st_uid), sh.uname(stat_src.st_uid)) )
-			else: cps = True
-		if stat_src.st_gid != stat_dst.st_gid:
-			errz += 1
-			if not optz.fix:
-				log.error( 'Wrong GID: {0} - {1}, instead of {2}'
-					.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
-			else: cps = True
-		stat_src, stat_dst = stat_src.st_mode & 0777, stat_dst.st_mode & 0777
-		if stat_src != stat_dst:
-			errz += 1
-			if not optz.fix:
-				log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_src), oct(stat_dst)))
-			else: cps = True
-		if cps:
-			try: sh.cp_stat(src, dst, attrz=True)
-			except OSError, err:
-				log.error('Unable to fix UID/GID/mode on {0}: {1}'.format(dst, err))
-			else: log.info('Corrected UID/GID/mode: {0}'.format(dst))
-		diff = get_diff(src, dst) # content diff
-		if diff:
-			errz += 1
-			log.error('Different content: {0}'.format(src))
-			if not optz.fix: show_diff(diff)
+				if not ltype & T_CR: show_diff(src, dst)
 			else:
-				sh.cp_cat(dst, src)
-				log.info('Corrected: {0} > {1}'.format(dst, src))
+				sh.cp_p(src, bak_path)
+				try:
+					if not os.path.samefile(dst, src): sh.cp_cat(dst, src)
+				except OSError: pass # broken symlink
+				sh.rm(dst)
+				if ltype == T_RSYM: src = rel_src(src, dst)
+				if ltype & T_SYM: sh.ln(src, dst)
+				elif ltype & T_CR: sh.cp_p(src, dst)
+				log.info('Corrected: {0} < {1} {2}'.format(src, aop, dst))
+			continue # rest of the checks will be bogus anyway
+
+		# Check target (symlink)
+		if ltype & T_SYM:
+			if ltype == T_RSYM:
+				src = rel_src(src, dst)
+				dst_tgt = os.readlink(dst)
+			else: dst_tgt = os.path.realpath(dst)
+			if dst_tgt != src:
+				errz += 1
+				log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, dst_tgt, src))
+				if optz.fix:
+					sh.rm(dst)
+					sh.ln(src, dst)
+					log.info('Corrected: {0} -> {1}'.format(src, dst))
+
+		# Check permissions and content (catref)
+		elif ltype & T_CR:
+			cps = False # there's common fix to all these problems - sh.cp_stat
+			stat_src, stat_dst = os.stat(src), os.stat(dst)
+			if stat_src.st_uid != stat_dst.st_uid:
+				errz += 1
+				if not optz.fix:
+					log.error( 'Wrong UID: {0} - {1}, instead of {2}'\
+						.format(dst, sh.uname(stat_dst.st_uid), sh.uname(stat_src.st_uid)) )
+				else: cps = True
+			if stat_src.st_gid != stat_dst.st_gid:
+				errz += 1
+				if not optz.fix:
+					log.error( 'Wrong GID: {0} - {1}, instead of {2}'
+						.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
+				else: cps = True
+			stat_src, stat_dst = stat_src.st_mode & 0777, stat_dst.st_mode & 0777
+			if stat_src != stat_dst:
+				errz += 1
+				if not optz.fix:
+					log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_src), oct(stat_dst)))
+				else: cps = True
+			if cps:
+				try: sh.cp_stat(src, dst, attrz=True)
+				except OSError, err:
+					log.error('Unable to fix UID/GID/mode on {0}: {1}'.format(dst, err))
+				else: log.info('Corrected UID/GID/mode: {0}'.format(dst))
+			diff = get_diff(src, dst) # content diff
+			if diff:
+				errz += 1
+				log.error('Different content: {0}'.format(src))
+				if not optz.fix: show_diff(diff)
+				else:
+					sh.cp_cat(dst, src)
+					log.info('Corrected: {0} > {1}'.format(dst, src))
+
+	## Reverse check that all files are listed in linkz, incorrectable
+	for node in sh.crawl(scim_path, exclude=optz.ln_exclude):
+		if optz.limit and errz > optz.limit: continue
+
+		path = sh.join(scim_path, node)
+		if path in srcz: continue
+		if not os.path.isdir(path): # check if any of path parents is in srcz
+			segz = path.split(os.sep)
+			seg_path = '/'
+			for seg in segz:
+				seg_path = sh.join(seg_path, seg)
+				if seg_path in srcz: break
+			else:
+				errz += 1
+				log.warn('Not listed in links-list: {0}'.format(path))
+
+	## Cleanup
+	if optz.fix: sh.rr(bak_path)
 
 
-## Reverse check that all files are listed in linkz, incorrectable
-for node in sh.crawl(scim_path, exclude=optz.ln_exclude):
-	if optz.limit and errz > optz.limit: continue
-
-	path = sh.join(scim_path, node)
-	if path in srcz: continue
-	if not os.path.isdir(path): # check if any of path parents is in srcz
-		segz = path.split(os.sep)
-		seg_path = '/'
-		for seg in segz:
-			seg_path = sh.join(seg_path, seg)
-			if seg_path in srcz: break
-		else:
-			errz += 1
-			log.warn('Not listed in links-list: {0}'.format(path))
-
-
-## Cleanup
-if optz.fix: sh.rr(bak_path)
+if optz.links: update_links()
