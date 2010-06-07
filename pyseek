@@ -5,6 +5,9 @@ from optparse import OptionParser
 parser = OptionParser(usage='%prog [options] [ FROM(MiB) TO(MiB) ... ] PATH',
 	description=('Stream given file from/to specified offset.'
 		' Limits can be omitted or specified as a single dash for bof/eof.'))
+parser.add_option('-b', '--bytes',
+	action='store_true', dest='bytes',
+	help='Use bytes (B) instead of MiB.')
 parser.add_option('-c', '--chunk-size',
 	action='store', dest='bs', type='int', metavar='BYTES', default=8192,
 	help='Use atomic chunks of a given size for I/O.')
@@ -19,11 +22,11 @@ parser.add_option('-t',
 optz,argz = parser.parse_args()
 
 
-M = 1024*1024
-
 import itertools as it, operator as op, functools as ft
 from cStringIO import StringIO as sio
 import os, sys
+
+scale = 1024*1024 if not optz.bytes else 1
 
 src = len(argz) % 2
 if not src: parser.error('STDIN processing is not supported')
@@ -36,9 +39,9 @@ dst = sys.stdout # if not optz.buff else sio()
 
 def read(src, dst, chunks, bs):
 	for pos,to in chunks:
-		try: pos = int(pos)*M
+		try: pos = int(pos)*scale
 		except (TypeError, ValueError): pos = 0
-		try: to = int(to)*M
+		try: to = int(to)*scale
 		except (TypeError, ValueError): to = 0
 
 		src.seek(pos, os.SEEK_SET)
