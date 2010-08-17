@@ -5,22 +5,21 @@ from __future__ import print_function
 from optparse import OptionParser
 parser = OptionParser(usage='%prog [options]')
 
-parser.add_option('-f', '--fix',
-	action='store_true', dest='fix',
+parser.add_option('-f', '--fix', action='store_true',
 	help='Fix detected errors.'
 		' In case of links, its the update of a source from a destination or link-dst creation.'
+		' In case of catrefs (if there are differences), live-fs (dst) file will overwrite source.'
 		' Metadata is restored from a list for known files, then list is updated with new/deleted ones.')
-parser.add_option('-n', '--limit',
-	action='store', dest='limit',
-	type='int', metavar='NUM',
+parser.add_option('-n', '--limit', action='store', type='int',
 	help='Process only given number of correctable errors from top of the file.')
+parser.add_option('-r', '--reverse', action='store_true', default=False,
+	help='Reverse direction of a catref fix, so live-fs file'
+		' will get overwritten by the one from repository.')
 
-parser.add_option('-l', '--links',
-	action='store_true', dest='links',
+parser.add_option('-l', '--links', action='store_true',
 	help='Perform any links-manipulations.'
 		' Implied if none of --links or --meta specified explicitly.')
-parser.add_option('-m', '--meta',
-	action='store_true', dest='meta',
+parser.add_option('-m', '--meta', action='store_true',
 	help='Perform any links-manipulations.'
 		' Implied if none of --links or --meta specified explicitly, except when user'
 		' has no ability to manipulate file ownership and meta_list does not exists.')
@@ -260,7 +259,16 @@ if optz.meta:
 
 ## Helpers
 optz.cmd_diff = optz.cmd_diff.split()
-get_diff = lambda src,dst: Popen(optz.cmd_diff + [src, dst], stdout=PIPE).stdout.read()
+
+def get_diff(src, dst):
+	try: proc = Popen(optz.cmd_diff + [src, dst], stdout=PIPE)
+	except OSError as err:
+		log.fatal('Unable to execute diff command: {0}'.format(err))
+		sys.exit(1)
+	diff = proc.stdout.read()
+	proc.wait()
+	return diff
+
 def show_diff(src, dst=None):
 	diff = get_diff(src, dst) if not dst is None else src
 	if diff:
@@ -276,6 +284,9 @@ def rel_src(src, dst):
 		if dst[i] != src[i]: break
 		else: i +=1
 	return os.path.join(*([os.pardir] * (len(dst)-i) + src[i:]))
+
+def optional_reverse(src, dst):
+	return (src, dst) if not optz.reverse else (dst, src)
 
 T_SYM = 1 # symlink
 T_RSYM = T_SYM | 2 # relative symlink
@@ -345,10 +356,12 @@ def update_links():
 					if ltype & T_SYM:
 						if ltype == T_RSYM: src = rel_src(src, dst)
 						sh.ln(src, dst)
-					elif ltype & T_CR: sh.cp_p(src, dst) # non-recursive: cat references to dirs aren't allowed
+					elif ltype & T_CR:
+						# Note that cp_p is non-recursive: cat references to dirs aren't allowed
+						sh.cp_p(src, dst) # and there's no "reverse" if there's no dst
 				except sh.Error as err:
 					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
-				else: log.info('Corrected: {0} -> {1}'.format(src, dst))
+				else: log.info('Corrected: {0} {1} {2}'.format(src, aop, dst))
 			continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
 
 		# Check if dst is the right type (symlink / reg file)
@@ -361,13 +374,13 @@ def update_links():
 			else:
 				sh.cp_p(src, bak_path)
 				try:
-					if not os.path.samefile(dst, src): sh.cp_cat(dst, src)
+					if not os.path.samefile(dst, src): sh.cp_cat(*optional_reverse(dst, src))
 				except OSError: pass # broken symlink
 				sh.rm(dst)
 				if ltype == T_RSYM: src = rel_src(src, dst)
 				if ltype & T_SYM: sh.ln(src, dst)
 				elif ltype & T_CR: sh.cp_p(src, dst)
-				log.info('Corrected: {0} < {1} {2}'.format(src, aop, dst))
+				log.info('Corrected: {0} {1} {2} {3}'.format(src, '<>'[int(optz.reverse)], aop, dst))
 			continue # rest of the checks will be bogus anyway
 
 		# Check target (symlink)
@@ -417,8 +430,8 @@ def update_links():
 				log.error('Different content: {0}'.format(src))
 				if not optz.fix: show_diff(diff)
 				else:
-					sh.cp_cat(dst, src)
-					log.info('Corrected: {0} > {1}'.format(dst, src))
+					sh.cp_cat(*optional_reverse(dst, src))
+					log.info('Corrected: {0} {1} {2}'.format(dst, '><'[int(optz.reverse)], src))
 
 	## Reverse check that all files are listed in linkz, incorrectable
 	for node in sh.crawl(scim_path, exclude=optz.ln_exclude):
