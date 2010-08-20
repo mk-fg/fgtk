@@ -65,7 +65,7 @@ if not os.path.exists(linkz_path):
 		sys.exit(1)
 
 linkz = list(filter(None, map(str.strip, open(linkz_path))))
-if linkz[0].split(' ', 1)[0] == '.': # rebase on symlinked path
+if linkz and linkz[0].split(' ', 1)[0] == '.': # rebase on symlinked path
 	scim_path = os.path.expanduser(linkz[0].rsplit(' ', 1)[-1])
 
 
