@@ -3,16 +3,13 @@ from __future__ import print_function
 
 
 from optparse import OptionParser
-parser = OptionParser(usage='%prog [options] SRC1 SRC2 ... DST')
+parser = OptionParser(usage='%prog [options] SRC1 SRC2 ... [DST]')
 
-parser.add_option('-a', '--register',
-	action='store_true', dest='register',
+parser.add_option('-a', '--register', action='store_true',
 	help='Do not create ref, just add it to registry.')
-parser.add_option('-f', '--force',
-	action='store_true', dest='force',
+parser.add_option('-f', '--force', action='store_true',
 	help='Dont interrupt operation on some non-critical errors.')
-parser.add_option('-t', '--no-tilda',
-	action='store_true', dest='no_tilda',
+parser.add_option('-t', '--no-tilda', action='store_true', dest='no_tilda',
 	help='Do not replace current user home path with tilda.')
 
 parser.add_option('-c', '--catref',

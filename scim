@@ -148,8 +148,8 @@ def meta_set(path, meta):
 	#  to avoid situations where suid bit or posix caps can be added to an
 	#  unprivileged binary (because uid/gid/mode/acl restoration failed)
 	try: sh.chown(path, uid, gid, resolve=True)
-	except KeyError:
-		raise OSError('No such id - {0}:{1} ({2})'.format(uid, gid, path))
+	except KeyError as err:
+		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
 	sh.chmod(path, mode, deference=False)
 	if acls: acl.rebase(acls, path, base=mode)
 	if caps: strcaps.set_file(caps.replace(';', ' '), path)
