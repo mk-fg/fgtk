@@ -258,9 +258,20 @@ if optz.meta:
 ### Links-check
 
 ## Helpers
+from hashlib import md5
+
 optz.cmd_diff = optz.cmd_diff.split()
 
+def digest_file(path, bs=8192):
+	stream, hc = open(path, 'rb'), md5()
+	while True:
+		chunk = stream.read(bs)
+		if not chunk: break
+		hc.update(chunk)
+	return hc.digest()
+
 def get_diff(src, dst):
+	if digest_file(src) == digest_file(dst): return '' # no difference on byte-level
 	try: proc = Popen(optz.cmd_diff + [src, dst], stdout=PIPE)
 	except OSError as err:
 		log.fatal('Unable to execute diff command: {0}'.format(err))
