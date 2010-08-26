@@ -116,6 +116,7 @@ errz_critical = False # should be either false or equal to errz
 
 ### Metadata check
 from fgc import strcaps, acl
+import stat
 
 ## Helpers
 def meta_get(path):
@@ -134,15 +135,24 @@ def meta_get(path):
 		mode = acl.get_mode(acls) | (fstat.st_mode & 07000)
 		meta += '/' + ','.join(acls)
 	else: mode = fstat.st_mode
-	return meta.format(oct(mode & 07777).lstrip('0'))
+	setgid_recurse = False
+	if stat.S_ISDIR(mode) and mode & stat.S_ISGID:
+		for subpath in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
+			if not os.stat(subpath).st_mode & stat.S_ISGID: break
+		else: setgid_recurse = True
+	return meta.format('{0}{1}'.format(
+		oct(stat.S_IMODE(mode)).lstrip('0'), 'r' if setgid_recurse else '' ))
 
 def meta_set(path, meta):
-	caps = acls = None
+	caps = acls = setgid_recurse = None
 	try:
 		meta, caps = meta.split('/', 1)
 		caps, acls = caps.split('/', 1)
 	except ValueError: pass
 	uid, gid, smode = meta.split(':')
+	if smode.endswith('r'):
+		smode = smode[:-1]
+		setgid_recurse = True
 	mode = sh.mode(smode)
 	# Privileges are restored sequentially, any error aborts the process
 	#  to avoid situations where suid bit or posix caps can be added to an
@@ -150,7 +160,11 @@ def meta_set(path, meta):
 	try: sh.chown(path, uid, gid, resolve=True)
 	except KeyError as err:
 		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
-	sh.chmod(path, mode, deference=False)
+	if not (setgid_recurse and mode & stat.S_ISGID):
+		sh.chmod(path, mode, dereference=False)
+	else:
+		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
+			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
 	if acls: acl.rebase(acls, path, base=mode)
 	if caps: strcaps.set_file(caps.replace(';', ' '), path)
 
@@ -424,7 +438,7 @@ def update_links():
 					log.error( 'Wrong GID: {0} - {1}, instead of {2}'
 						.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
 				else: cps = True
-			stat_src, stat_dst = stat_src.st_mode & 0777, stat_dst.st_mode & 0777
+			stat_src, stat_dst = stat.S_IMODE(stat_src.st_mode), stat.S_IMODE(stat_dst.st_mode)
 			if stat_src != stat_dst:
 				errz += 1
 				if not optz.fix:
