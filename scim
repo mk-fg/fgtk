@@ -154,15 +154,18 @@ def meta_set(path, meta):
 		smode = smode[:-1]
 		setgid_recurse = True
 	mode = sh.mode(smode)
+	if setgid_recurse and not mode & stat.S_ISGID:
+		raise ValueError( 'Non-setgid recursive modes'
+			' are not supported (path: {0})'.format(path) )
 	# Privileges are restored sequentially, any error aborts the process
 	#  to avoid situations where suid bit or posix caps can be added to an
 	#  unprivileged binary (because uid/gid/mode/acl restoration failed)
 	try: sh.chown(path, uid, gid, resolve=True)
 	except KeyError as err:
 		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
-	if not (setgid_recurse and mode & stat.S_ISGID):
-		sh.chmod(path, mode, dereference=False)
+	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
 	else:
+		sh.chmod(path, mode, dereference=False)
 		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
 			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
 	if acls: acl.rebase(acls, path, base=mode)
