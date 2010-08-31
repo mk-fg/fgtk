@@ -13,8 +13,8 @@ parser.add_option('-f', '--fix', action='store_true',
 parser.add_option('-n', '--limit', action='store', type='int',
 	help='Process only given number of correctable errors from top of the file.')
 parser.add_option('-r', '--reverse', action='store_true', default=False,
-	help='Reverse direction of a catref fix, so live-fs file'
-		' will get overwritten by the one from repository.')
+	help='Reverse direction of a catref fix, so live-fs file will get'
+		' overwritten by the one from repository. Also reverses all diffs accordingly.')
 
 parser.add_option('-l', '--links', action='store_true',
 	help='Perform any links-manipulations.'
@@ -166,6 +166,7 @@ def meta_set(path, meta):
 	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
 	else:
 		sh.chmod(path, mode, dereference=False)
+		sh.chown(path, gid=gid)
 		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
 			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
 	if acls: acl.rebase(acls, path, base=mode)
@@ -288,6 +289,7 @@ def digest_file(path, bs=8192):
 	return hc.digest()
 
 def get_diff(src, dst):
+	if optz.reverse: src, dst = dst, src
 	if digest_file(src) == digest_file(dst): return '' # no difference on byte-level
 	try: proc = Popen(optz.cmd_diff + [src, dst], stdout=PIPE)
 	except OSError as err:
@@ -445,7 +447,7 @@ def update_links():
 			if stat_src != stat_dst:
 				errz += 1
 				if not optz.fix:
-					log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_src), oct(stat_dst)))
+					log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_dst), oct(stat_src)))
 				else: cps = True
 			if cps:
 				try: sh.cp_stat(src, dst, attrz=True)
