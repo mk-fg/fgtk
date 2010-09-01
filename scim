@@ -5,6 +5,8 @@ from __future__ import print_function
 from optparse import OptionParser
 parser = OptionParser(usage='%prog [options]')
 
+parser.add_option('-s', '--summary', action='store_true',
+	help='Dont show the diffs, just the summary of them.')
 parser.add_option('-f', '--fix', action='store_true',
 	help='Fix detected errors.'
 		' In case of links, its the update of a source from a destination or link-dst creation.'
@@ -290,7 +292,8 @@ def digest_file(path, bs=8192):
 
 def get_diff(src, dst):
 	if optz.reverse: src, dst = dst, src
-	if digest_file(src) == digest_file(dst): return '' # no difference on byte-level
+	if digest_file(src) == digest_file(dst): return None # no difference on byte-level
+	if optz.summary: return True # contents doesn't matter in this case
 	try: proc = Popen(optz.cmd_diff + [src, dst], stdout=PIPE)
 	except OSError as err:
 		log.fatal('Unable to execute diff command: {0}'.format(err))
@@ -300,8 +303,8 @@ def get_diff(src, dst):
 	return diff
 
 def show_diff(src, dst=None):
-	diff = get_diff(src, dst) if not dst is None else src
-	if diff:
+	diff = get_diff(src, dst) if dst is not None else src
+	if diff and not optz.summary:
 		log.warn(' <<<<<<<<< Source/Replacement diff:')
 		sys.stderr.write(diff)
 		log.warn(' >>>>>>>>> ')
