@@ -175,7 +175,7 @@ def meta_set(path, meta):
 	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
 	else:
 		sh.chmod(path, mode, dereference=False)
-		sh.chown(path, gid=gid)
+		sh.chown(path, tgid=gid, resolve=True)
 		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
 			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
 	if acls: acl.rebase(acls, path, base=mode)
