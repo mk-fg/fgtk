@@ -35,7 +35,7 @@ import itertools as it, operator as op, functools as ft
 from fgc import sh
 import os, sys, logging
 
-logging.basicConfig()
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(sys.argv[0])
 
 
@@ -47,7 +47,10 @@ else:
 	while os.sep in scim_path and not os.path.exists(sh.join(scim_path, optz.list)):
 		scim_path = scim_path.rsplit(os.sep, 1)[0]
 	if os.sep not in scim_path:
-		parser.error('Unable to determine scim-path location')
+		if optz.new:
+			scim_path = os.path.realpath(os.getcwd())
+			log.info('Using {0} (current path) as scim-path'.format(scim_path))
+		else: parser.error('Unable to determine scim-path location')
 scim_real_path = scim_path # in case of symlink-rebase
 
 
@@ -111,6 +114,7 @@ if argz:
 			if not optz.force: continue
 
 		# Generate target-path, depending on whether last argument was a file or dir
+		src = os.path.abspath(src) # in case of "../file" spec
 		tgt = dst(src)
 		# Strip absolute path, so the link left part (source) will be relative to scim_path
 		if tgt.startswith(scim_path): tgt_rel = tgt.replace(scim_path + os.sep, '', 1)
