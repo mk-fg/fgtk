@@ -119,6 +119,9 @@ if argz:
 		# Strip absolute path, so the link left part (source) will be relative to scim_path
 		if tgt.startswith(scim_path): tgt_rel = tgt.replace(scim_path + os.sep, '', 1)
 		elif tgt.startswith(scim_real_path): tgt_rel = tgt.replace(scim_real_path + os.sep, '', 1)
+		else:
+			log.fatal('Target path ({0}) is not inside scim-path ({1})'.format(tgt, scim_real_path))
+			sys.exit(1)
 		link = ' '.join(( tgt_rel, aop, src if not home_dir
 			or not src.startswith(home_dir) else src.replace(home_dir, '~', 1) ))
 
