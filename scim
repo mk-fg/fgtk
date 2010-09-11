@@ -18,15 +18,19 @@ parser.add_option('-f', '--fix', action='store_true',
 		' Metadata is restored from a list for known files, then list is updated with new/deleted ones.')
 parser.add_option('-n', '--limit', action='store', type='int',
 	help='Process only given number of correctable errors from top of the file.')
+
 parser.add_option('-r', '--reverse', action='store_true', default=False,
-	help='Reverse direction of a catref fix, so live-fs file will get'
-		' overwritten by the one from repository. Also reverses all diffs accordingly.')
+	help='Reverse direction of a fixes, both for links and metadata.')
+parser.add_option('-w', '--reverse-meta',
+	dest='reverse_meta', action='store_true', default=False,
+	help='Reverse direction of a metadata fixes, so live-fs ownership, modes'
+		' and attributes will be applied to repository files and fixed in meta-list file.')
 
 parser.add_option('-l', '--links', action='store_true',
 	help='Perform any links-manipulations.'
 		' Implied if none of --links or --meta specified explicitly.')
 parser.add_option('-m', '--meta', action='store_true',
-	help='Perform any links-manipulations.'
+	help='Perform metadata manipulations.'
 		' Implied if none of --links or --meta specified explicitly, except when user'
 		' has no ability to manipulate file ownership and meta_list does not exists.')
 
@@ -127,6 +131,11 @@ errz_critical = False # should be either false or equal to errz
 from fgc import strcaps, acl
 import stat
 
+import re
+optz.meta_exclude = map(re.compile, optz.meta_exclude)
+optz.reverse_meta ^= optz.reverse
+_meta_updates = 0 # count of changes-to-make in scim-meta file, mostly aesthetic
+
 ## Helpers
 def meta_get(path):
 	fstat = os.lstat(path)
@@ -181,15 +190,10 @@ def meta_set(path, meta):
 	if acls: acl.rebase(acls, path, base=mode)
 	if caps: strcaps.set_file(caps.replace(';', ' '), path)
 
-import re
-optz.meta_exclude = map(re.compile, optz.meta_exclude)
 
-
-def update_meta():
-	## Init
-	global errz, errz_critical
-	srcz = dict()
-	srcz_updates = 0
+def meta_read_list():
+	global errz, _meta_updates
+	srcz = dict() # { repo_path: metadata }
 
 	## Straight check
 	for line in optz.meta_list:
@@ -206,7 +210,7 @@ def update_meta():
 					errz += 1
 					log.error('Found metadata for excluded path {0} ({1})'.format(node, meta))
 					chk = True
-					srcz_updates += 1
+					_meta_updates += 1
 					break
 			if chk is True: continue
 
@@ -216,30 +220,9 @@ def update_meta():
 			if srcz[node] != meta: meta_diff += ' => {0}'.format(srcz[node])
 			log.warn( 'Duplicate metadata info for path {0} ({1}),'
 				' only the latest one will be used'.format(node, meta_diff) )
-			srcz_updates += 1
+			_meta_updates += 1
 
 		srcz[node] = meta
-
-		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
-
-		path = sh.join(scim_path, node)
-		try: fstat = meta_get(path)
-		except OSError as err:
-			errz += 1
-			log.error('Failed to stat path {0}: {1}'.format(node, err))
-			del srcz[node] # no stat - no meta
-			srcz_updates += 1
-			continue # no need to "fix" permissions here ;)
-		else:
-			if meta == fstat: continue
-			errz += 1
-			log.error('Invalid metadata for path {0}: {1} instead of {2}'.format(node, fstat, meta))
-
-		if optz.fix:
-			try: meta_set(path, meta)
-			except OSError as err:
-				log.warn('Unable to restore metadata ({0}) for path {1}: {2}'.format(meta, node, err))
-			else: log.info('Fixed metadata for path {0}'.format(node))
 
 	## Reverse check
 	for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
@@ -259,26 +242,66 @@ def update_meta():
 				meta = meta_get(path)
 				log.warn('Not in metadata-list: {0} ({1})'.format(node, meta))
 				srcz[node] = meta
-				srcz_updates += 1
+				_meta_updates += 1
 
-	if optz.fix and srcz_updates:
+	return srcz
+
+
+def update_meta(srcz, force=False):
+	global errz, _meta_updates
+
+	if not force: # implicit, skip metadata stuff for simple users if there's no list yet
+		from fgc.caps import get_process
+		can_chown = not os.geteuid() or 'cap_chown' in get_process(os.getpid()).effective
+		if can_chown or os.path.exists(meta_list_path): force = True
+	if not force: return
+
+	for node, meta in srcz.iteritems():
+		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
+
+		path = sh.join(scim_path, node)
+		try: fstat = meta_get(path)
+		except OSError as err:
+			errz += 1
+			log.error('Failed to stat path {0}: {1}'.format(node, err))
+			del srcz[node] # no stat - no meta
+			_meta_updates += 1
+			continue # no need to "fix" permissions here ;)
+		else:
+			if meta == fstat: continue
+			errz += 1
+			log.error('Invalid metadata {0}for path {1}: {2} instead of {3}'.format(*(
+				('', node, fstat, meta) if not optz.reverse_meta else ('stored ', node, meta, fstat) )))
+			if optz.reverse_meta:
+				meta = srcz[node] = fstat
+				_meta_updates += 1
+
+		if not optz.reverse_meta and optz.fix:
+			try: meta_set(path, meta)
+			except OSError as err:
+				log.warn('Unable to restore metadata ({0}) for path {1}: {2}'.format(meta, node, err))
+			else: log.info('Fixed metadata for path {0}'.format(node))
+
+	if optz.fix and _meta_updates:
 		# Check metadata for list itself
 		meta_list_path_rel = meta_list_path[len(scim_path)+1:]
 		try: meta = srcz[meta_list_path_rel]
-		except KeyError: meta = srcz[meta_list_path_rel] = 'root:wheel:600'
+		except KeyError:
+			meta = srcz[meta_list_path_rel] = '{0}:{0}:600'.format(sh.uname(0), sh.gname(0))
 		open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
 			for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
 		meta_set(meta_list_path, meta)
 		log.info( 'Updated metadata ({0} change{1})'\
-			.format(srcz_updates, 's' if srcz_updates != 1 else '') )
+			.format(_meta_updates, 's' if _meta_updates != 1 else '') )
+
 
 
 if optz.meta:
-	if optz.meta is True: update_meta()
-	else: # implicit, skip metadata stuff for simple users if there's no list yet
-		from fgc.caps import get_process
-		can_chown = not os.geteuid() or 'cap_chown' in get_process(os.getpid()).effective
-		if can_chown or os.path.exists(meta_list_path): update_meta()
+	meta = meta_read_list()
+	if not optz.reverse_meta:
+		# Otherwise update takes place after all links are processed,
+		#  because catrefs' permissions must be taken into account
+		update_meta(meta, force=optz.meta is True)
 
 
 
@@ -325,8 +348,8 @@ def rel_src(src, dst):
 		else: i +=1
 	return os.path.join(*([os.pardir] * (len(dst)-i) + src[i:]))
 
-def optional_reverse(src, dst):
-	return (src, dst) if not optz.reverse else (dst, src)
+def optional_reverse(src, dst, flag=optz.reverse):
+	return (src, dst) if not flag else (dst, src)
 
 T_SYM = 1 # symlink
 T_RSYM = T_SYM | 2 # relative symlink
@@ -357,7 +380,7 @@ def update_links():
 
 		## Get src, type, dst
 		for ltype, aop in ops.iteritems():
-			try: src,dst = line.split(' {0} '.format(aop))
+			try: src_rel, dst = line.split(' {0} '.format(aop))
 			except ValueError: pass
 			else: break
 		else:
@@ -366,7 +389,7 @@ def update_links():
 			continue
 
 		## Expand relative paths
-		src = sh.join(scim_path, src)
+		src = sh.join(scim_path, src_rel)
 		dst = sh.join(scim_path, os.path.expanduser(dst))
 		if os.path.abspath(src) == os.path.abspath(scim_path):
 			scim_path = dst # rebase on symlinked path
@@ -440,30 +463,19 @@ def update_links():
 		# Check permissions and content (catref)
 		elif ltype & T_CR:
 			cps = False # there's common fix to all these problems - sh.cp_stat
-			stat_src, stat_dst = os.stat(src), os.stat(dst)
-			if stat_src.st_uid != stat_dst.st_uid:
+			src_meta = meta[src_rel] if not optz.reverse_meta else meta_get(src)
+			src_meta, dst_meta = optional_reverse(src_meta, meta_get(dst), flag=optz.reverse_meta)
+			if dst_meta != src_meta:
 				errz += 1
-				if not optz.fix:
-					log.error( 'Wrong UID: {0} - {1}, instead of {2}'\
-						.format(dst, sh.uname(stat_dst.st_uid), sh.uname(stat_src.st_uid)) )
-				else: cps = True
-			if stat_src.st_gid != stat_dst.st_gid:
-				errz += 1
-				if not optz.fix:
-					log.error( 'Wrong GID: {0} - {1}, instead of {2}'
-						.format(dst, sh.gname(stat_dst.st_gid), sh.gname(stat_src.st_gid)) )
-				else: cps = True
-			stat_src, stat_dst = stat.S_IMODE(stat_src.st_mode), stat.S_IMODE(stat_dst.st_mode)
-			if stat_src != stat_dst:
-				errz += 1
-				if not optz.fix:
-					log.error('Wrong mode: {0} - {1}, instead of {2}'.format(dst, oct(stat_dst), oct(stat_src)))
-				else: cps = True
-			if cps:
-				try: sh.cp_stat(src, dst, attrz=True)
-				except OSError, err:
-					log.error('Unable to fix UID/GID/mode on {0}: {1}'.format(dst, err))
-				else: log.info('Corrected UID/GID/mode: {0}'.format(dst))
+				tgt = dst if not optz.reverse_meta else src
+				log.error('Invalid metadata for {0}path {1}: {2} instead of {3}'.format(*(
+					('live-fs ', tgt, dst_meta, src_meta) if not optz.reverse_meta
+					else ('', src_rel, dst_meta, src_meta) )))
+				if optz.fix:
+					try: sh.cp_stat(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
+					except OSError, err: log.error('Unable to fix metadata on {0}: {1}'.format(tgt, err))
+					else: log.info('Corrected metadata for path: {0}'.format(tgt))
+			if optz.limit and errz > optz.limit: continue
 			diff = get_diff(src, dst) # content diff
 			if diff:
 				errz += 1
@@ -494,5 +506,6 @@ def update_links():
 
 
 if optz.links: update_links()
+if optz.reverse_meta: update_meta(meta, force=optz.meta is True)
 
 sys.exit(int(bool(errz-1)) if not optz.fix else 0)
