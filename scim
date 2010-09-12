@@ -118,7 +118,15 @@ for i in filter( lambda x: x.startswith('ln_')\
 		setattr(optz, i, merge_filter(open(dst)) if os.path.exists(dst) else list())
 
 if not optz.meta and not optz.links:
-	optz.meta = optz.links = 'implicit' # not just "True", affects meta
+	if os.path.exists(meta_list_path): optz.meta = True
+	elif not os.geteuid(): optz.meta = True
+	else:
+		try:
+			from fgc.caps import get_process
+			if 'cap_chown' in get_process(os.getpid()).effective: optz.meta = True
+		except ImportError: pass # no support for posix caps in fgc
+	optz.links = True
+
 
 
 ### Common spool
@@ -128,10 +136,20 @@ errz_critical = False # should be either false or equal to errz
 
 
 ### Metadata check
-from fgc import strcaps, acl
-import stat
 
-import re
+## Following imports substitute unsupported feats with mock functions,
+##  producing empty-set data on get operations and warnings instead of changes
+feat_get, feat_set = lambda *a: None, lambda *a,**k: log.warn(
+	'Setting {0} is not supported in this fgc module build'.format(k['feat']) )
+try: from fgc.strcaps import get_file as strcaps_get, set_file as strcaps_set
+except ImportError:
+	strcaps_get, strcaps_set = feat_get, ft.partial(feat_set, feat='posix caps')
+try: from fgc.acl import get as acl_get, set as acl_set, is_mode as acl_is_mode
+except ImportError:
+	acl_get = acl_is_mode = feat_get
+	acl_rebase = ft.partial(feat_set, feat='acls')
+
+import re, stat
 optz.meta_exclude = map(re.compile, optz.meta_exclude)
 optz.reverse_meta ^= optz.reverse
 _meta_updates = 0 # count of changes-to-make in scim-meta file, mostly aesthetic
@@ -142,11 +160,11 @@ def meta_get(path):
 	meta = '{0}:{1}:{{0}}'.format( # mode part is acl-dependant
 		fstat.st_uid if optz.numeric else sh.uname(fstat.st_uid),
 		fstat.st_gid if optz.numeric else sh.gname(fstat.st_gid) )
-	try: caps = strcaps.get_file(path)
+	try: caps = strcaps_get(path)
 	except OSError: caps = None # no kernel/fs support
 	try:
-		acls = acl.get(path)
-		if acl.is_mode(acls): raise OSError # just a mode reflection
+		acls = acl_get(path)
+		if acl_is_mode(acls): raise OSError # just a mode reflection
 	except OSError: acls = None # no kernel/fs support
 	if caps or acls: meta += '/' + (caps.replace(' ', ';') if caps else '')
 	if acls:
@@ -187,8 +205,8 @@ def meta_set(path, meta):
 		sh.chown(path, tgid=gid, resolve=True)
 		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
 			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
-	if acls: acl.rebase(acls, path, base=mode)
-	if caps: strcaps.set_file(caps.replace(';', ' '), path)
+	if acls: acl_rebase(acls, path, base=mode)
+	if caps: strcaps_set(caps.replace(';', ' '), path)
 
 
 def meta_read_list():
@@ -247,14 +265,8 @@ def meta_read_list():
 	return srcz
 
 
-def update_meta(srcz, force=False):
+def update_meta(srcz):
 	global errz, _meta_updates
-
-	if not force: # implicit, skip metadata stuff for simple users if there's no list yet
-		from fgc.caps import get_process
-		can_chown = not os.geteuid() or 'cap_chown' in get_process(os.getpid()).effective
-		if can_chown or os.path.exists(meta_list_path): force = True
-	if not force: return
 
 	for node, meta in srcz.iteritems():
 		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
@@ -298,10 +310,9 @@ def update_meta(srcz, force=False):
 
 if optz.meta:
 	meta = meta_read_list()
-	if not optz.reverse_meta:
-		# Otherwise update takes place after all links are processed,
-		#  because catrefs' permissions must be taken into account
-		update_meta(meta, force=optz.meta is True)
+	# Update must be delayed in case of reverse-meta check,
+	#  because catrefs' permissions must be taken into account
+	if not optz.reverse_meta: update_meta(meta)
 
 
 
@@ -506,6 +517,6 @@ def update_links():
 
 
 if optz.links: update_links()
-if optz.reverse_meta: update_meta(meta, force=optz.meta is True)
+if optz.meta and optz.reverse_meta: update_meta(meta)
 
 sys.exit(int(bool(errz-1)) if not optz.fix else 0)
