@@ -473,19 +473,19 @@ def update_links():
 
 		# Check permissions and content (catref)
 		elif ltype & T_CR:
-			cps = False # there's common fix to all these problems - sh.cp_stat
-			src_meta = meta[src_rel] if not optz.reverse_meta else meta_get(src)
-			src_meta, dst_meta = optional_reverse(src_meta, meta_get(dst), flag=optz.reverse_meta)
-			if dst_meta != src_meta:
-				errz += 1
-				tgt = dst if not optz.reverse_meta else src
-				log.error('Invalid metadata for {0}path {1}: {2} instead of {3}'.format(*(
-					('live-fs ', tgt, dst_meta, src_meta) if not optz.reverse_meta
-					else ('', src_rel, dst_meta, src_meta) )))
-				if optz.fix:
-					try: sh.cp_stat(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
-					except OSError, err: log.error('Unable to fix metadata on {0}: {1}'.format(tgt, err))
-					else: log.info('Corrected metadata for path: {0}'.format(tgt))
+			if optz.meta:
+				src_meta = meta[src_rel] if not optz.reverse_meta else meta_get(src)
+				src_meta, dst_meta = optional_reverse(src_meta, meta_get(dst), flag=optz.reverse_meta)
+				if dst_meta != src_meta:
+					errz += 1
+					tgt = dst if not optz.reverse_meta else src
+					log.error('Invalid metadata for {0}path {1}: {2} instead of {3}'.format(*(
+						('live-fs ', tgt, dst_meta, src_meta) if not optz.reverse_meta
+						else ('', src_rel, dst_meta, src_meta) )))
+					if optz.fix:
+						try: sh.cp_stat(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
+						except OSError, err: log.error('Unable to fix metadata on {0}: {1}'.format(tgt, err))
+						else: log.info('Corrected metadata for path: {0}'.format(tgt))
 			if optz.limit and errz > optz.limit: continue
 			diff = get_diff(src, dst) # content diff
 			if diff:
