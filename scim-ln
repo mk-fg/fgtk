@@ -68,6 +68,13 @@ linkz = list(filter(None, map(str.strip, open(linkz_path))))
 if linkz and linkz[0].split(' ', 1)[0] == '.': # rebase on symlinked path
 	scim_path = os.path.expanduser(linkz[0].rsplit(' ', 1)[-1])
 
+linkz_hash = dict() # set to check whether link to a file already exists
+ops = '->', '+>', '>'
+for src,aop in it.product(linkz, ops):
+	try: src, dst = src.split(' {0} '.format(aop))
+	except ValueError: pass
+	else: linkz_hash[dst] = src
+
 
 ### Helpers
 def rel_src(src, dst):
@@ -105,6 +112,10 @@ if argz:
 	else: dst = ft.partial(lambda src, dst: dst, dst=dst)
 
 	for src in srcz:
+		if src in linkz_hash:
+			log.error(( 'File, linked to {0} already exists'
+				' in repository ({1})' ).format(src, linkz_hash[src]))
+			if not optz.force: continue
 		if os.path.islink(src):
 			if not optz.register:
 				log.error('{0} is a symlink already'.format(src))
