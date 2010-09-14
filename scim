@@ -268,7 +268,7 @@ def meta_read_list():
 def update_meta(srcz):
 	global errz, _meta_updates
 
-	for node, meta in srcz.iteritems():
+	for node, meta in srcz.items():
 		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
 
 		path = sh.join(scim_path, node)
