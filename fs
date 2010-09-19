@@ -3,27 +3,56 @@
 
 from optparse import OptionParser
 parser = OptionParser(usage='%prog CMD [options]')
-parser.add_option('-s', '--src', metavar='PATH', action='store', type='str', dest='src', help='source, positional argz will be treated as destination')
-parser.add_option('-d', '--dst', metavar='PATH', action='store', type='str', dest='dst', help='destination, positional argz will be treated as source')
+
+parser.add_option('-s', '--src', metavar='PATH', action='store', type='str',
+	help='source, positional argz will be treated as destination')
+parser.add_option('-d', '--dst', metavar='PATH', action='store', type='str',
+	help='destination, positional argz will be treated as source')
 parser.add_option('-r', '--recursive', action='store_true', dest='recursive', help='recursive operation')
+
 parser.add_option('--reverse', action='store_true', dest='reverse', help='reverse source / destination targets')
-parser.add_option('-v', '--verbose', action='store_true', dest='verbose', help='output more operational data')
-parser.add_option('-p', '--pretend', action='store_true', dest='pretend', help='just show what will be done, implies -v')
-parser.add_option('-H', '--no-deference', action='store_false', dest='deference', help='never follow symlinks')
-parser.add_option('-f', '--force', action='store_true', dest='force', help='overwrite, crush and destroy everything that stands in the way')
-parser.add_option('-c', '--cautious', action='store_true', dest='cautious', help='stop on first error encountered (default is to keep going on non-fatal)')
-parser.add_option('-m', '--mode', metavar='OCT/STR', action='store', type='str', dest='mode', help='path mode, can be specified as nine-char string like "rwxr-xr-x"')
-parser.add_option('-u', '--uid', metavar='NAME/ID[:NAME/ID]', action='store', type='str', dest='uid', help='user name or id')
-parser.add_option('-g', '--gid', metavar='NAME/ID', action='store', type='str', dest='gid', help='group name or id')
-parser.add_option('-o', '--ownership', metavar='PATH', action='store', type='str', dest='ownership', help='use the same uid/gid as on the given path; precedes uid/gid')
-parser.add_option('-a', '--sample', metavar='PATH', action='store', type='str', dest='sample', help='use the same uid/gid and mode as on the given path; precedes all similar options')
-parser.add_option('-e', '--exclude', metavar='PATH[:PATH...]', action='store', type='str', dest='exclude', help='colon-separated regexes, to match paths (relative to action root), excluded from given recursive action')
-parser.add_option('--recode', metavar='ENC', action='store', type='str', dest='recode', help='recode passed content to specified encoding')
-parser.add_option('-P', '--attrz', action='store_true', dest='attrz', help='force preserving fs metadata: uid/gid and timestamps, default for some ops, like mv')
-parser.add_option('-t', '--time', metavar='SEC', action='store', type='int', dest='time', default=20, help='delay for timed operations (like expose), default - 20s')
-parser.add_option('--debug', action='store_true', dest='debug', help='print lots of debug info')
-parser.add_option('--dump', action='store_true', dest='dump', help='dump available commands')
+parser.add_option('--recode', metavar='ENC', action='store',
+	type='str', help='recode passed content to specified encoding')
+
+parser.add_option('-f', '--force', action='store_true',
+	help='overwrite, crush and destroy everything that stands in the way')
+parser.add_option('-c', '--cautious', action='store_true',
+	help='stop on first error encountered (default is to keep going on non-fatal)')
+parser.add_option('-p', '--pretend', action='store_true',
+	help='just show what will be done, implies -v')
+
+parser.add_option('-e', '--exclude', metavar='PATH[:PATH...]', action='store', type='str',
+	help='colon-separated regexes, to match paths (relative'
+		' to action root), excluded from given recursive action')
+
+parser.add_option('-m', '--mode', metavar='OCT/STR', action='store', type='str',
+	help='path mode, can be specified as nine-char string like "rwxr-xr-x"')
+parser.add_option('-u', '--uid', metavar='NAME/ID[:NAME/ID]',
+	action='store', type='str', dest='uid', help='user name or id')
+parser.add_option('-g', '--gid', metavar='NAME/ID',
+	action='store', type='str', dest='gid', help='group name or id')
+parser.add_option('-o', '--ownership', metavar='PATH', action='store', type='str',
+	dest='ownership', help='use the same uid/gid as on the given path; precedes uid/gid')
+parser.add_option('-a', '--sample', metavar='PATH', action='store', type='str', dest='sample',
+	help='use the same uid/gid and mode as on the given path; precedes all similar options')
+
+parser.add_option('-P', '--attrz', action='store_true',
+	help='force preserving fs metadata:'
+		' uid/gid and timestamps, implied for some ops, like mv or cps')
+parser.add_option('-N', '--no-priv-attrz', action='store_true', dest='no_priv_attrz',
+	help='inhibit fs metadata copying (direct uid/gid setting will work as requested)'
+		' ops which may require elevated privileges')
+parser.add_option('-H', '--no-dereference', default=True,
+	action='store_false', dest='dereference', help='never follow symlinks')
+
+parser.add_option('-t', '--time', metavar='SEC', action='store', type='int',
+	default=20, help='delay for timed operations (like expose), default - 20s')
+
+parser.add_option('-v', '--verbose', action='store_true', help='output more operational data')
+parser.add_option('--debug', action='store_true', help='print lots of debug info')
+parser.add_option('--dump', action='store_true', help='dump available commands')
 parser.add_option('--dump-args', action='store_true', dest='dump_args', help='dump available arguments')
+
 optz, argz = parser.parse_args()
 
 
@@ -130,12 +159,13 @@ def _cps(kwz):
 	'''
 	Copy node attributes to other node(s).
 	'''
-	kwz['attrz'] = True
+	kwz['skip_ts'], kwz['attrz'] = False, not optz.no_priv_attrz
 	cps = parse_flow()
 	for src, dst in cps:
 		if not optz.recursive: do(sh.cp_stat, src, dst, **kwz)
 		else:
-			for node in sh.crawl(dst, topdown=False, filter=optz.exclude): do(sh.cp_stat, src, os.path.join(dst, node), **kwz)
+			for node in sh.crawl(dst, topdown=False, filter=optz.exclude):
+				do(sh.cp_stat, src, os.path.join(dst, node), **kwz)
 			do(sh.cp_stat, src, dst, **kwz)
 
 def _cc(kwz):
@@ -161,8 +191,14 @@ def _cp(kwz):
 	cps = parse_flow()
 	for src, dst in cps:
 		into = os.path.isdir(dst)
-		if not optz.recursive: do(sh.cp, src, dst, **kwz)
-		else: do(sh.cp_r, src, dst, **kwz)
+		if not optz.recursive:
+			if kwz['attrz'] and optz.no_priv_attrz:
+				kwz['skip_ts'] = kwz['attrz'] = False
+			do(sh.cp, src, dst, **kwz)
+		else:
+			if kwz['attrz'] and optz.no_priv_attrz:
+				kwz['attrz'], kwz['atom'] = False, ft.partial(sh.cp_d, skip_ts=False)
+			do(sh.cp_r, src, dst, **kwz)
 		if into: dst = os.path.join(dst, os.path.basename(src))
 		try: uid,gid = parse_ids()
 		except TypeError: pass
@@ -181,9 +217,10 @@ def _mv(kwz):
 	Move file/path(s).
 	'''
 	cps = parse_flow()
+	if optz.no_priv_attrz: kwz['attrz'] = False
 	for src, dst in cps:
 		if os.path.isdir(dst): dst = os.path.join(dst, os.path.basename(src))
-		do(sh.mv, src, dst)
+		do(sh.mv, src, dst, **kwz)
 		try: uid,gid = parse_ids()
 		except TypeError: pass
 		else:
@@ -242,13 +279,14 @@ meta = {
 	},
 	'cp': {
 		'skip': optz.exclude,
-		'symlinks': optz.deference,
+		'symlinks': optz.dereference,
 		'direct': ['attrz'],
 		'use': [
+			'no_priv_attrz',
 			'recursive',
 			'pretend',
 			'exclude',
-			'deference',
+			'dereference',
 			'src', 'dst', 'reverse',
 			'uid', 'gid',
 			'ownership', 'sample',
@@ -258,6 +296,7 @@ meta = {
 	'mv': {
 		'direct': ['attrz'],
 		'use': [
+			'no_priv_attrz',
 			'recursive',
 			'pretend',
 			'src', 'dst', 'reverse',
@@ -269,8 +308,8 @@ meta = {
 	'lc': {'use': ['pretend', 'exclude']},
 	'ln': {'use': ['pretend']},
 	'cps': {
-		'direct': ['deference'],
-		'use': ['recursive', 'pretend', 'exclude', 'src', 'dst', 'reverse']
+		'direct': ['dereference'],
+		'use': ['no_priv_attrz', 'recursive', 'pretend', 'exclude', 'src', 'dst', 'reverse']
 	},
 	'expose': {
 		'direct': ['time'],
@@ -311,7 +350,7 @@ except KeyError: parser.error('Unknown cmd: %s'%cmd)
 else:
 	kwz = {}
 
-	kmerge = lambda x: opt.update(dict([(k, k) for k in x]))
+	kmerge = lambda x: opt.update((k, k) for k in x)
 	try: use = opt.pop('use') # not used, actually ;P
 	except (KeyError,TypeError): use = []
 	try: direct = opt.pop('direct')
