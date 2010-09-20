@@ -12,9 +12,9 @@ parser.add_option('-f', '--force', action='store_true',
 parser.add_option('-t', '--no-tilda', action='store_true', dest='no_tilda',
 	help='Do not replace current user home path with tilda.')
 
-parser.add_option('-c', '--catref',
-	action='store_true', dest='cr',
-	help='Create catref instead of symlink.')
+parser.add_option('-l', '--symlink',
+	action='store_false', dest='cr', default=True,
+	help='Create symlink instead of catref.')
 parser.add_option('-r', '--relative',
 	action='store_true', dest='rel',
 	help='Create relative symlink.')
