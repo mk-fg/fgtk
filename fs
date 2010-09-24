@@ -192,11 +192,11 @@ def _cp(kwz):
 	for src, dst in cps:
 		into = os.path.isdir(dst)
 		if not optz.recursive:
-			if kwz['attrz'] and optz.no_priv_attrz:
+			if kwz.get('attrz', False) and optz.no_priv_attrz:
 				kwz['skip_ts'] = kwz['attrz'] = False
 			do(sh.cp, src, dst, **kwz)
 		else:
-			if kwz['attrz'] and optz.no_priv_attrz:
+			if kwz.get('attrz', False) and optz.no_priv_attrz:
 				kwz['attrz'], kwz['atom'] = False, ft.partial(sh.cp_d, skip_ts=False)
 			do(sh.cp_r, src, dst, **kwz)
 		if into: dst = os.path.join(dst, os.path.basename(src))
