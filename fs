@@ -38,7 +38,8 @@ parser.add_option('-a', '--sample', metavar='PATH', action='store', type='str', 
 
 parser.add_option('-P', '--attrz', action='store_true',
 	help='force preserving fs metadata:'
-		' uid/gid and timestamps, implied for some ops, like mv or cps')
+		' uid/gid and timestamps, implied for some ops, like cps, and'
+		' conditionally implied for others (like mv), if user is root')
 parser.add_option('-N', '--no-priv-attrz', action='store_true', dest='no_priv_attrz',
 	help='inhibit fs metadata copying (direct uid/gid setting will work as requested)'
 		' ops which may require elevated privileges')
@@ -217,7 +218,7 @@ def _mv(kwz):
 	Move file/path(s).
 	'''
 	cps = parse_flow()
-	if optz.no_priv_attrz: kwz['attrz'] = False
+	if optz.no_priv_attrz or (optz.attrz is None and os.geteuid()): kwz['attrz'] = False
 	for src, dst in cps:
 		if os.path.isdir(dst): dst = os.path.join(dst, os.path.basename(src))
 		do(sh.mv, src, dst, **kwz)
