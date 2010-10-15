@@ -28,4 +28,4 @@ for path in argz:
 	if acl_src != acl_dst:
 		log.info( 'Updating ACL for path: {0}\n old: {1}\n new: {2}'\
 			.format(path, sorted(acl_src), sorted(acl_dst)) )
-		if not optz.dry_run: acl_set(acl_dst, arg)
+		if not optz.dry_run: apply(acl_dst, path)
