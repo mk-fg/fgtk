@@ -1,0 +1,28 @@
+#!/usr/bin/env python
+from __future__ import unicode_literals, print_function
+
+from optparse import OptionParser
+parser = OptionParser(usage='%prog [options] [PATH1 PATH2 ...]',
+	description="Update ACLs on given paths, so that they'd match'
+		' default ACLs. Usually needed after a chmod.")
+parser.add_option('--debug', action='store_true',
+	help='Give extra info on whats going on.')
+optz,argz = parser.parse_args()
+
+import itertools as it, operator as op, functools as ft
+from fgc.acl import get, apply, update_from_default
+import os, sys
+
+import logging
+logging.basicConfig(
+	level=logging.WARNING\
+		if optz.debug else logging.DEBUG )
+log = logging.getLogger()
+
+for path in argz:
+	acl_src = set(get(path))
+	acl_dst = set(update_from_default(acl_src))
+	if acl_src != acl_dst:
+		log.debug( 'Updating ACL for path: {0}\n old: {1}\n new: {2}'\
+			.format(path, sorted(acl_src), sorted(acl_dst)) )
+		acl_set(acl_dst, arg)
