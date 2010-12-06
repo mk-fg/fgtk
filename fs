@@ -57,14 +57,16 @@ parser.add_option('--dump-args', action='store_true', dest='dump_args', help='du
 optz, argz = parser.parse_args()
 
 
-from fgc import log, sh
-from string import whitespace as spaces
+from fgc import sh
 from time import sleep
 import os, sys
-if optz.debug: log_level = log.DEBUG
-elif optz.verbose or optz.pretend: log_level = log.INFO
-else: log_level = log.WARNING
-log.cfg(level=log_level)
+
+import logging
+if optz.debug: log = logging.DEBUG
+elif optz.verbose or optz.pretend: log = logging.INFO
+else: log = logging.WARNING
+logging.basicConfig(level=log)
+log = logging.getLogger()
 
 
 if optz.sample:
@@ -330,7 +332,7 @@ except IndexError:
 	else:
 		if optz.dump: sys.stdout.write(' '.join([k[1:] for k in locals().keys() if k.startswith('_') and k[1:].isalnum()]))
 			#~ cmdz = [
-				#~ "'%s[%s]:%s:'"%(k[1:], eval(k+'.__doc__').strip(spaces).splitlines()[0].strip('.'), k[1:])
+				#~ "'%s[%s]:%s:'"%(k[1:], eval(k+'.__doc__').strip().splitlines()[0].strip('.'), k[1:])
 				#~ for k in locals().keys() if k.startswith('_') and k[1:].isalnum()
 			#~ ]
 			#~ sys.stdout.write(' '.join(cmdz))
@@ -387,7 +389,9 @@ else:
 		log.debug('Passing kwz: %s'%kwz)
 
 		try: cmd(kwz)
-		except (sh.Error, RuntimeError), err: log.fatal(err)
+		except (sh.Error, RuntimeError), err:
+			log.fatal(err)
+			sys.exit(1)
 
 	else:
 		# --- Just print command description
