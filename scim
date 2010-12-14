@@ -158,8 +158,8 @@ _meta_updates = 0 # count of changes-to-make in scim-meta file, mostly aesthetic
 def meta_get(path):
 	fstat = os.lstat(path)
 	meta = '{0}:{1}:{{0}}'.format( # mode part is acl-dependant
-		fstat.st_uid if optz.numeric else sh.uname(fstat.st_uid),
-		fstat.st_gid if optz.numeric else sh.gname(fstat.st_gid) )
+		fstat.st_uid if optz.numeric else sh.to_uname(fstat.st_uid),
+		fstat.st_gid if optz.numeric else sh.to_gname(fstat.st_gid) )
 	try: caps = strcaps_get(path)
 	except OSError: caps = None # no kernel/fs support
 	try:
@@ -173,7 +173,7 @@ def meta_get(path):
 	else: mode = fstat.st_mode
 	setgid_recurse = False
 	if stat.S_ISDIR(mode) and mode & stat.S_ISGID:
-		for subpath in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
+		for subpath in it.ifilter(os.path.isdir, sh.crawl(path)):
 			if not os.stat(subpath).st_mode & stat.S_ISGID: break
 		else: setgid_recurse = True
 	return meta.format('{0}{1}'.format(
@@ -185,25 +185,25 @@ def meta_set(path, meta):
 		meta, caps = meta.split('/', 1)
 		caps, acls = caps.split('/', 1)
 	except ValueError: pass
-	uid, gid, smode = meta.split(':')
-	if smode.endswith('r'):
-		smode = smode[:-1]
+	uid, gid, mode = meta.split(':')
+	if mode.endswith('r'):
+		mode = mode[:-1]
 		setgid_recurse = True
-	mode = sh.mode(smode)
+	mode = int(mode, 8)
 	if setgid_recurse and not mode & stat.S_ISGID:
 		raise ValueError( 'Non-setgid recursive modes'
 			' are not supported (path: {0})'.format(path) )
 	# Privileges are restored sequentially, any error aborts the process
 	#  to avoid situations where suid bit or posix caps can be added to an
 	#  unprivileged binary (because uid/gid/mode/acl restoration failed)
-	try: sh.chown(path, uid, gid, resolve=True)
+	try: sh.chown(path, uid, gid)
 	except KeyError as err:
 		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
 	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
 	else:
 		sh.chmod(path, mode, dereference=False)
-		sh.chown(path, tgid=gid, resolve=True)
-		for path in it.imap(ft.partial(os.path.join, path), sh.crawl(path, dirs_only=True)):
+		sh.chown(path, gid=gid)
+		for path in it.ifilter(os.path.isdir, sh.crawl(path)):
 			sh.chmod(path, stat.S_ISGID, dereference=False, merge=True)
 	if acls: acl_rebase(acls, path, base=mode)
 	if caps: strcaps_set(caps.replace(';', ' '), path)
@@ -243,7 +243,7 @@ def meta_read_list():
 		srcz[node] = meta
 
 	## Reverse check
-	for node in sh.crawl(scim_path, exclude=optz.meta_exclude):
+	for node in sh.crawl(scim_path, relative=True, exclude=optz.meta_exclude):
 		if optz.limit and errz > optz.limit: continue
 
 		path = sh.join(scim_path, node)
@@ -299,7 +299,7 @@ def update_meta(srcz):
 		meta_list_path_rel = meta_list_path[len(scim_path)+1:]
 		try: meta = srcz[meta_list_path_rel]
 		except KeyError:
-			meta = srcz[meta_list_path_rel] = '{0}:{0}:600'.format(sh.uname(0), sh.gname(0))
+			meta = srcz[meta_list_path_rel] = '{0}:{0}:600'.format(sh.to_uname(0), sh.to_gname(0))
 		open(meta_list_path, 'w').write(''.join( '{0} {1}\n'.format(path, meta)
 			for path,meta in sorted(srcz.iteritems(), key=op.itemgetter(0)) ))
 		meta_set(meta_list_path, meta)
@@ -448,7 +448,7 @@ def update_links():
 			else:
 				sh.cp_p(src, bak_path)
 				try:
-					if not os.path.samefile(dst, src): sh.cp_cat(*optional_reverse(dst, src))
+					if not os.path.samefile(dst, src): sh.cp_data(*optional_reverse(dst, src))
 				except OSError: pass # broken symlink
 				sh.rm(dst)
 				if ltype == T_RSYM: src = rel_src(src, dst)
@@ -483,7 +483,7 @@ def update_links():
 						('live-fs ', tgt, dst_meta, src_meta) if not optz.reverse_meta
 						else ('', src_rel, dst_meta, src_meta) )))
 					if optz.fix:
-						try: sh.cp_stat(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
+						try: sh.cp_meta(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
 						except OSError, err: log.error('Unable to fix metadata on {0}: {1}'.format(tgt, err))
 						else: log.info('Corrected metadata for path: {0}'.format(tgt))
 			if optz.limit and errz > optz.limit: continue
@@ -493,11 +493,11 @@ def update_links():
 				log.error('Different content: {0}'.format(src))
 				if not optz.fix: show_diff(diff)
 				else:
-					sh.cp_cat(*optional_reverse(dst, src))
+					sh.cp_data(*optional_reverse(dst, src))
 					log.info('Corrected: {0} {1} {2}'.format(dst, '><'[int(optz.reverse)], src))
 
 	## Reverse check that all files are listed in linkz, incorrectable
-	for node in sh.crawl(scim_path, exclude=optz.ln_exclude):
+	for node in sh.crawl(scim_path, relative=True, exclude=optz.ln_exclude):
 		if optz.limit and errz > optz.limit: continue
 
 		path = sh.join(scim_path, node)
