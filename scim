@@ -376,9 +376,8 @@ def update_links():
 
 	## Backups dir
 	if optz.fix:
-		bak_path = '/tmp/scim-lnck.{0}'.format(os.getpid())
-		if os.path.exists(bak_path): sh.rr(bak_path)
-		sh.mkdir(bak_path)
+		from tempfile import mkdtemp
+		bak_path = mkdtemp(prefix='scim-lnck.')
 
 	## Straight check (all linkz are correct)
 	for line in optz.ln_list:
@@ -512,7 +511,7 @@ def update_links():
 				errz += 1
 				log.warn('Not listed in links-list: {0}'.format(path))
 
-	## Cleanup
+	## Cleanup, provided the script didn't crash earlier
 	if optz.fix: sh.rr(bak_path)
 
 
