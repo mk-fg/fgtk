@@ -7,10 +7,10 @@ import argparse
 parser = argparse.ArgumentParser(
 	description='Advanced/batched filesystem manipulation tool.')
 
-parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 # TODO: --pretend flag
+parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 
-cmds = parser.add_subparsers(title='supported operations')
+cmds = parser.add_subparsers(title='supported operations', help='Subcommand info.')
 
 cmd = cmds.add_parser('mv', help='Recursively move path(s).')
 cmd.add_argument('src/dst', nargs='*',
