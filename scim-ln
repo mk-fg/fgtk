@@ -77,15 +77,6 @@ for src,aop in it.product(linkz, ops):
 
 
 ### Helpers
-def rel_src(src, dst):
-	src, dst = map(os.path.abspath, (src, dst))
-	dst = os.path.dirname(dst)
-	src, dst = map(lambda x: x.split(os.sep), (src, dst))
-	for i in range(min(len(dst), len(src))):
-		if dst[i] != src[i]: break
-		else: i +=1
-	return os.path.join(*([os.pardir] * (len(dst)-i) + src[i:]))
-
 if not optz.no_tilda:
 	import pwd
 	home_dir = pwd.getpwuid(os.getuid()).pw_dir.rstrip(os.sep)
@@ -104,7 +95,7 @@ if argz:
 			os.path.abspath(argz.pop()).replace(scim_real_path, scim_path, 1) )
 		srcz = list(sh.join(os.getcwd(), src) for src in argz)
 
-	if os.path.isdir(dst):
+	if sh.isdir(dst):
 		dst = ft.partial(lambda src, dst: sh.join(dst, os.path.basename(src)), dst=dst)
 	elif len(srcz) != 1:
 		log.fatal('Cannot use multiple srcz w/ non-dir dst')
@@ -116,7 +107,7 @@ if argz:
 			log.error(( 'File, linked to {0} already exists'
 				' in repository ({1})' ).format(src, linkz_hash[src]))
 			if not optz.force: continue
-		if os.path.islink(src):
+		if sh.islink(src):
 			if not optz.register:
 				log.error('{0} is a symlink already'.format(src))
 				continue
@@ -150,7 +141,7 @@ if argz:
 				if not optz.cr:
 					sh.mv(src, tgt)
 					if optz.rel:
-						tgt = rel_src(sh.join(scim_path, tgt), src)
+						tgt = sh.relpath(sh.join(scim_path, tgt), src)
 						if not os.path.exists(sh.join(os.path.dirname(src), tgt)): # sanity check
 							log.error('Failed to calculate correct relative path for {0}: {1}'.format(src, tgt))
 							continue
