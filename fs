@@ -57,15 +57,6 @@ def flow_func(func): return lambda argz: func(argz, flow_parse(argz))
 
 @flow_func
 def mv(argz, ops):
-	ops_todo = list()
-	for src,dst in ops:
-		try:
-			if argz.relocate and sh.isdir(src): raise OSError
-			os.rename(src, dst)
-			if argz.relocate: sh.ln(os.path.abspath(dst), src) # TODO: a flag to create relative links?
-		except OSError: ops_todo.append((src,dst))
-	ops = ops_todo
-
 	if not argz.relocate: mv_func = sh.mv
 	else: # goal here is to create link in place of a file/dir asap
 		def mv_func(src, dst, attrz):
@@ -81,10 +72,12 @@ def mv(argz, ops):
 					tmp = NamedTemporaryFile( dir=os.path.dirname(src),
 						prefix='{}.'.format(os.path.basename(src)),delete=False )
 					os.unlink(tmp.name), os.rename(src, tmp.name)
-			sh.ln(os.path.abspath(dst), src) # TODO: a flag to create relative links?
+			sh.ln((os.path.abspath(dst) if not argz.relative else sh.relpath(dst, src)), src)
 			if tmp: sh.rr(tmp.name, onerror=False)
 
-	for src,dst in ops: mv_func(src, dst, attrz=True) # TODO: --attrz flags (yep, several)
+	for src,dst in ops:
+		# TODO: --attrz flags (yep, several)
+		mv_func(src, sh.join(dst, os.path.basename(src)) if sh.isdir(dst) else dst, attrz=True)
 
 
 locals()[argz.call](argz)
