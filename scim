@@ -460,11 +460,12 @@ def update_links():
 		if ltype & T_SYM:
 			if ltype == T_RSYM:
 				src = rel_src(src, dst)
-				dst_tgt = os.readlink(dst)
-			else: dst_tgt = os.path.realpath(dst)
-			if dst_tgt != src:
+				dst_tgt = [os.readlink(dst)]
+			else:
+				dst_tgt = [os.readlink(dst), os.path.realpath(dst)]
+			if src not in dst_tgt:
 				errz += 1
-				log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, dst_tgt, src))
+				log.error('Wrong symlink: {0} -> {1}, instead of {2}'.format(dst, ' / '.join(dst_tgt), src))
 				if optz.fix:
 					sh.rm(dst)
 					sh.ln(src, dst)
