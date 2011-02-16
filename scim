@@ -432,7 +432,7 @@ def update_links():
 					elif ltype & T_CR:
 						# Note that cp_p is non-recursive: cat references to dirs aren't allowed
 						sh.cp_p(src, dst) # and there's no "reverse" if there's no dst
-				except sh.Error as err:
+				except (sh.Error, IOError, OSError) as err:
 					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
 				else: log.info('Corrected: {0} {1} {2}'.format(src, aop, dst))
 			continue # other checks need dst, and fix here should restore everything else as well (cp_p or just link)
