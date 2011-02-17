@@ -29,6 +29,8 @@ parser.add_option('-w', '--reverse-meta',
 parser.add_option('-l', '--links', action='store_true',
 	help='Perform any links-manipulations.'
 		' Implied if none of --links or --meta specified explicitly.')
+parser.add_option('--links-meta', action='store_true',
+	help='Sync metadata (repo -> live-fs) for linked files. Implies --links.')
 parser.add_option('-m', '--meta', action='store_true',
 	help='Perform metadata manipulations.'
 		' Implied if none of --links or --meta specified explicitly, except when user'
@@ -69,6 +71,7 @@ parser.add_option('--debug',
 
 optz,argz = parser.parse_args()
 if argz: parser.error('This command takes no arguments')
+if optz.links_meta: optz.links = True
 
 
 import itertools as it, operator as op, functools as ft
@@ -473,7 +476,7 @@ def update_links():
 
 		# Check permissions and content (catref)
 		elif ltype & T_CR:
-			if optz.meta:
+			if optz.meta or optz.links_meta:
 				src_meta = meta[src_rel] if not optz.reverse_meta else meta_get(src)
 				src_meta, dst_meta = optional_reverse(src_meta, meta_get(dst), flag=optz.reverse_meta)
 				if dst_meta != src_meta:
