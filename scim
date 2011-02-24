@@ -500,7 +500,9 @@ def update_links():
 					log.info('Corrected: {0} {1} {2}'.format(dst, '><'[int(optz.reverse)], src))
 
 	## Reverse check that all files are listed in linkz, incorrectable
-	for node in sh.crawl(scim_path, relative=True, exclude=optz.ln_exclude):
+	for node in sh.crawl(
+			os.path.realpath(scim_path),
+			relative=True, exclude=optz.ln_exclude ):
 		if optz.limit and errz > optz.limit: continue
 
 		path = sh.join(scim_path, node)
