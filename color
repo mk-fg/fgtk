@@ -1,0 +1,43 @@
+#!/bin/sh
+
+if [[ "$1" = '-h' ]]; then
+ echo >&2 "Usage: $0 COLOR [BOLD] [-]"
+ exit 1
+fi
+
+case "$1" in
+ black) CC=30;;
+ red|r) CC=31;;
+ green|g) CC=32;;
+ yellow|y) CC=33;;
+ dark_blue) CC=34;;
+ magneta|m) CC=35;;
+ blue|b) CC=36;;
+ white|w) CC=37;;
+ *) CC=;;
+esac
+shift
+
+FOLLOW=
+CB=
+while [[ -n "$1" ]]; do
+ case "$1" in
+  -) FOLLOW=true;;
+  *) CB='1;'
+ esac
+ shift
+done
+
+CM="\\033[${CB}${CC}m"
+CT="\\033[0m"
+unset CC CB
+
+if [[ -z "$FOLLOW" ]]
+then echo -ne "$CM"
+else
+ while read line; do
+  echo -ne "$CM"
+  echo "$line"
+  echo -ne "$CT"
+ done
+fi

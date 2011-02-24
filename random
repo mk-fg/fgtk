@@ -1,0 +1,22 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
+
+import argparse
+parser = argparse.ArgumentParser(description='Generate a pseudorandom strings.')
+parser.add_argument('-n', '--length', type=int, default=40, help='Length of a produced string.')
+argz = parser.parse_args()
+
+import itertools as it, operator as op, functools as ft
+import string
+
+chr_range = bytes( string.ascii_letters + string.digits\
+	+ string.punctuation.replace("'", '').replace('"', '')\
+		.replace('`', '').replace('\\', '').replace('!', '').replace('$', '') )
+
+def src():
+	with open('/dev/urandom', 'rb') as src:
+		while True: yield src.read(1)
+src = it.ifilter(ft.partial(op.contains, chr_range), src())
+
+print(bytearray(next(src) for i in xrange(argz.length)))

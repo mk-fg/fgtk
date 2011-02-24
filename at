@@ -1,0 +1,58 @@
+#!/bin/sh
+
+if [[ "$1" == "-h" ]]; then
+	echo >&2 "Usage: $0 [ -h | -v ] when < sh_script"
+	echo >&2 "With -v flag $0 mails script output if it's not empty even if exit code is zero."
+	exit 0
+fi
+
+spool=
+for spool_root in /{var/spool,dev}/shm /tmp; do
+	if [[ -d "${spool_root}" ]]; then
+		spool="${spool_root}/at"
+		break
+	fi
+done
+if [[ ! "$spool" ]]; then
+	echo >&2 "Unable to find reliable enough spool-path, exiting"
+	exit 1
+fi
+
+if [[ "$1" == "-v" ]]; then
+	verbose=true
+	shift
+else verbose=
+fi
+
+timeout=$(( $(date +%s -d "$*") - $(date +%s) ))
+if [[ $timeout -lt 0 ]]; then
+	echo >&2 "Timeout is in the past: $(date -d "$*"), exiting"
+	exit 1
+fi
+
+[[ ! -d "$spool" ]] && mkdir "$spool" && chmod 1777 "$spool"
+
+umask 077
+spool_file="$(mktemp --tmpdir="$spool" at.XXXXX)"
+cat >"$spool_file"
+echo "$(date): $@" >"${spool_file}.sched"
+
+(
+	sleep "$timeout"
+
+	rm -f "${spool_file}.out"
+	sh "$spool_file" >>"${spool_file}.out" 2>&1
+	ERR=$?
+
+	[[ $ERR -gt 0 || ( $verbose && -s "${spool_file}.out" ) ]] &&\
+		cat "${spool_file}.out" | mailx -s "Delayed command output (exit code: $ERR)" "$USER"
+
+	rm -f "$spool_file" "${spool_file}.pid" "${spool_file}.out" "${spool_file}.sched"
+	rmdir "$spool" 2>/dev/null
+) &
+
+echo $! >"${spool_file}.pid"
+pgrep -F "${spool_file}.pid" >/dev/null || rm -f "${spool_file}.pid"
+
+disown
+exit 0
