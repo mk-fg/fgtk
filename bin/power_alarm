@@ -8,16 +8,22 @@ cleanup() {
  return 0
 }
 
+
+## Shows either "Unknwon" or "Discharging" on coercion
 grep -e Charging -e Full\
   /sys/class/power_supply/BAT0/status >/dev/null && \
  cleanup && exit
 
+## Now thats seem reliable enough
 PW_LEFT=`cat /sys/class/power_supply/BAT0/charge_now`
 PW=`cat /sys/class/power_supply/BAT0/charge_full`
 PW=`echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc`
 PW=${PW#*.}
 PW=${PW#0}
+[[ $PW -eq 0 ]] && PW=100
 
+
+## Phase 1: Sound
 if [[ $PW -lt 12 ]]; then aplay -q ~/media/appz/batt_down.wav
 else if [[ $PW -lt 17 ]]; then aplay -q ~/media/appz/batt_warn.wav
  else if [[ $PW -lt 25 ]]; then aplay -q ~/media/appz/batt_low.wav
@@ -26,14 +32,31 @@ else if [[ $PW -lt 17 ]]; then aplay -q ~/media/appz/batt_warn.wav
  fi
 fi
 
+
+## Phase 2: Visuals
+pgrep -x X >/dev/null || exit 0 # no X - no visual notifications
+
 if [[ ! -O "$PW_FLAG" && $PW -lt 10 ]]; then
+ # Force-enable the display
  xset dpms force on 2>/dev/null
+
+ # Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
+ WC=$(pgrep notification-)
+ [[ -z "$WC" ]] && WC='*'
+ export DBUS_SESSION_BUS_ADDRESS="$(
+  grep --color=never -ao -m1 -h -P\
+   '(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
+   /proc/$WC/environ 2>/dev/null | head -1 )"
+
+ # Format message and send it
  MSG=$(cat << EOF
 Battery charge level critical (${PW}%)!
 Do something about it NOW or touch $PW_FLAG
 EOF
 )
- DISPLAY=:0 notify-send -u critical -i nwn "Low power alert" "$MSG"
+ notify-send -u critical -i nwn "Low power alert" "$MSG"
 fi
 
+
+## Mail won't be read in time
 exit 0
