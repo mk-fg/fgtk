@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
 
 from optparse import OptionParser
 parser = OptionParser(usage='%prog host',
@@ -28,13 +29,25 @@ parser.add_option('-a', '--forward-agent',
 parser.add_option('-x', '--disable-Xfwd',
 	action='store_false', dest='fwd_x', default=True,
 	help='disable X-forwarding')
+parser.add_option('-t', '--roam', action='store_true',
+	help='Roaming mode (use real hostnames and IPs, not local ones).'
+		' Auto-detected by default through wlan0 interface state.')
 optz, argz = parser.parse_args()
 if not argz and not optz.list_hosts: parser.error('No host specified')
 
 
 from string import whitespace as spaces
+from subprocess import Popen, PIPE
 import re, os, sys
 
+
+if optz.roam is None:
+	optz.roam = Popen('/sbin/ip link show wlan0'.split(), stdout=PIPE)
+	line = optz.roam.stdout.readline()
+	if optz.roam.wait():
+		print('Failed to detect roaming profile, assuming False', file=sys.stderr)
+		optz.roam = False
+	else: optz.roam = 'NO-CARRIER' in line or ' DOWN ' in line
 
 hosts = dict(
 	(host, (ip if optz.ip else None, suffix, None)) # host, (ip,suffix,port); ip isn't needed if connecting to host
@@ -42,7 +55,8 @@ hosts = dict(
 		re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$',
 			open('/etc/hosts').read(), re.M) )
 
-for line in open(os.path.expanduser('~/.cFG/host_list')):
+for line in open(os.path.expanduser(
+		'~/.cFG/host_list' if not optz.roam else '~/.cFG/host_list.roam' )):
 	line = line.strip(spaces)
 	if not line or line.startswith('#'): continue
 	alias,link = line.split(' ', 1)
@@ -99,9 +113,8 @@ if not optz.persist:
 	sys.stderr.flush()
 	os.execvp(line[0], line)
 else:
-	from subprocess import Popen as exe
 	while True:
-		proc = exe(line)
+		proc = Popen(line)
 		try: err = proc.wait()
 		except OSError: break # caught signal
 		if not err: break
