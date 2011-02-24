@@ -1,0 +1,93 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
+
+import argparse
+parser = argparse.ArgumentParser(description='Find failures among enabled services.')
+parser.add_argument('-s', '--status',
+	action='store_true', help='Show status report on found services.')
+parser.add_argument('-u', '--unknown',
+	action='store_true', help='Show enabled but unknown (not loaded) services.')
+argz = parser.parse_args()
+
+
+import itertools as it, operator as op, functools as ft
+import os, sys
+
+
+from glob import iglob
+
+class Service(object):
+
+	_cache = dict()
+
+	def __new__(cls, unit=None, id=None):
+		if unit: id = unicode(unit[0])
+		try: self = cls._cache[id]
+		except KeyError:
+			self = super(Service, cls).__new__(cls)
+			self.id = id
+			cls._cache[id] = self
+		if unit:
+			self.obj = unit[6]
+			self.state = unicode(unit[3])
+		return self
+
+	def __repr__(self): return self.id
+	def __eq__(self, other): return hash(self) == hash(other)
+	def __hash__(self):
+		if self.id is None: raise ValueError
+		return hash(self.id)
+
+	@property
+	def type(self):
+		return unicode(bus.get_object('org.freedesktop.systemd1', self.obj)\
+			.Get( 'org.freedesktop.systemd1.Service', 'Type',
+				dbus_interface='org.freedesktop.DBus.Properties' ))
+
+class ServiceLink(object):
+
+	def __init__(self, path):
+		self.path = path
+		self.eid = unicode(self.path).split('/', 4)[-1]
+		self.id = self.eid.split('/', 1)[-1]
+		self.masked = os.readlink(self.path) == '/dev/null'
+
+	def __hash__(self):
+		if self.eid is None: raise ValueError
+		return hash(self.eid)
+
+	def to_service(self): return Service(id=self.id)
+
+
+svc_links_list = set(it.imap(ServiceLink, it.chain.from_iterable(it.imap( iglob,
+	('/etc/systemd/system/*/*.service', '/lib/systemd/system/*/*.service') ))))
+
+svc_links_masked = set(it.ifilter(op.attrgetter('masked'), svc_links_list))
+svc_links_enabled = svc_links_list - svc_links_masked
+
+svc_enabled = set(it.imap(op.methodcaller('to_service'), svc_links_enabled))
+
+
+import dbus
+
+bus = dbus.SystemBus()
+svc_known = set( Service(unit)
+	for unit in bus.get_object(
+		'org.freedesktop.systemd1',
+		'/org/freedesktop/systemd1' ).ListUnits()
+	if unit[0].endswith('.service') )
+
+
+if not argz.unknown:
+	for svc in svc_enabled.intersection(svc_known):
+		if svc.state == 'active' or svc.type == 'oneshot': continue
+		if argz.status:
+			from subprocess import Popen, STDOUT
+			print()
+			Popen(['systemctl', 'status', unicode(svc)], stdout=sys.stderr, stderr=STDOUT).wait()
+		else: print('{}'.format(svc))
+	if argz.status: print()
+
+else:
+	for svc in svc_enabled.difference(svc_known): print('{}'.format(svc))
