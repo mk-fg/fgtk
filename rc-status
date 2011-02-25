@@ -8,6 +8,8 @@ parser.add_argument('-s', '--status',
 	action='store_true', help='Show status report on found services.')
 parser.add_argument('-u', '--unknown',
 	action='store_true', help='Show enabled but unknown (not loaded) services.')
+parser.add_argument('-n', '--not-enabled',
+	action='store_true', help='Show list of services that are running but are not enabled directly.')
 argz = parser.parse_args()
 
 
@@ -30,7 +32,7 @@ class Service(object):
 			cls._cache[id] = self
 		if unit:
 			self.obj = unit[6]
-			self.state = unicode(unit[3])
+			self.state = tuple(it.imap(unicode, unit[3:5]))
 		return self
 
 	def __repr__(self): return self.id
@@ -78,16 +80,19 @@ svc_known = set( Service(unit)
 		'/org/freedesktop/systemd1' ).ListUnits()
 	if unit[0].endswith('.service') )
 
+if argz.unknown:
+	for svc in svc_enabled.difference(svc_known): print('{}'.format(svc))
 
-if not argz.unknown:
+elif argz.not_enabled:
+	for svc in svc_known.difference(svc_enabled):
+		if svc.state == ('active', 'running'): print(svc)
+
+else:
 	for svc in svc_enabled.intersection(svc_known):
-		if svc.state == 'active' or svc.type == 'oneshot': continue
+		if svc.state[0] == 'active' or svc.type == 'oneshot': continue
 		if argz.status:
 			from subprocess import Popen, STDOUT
 			print()
 			Popen(['systemctl', 'status', unicode(svc)], stdout=sys.stderr, stderr=STDOUT).wait()
-		else: print('{}'.format(svc))
+		else: print(svc)
 	if argz.status: print()
-
-else:
-	for svc in svc_enabled.difference(svc_known): print('{}'.format(svc))
