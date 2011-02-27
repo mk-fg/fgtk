@@ -3,7 +3,11 @@
 from __future__ import unicode_literals, print_function
 
 import argparse
-parser = argparse.ArgumentParser(description='Find failures among enabled services.')
+parser = argparse.ArgumentParser(
+	description='Tool to compare the set of enabled'
+		' systemd services against currently running ones.\n'
+	'If started without parameters, it\'ll just show all the enabled services'
+		' that should be running (Type != oneshot) yet for some reason they aren\'t.')
 parser.add_argument('-s', '--status',
 	action='store_true', help='Show status report on found services.')
 parser.add_argument('-u', '--unknown',
