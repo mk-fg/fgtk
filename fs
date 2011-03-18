@@ -23,15 +23,27 @@ cmd.add_argument('-r', '--relative', action='store_true',
 cmd.set_defaults(call='mv')
 
 for cmd in [op.itemgetter('mv')(cmds.choices)]:
+
 	cmd.add_argument('-s', '--src', dest='src_opt', metavar='SRC',
 		help='Source, positional argz will be treated as destination(s).')
 	cmd.add_argument('-d', '--dst', dest='dst_opt', metavar='DST',
 		help='Destination, positional argz will be treated as source(s).')
+
 	cmd.add_argument('--reverse',
 		action='store_true', help='Reverse source / destination targets.')
 
+	cmd.add_argument('-P', '--attrz', action='store_true',
+		help='force preserving fs metadata:'
+			' uid/gid and timestamps, implied for some ops (which doesnt'
+			' make sense w/o it, like cps), and conditionally implied for'
+			' others (like mv), if user is root.')
+	cmd.add_argument('-N', '--no-priv-attrz', action='store_true',
+		help='Inhibit fs metadata copying (direct uid/gid/whatever setting will'
+			' still work as requested) ops which may require elevated privileges.')
+
 argz = parser.parse_args()
 argz.pos = getattr(argz, 'src/dst')
+if argz.attrz is None and argz.no_priv_attrz: argz.attrz = False
 
 
 import logging
@@ -40,6 +52,7 @@ log = logging.getLogger()
 
 from tempfile import NamedTemporaryFile
 from fgc import sh
+from os.path import dirname, basename, abspath
 import os, sys, stat
 
 
@@ -69,15 +82,17 @@ def mv(argz, ops):
 				else:
 					sh.cp_r( src, dst, dereference=False,
 						attrz=attrz, atom=ft.partial(sh.cp_d, skip_ts=False) )
-					tmp = NamedTemporaryFile( dir=os.path.dirname(src),
-						prefix='{}.'.format(os.path.basename(src)),delete=False )
+					tmp = NamedTemporaryFile( dir=dirname(src),
+						prefix='{}.'.format(basename(src)),delete=False )
 					os.unlink(tmp.name), os.rename(src, tmp.name)
-			sh.ln((os.path.abspath(dst) if not argz.relative else sh.relpath(dst, src)), src)
+			sh.ln((abspath(dst) if not argz.relative else sh.relpath(dst, src)), src)
 			if tmp: sh.rr(tmp.name, onerror=False)
 
+	# attrz is implied if uid=0, otherwise disabled, unless specified explicitly in any way
+	attrz = argz.attrz if argz.attrz is not None else not bool(os.getuid())
+
 	for src,dst in ops:
-		# TODO: --attrz flags (yep, several)
-		mv_func(src, sh.join(dst, os.path.basename(src)) if sh.isdir(dst) else dst, attrz=True)
+		mv_func(src, sh.join(dst, basename(src)) if sh.isdir(dst) else dst, attrz=attrz)
 
 
 locals()[argz.call](argz)
