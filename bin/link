@@ -31,7 +31,7 @@ parser.add_option('-x', '--disable-Xfwd',
 	help='disable X-forwarding')
 parser.add_option('-t', '--roam', action='store_true',
 	help='Roaming mode (use real hostnames and IPs, not local ones).'
-		' Auto-detected by default through wlan0 interface state.')
+		' Auto-detected by default through wlan0 interface state if host_list.roam exists.')
 optz, argz = parser.parse_args()
 if not argz and not optz.list_hosts: parser.error('No host specified')
 
@@ -41,7 +41,9 @@ from subprocess import Popen, PIPE
 import re, os, sys
 
 
-if optz.roam is None:
+host_lists = map(os.path.expanduser, ['~/.cFG/host_list', '~/.cFG/host_list.roam'])
+
+if optz.roam is None and os.path.exists(host_lists[1]):
 	optz.roam = Popen('/sbin/ip link show wlan0'.split(), stdout=PIPE)
 	line = optz.roam.stdout.readline()
 	if optz.roam.wait():
@@ -55,8 +57,7 @@ hosts = dict(
 		re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$',
 			open('/etc/hosts').read(), re.M) )
 
-for line in open(os.path.expanduser(
-		'~/.cFG/host_list' if not optz.roam else '~/.cFG/host_list.roam' )):
+for line in open(host_lists[int(bool(optz.roam))]):
 	line = line.strip(spaces)
 	if not line or line.startswith('#'): continue
 	alias,link = line.split(' ', 1)
