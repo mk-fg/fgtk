@@ -36,12 +36,13 @@ optz, argz = parser.parse_args()
 if not argz and not optz.list_hosts: parser.error('No host specified')
 
 
-from string import whitespace as spaces
+import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE
-import re, os, sys
+import re, os, sys, types
 
 
 host_lists = map(os.path.expanduser, ['~/.cFG/host_list', '~/.cFG/host_list.roam'])
+host_lists_ext = os.path.expanduser('~/.cFG/host_list.ext')
 
 if optz.roam is None and os.path.exists(host_lists[1]):
 	optz.roam = Popen('/sbin/ip link show wlan0'.split(), stdout=PIPE)
@@ -52,13 +53,48 @@ if optz.roam is None and os.path.exists(host_lists[1]):
 	else: optz.roam = 'NO-CARRIER' in line or ' DOWN ' in line
 
 hosts = dict(
-	(host, (ip if optz.ip else None, suffix, None)) # host, (ip,suffix,port); ip isn't needed if connecting to host
+	# host, (ip,suffix,port); ip isn't needed if connecting to hostname
+	(host, (ip if optz.ip else None, suffix, None))
 	for ip,fqhn,suffix,host in
 		re.findall('^([a-f\d.:]+).*?(\S\.(\w+))?\s+([^\s.]+)\s*$',
 			open('/etc/hosts').read(), re.M) )
 
+if os.path.isfile(host_lists_ext):
+	for line in open(host_lists_ext):
+		try:
+			line = line.strip().split('\t')
+			if not filter(None, line): continue
+			src = os.path.expanduser(line[0])
+
+			if src.endswith('.gpg'):
+				proc = Popen(['gpg', '--no-tty', '-qd'], stdin=open(src, 'rb'), stdout=PIPE)
+				ext, src = proc.stdout.read(), src[:-4]
+				if proc.wait(): raise RuntimeError('GPG subprocess failed')
+			else: ext = open(src).read()
+
+			while True:
+				if src.endswith('.yaml'):
+					import yaml
+					ext, src = yaml.load(ext), src[:-5]
+				elif src.endswith('.json'):
+					import json
+					ext, src = json.loads(ext), src[:-5]
+				elif src.endswith('.pickle'):
+					import pickle
+					ext, src = pickle.loads(ext), src[:-6]
+				elif isinstance(ext, types.StringTypes):
+					ext = map(op.methodcaller('strip'), ext.splitlines())
+				else: break
+
+			if len(line) > 2 and line[2]:
+				for k in line[2].split('.'): ext = ext[k]
+			ext_domain = line[1] if len(line) > 1 and line[1] else None
+			if isinstance(ext, types.StringTypes): ext = [ext]
+			for ext in ext: hosts[ext] = None, ext_domain, None
+		except RuntimeError: pass # these are considered OK here
+
 for line in open(host_lists[int(bool(optz.roam))]):
-	line = line.strip(spaces)
+	line = line.strip()
 	if not line or line.startswith('#'): continue
 	alias,link = line.split(' ', 1)
 	try: host,suffix = alias.rsplit('.', 1)
@@ -72,7 +108,7 @@ if optz.list_hosts:
 	sys.exit()
 
 
-auth = dict( line.strip(spaces).split(' ', 1) for line in
+auth = dict( line.strip().split(' ', 1) for line in
 	open(os.path.expanduser('~/.cFG/host_auth')) )
 
 for host,(link,suffix,port) in hosts.iteritems():
