@@ -67,6 +67,7 @@ if os.path.isfile(host_lists_ext):
 			src = os.path.expanduser(line[0])
 
 			if src.endswith('.gpg'):
+				if 'GPG_AGENT_INFO' not in os.environ: raise RuntimeError
 				proc = Popen(['gpg', '--no-tty', '-qd'], stdin=open(src, 'rb'), stdout=PIPE)
 				ext, src = proc.stdout.read(), src[:-4]
 				if proc.wait(): raise RuntimeError('GPG subprocess failed')
