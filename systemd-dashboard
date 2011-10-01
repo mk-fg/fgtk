@@ -14,7 +14,9 @@ parser.add_argument('-u', '--unknown',
 	action='store_true', help='Show enabled but unknown (not loaded) services.')
 parser.add_argument('-n', '--not-enabled',
 	action='store_true', help='Show list of services that are running but are not enabled directly.')
-argz = parser.parse_args()
+parser.add_argument('-x', '--systemd-internals',
+	action='store_true', help='Dont exclude systemd internal services from the output.')
+optz = parser.parse_args()
 
 
 import itertools as it, operator as op, functools as ft
@@ -84,19 +86,21 @@ svc_known = set( Service(unit)
 		'/org/freedesktop/systemd1' ).ListUnits()
 	if unit[0].endswith('.service') )
 
-if argz.unknown:
+if optz.unknown:
 	for svc in svc_enabled.difference(svc_known): print('{}'.format(svc))
 
-elif argz.not_enabled:
+elif optz.not_enabled:
 	for svc in svc_known.difference(svc_enabled):
+		if not optz.systemd_internals and svc.id.startswith('systemd-'): continue
 		if svc.state == ('active', 'running'): print(svc)
 
 else:
 	for svc in svc_enabled.intersection(svc_known):
 		if svc.state[0] == 'active' or svc.type == 'oneshot': continue
-		if argz.status:
+		if not optz.systemd_internals and svc.id.startswith('systemd-'): continue
+		if optz.status:
 			from subprocess import Popen, STDOUT
 			print()
 			Popen(['systemctl', 'status', unicode(svc)], stdout=sys.stderr, stderr=STDOUT).wait()
 		else: print(svc)
-	if argz.status: print()
+	if optz.status: print()
