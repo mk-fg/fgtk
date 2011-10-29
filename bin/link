@@ -157,4 +157,3 @@ else:
 		except OSError: break # caught signal
 		if not err: break
 		sleep(optz.poll)
-
