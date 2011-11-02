@@ -40,13 +40,15 @@ if [[ ! -O "$PW_FLAG" && $PW -lt 10 ]]; then
  # Force-enable the display
  xset dpms force on 2>/dev/null
 
- # Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
- WC=$(pgrep notification-)
- [[ -z "$WC" ]] && WC='*'
- export DBUS_SESSION_BUS_ADDRESS="$(
-  grep --color=never -ao -m1 -h -P\
-   '(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
-   /proc/$WC/environ 2>/dev/null | head -1 )"
+ if [[ -z "$DBUS_SESSION_BUS_ADDRESS" ]]; then
+  # Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
+  WC=$(pgrep notification-)
+  [[ -z "$WC" ]] && WC='*'
+  export DBUS_SESSION_BUS_ADDRESS="$(
+   grep --color=never -ao -m1 -h -P\
+    '(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
+    /proc/$WC/environ 2>/dev/null | head -1 )"
+ fi
 
  # Format message and send it
  MSG=$(cat << EOF
