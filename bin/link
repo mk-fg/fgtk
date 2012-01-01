@@ -32,6 +32,8 @@ parser.add_option('-x', '--disable-Xfwd',
 parser.add_option('-t', '--roam', action='store_true',
 	help='Roaming mode (use real hostnames and IPs, not local ones).'
 		' Auto-detected by default through wlan0 interface state if host_list.roam exists.')
+parser.add_option('-v', '--visual', action='store_true',
+	help='Enabled randomart key signature display.')
 optz, argz = parser.parse_args()
 if not argz and not optz.list_hosts: parser.error('No host specified')
 
@@ -145,6 +147,7 @@ line = ['ssh', '%s@%s'%(auth,host) if auth else host]
 if port: line.extend(['-p', str(port)])
 if optz.fwd_x: line.append('-Y')
 if optz.fwd_auth: line.append('-A')
+if optz.visual: line.append('-oVisualHostKey=yes')
 
 if not optz.persist:
 	sys.stdout.flush()
