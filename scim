@@ -477,7 +477,8 @@ def update_links():
 		# Check permissions and content (catref)
 		elif ltype & T_CR:
 			if optz.meta or optz.links_meta:
-				src_meta = meta[src_rel] if not optz.reverse_meta else meta_get(src)
+				src_meta = (meta.get(src_rel) or meta_get(src))\
+					if not optz.reverse_meta else meta_get(src)
 				src_meta, dst_meta = optional_reverse(src_meta, meta_get(dst), flag=optz.reverse_meta)
 				if dst_meta != src_meta:
 					errz += 1
