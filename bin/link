@@ -27,7 +27,7 @@ parser.add_argument('-w', '--wait',
 parser.add_argument('-a', '--forward-auth', action='store_true',
 	help='Enable ssh authentication forwarding.')
 parser.add_argument('-x', '--disable-Xfwd',
-	action='store_false', dest='fwd_x', default=True,
+	action='store_false', dest='forward_x', default=True,
 	help='Disable X-forwarding.')
 parser.add_argument('-t', '--roam', action='store_true',
 	help='Roaming mode (use real hostnames and IPs, not local ones).'
@@ -141,7 +141,7 @@ signal.signal(signal.SIGINT, key_int)
 
 line = ['ssh', '%s@%s'%(auth,host) if auth else host]
 if port: line.extend(['-p', str(port)])
-if optz.fwd_x: line.append('-Y')
+if optz.forward_x: line.append('-Y')
 if optz.forward_auth: line.append('-A')
 if optz.visual: line.append('-oVisualHostKey=yes')
 if optz.screen: line.extend(['-t', 'screen', '-DR'])
