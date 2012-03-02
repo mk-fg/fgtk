@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+# To use this script: Open Skype
+# -> Open the menu and press 'Options' or press Ctrl-O
+# -> go to 'Notifications' tab
+# -> hit the 'Advanced' button and check 'Execute the following script on _any_ event'
+# -> paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
+# -> disable or enable the notifications you want to receive.
+
+import argparse
+parser = argparse.ArgumentParser(
+	description='Bridge netween skype and desktop-notification daemon.')
+for arg in 'type sname fname fpath smessage fsize sskype'.split(): parser.add_argument(arg)
+optz = parser.parse_args()
+
+import itertools as it, operator as op, functools as ft
+from gi.repository import Gtk, Notify
+import os, sys
+
+# Ripped from https://gist.github.com/1361027
+notifications = dict(
+	SkypeLogin=dict(summary='Skype', body='You have logged into Skype with {sname}'),
+	SkypeLogout=dict(summary='You have logged out of Skype', icon_name='user-offline'),
+	SkypeLoginFailed=dict(summary='Skype login failed', icon_name='user-offline'),
+	CallConnecting=dict(summary='Dailing... {sname}', icon_name='call-start'),
+	CallRingingIn=dict(summary='Brring..', body='{sname} is calling you', icon_name='call-start'),
+	CallRingingOut=dict(summary='Dididi.. dididi...',
+		body='You are calling {sname}', icon_name='call-start'),
+	CallAnswered=dict(summary='Call Answered', icon_name='call-start'),
+	VoicemailReceived=dict(summary='{sname}', body='Voicemail Received'),
+	VoicemailSent=dict(summary='Voicemail Sent'),
+	ContactOnline=dict(summary='{sname} is now online', icon_name='user-online'),
+	ContactOffline=dict(summary='{sname} is now offline', icon_name='user-offline'),
+	ContactDeleted=None,
+	ChatIncomingInitial=dict(summary='{sname}', body='{smessage}', icon_name='im-message-new'),
+	ChatIncoming=dict(summary='{sname}', body='{smessage}', icon_name='im-message-new'),
+	ChatOutgoing=None,
+	ChatJoined=dict(summary='{sname} joined chat', body='{smessage}', icon_name='emblem-people'),
+	ChatParted=dict(summary='{sname} left chat', body='{smessage}'),
+	TransferComplete=dict(summary='Transfer Complete',
+		body='{fname} saved to {fpath}{fname}', icon_name='gtk-save'),
+	TransferFailed=dict(summary='Transfer Failed', body='{filename}', icon_name='gtk-close'),
+	Birthday=dict(summary='{sname} has a birthday Tomorrow', icon_name='appointment-soon') )
+notifications['%type'] = None # we get %type at skype startup sometimes. ignore it
+
+note = notifications.get( optz.type,
+	dict(summary='{type}', body='{contact} ({sskype})') )
+if note is None: sys.exit()
+
+if 'icon_name' not in note: note['icon_name'] = 'skype'
+if not Gtk.IconTheme.get_default().has_icon(note['icon_name']):
+	note['icon_name'] = 'skype'
+
+note_data = vars(optz)
+for k in 'summary', 'body':
+	try: note[k] = note[k].format(**note_data)
+	except KeyError: pass
+note_data = note
+
+Notify.init('skype')
+note = Notify.Notification()
+note.set_properties(**note_data)
+note.show()
