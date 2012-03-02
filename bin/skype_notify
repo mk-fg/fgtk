@@ -1,9 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 
-# To use this script: Open Skype
-# -> Open the menu and press 'Options' or press Ctrl-O
+# Python script to make Skype co-operate with GNOME3 notifications.
+#
+# Copyright (c) 2012, Mike Kazantsev
+# Copyright (c) 2011, John Stowers
+# Copyright (c) 2009, Lightbreeze
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# To use this script:
+# -> open Skype
+# -> open the menu and press 'Options' or press Ctrl-O
 # -> go to 'Notifications' tab
 # -> hit the 'Advanced' button and check 'Execute the following script on _any_ event'
 # -> paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
