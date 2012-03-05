@@ -60,12 +60,12 @@ notifications = dict(
 	ChatParted=dict(summary='{sname} left chat', body='{smessage}'),
 	TransferComplete=dict(summary='Transfer Complete',
 		body='{fname} saved to {fpath}{fname}', icon_name='gtk-save'),
-	TransferFailed=dict(summary='Transfer Failed', body='{filename}', icon_name='gtk-close'),
+	TransferFailed=dict(summary='Transfer Failed', body='{fname}', icon_name='gtk-close'),
 	Birthday=dict(summary='{sname} has a birthday Tomorrow', icon_name='appointment-soon') )
 notifications['%type'] = None # we get %type at skype startup sometimes. ignore it
 
 note = notifications.get( optz.type,
-	dict(summary='{type}', body='{contact} ({sskype})') )
+	dict(summary='{type}', body='{sname} ({sskype})') )
 if note is None: sys.exit()
 
 if 'icon_name' not in note: note['icon_name'] = 'skype'
