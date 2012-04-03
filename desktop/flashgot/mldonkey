@@ -1,6 +1,6 @@
 #!/bin/bash
 
-Resolve possible redirects (mldonkey doesn't seem to handle these well)
+# Resolve possible redirects (mldonkey doesn't seem to handle these well)
 url="$(curl -sL4 --head --referer "$2" "$1" |
 	awk '/^Location:/ {loc=$2} END {sub("\r", "", loc); print loc}')"
 [[ -z "$url" ]] && url="$1"
