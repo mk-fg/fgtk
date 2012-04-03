@@ -5,7 +5,7 @@ from __future__ import unicode_literals, print_function
 import argparse
 parser = argparse.ArgumentParser(
 	description='Connect to remote host, whatever that means.')
-parser.add_argument('host', nargs='?', help='Host alias to connect to.')
+parser.add_argument('host', nargs='+', help='Host alias to connect to.')
 parser.add_argument('-r', '--root', action='store_true',
 	help='Try to log in as root user, regardless of cfg.')
 parser.add_argument('-s', '--screen', action='store_true',
@@ -34,14 +34,33 @@ parser.add_argument('-t', '--roam', action='store_true',
 		' Should be auto-detected by default if host_list.roam exists.')
 parser.add_argument('-v', '--visual', action='store_true',
 	help='Enabled randomart key signature display.')
+parser.add_argument('-m', '--tmux', action='store_true',
+	help='Connect to all the specified hosts in different tmux windows.')
+parser.add_argument('--no-tmux', action='store_true')
 optz = parser.parse_args()
-
-if not optz.host and not optz.list_hosts: parser.error('No host specified')
-
 
 import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE
 import re, os, sys, types
+
+if not optz.host and not optz.list_hosts: parser.error('No host specified')
+if optz.no_tmux: optz.tmux = False # should only be used from --tmux
+if optz.host and not optz.tmux:
+	try: optz.host, = optz.host
+	except ValueError: parser.error('Only one host may be specified without --tmux.')
+
+if optz.tmux:
+	hosts = set(optz.host)
+	argv = [sys.argv[0], '--no-tmux']
+	for arg in sys.argv[1:]:
+		if arg in hosts:
+			hosts.remove(arg)
+		else: argv.append(arg)
+	assert not hosts
+	for host in optz.host:
+		Popen(['tmux', 'new-window']).wait()
+		Popen(['tmux', 'send', 'exec {}\n'.format(' '.join(argv + [host]))]).wait()
+	sys.exit(0)
 
 
 host_lists = map(os.path.expanduser, ['~/.cFG/host_list', '~/.cFG/host_list.roam'])
