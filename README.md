@@ -94,8 +94,6 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 	t -f /var/log/app2.log | color green - &
 	t -f /var/log/app2.log | color blue - &
 
-##### etc...
-
 
 ### Misc
 
@@ -126,6 +124,11 @@ with more details.
 	systemd-readahead-replay.service
 	apache.service
 
+
+### Desktop
+
+Helpers for more interactive (client) machine and/or DE.
+
 ##### flashgot
 
 Scripts to delegate downloads from firefox to a more sensible download managers.
@@ -144,3 +147,10 @@ Also has the ability to "keep trying to connect", useful (to me, at least) for
 crappy shared-hosting servers, where botnets flood ssh with slowloris-like
 attacks on it's authentication, exceeding limit on unauthorized connections in
 sshd.
+
+##### power_alarm
+
+Script to spam sounds and desktop-notifications upon detecting low battery
+level.
+Not the only one to do somethng like that on my system, but saved me some work
+on many occasions.
