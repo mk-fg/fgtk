@@ -1,0 +1,32 @@
+#!/bin/bash
+
+Resolve possible redirects (mldonkey doesn't seem to handle these well)
+url="$(curl -sL4 --head --referer "$2" "$1" |
+	awk '/^Location:/ {loc=$2} END {sub("\r", "", loc); print loc}')"
+[[ -z "$url" ]] && url="$1"
+
+read host port login password\
+	< <( awk '{
+		for (i=1; i<NF+1; i++)
+			if (!k) k=$i; else {auth[k]=$i; k=""}
+		if (auth["service"]=="mld")
+			print auth["machine"], auth["port"],\
+				auth["login"], auth["password"]}'\
+		~/.netrc )
+
+umask 077
+exec 3>/tmp/leech_mld.lock
+flock -w 300 3
+echo -e "auth $login $password\nhttp '$url' '$2'\nexit\n" |
+	ncat "$host" "$port" 2>&1 >/dev/null
+err=$?
+flock -u 3
+
+if [[ $err -eq 0 ]]
+then
+	msg="Link relayed successfully\nLink: ${1}"
+	msg+="\nResolved-to: ${url}"
+else msg="Failed sending link, exit code: $err"
+fi
+
+notify-send -u critical "Leech: MLD" "$msg"
