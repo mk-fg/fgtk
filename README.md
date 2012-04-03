@@ -125,3 +125,22 @@ with more details.
 	smartd.service
 	systemd-readahead-replay.service
 	apache.service
+
+##### flashgot
+
+Scripts to delegate downloads from firefox to a more sensible download managers.
+
+Mostly I use remote mldonkey for regular http downloads and rtorrent /
+transmission for bittorrent (with some processing of .torrent files to drop
+long-dead trackers from there and flatten tracker tiers, for reasons I blogged
+about in some distant past).
+
+##### link
+
+ssh wrapper, to save time on typing something like `exec ssh -X -A -p3542
+root@1.2.3.4 'screen -DR'`, especially for N remote hosts.
+
+Also has the ability to "keep trying to connect", useful (to me, at least) for
+crappy shared-hosting servers, where botnets flood ssh with slowloris-like
+attacks on it's authentication, exceeding limit on unauthorized connections in
+sshd.
