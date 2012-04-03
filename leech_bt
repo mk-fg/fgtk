@@ -1,0 +1,269 @@
+#!/usr/bin/env python
+
+# The contents of this file are subject to the BitTorrent Open Source License
+# Version 1.1 (the License).  You may not copy or use this file, in either
+# source code or executable form, except in compliance with the License.  You
+# may obtain a copy of the License at http://www.bittorrent.com/license/.
+#
+# Software distributed under the License is distributed on an AS IS basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
+# for the specific language governing rights and limitations under the
+# License.
+
+# Written by Petru Paler
+
+
+class BTFailure(Exception):
+	pass
+
+def decode_int(x, f):
+	f += 1
+	newf = x.index('e', f)
+	n = int(x[f:newf])
+	if x[f] == '-':
+		if x[f + 1] == '0':
+			raise ValueError
+	elif x[f] == '0' and newf != f+1:
+		raise ValueError
+	return (n, newf+1)
+
+def decode_string(x, f):
+	colon = x.index(':', f)
+	n = int(x[f:colon])
+	if x[f] == '0' and colon != f+1:
+		raise ValueError
+	colon += 1
+	return (x[colon:colon+n], colon+n)
+
+def decode_list(x, f):
+	r, f = [], f+1
+	while x[f] != 'e':
+		v, f = decode_func[x[f]](x, f)
+		r.append(v)
+	return (r, f + 1)
+
+def decode_dict(x, f):
+	r, f = {}, f+1
+	while x[f] != 'e':
+		k, f = decode_string(x, f)
+		r[k], f = decode_func[x[f]](x, f)
+	return (r, f + 1)
+
+decode_func = {}
+decode_func['l'] = decode_list
+decode_func['d'] = decode_dict
+decode_func['i'] = decode_int
+decode_func['0'] = decode_string
+decode_func['1'] = decode_string
+decode_func['2'] = decode_string
+decode_func['3'] = decode_string
+decode_func['4'] = decode_string
+decode_func['5'] = decode_string
+decode_func['6'] = decode_string
+decode_func['7'] = decode_string
+decode_func['8'] = decode_string
+decode_func['9'] = decode_string
+
+def bdecode(x):
+	try:
+		r, l = decode_func[x[0]](x, 0)
+	except (IndexError, KeyError, ValueError):
+		raise BTFailure("not a valid bencoded string")
+	if l != len(x):
+		raise BTFailure("invalid bencoded value (data after valid prefix)")
+	return r
+
+from types import StringTypes, StringType,\
+	IntType, LongType, DictType, ListType, TupleType
+
+class Bencached(object):
+
+	__slots__ = ['bencoded']
+
+	def __init__(self, s):
+		self.bencoded = s
+
+def encode_bencached(x,r):
+	r.append(x.bencoded)
+
+def encode_int(x, r):
+	r.extend(('i', str(x), 'e'))
+
+def encode_bool(x, r):
+	if x:
+		encode_int(1, r)
+	else:
+		encode_int(0, r)
+
+def encode_string(x, r):
+	r.extend((str(len(x)), ':', x))
+
+def encode_list(x, r):
+	r.append('l')
+	for i in x:
+		encode_func[type(i)](i, r)
+	r.append('e')
+
+def encode_dict(x,r):
+	r.append('d')
+	ilist = x.items()
+	ilist.sort()
+	for k, v in ilist:
+		r.extend((str(len(k)), ':', k))
+		encode_func[type(v)](v, r)
+	r.append('e')
+
+encode_func = {}
+encode_func[Bencached] = encode_bencached
+encode_func[IntType] = encode_int
+encode_func[LongType] = encode_int
+encode_func[StringType] = encode_string
+encode_func[ListType] = encode_list
+encode_func[TupleType] = encode_list
+encode_func[DictType] = encode_dict
+
+try:
+	from types import BooleanType
+	encode_func[BooleanType] = encode_bool
+except ImportError:
+	pass
+
+def bencode(x):
+	r = []
+	encode_func[type(x)](x, r)
+	return ''.join(r)
+
+
+_notify_init = False
+def try_notification(title, body, critical=False, timeout=None):
+	global _notify_init
+	try:
+		from gi.repository import Notify
+		if not _notify_init:
+			Notify.init('Basics')
+			_notify_init = True
+		note = Notify.Notification()
+		note.set_properties(summary=title, body=body)
+		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
+		if timeout is not None: note.set_timeout(timeout)
+		note.show()
+	except: pass
+
+
+def main():
+	from socket import gethostbyname, gaierror, setdefaulttimeout
+	from urlparse import urlparse
+	import sys, itertools as it
+
+	# Long hangs are unacceptable here
+	setdefaulttimeout(10)
+
+	# CLI
+	headers = {'-r': 'Referer', '-c': 'Cookie'}
+	argz, key = dict(), 'url'
+	for arg in sys.argv[1:]:
+		if not arg: pass
+		elif arg in headers: key = headers[arg]
+		elif arg == '-d': key = 'dest'
+		elif key is None:
+			raise ValueError('Unrecognized value purpose: {0}'.format(arg))
+		else: argz[key], key = arg, None
+
+	# Get source
+	if not argz: torrent = sys.stdin.read()
+	else:
+		import urllib2
+		source = urllib2.Request(argz['url'])
+		for arg in headers.itervalues():
+			try: source.add_header(arg, argz[arg])
+			except KeyError: pass
+		torrent = urllib2.urlopen(source).read()
+
+	# URL checker
+	global trak_bad, trak_nx, count
+	def trak_check(trak):
+		global trak_bad, trak_nx, count
+		count += 1
+		if not trak: return False
+		try: ip = gethostbyname(urlparse(trak).netloc.split(':', 1)[0])
+		except gaierror:
+			trak_nx.append(trak)
+			return True # prehaps it will resolve later on
+		else:
+			if ip in ('127.0.0.1', '0.0.0.0'):
+				trak_bad.append(trak)
+				return False
+			else: return True
+
+	def chain_lists(src):
+		if isinstance(src, StringTypes): yield src
+		else:
+			for atom in it.chain.from_iterable(
+				it.imap(chain_lists, src) ): yield atom
+
+	# Actual processing
+	torrent_dec = bdecode(torrent)
+	torrent_dec.pop('libtorrent_resume', None) # see http://libtorrent.rakshasa.no/ticket/2202
+	if 'announce-list' in torrent:
+		torrent_dec['announce-list'] = [filter( trak_check,
+			chain_lists(torrent_dec['announce-list']) )]
+		# print >>sys.stderr, 'Result:', torrent['announce-list']
+		if not trak_check(torrent_dec['announce']):
+			try: torrent_dec['announce'] = torrent_dec['announce-list'][0][0]
+			except IndexError as err:
+				try_notification( 'No working trackers for torrent',
+					'Filtered out ({0}): {1}'.format(len(trak_bad), '\n  ' + '\n  '.join(trak_bad)) )
+				sys.exit()
+	torrent = bencode(torrent_dec)
+
+	# Output
+	if 'dest' not in argz or 'url' not in argz: dest = sys.stdout
+	else:
+		from os.path import basename, join, exists, realpath
+		from string import letters, digits
+		from urllib import unquote_plus
+		name = set(letters + digits + r'!"#$%&\'()*+,-.<=>@[]_~')
+		name = unquote_plus(''.join( (chr if chr in name else '_')
+			for chr in basename(urlparse(argz['url']).path) ))
+		if name and not name.endswith('.torrent'): name += '.torrent'
+		name = join(argz['dest'], name)
+		if exists(name):
+			from hashlib import md5
+			def samefile_check(name):
+				if md5(open(name).read()).digest() == md5(torrent).digest(): # same thing
+					try_notification('Torrent already exists', 'Path: {0}'.format(name))
+					sys.exit()
+			name_from_url = lambda url,base: join(base, '{0}.torrent'.format(md5(url).hexdigest()))
+			if realpath(name) == realpath(argz['dest']):
+				name = name_from_url(argz['url'], argz['dest'])
+				if exists(name): samefile_check(name)
+			else:
+				samefile_check(name)
+				name = name_from_url(argz['url'], argz['dest'])
+		# print >>sys.stderr, 'Name:', name
+		try: dest = open(name, 'w')
+		except (OSError, IOError) as err:
+			try_notification( 'Failed to add torrent file',
+				'Error: {0}'.format(err), critical=True, timeout=5000 )
+			sys.exit()
+	dest.write(torrent)
+
+	count_sum = len(trak_bad) + len(trak_nx)
+	if not count_sum: msg = 'Trackers look alive', 'Let the leeching begin!'
+	else:
+		msg = list()
+		if trak_bad:
+			msg.append('Bogus ({0}):{1}'.format(len(trak_bad), '\n  '+'\n  '.join(trak_bad)))
+		if trak_nx:
+			msg.append('Unresolved ({0}):{1}'.format(len(trak_nx), '\n  '+'\n  '.join(trak_nx)))
+		msg = 'Found some crappy trackers ({0} / {1})'.format(
+			len(trak_bad) + len(trak_nx), count ), '\n'.join(msg)
+	try_notification(*msg)
+
+
+if __name__ == '__main__':
+	trak_bad, trak_nx, count = list(), list(), 0
+	try: main()
+	except Exception as err:
+		try_notification('Failed to process torrent file', '{0}: {1}'.format(type(err), err))
+		raise err
