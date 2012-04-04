@@ -129,11 +129,11 @@ with more details.
 
 Helpers for more interactive (client) machine and/or DE.
 
-##### flashgot
+##### uri_handlers
 
 Scripts to delegate downloads from firefox to a more sensible download managers.
 
-Mostly I use remote mldonkey for regular http downloads and rtorrent /
+Mostly I use remote mldonkey for ed2k and regular http downloads and rtorrent /
 transmission for bittorrent (with some processing of .torrent files to drop
 long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
