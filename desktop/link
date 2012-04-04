@@ -5,7 +5,7 @@ from __future__ import unicode_literals, print_function
 import argparse
 parser = argparse.ArgumentParser(
 	description='Connect to remote host, whatever that means.')
-parser.add_argument('host', nargs='+', help='Host alias to connect to.')
+parser.add_argument('host', nargs='*', help='Host alias to connect to.')
 parser.add_argument('-r', '--root', action='store_true',
 	help='Try to log in as root user, regardless of cfg.')
 parser.add_argument('-s', '--screen', action='store_true',
