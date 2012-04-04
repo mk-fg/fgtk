@@ -13,6 +13,7 @@ read host port login password\
 			print auth["machine"], auth["port"],\
 				auth["login"], auth["password"]}'\
 		~/.netrc )
+[[ -z "$host" || -z "$port" || -z "$login" || -z "$password" ]] && exit 1
 
 umask 077
 exec 3>/tmp/leech_mld.lock
