@@ -56,6 +56,7 @@ class TransmissionRemoteCLI(BufferedExec):
 
 	@classmethod
 	def relay(cls, link):
+		if not link: raise ValueError('Empty link passed')
 		cmdline = cls.cmd + [link]
 		log.debug('Spawning relay-process: {}'.format(cmdline))
 		proc = reactor.spawnProcess(
