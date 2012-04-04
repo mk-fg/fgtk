@@ -1,0 +1,21 @@
+#!/bin/bash
+
+letter=( "From: $(id -un) ($(id -un))" "Date: $(date --rfc-822)" )
+rcpt=()
+opt_chk=true
+
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-s) shift; letter+=( "Subject: $1" ); shift ;;
+		-a) shift; letter+=( "$1" ); shift ;;
+		--) opt_chk=; shift ;;
+		-*) if [[ -n "$opt_chk" ]]; then echo >&2 "Unknown option: $1"; exit 1; fi ;;
+		*) rcpt+=( "$1" ); shift ;;
+	esac
+done
+
+ifs_=$IFS; IFS=", "
+letter+=( "To: ${rcpt[*]}" )
+IFS=$ifs_; unset ifs_
+
+( for line in "${letter[@]}"; do echo "${line}"; done; echo; cat ) | /usr/sbin/sendmail "${rcpt[@]}"

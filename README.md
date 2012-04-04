@@ -94,6 +94,18 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 	t -f /var/log/app2.log | color green - &
 	t -f /var/log/app2.log | color blue - &
 
+##### mail
+
+Simple bash wrapper for sendmail command, generating From/Date headers and
+stuff, just like mailx would do, but also allowing to pass custom headers
+(useful for filtering error reports by-source), which some implementations of
+"mail" fail to do.
+
+##### passgen
+
+Uses adict english dictionaly to generate easy-to-remember passphrase.
+Should be weak if bruteforce attack picks words instead of individual lettters.
+
 
 ### Misc
 

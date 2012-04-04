@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
+
+import itertools as it, operator as op, functools as ft
+import types
+try:
+	map, filter, zip, range = it.imap, it.ifilter, it.izip, xrange # py2.X
+	str = types.StringTypes
+except AttributeError: pass # py3.X
+
+
+import argparse
+parser = argparse.ArgumentParser(description='Generate random passphrase.')
+parser.add_argument('-w', '--words', default=4,
+	help='Passphrase word count (default: %(default)s).')
+parser.add_argument('-f', '--char-count-min', default=15,
+	help='Min passphrase character count (default: %(default)s).')
+parser.add_argument('-t', '--char-count-max', default=30,
+	help='Max passphrase character count (default: %(default)s).')
+parser.add_argument('-i', '--id', help='Add some ID to one of the words.')
+optz = parser.parse_args()
+
+from subprocess import Popen, PIPE
+from random import random, choice
+
+aspell = Popen(['aspell', '-d', 'en', 'dump', 'master'], stdout=PIPE)
+aspell_words = list(set(map(op.methodcaller('strip'), aspell.stdout)))
+
+words = list(map(choice, it.repeat(aspell_words, optz.words)))
+for i in xrange(100):
+	words[choice(range(len(words)))] = choice(aspell_words)
+	words_len = sum(map(len, words))
+	if words_len >= optz.char_count_min and words_len <= optz.char_count_max: break
+
+if optz.id:
+	id_sep = choice('#@$%&^*!<>/?\|')
+	id_word = choice(range(len(words)))
+	word = words[id_word]
+	words[id_word] = ''.join([optz.id, id_sep, word]\
+		if random() > 0.5 else [word, id_sep, optz.id])
+
+print(' '.join(words))
