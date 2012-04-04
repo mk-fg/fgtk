@@ -1,0 +1,11 @@
+#!/bin/bash
+
+src=$1
+[[ -z "$src" ]] && exit 1
+
+read dst < <(echo "$src" | awk '
+	match($0, /\<xt=urn:btih:([0-9a-fA-F]+)/, a)\
+		{printf("/mnt/p2p/bt/torrents/%s.magnet", a[1])}')
+[[ -z "$dst" ]] && exit 1
+
+echo "$src" >"$dst" || exit 1
