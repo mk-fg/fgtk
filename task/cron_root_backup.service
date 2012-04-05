@@ -1,0 +1,13 @@
+[Unit]
+Description=cron job
+
+[Service]
+Type=oneshot
+SyslogFacility=cron
+SyslogIdentifier=cron_task_pipe
+SyslogLevel=info
+
+# .include /etc/systemd/cron_task_base
+[Service]
+ExecStartPre=/usr/sbin/fping6 -q backup_host
+ExecStart=/bin/task_pipe %n /usr/local/sbin/backup_script
