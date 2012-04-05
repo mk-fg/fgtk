@@ -69,6 +69,12 @@ def main():
 		pos = sys.argv.index('--')
 		optz, cmd = sys.argv[1:pos], sys.argv[pos+1:]
 
+	cmd_base = os.path.basename(sys.argv[0])
+	if not optz and cmd_base !=\
+			os.path.basename(os.path.realpath(sys.argv[0])):
+		if cmd_base.endswith('.wrapper'): cmd_base = cmd_base[:-8]
+		cmd = [cmd_base] + cmd
+
 	import argparse
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s: [ options... -- ] command [ arguments... ]',
