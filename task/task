@@ -1,0 +1,85 @@
+#!/bin/bash
+source /etc/profile
+
+[[ -z "$1" || "$1" = '-h' || "$1" = '--help' ]]\
+	&& { echo >&2 "Usage: $0 [ --transient ] [ --hack ]"\
+		"[ --no-out-on-success ] ( delay | - ) cmd args..."; exit 1; }
+
+delay= nomarks= erronlyout= systemd= output=
+while [[ -n "$1" ]]; do
+	case "$1" in
+		--transient|--hack) nomarks=true ;;
+		--no-out-on-success) erronlyout=true ;;
+		--systemd) systemd=true ;;
+		*)
+			if [[ "$1" = '-' ]]; then delay=0
+			elif [[ "$1" =~ ^[0-9]+h$ ]]; then delay=$(( ${1//[^0-9]/} * 3600 ))
+			elif [[ "$1" =~ ^[0-9]+h$ ]]; then delay=$(( ${1//[^0-9]/} * 3600 ))
+			elif [[ "$1" =~ ^[0-9]+m$ ]]; then delay=$(( ${1//[^0-9]/} * 60 ))
+			elif [[ "$1" =~ ^[0-9]+s?$ ]]; then delay=${1//[^0-9]/}
+			else
+				echo >&2 "Unable to parse delay from '$1'"
+				exit 1
+			fi
+			shift
+			break ;;
+	esac
+	shift
+done
+
+[[ -z "$*" ]] && { echo >&2 'No command to run'; exit 1; }
+
+
+if [[ -n "$systemd" ]]; then
+	case "$#" in
+		1) task_name="systemd: root $1" systemd="root_$1" ;;
+		2) task_name="systemd: $1 $2" systemd="$1_$2" ;;
+		*) echo >&2 'Expecting "user service" or "service" spec'; exit 1 ;;
+	esac
+	systemd_unit="cron_${systemd}.service"
+	[[ $(systemctl is-active "${systemd_unit}") = activating ]] && exit 0
+else task_name="$*"
+fi
+
+sleep=$(( ( $RANDOM * $delay ) / 32767 ))
+[[ -z "$nomarks" ]] &&\
+	logger -i -p cron.info -t task\
+		"Queued (delay=${sleep}, max=${delay}): ${task_name}"
+[[ $sleep -gt 0 ]] && sleep $sleep
+
+[[ -z "$nomarks" ]] && {
+	logger -i -p cron.info -t task "Started: ${task_name}"
+	printf -v ts_start '%(%s)T' -1
+}
+
+if [[ -n "$systemd" ]]
+then
+	[[ $(systemctl is-active "${systemd_unit}") = activating ]] && exit 0
+	output=$(mktemp)
+	pipe="/run/cron_tasks/${systemd}.fifo"
+	[[ ! -e "$pipe" ]] && mkfifo -m 0600 "$pipe"
+	shopt -s huponexit # clean up properly
+	cat "$pipe" >"$output" 2>/dev/null &
+	systemctl start "${systemd_unit}"
+	err=$?
+else
+	if [[ -z "$erronlyout" ]]
+	then "$@"
+	else
+		output=$(mktemp)
+		"$@" >"$output" 2>&1
+	fi
+	err=$?
+fi
+
+[[ -z "$nomarks" ]] && {
+	printf -v ts_end '%(%s)T' -1
+	logger -i -p cron.info -t task\
+		"Finished (duration=$((${ts_end}-${ts_start})), status=${err}): ${task_name}"
+}
+
+[[ ( $err -ne 0 && -n "$erronlyout" )
+	|| ( -n "$systemd" && -z "$erronlyout" ) ]] && cat "$output" >&2
+[[ -n "$output" ]] && rm -f "$output"
+
+exit $err
