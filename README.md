@@ -1,4 +1,4 @@
-fgtk: a set of a misc tools for files and their contents manipulation
+fgtk: a set of a misc tools to work with files and processes
 --------------------
 
 Various oldish helper binaries I wrote to help myself with day-to-day tasks.
@@ -110,14 +110,14 @@ with more details.
 	that should be running (Type != oneshot) yet for some reason they aren't.
 
 	optional arguments:
-		-h, --help            show this help message and exit
-		-s, --status          Show status report on found services.
-		-u, --unknown         Show enabled but unknown (not loaded) services.
-		-n, --not-enabled     Show list of services that are running but are not
-													enabled directly.
-		-x, --systemd-internals
-													Dont exclude systemd internal services from the
-													output.
+	  -h, --help            show this help message and exit
+	  -s, --status          Show status report on found services.
+	  -u, --unknown         Show enabled but unknown (not loaded) services.
+	  -n, --not-enabled     Show list of services that are running but are not
+	                        enabled directly.
+	  -x, --systemd-internals
+	                        Dont exclude systemd internal services from the
+	                        output.
 
 	root@damnation:~# systemd-dashboard
 	smartd.service
@@ -150,6 +150,29 @@ Wrapper scripts to run stuff from cron:
 * Adding syslog entries about jobs' start/stop/delay.
 * Running job from a oneshot systemd service, to enforce any arbitrary cgroup
   limits via unit file, dependencies and prevent parallel execution.
+
+##### exec_notify
+
+Wrapper to run specified command and notify (via
+[desktop-notifications](http://developer.gnome.org/notification-spec/) only atm)
+if it fails (including "no such binary" errors) or produces any stderr.
+Optionally produces notification in any case.
+
+Useful mainly for wrapping hooks in desktop apps like firefox, to know if click
+on some "magnet:..." link was successfully processed or discarded.
+
+	% exec_notify -h --
+	usage: exec_notify: [ options... -- ] command [ arguments... ]
+
+	Wrapper for command execution results notification.
+
+	optional arguments:
+	  -h, --help            show this help message and exit
+	  -e, --exit-code-only  Issue notification only if exit code not equals zero,
+	                        despite stderr.
+	  -v, --notify-on-success
+	                        Issue notification upon successful execution as well.
+	  -d, --dump            Include stdou/stderr for all notifications.
 
 
 ### Desktop

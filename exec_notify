@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+from subprocess import Popen, PIPE
+from select import epoll, EPOLLOUT
+import os, sys, fcntl, errno, traceback
+
+
+_notify_init = False
+def try_notification(title, body, critical=False, timeout=None):
+	# TODO: fallback to other means of notification (mail, stderr, configurable, ...)
+	global _notify_init
+	try:
+		from gi.repository import Notify
+		if not _notify_init:
+			Notify.init('Basics')
+			_notify_init = True
+		note = Notify.Notification()
+		note.set_properties(summary=title, body=body)
+		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
+		if timeout is not None: note.set_timeout(timeout)
+		note.show()
+	except: pass
+
+
+def proc_pipe(cmd):
+	proc = Popen(cmd, stdout=PIPE, stderr=PIPE)
+	poller = epoll()
+
+	pipes = dict()
+	for stream in 'stdout', 'stderr':
+		fd = getattr(proc, stream).fileno()
+		flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+		fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+		poller.register(fd, EPOLLOUT)
+		pipes[fd] = stream, getattr(proc, stream), getattr(sys, stream)
+
+	def pipe_read(fd):
+		stream, src, dst = pipes[fd]
+		try: buff = src.read()
+		except IOError as err:
+			if err.errno != errno.EAGAIN: raise
+			buff = None
+		if buff: dst.write(buff)
+		return buff
+
+	output = dict((fd, list()) for fd in pipes)
+	while True:
+		(fd, ev), = poller.poll(-1, 1)
+		buff = pipe_read(fd)
+
+		# Check if process has finished, if there's no output
+		err = proc.poll()
+		if not buff and err is not None:
+			# Check other pipes
+			for fd_chk in pipes:
+				if fd == fd_chk: continue
+				buff = pipe_read(fd_chk)
+				if buff: output[fd_chk].append(buff)
+			return err, dict(
+				(pipes[fd][0], ''.join(reads))
+				for fd, reads in output.viewitems() )
+		else: output[fd].append(buff)
+
+
+def main():
+	optz, cmd = list(), sys.argv[1:]
+	if '--' in sys.argv:
+		pos = sys.argv.index('--')
+		optz, cmd = sys.argv[1:pos], sys.argv[pos+1:]
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s: [ options... -- ] command [ arguments... ]',
+		description='Wrapper for command execution results notification.')
+	parser.add_argument('-e', '--exit-code-only', action='store_true',
+		help='Issue notification only if exit code not equals zero, despite stderr.')
+	parser.add_argument('-v', '--notify-on-success', action='store_true',
+		help='Issue notification upon successful execution as well.')
+	parser.add_argument('-d', '--dump', action='store_true',
+		help='Include stdou/stderr for all notifications.')
+	optz = parser.parse_args(optz)
+
+	proc_name = cmd[0] if cmd else '(generic error)'
+	try: err, output = proc_pipe(cmd)
+	except Exception as err:
+		try_notification( '{}: failed to run command'.format(proc_name),
+			'Error: {}\n\n{}'.format(err, traceback.format_exc().strip()), critical=True )
+		raise
+
+	if err != 0 or (not optz.exit_code_only and output['stderr']):
+		try_notification(
+			'{}: command finished with errors'.format(proc_name, err),
+			'Cmdline: {}\nExit code: {}\nStdout:\n  {}\nStderr:\n  {}'.format( cmd, err,
+				*('\n  '.join(output[stream].splitlines()) for stream in ['stdout', 'stderr']) ),
+			critical=True )
+		sys.exit(err)
+
+	elif optz.notify_on_success:
+		try_notification(
+			'{}: command was executed successfully'.format(proc_name),
+			'Cmdline: {}{}'.format( ' '.join(cmd),
+				'\nStdout:\n  {}\nStderr:\n  {}'.format(*(
+						'\n  '.join(output[stream].splitlines()) for stream in ['stdout', 'stderr'] ))
+					if optz.dump else '' ))
+
+
+if __name__ == '__main__': main()
