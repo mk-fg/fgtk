@@ -106,6 +106,10 @@ stuff, just like mailx would do, but also allowing to pass custom headers
 Uses adict english dictionaly to generate easy-to-remember passphrase.
 Should be weak if bruteforce attack picks words instead of individual lettters.
 
+##### ssh_tunnel
+
+Script to keep persistent, unique and reasonably responsive ssh tunnel.
+
 
 ### Misc
 
