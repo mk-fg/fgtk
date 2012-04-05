@@ -1,11 +1,39 @@
 #!/bin/bash
 
-src=$1
-[[ -z "$src" ]] && exit 1
+typeset -A dst_dirs
 
-read dst < <(echo "$src" | awk '
+while [[ -n "$1" ]]; do
+	case "$1" in
+		--dst-*)
+			dst_type=${1#--dst-}
+			shift
+			dst_dirs[$dst_type]=$1 ;;
+		-x) set -x ;;
+		*) break ;;
+	esac
+	shift
+done
+
+[[ -z "$1" ]] && { echo >&2 "Expecting at least one link"; exit 1; }
+
+coproc awk '
 	match($0, /\<xt=urn:btih:([0-9a-fA-F]+)/, a)\
-		{printf("/mnt/p2p/bt/torrents/%s.magnet", a[1])}')
-[[ -z "$dst" ]] && exit 1
+		{printf("bt %s.magnet\n", a[1]); fflush(); next}
+	{ print $0 |& "md5sum"; close("md5sum", "to"); "md5sum" |& getline
+		printf("misc %s.magnet", $1); fflush() }'
 
-echo "$src" >"$dst" || exit 1
+err=
+for src in "$@"; do
+	echo "$src"> /dev/fd/"${COPROC[1]}"
+	read dst_type dst_basename < /dev/fd/"${COPROC[0]}"
+
+	dst="${dst_dirs[$dst_type]}/${dst_basename}"
+	[[ -z "$dst" ]] && { echo >&2 "Failed to classify link"\
+		"(type: ${dst_type}, basename: ${dst_basename})"; err=true; }
+	echo "$src" >"$dst" || { echo >&2 "Failed to write to a destination file (${dst})"; err=true; }
+done
+
+eval "exec ${COPROC[0]}>&- ${COPROC[1]}>&-"
+wait
+
+[[ -z "$err" ]] && exit 0 || exit 1
