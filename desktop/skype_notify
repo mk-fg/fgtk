@@ -65,30 +65,20 @@ notifications = dict(
 notifications['%type'] = None # we get %type at skype startup sometimes. ignore it
 
 Notify.init('skype')
-try:
-	note = notifications.get( optz.type,
-		dict(summary='{type}', body='{sname} ({sskype})') )
-	if note is None: sys.exit()
+note = notifications.get( optz.type,
+	dict(summary='{type}', body='{sname} ({sskype})') )
+if note is None: sys.exit()
 
-	if 'icon_name' not in note: note['icon_name'] = 'skype'
-	if not Gtk.IconTheme.get_default().has_icon(note['icon_name']):
-		note['icon_name'] = 'skype'
+if 'icon_name' not in note: note['icon_name'] = 'skype'
+if not Gtk.IconTheme.get_default().has_icon(note['icon_name']):
+	note['icon_name'] = 'skype'
 
-	note_data = vars(optz)
-	for k in 'summary', 'body':
-		if k not in note: continue
-		note[k] = note[k].format(**note_data)
-	note_data = note
+note_data = vars(optz)
+for k in 'summary', 'body':
+	if k not in note: continue
+	note[k] = note[k].format(**note_data)
+note_data = note
 
-	note = Notify.Notification()
-	note.set_properties(**note_data)
-	note.show()
-
-except Exception as err:
-	import traceback
-	note = Notify.Notification()
-	note.set_properties(
-		summary='Failed to display skype notification',
-		body='Error: {}\n\n{}'.format(err, traceback.format_exc().strip()) )
-	note.set_urgency(Notify.Urgency.CRITICAL)
-	note.show()
+note = Notify.Notification()
+note.set_properties(**note_data)
+note.show()
