@@ -39,6 +39,22 @@ operation boils down to two (optional) steps:
 Tool to restore POSIX ACLs on paths, broken by chmod or similar stuff without
 actually changing them.
 
+##### fs
+
+Complex tool for high-level fs operations. Reference is built-in.
+
+Copy files, setting mode and ownership for the destination:
+
+	fs -m600 -o root:wheel cp * /somepath
+
+Temporarily (1hr) change attributes (i.e. to edit file from user's editor):
+
+	fs -t3600 -m600 -o someuser expose /path/to/file
+
+Copy ownership/mode from one file to another:
+
+	fs cps /file1 /file2
+
 
 ### Content
 
@@ -57,32 +73,6 @@ alignment:
 Sort file contents, based on some key-field with support for multiple field
 delimeters. Wrote this one when my /etc/passwd got messy and I just wanted to
 sort its contents by uid.
-
-##### fs
-
-Complex tool for high-level fs operations. Reference is built-in.
-
-Copy files, setting mode and ownership for the destination:
-
-	fs -m600 -o root:wheel cp * /somepath
-
-Temporarily (1hr) change attributes (i.e. to edit file from user's editor):
-
-	fs -t3600 -m600 -o someuser expose /path/to/file
-
-Copy ownership/mode from one file to another:
-
-	fs cps /file1 /file2
-
-##### at
-
-Replacement for standard unix'ish "atd" daemon in the form of a bash script.
-
-It just forks out and waits for however long it needs before executing the given
-command. Unlike with atd, such tasks won't survive reboot, obviously.
-
-	Usage: ./at [ -h | -v ] when < sh_script
-	With -v flag ./at mails script output if it's not empty even if exit code is zero.
 
 ##### color
 
@@ -123,6 +113,16 @@ with more details.
 	smartd.service
 	systemd-readahead-replay.service
 	apache.service
+
+##### at
+
+Replacement for standard unix'ish "atd" daemon in the form of a bash script.
+
+It just forks out and waits for however long it needs before executing the given
+command. Unlike with atd, such tasks won't survive reboot, obviously.
+
+	Usage: ./at [ -h | -v ] when < sh_script
+	With -v flag ./at mails script output if it's not empty even if exit code is zero.
 
 ##### mail
 
