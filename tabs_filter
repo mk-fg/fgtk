@@ -1,0 +1,63 @@
+#!/usr/bin/python -B
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, codecs
+
+# Yeah, argparse rocks ;)
+convert, flags = 4, ''
+try: action, path = sys.argv[1:]
+except ValueError:
+	try: convert, action, path = sys.argv[1:]
+	except ValueError: convert, flags, action, path = sys.argv[1:]
+enc, convert = 'utf-8', ['\t', int(convert)]
+if set(flags).difference('a'): raise ValueError('Unknown flags specified')
+
+codecs = list(getattr(codecs, k)(enc) for k in ['getreader', 'getwriter'])
+for k, codec in it.izip(['stdin', 'stdout'], codecs): setattr(sys, k, codec(getattr(sys, k)))
+
+def filter_base(src, seqs, dst=sys.stdout):
+	src_seq, dst_seq = (( (' '*seq)
+		if isinstance(seq, int) else seq ) for seq in seqs)
+	src_seq_len = len(src_seq)
+	for line in src:
+		indent = ''
+		while line.startswith(src_seq):
+			indent, line = dst_seq+indent, line[src_seq_len:]
+		# Handle half-indents and weird space-alignment
+		if 'a' in flags and src_seq_len > 1\
+				and isinstance(seqs[0], int) and line.startswith(' '):
+			line, line_len = line.lstrip(' '), len(line)
+			if line_len - len(line) >= float(seqs[0]) / 2: indent += dst_seq
+		dst.write(indent + line)
+
+filter_clean = ft.partial(filter_base, seqs=convert)
+filter_smudge = ft.partial(filter_base, seqs=list(reversed(convert)))
+
+if action == 'clean': filter_clean(sys.stdin)
+elif action == 'smudge': filter_smudge(sys.stdin)
+
+elif action == 'mangle':
+	from tempfile import NamedTemporaryFile
+	import io, stat, hashlib
+
+	with codecs[1](NamedTemporaryFile(
+			delete=False,
+			dir=os.path.dirname(path),
+			prefix=os.path.basename(path + '.') )) as tmp:
+		try:
+			filter_smudge(io.open(path, encoding=enc), dst=tmp)
+			tmp.flush()
+			if not op.eq(*(hashlib.sha1(
+					io.open(path, 'rb').read() ).digest() for path in [path, tmp.name])):
+				os.chmod(tmp.name, stat.S_IMODE(os.stat(path).st_mode))
+				os.rename(tmp.name, path)
+		finally:
+			if os.path.exists(tmp.name):
+				try: os.unlink(tmp.name)
+				except Exception as err:
+					print('Failed to remove tmp file ({}): {}'.format(tmp.name, err), file=sys.stderr)
+
+else:
+	raise ValueError('Unsupported action: {}'.format(action))

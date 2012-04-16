@@ -84,6 +84,34 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 	t -f /var/log/app2.log | color green - &
 	t -f /var/log/app2.log | color blue - &
 
+##### tabs_filter
+
+My secret weapon in tabs-vs-spaces holywar.
+
+In my emacs, tab key always inserts "\t", marking spaces as a bug with
+develock-mode.
+This script transparently converts all indent-tabs into spaces and back,
+designed to be used from git content filters, and occasionally by hand.
+
+.git/config:
+
+	[filter "tabs"]
+		clean = tabs_filter clean %f
+		smudge = tabs_filter smudge %f
+
+.gitattributes:
+
+	*.py filter=tabs
+	*.tac filter=tabs
+
+.gitignore:
+
+	/.gitignore
+	/.gitattributes
+
+Not sure why people have such strong opinions on that trivial matter, but I find
+it easier never to mention that I use such script ;)
+
 
 ### Misc
 
