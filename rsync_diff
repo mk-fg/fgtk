@@ -1,0 +1,192 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import itertools as it, operator as op, functools as ft
+from os.path import join, normpath
+from bsddb import btopen
+from time import sleep
+import os, fcntl, xdrlib, logging
+
+
+def stat_get(path, stat_func=os.lstat):
+	return int(stat_func(path).st_mtime)
+
+def stat_pack(mtime):
+	blob = xdrlib.Packer()
+	blob.pack_uint(mtime)
+	return blob.get_buffer()
+
+def stat_unpack(blob):
+	if blob is None: return None
+	blob = xdrlib.Unpacker(blob)
+	mtime = blob.unpack_uint()
+	blob.done()
+	return mtime
+
+
+def compare(src, db_path, callback=None, log=None, delay=None):
+	# DB Structure:
+	#  / : blob
+	#  /\0file1 : blob
+	#  /\1dir1 : blob
+	#  /dir1/\0file2 : blob
+	#  /dir1/\1dir2 : blob
+
+	if not log: log = logging.getLogger()
+	db = btopen(db_path, 'c')
+	popd = os.getcwd()
+	os.chdir(src)
+
+	try:
+		fcntl.lockf(db.db.fd(), fcntl.LOCK_EX) # important, to prevent corruption due to concurrent access
+
+		for root,dirs,files in os.walk('.'):
+			# Paths are stored as db keys
+			# Files are prefixed by \0 and dirs by \1 *before basename*
+			# Dirs end with /
+			# Examples: /path/to/\1some_dir, /path/to/\0some_file
+			files = dict( (k, (stat_get(path), path))
+				for k,path in ( (b'{}/\0{}'.format(root, name),
+					b'{}/{}'.format(root, name) ) for name in files) )
+			for name in dirs: assert name[0] != '\1' # can't handle these due to conflict with keys
+			dirs = dict(( b'{}/\1{}'.format(root, name),
+				b'{}/{}/'.format(root, name) ) for name in dirs)
+
+			root, path = b'{}/'.format(root), root
+			stat = stat_get(root)
+			try: k, v = db.set_location(root) # might return k > root
+			except KeyError: k = v = None # empty db or post-last key
+			log.debug('Entry: {}'.format(k))
+
+			## Update root node, if necessary
+			# stat is checked to detect whether files/dirs lists have changed,
+			#  and "root_updated" is set accordingly
+			if k != root or stat != stat_unpack(v):
+				if callback: callback('+', 'd', path)
+				db[root] = stat_pack(stat)
+				root_updated = True
+			else: root_updated = False
+
+			## Check db files
+			ks = len(root)
+			while True:
+				if k is None: break # there was no root entry
+				try: k,v = db.next()
+				except KeyError: break # no more keys
+				assert k != root # sanity check
+				# Check if this path is not in "root" anymore, or is a subdir
+				if not k.startswith(root) or b'/' in k[ks:]: break
+				log.debug(' subentry: {}'.format(k))
+
+				kt = k[ks]
+				if kt == b'\0': # file
+					if root_updated and k not in files:
+						log.debug('  deleted file')
+						if callback: callback('-', 'f', join(root, k[ks+1:]))
+						del db[k] # deleted file
+					else:
+						(stat, path), v_stat = files.pop(k), stat_unpack(v)
+						if stat != v_stat:
+							log.debug('  file stat mismatch, update')
+							if callback: callback('+', 'f', path)
+							db[k] = stat_pack(stat) # update stored file
+				elif root_updated and kt == b'\1' and k not in dirs: # dir, only checking for deletes here
+					log.debug('  deleted subdir')
+					if callback: callback('-', 'd', path)
+					# Prune all the paths that are recorded under it
+					subroot = dirs[k]
+					sk,v = db.set_location(subroot)
+					while True:
+						if not sk.startswith(subroot): break # done
+						del db[sk]
+						try: sk,v = db.next()
+						except KeyError: break
+					# Return db cursor to the previous location
+					db.set_location(k)
+					del db[k] # remove \1-prefixed entry in root as well
+
+			## Record new files
+			# New dirs will be stored when os.walk will recurse them as a "root" node
+			if root_updated:
+				for k,(stat,path) in files.viewitems():
+					log.debug(' new file: {}'.format(path))
+					if callback: callback('+', 'f', path)
+					db[k] = stat_pack(stat)
+			else: assert not files # should be consumed on stat checks
+
+			# Delay next iteration, if requested
+			if delay: sleep(delay)
+
+	finally:
+		db.sync()
+		db.close()
+
+	os.chdir(popd)
+
+
+def rsync_filter(*patterns):
+	patterns = map(normpath, patterns)
+	includes, excludes = set(), [b'*']
+	for pat in patterns:
+		pat = pat.lstrip(os.sep)
+		slugs = pat.split(os.sep)
+		for slug in range(1, len(slugs)):
+			includes.add(os.path.join(os.sep, *slugs[:slug]) + os.sep)
+		includes.add(os.path.join(os.sep, *slugs))
+	includes = sorted(includes, key=len)
+	return b'\n'.join(it.chain(
+		it.imap(ft.partial(op.add, b'+ '), includes),
+		it.imap(ft.partial(op.add, b'- '), excludes) ))
+
+
+def main():
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Mirror changes from source dir to destinaton dir.')
+	parser.add_argument('db', help='State-db path.')
+	parser.add_argument('src', help='Source path.')
+	parser.add_argument('dst', nargs='?', help='Destination path, optional with --update-only.')
+
+	parser.add_argument('-u', '--update-only', action='store_true',
+		help='Only update state-db, without syncing the actual paths.')
+	parser.add_argument('-x', '--from-scratch', action='store_true',
+		help='Start with blank state-db, force-syncing the paths.')
+
+	parser.add_argument('-v', '--verbose-sync', action='store_true', help='Add -v flag to rsync.')
+	parser.add_argument('--delay', type=float,
+		help='Sleep-delay on path entries iteration, mainly for easier debugging.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	optz = parser.parse_args()
+
+	if not optz.dst and not optz.update_only:
+		parser.error('Destination path must be specified.')
+
+	logging.basicConfig(
+		level=logging.DEBUG if optz.debug else logging.WARNING,
+		logfmt='%(asctime)s :: %(levelname)s :: %(name)s: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S' )
+	log = logging.getLogger()
+
+	compare_kwz = dict()
+
+	sync = not optz.update_only
+	if sync: # no point collecting these otherwise
+		paths = list()
+		compare_kwz['callback'] = lambda m,t,path: paths.append(path)
+
+	if optz.from_scratch and os.path.exists(optz.db): os.unlink(optz.db)
+	compare(optz.src, optz.db, log=log, delay=optz.delay, **compare_kwz)
+
+	if sync and paths:
+		from subprocess import Popen, PIPE
+		if not os.path.exists(optz.dst): os.mkdir(optz.dst)
+		sync = [ 'rsync', '-lptr', '--delete',
+			'--filter=merge -', join(optz.src, '.'), join(optz.dst, '.') ]
+		if optz.verbose_sync: sync.append('-v')
+		log.debug('Rsync command: {}'.format(' '.join(sync)))
+		sync = Popen(sync, stdin=PIPE)
+		sync.stdin.write(rsync_filter(*paths))
+		sync.stdin.close()
+		sync.wait()
+
+if __name__ == '__main__': main()

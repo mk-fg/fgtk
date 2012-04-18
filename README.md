@@ -39,6 +39,25 @@ operation boils down to two (optional) steps:
 Tool to restore POSIX ACLs on paths, broken by chmod or similar stuff without
 actually changing them.
 
+##### rsync_diff
+
+Tool to sync paths, based on berkley db and rsync.
+
+Keeps b-tree of paths (files and dirs) and corresponding mtimes in berkdb,
+comparing state when ran and building a simple merge-filter for rsync ("+ /path"
+line for each changed file/dir, including their path components, ending with "-
+*").
+Then it runs a single rsync with this filter to efficiently sync the paths.
+
+Note that the only difference from "rsync -a src dst" here is that "dst" tree
+doesn't have to exist on fs, otherwise scanning "dst" should be pretty much the
+same (and probably more efficient, depending on fs implementation) b-tree
+traversal as with berkdb.
+
+Wrote it before realizing that it's quite pointless for my mirroring use-case -
+I do have full source and destination trees, so rsync can be used to compare (if
+diff file-list is needed) or sync them.
+
 ##### fs
 
 Complex tool for high-level fs operations. Reference is built-in.
