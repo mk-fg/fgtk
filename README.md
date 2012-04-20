@@ -134,6 +134,21 @@ designed to be used from git content filters, and occasionally by hand.
 Not sure why people have such strong opinions on that trivial matter, but I find
 it easier never to mention that I use such script ;)
 
+##### distribute_regen
+
+Tool to auto-update python package metadata in setup.py and README files.
+
+Uses python ast module to parse setup.py to find "version" keyword there and
+update it (via simple regex replacement, not sure if ast can be converted back
+to code properly), based on date and current git revision number, producing
+something like "12.04.58" (year.month.revision-since-month-start).
+
+Also generates README.pypi (plaintext) from README.md (Markdown), if both are
+present and there's no README or README.rst.
+
+Designed to be used from pre-commit hook, like `ln -s /path/to/distribute_regen
+.git/hooks/pre-commit`, to update version number before every commit.
+
 
 ### Misc
 
