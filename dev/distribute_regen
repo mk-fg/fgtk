@@ -138,7 +138,9 @@ if regen_git:
 		while True:
 			if os.path.exists('.git/index.lock'): sleep(0.1)
 			else: break
-		Popen(['git', 'add', 'setup.py', 'README.pypi'], env=dict()).wait()
+		cmd = ['git', 'add', 'setup.py']\
+			+ (['README.pypi'] if regen_docs else [])
+		Popen(cmd, env=dict()).wait()
 		sys.exit()
 
 	# Abort the current commit due to changes made
