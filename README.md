@@ -103,6 +103,9 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 	t -f /var/log/app2.log | color green - &
 	t -f /var/log/app2.log | color blue - &
 
+
+### Dev
+
 ##### tabs_filter
 
 My secret weapon in tabs-vs-spaces holywar.
