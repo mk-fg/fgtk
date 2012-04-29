@@ -110,7 +110,7 @@ class TransmissionRemoteCLI(BufferedExec):
 
 
 @defer.inlineCallbacks
-def handle_dropped_file(self, path, mask):
+def handle_dropped_file(_, path, mask):
 	if path.splitext()[1] != '.magnet':
 		log.debug('Ignoring event for non-magnet path: {}'.format(path))
 		defer.returnValue(None)
