@@ -66,7 +66,7 @@ if optz.tmux:
 host_lists = map(os.path.expanduser, ['~/.cFG/host_list', '~/.cFG/host_list.roam'])
 host_lists_ext = os.path.expanduser('~/.cFG/host_list.ext')
 
-if optz.roam is None and os.path.exists(host_lists[1]):
+if not optz.roam and os.path.exists(host_lists[1]):
 	optz.roam = not os.path.exists('/dev/.net/fg_core') # created by wicd hook
 
 hosts = dict(
