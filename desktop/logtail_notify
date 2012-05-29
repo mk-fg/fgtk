@@ -39,7 +39,8 @@ class ReliableInotify(inotify.INotify):
 class Logtail(object):
 
 
-	def __init__( self, monitor, callback, exclude=None,
+	def __init__( self, monitor, callback,
+			exclude=None, keep_pos=False,
 			processing_delay=1.0, xattr_name='user.bordercamp.logtail.pos' ):
 		self.callback, self.processing_delay, self.xattr_name =\
 			callback, processing_delay, xattr_name
@@ -76,6 +77,10 @@ class Logtail(object):
 			if path not in paths_watch:
 				paths_watch[path] = {mask}
 			else: paths_watch[path].add(mask)
+
+		if not keep_pos:
+			for path_dir, paths in paths_watch.viewitems():
+				for path in paths: self.discard_changes(path_dir.child(path))
 
 		self.notifier_restart()
 
@@ -126,9 +131,12 @@ class Logtail(object):
 		return True
 
 
-	def handle_change(self, stuff, path, mask):
-		mask_str = inotify.humanReadableMask(mask)
-		log.debug('Event: {} ({})'.format(path, mask_str))
+	def discard_changes(self, path): self.handle_change(None, path)
+
+	def handle_change(self, stuff, path, mask=None):
+		if mask:
+			mask_str = inotify.humanReadableMask(mask)
+			log.debug('Event: {} ({})'.format(path, mask_str))
 
 		## Filtering
 		path_real = path.realpath()
@@ -166,8 +174,9 @@ class Logtail(object):
 		if pos:
 			pos, size, data_hash = pos
 			if self.file_end_check(path_real, pos, size=size, data_hash=data_hash):
-				log.debug(( 'Event (mask: {}) for unchanged'
-					' path, ignoring: {}' ).format(mask_str, path))
+				if mask:
+					log.debug(( 'Event (mask: {}) for unchanged'
+						' path, ignoring: {}' ).format(mask_str, path))
 				return
 			if path_real.getsize() < pos:
 				log.debug( 'Detected truncation'
@@ -195,18 +204,19 @@ class Logtail(object):
 						log.debug( 'Updated xattr ({}) for path {} to: {!r}'\
 							.format(self.xattr_name, path_real, pos) )
 					break
-				buff_agg = self.paths_buff[path_real] = self.process(buff_agg + buff, path)
+				buff_agg = self.paths_buff[path_real] = self.process(
+					buff_agg + buff, path, supress_callback=mask is None )
 
 	def read(self, src):
 		'Read however much is necessary for process() method'
 		return src.readline()
 
-	def process(self, buff, path):
+	def process(self, buff, path, supress_callback=False):
 		'Process buffered/read data, returning leftover buffer'
 		if buff.endswith('\n'):
 			line = buff.strip()
 			log.debug('New line: {!r}'.format(line))
-			self.callback(path, line)
+			if not supress_callback: self.callback(path, line)
 			return ''
 		else:
 			return buff
@@ -237,6 +247,8 @@ def main():
 	parser.add_argument('-i', '--icon', help='Icon to use for notifications.')
 	parser.add_argument('-x', '--xattr-db',
 		help='Path to shelve-db to use instead of xattrs to record file position.')
+	parser.add_argument('--keep-pos',
+		help='Start reading file from last-recorded position, not from the end.')
 	parser.add_argument('--debug',
 		action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args()
@@ -268,8 +280,8 @@ def main():
 
 	note_attrs = dict()
 	if optz.icon: note_attrs['icon_name'] = optz.icon
-	tailer = Logtail( optz.monitor,
-		ft.partial(notify, **note_attrs), exclude=optz.exclude )
+	tailer = Logtail( optz.monitor, ft.partial(notify, **note_attrs),
+		keep_pos=optz.keep_pos, exclude=optz.exclude )
 
 	log.debug('Starting event loop')
 	reactor.run()
