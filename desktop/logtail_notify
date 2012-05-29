@@ -241,7 +241,7 @@ def main():
 	parser = argparse.ArgumentParser(
 		description='Monitor given log paths for changes,'
 			' creating desktop notifications for new lines.')
-	parser.add_argument('monitor', help='Glob patterns for paths to monitor.')
+	parser.add_argument('monitor', nargs='+', help='Glob patterns for paths to monitor.')
 	parser.add_argument('--exclude', action='append',
 		default=list(), help='Regexps to match against paths to exclude from monitoring.')
 	parser.add_argument('-i', '--icon', help='Icon to use for notifications.')
