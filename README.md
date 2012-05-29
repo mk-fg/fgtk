@@ -282,3 +282,20 @@ Script to make Skype use desktop-notification protocol.
 * disable or enable the notifications you want to receive.
 
 Imported from [this gist](https://gist.github.com/1958564).
+
+##### logtail_notify
+
+Script to watch log files (as many as necessary) for changes with inotify and
+report any new lines appearing there via desktop notifications.
+
+Can remember last position in file either by recording it in file's xattrs or in
+a shelve db (specified via -x option).
+Doesn't do much with it by default though, starting to read files from the end,
+but that can be fixed by passing --keep-pos.
+
+Somewhat advanced usage example:
+
+	logtail_notify\
+	  -i ~/media/appz/icons/biohazard_48x.png\
+	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
+	  /var/log/messages
