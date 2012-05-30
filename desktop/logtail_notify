@@ -12,7 +12,34 @@ from twisted.python.filepath import FilePath
 from twisted.internet import inotify, reactor, defer
 from twisted.python import log
 
-from gi.repository import Gtk, Notify
+import dbus # gi.Notify seem to break when daemon instance exits
+
+
+
+_notifier = None
+
+def notify( path, line, icon='',
+		actions=list(), hints=dict(), timeout=-1, retries=2 ):
+	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
+			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
+		r'\g<channel> \g<msg>', line )
+	global _notifier
+	while True:
+		if not _notifier:
+			_notifier = dbus.Interface(
+				dbus.SessionBus().get_object(
+					'org.freedesktop.Notifications',
+					'/org/freedesktop/Notifications' ),
+				dbus_interface='org.freedesktop.Notifications' )
+		try:
+			_notifier.Notify( 'logtail_notify', 0, icon,
+				'log: {}'.format(path.basename()), line, actions, hints, timeout )
+		except dbus.exceptions.DBusException as err:
+			if retries < 0 or err.get_dbus_name() !=\
+				'org.freedesktop.DBus.Error.ServiceUnknown': raise
+			_notifier = None # force reconnection
+			retries -= 1
+		else: break
 
 
 
@@ -223,19 +250,6 @@ class Logtail(object):
 
 
 
-Notify.init('logtail')
-def notify(path, line, **note_attrs):
-	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
-			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
-		r'\g<channel> \g<msg>', line )
-	note = Notify.Notification()
-	note.set_properties(
-		summary='log: {}'.format(path.basename()),
-		body=line, **note_attrs )
-	note.show()
-
-
-
 def main():
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -279,7 +293,7 @@ def main():
 			def __del__(self): xattr_db.sync()
 
 	note_attrs = dict()
-	if optz.icon: note_attrs['icon_name'] = optz.icon
+	if optz.icon: note_attrs['icon'] = optz.icon
 	tailer = Logtail( optz.monitor, ft.partial(notify, **note_attrs),
 		keep_pos=optz.keep_pos, exclude=optz.exclude )
 
