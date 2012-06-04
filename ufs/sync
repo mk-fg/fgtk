@@ -1,0 +1,31 @@
+#!/bin/bash
+shopt -s extglob
+
+fail= dry_run= verbose= chunks=()
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-n|--dry-run) dry_run=true;;
+		-v|--verbose) verbose=true;;
+		+([0-9])) chunks=( ${chunks[@]} $1 );;
+		*)
+			echo >&2 "Usage: $0 [-n] [-v] [chunk_number...]"
+			exit 1;;
+	esac
+	shift
+done
+
+if [[ ${#chunks[@]} -eq 0 ]]
+then chunks=( $(ls -1Ud /srv/ufs/chunk*) )
+else
+	chunks=( $( for chunk in ${chunks[@]}
+		do echo /srv/ufs/chunk$chunk; done ) )
+fi
+[[ -n "$dry_run" ]] && dry_run=echo
+[[ -n "$verbose" ]] && verbose='-v'
+
+for chunk in ${chunks[@]}; do
+	mountpoint -q $chunk\
+		&& { $dry_run csync2 -x -C ufs${chunk##*/chunk} $verbose || fail=true; true; }\
+		|| { echo >&2 "UFS chunk doesn't seem to be mounted: $chunk"; fail=true; }
+done
+[[ -z "$fail" ]]

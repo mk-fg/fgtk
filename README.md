@@ -299,3 +299,14 @@ Somewhat advanced usage example:
 	  -i ~/media/appz/icons/biohazard_48x.png\
 	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
 	  /var/log/messages
+
+
+### UFS
+
+A few tools to work with a unionfs-based distributed filesystem.
+
+Basically it's a few dumb nfs shares on different hosts, some of them being a
+replicas, maintained by csync2, unified via some sort of unionfs.
+
+So far, seem to be the simpliest and by far the most robust, predictable and
+reliable distributed filesystem configuration for my simple use-case.

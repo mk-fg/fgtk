@@ -1,0 +1,122 @@
+#!/bin/bash
+
+src=/srv/ufs/buffer
+lock=/tmp/.ufs.flush.lock
+lock_wait=3600
+passwd_file=
+
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-n|--dry-run) dry_run=true;;
+		-v|--verbose) verbose=true;;
+		*)
+			echo >&2 "Usage: $0 [-n] [-v]"
+			exit 1;;
+	esac
+	shift
+done
+
+[[ -n "$dry_run" ]] && dry_run=echo
+[[ -n "$verbose" ]] && verbose='-v'
+
+exec 9>"$lock"
+if ! flock -w "$lock_wait" -x 9; then
+	echo >&2 "Failed to acquire lock in ${lock_wait}s: $lock"
+	exit 1
+fi
+
+if [[ -z "$passwd_file" ]]; then
+	passwd_file=$(mktemp --tmpdir=/tmp .rsync.passwd.XXXXX)
+	[[ -n "$verbose" ]] && echo "Created rsync password file: $passwd_file"
+	awk -F: '$1=="ufs" {print $2}' /etc/rsyncd.auth >"$passwd_file"
+	trap "rm -f $passwd_file" EXIT
+fi
+
+awk '
+	# Get hostname
+	BEGIN { "hostname" | getline host }
+
+	# Set "fn" to something like ufsX, once for each file
+	BEGINFILE {
+		if (match(FILENAME, /_(ufs[[:digit:]]+)/, a)) fn=a[1]
+		else nextfile }
+
+	# Process group, get hosts
+	get_hosts && match($0, /^\s*#?\s*host\s+(.*);/, a) {
+		split(a[1], a)
+		for (i in a) {
+			if (a[i] == host) {
+				dst[fn]="local"
+				break }
+			else if (!dst[fn]) dst[fn]=a[i] }
+		get_hosts=0 }
+
+	# Process file lines, get hosts to sync from
+	/^\s*$/ {next}
+	/^\s*#?\s*group/ {
+		if (!paths_prev) delete pat[fn]
+		else get_hosts=1 }
+	/^#/ {
+		for (i=2; i<=NF; i++) {
+			if (!match($i, /^\//)) {
+				if (i>2) delete pat[fn]
+				break }
+			pat[fn][length(pat[fn])+1] = $i }
+		paths_prev=1
+		next }
+	{paths_prev=0}
+
+	# Print "CHUNK PATH DST" lines, sorted by PATH length (w/o "*")
+	# Idea here is to give most-specific paths first, more general ones later
+	function cmp_len(i1,v1,i2,v2) {
+		sa=v1[2]; sb=v2[2]
+		gsub("*", "", sa); gsub("*", "", sb)
+		return length(sb) - length(sa) }
+	END {
+		delete out[1] # declares "out" as an array
+		for (fn in pat)
+			for (i in pat[fn]) {
+				out_i=length(out)+1
+				out[out_i][1]=fn
+				out[out_i][2]=pat[fn][i]
+				out[out_i][3]=dst[fn] }
+		PROCINFO["sorted_in"]="cmp_len"
+		for (i in out) print out[i][1], out[i][2], out[i][3] }'\
+	/etc/csync2_ufs*.cfg |
+
+while read chunk what dst; do
+	[[ -z "$chunk" || -z "$what" || -z "$dst" ]] && exit 2
+	[[ -n "$verbose" ]] && echo "Checking ${src}${what} (chunk: $chunk, dst: $dst)"
+	[[ -e "${src}${what}" ]] || continue
+	[[ -n "$verbose" ]] && echo " --- $chunk: $what -> $dst"
+
+	sync_src="${src}${what}/."
+	if [[ "$dst" = local ]]
+	then
+		dst=/srv/ufs
+		passwd=
+	else
+		dst="ufs@${dst}::ufs-update"
+		passwd="--password-file ${passwd_file}"
+	fi
+	sync_dst="${dst}/chunk${chunk#ufs}${what}/."
+
+	if [[ -n "$(find "$sync_src" -newer "$lock")" ]]; then
+		[[ -n "$verbose" ]] && echo "detected recent mods in $sync_src, skipping"
+		continue
+	fi
+
+	$dry_run rsync -ax $verbose\
+		$passwd --remove-source-files\
+		"$sync_src" "$sync_dst" || exit 1
+	[[ -n "$verbose" ]] && echo
+done
+
+$dry_run find "$src"/* -type d -empty -delete 2>/dev/null
+[[ -n "$(find "$src"/* -newer "$lock" 2>/dev/null)" ]] && exit 0
+
+if [[ -n "$(find "$src"/* 2>/dev/null)" ]]; then
+	echo >&2 "Failed to flush some paths from ufs buffer:"
+	$dry_run find "$src"/* >&2
+	exit 1
+fi
