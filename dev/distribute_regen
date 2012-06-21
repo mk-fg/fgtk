@@ -12,7 +12,7 @@ import argparse
 parser = argparse.ArgumentParser(
 	description='Auto-update python package build system.'
 		' Updates "version" in setup.py,'
-			' produces README.pypi, checks *.py files for syntax errors.'
+			' produces README.txt, checks *.py files for syntax errors.'
 		' Special checks are made to check if the tool is run from git pre-commit hook.')
 parser.add_argument('--git-dir',
 	help='Project root directory, assumed to be "." by default.')
@@ -33,7 +33,7 @@ if regen_git: # break immediately if there's no changes
 regen_setup = bool(optz.setup)
 regen_docs = os.path.exists('README.md')\
 	and not any(map(os.path.exists, ['README', 'README.rst']))\
-	and os.path.exists('README.pypi')
+	and os.path.exists('README.txt')
 
 
 ### Do the stuff
@@ -107,23 +107,24 @@ if regen_setup:
 				raise
 
 if regen_docs:
-	## Regenerate README.pypi (ReST) from README.md (Markdown)
-	# Currently done in the sucky way by using lynx and md-to-html tool
+	## Regenerate README.txt (ReST) from README.md (Markdown)
 
 	from tempfile import NamedTemporaryFile
-	with NamedTemporaryFile(dir='.', prefix='README.pypi.', delete=False) as tmp:
+	with NamedTemporaryFile(dir='.', prefix='README.txt.', delete=False) as tmp:
 		try:
-			md_to_html = Popen(['markdown_py', 'README.md'], stdout=PIPE, env=dict())
-			html_to_text = Popen( ['lynx', '-dump', '-stdin'],
-				stdin=md_to_html.stdout, stdout=tmp, env=dict() )
-			os.rename(tmp.name, 'README.pypi')
+			if Popen( ['pandoc', '-f', 'markdown', '-t', 'rst', 'README.md'],
+					stdout=tmp, env=dict(PATH=os.environ['PATH']) ).wait():
+				raise RuntimeError('pandoc process exited with error')
+			os.rename(tmp.name, 'README.txt')
 		except Exception as err:
 			try: os.unlink(tmp.name)
 			except (OSError, IOError): pass
-			print('Failed to regenerate docs: {}'.format(err), file=sys.stderr)
-			sys.exit(1)
-	md_to_html.wait()
-	html_to_text.wait()
+			raise
+	proc_desc = Popen([ 'python', 'setup.py',
+		'--long-description' ], stdout=PIPE, env=dict(PATH=os.environ['PATH']))
+	if Popen( ['rst2html.py'], stdin=proc_desc.stdout,
+			stdout=open('/dev/null', 'wb') ).wait() or proc_desc.wait():
+		raise RuntimeError('Failed to validate produced README.txt')
 
 if regen_git:
 	## Check if no changes to setup.py were made and ack the commit
@@ -138,9 +139,7 @@ if regen_git:
 		while True:
 			if os.path.exists('.git/index.lock'): sleep(0.1)
 			else: break
-		cmd = ['git', 'add', 'setup.py']\
-			+ (['README.pypi'] if regen_docs else [])
-		Popen(cmd, env=dict()).wait()
+		Popen(['git', 'add', 'setup.py'], env=dict()).wait()
 		sys.exit()
 
 	# Abort the current commit due to changes made

@@ -143,8 +143,9 @@ update it (via simple regex replacement, not sure if ast can be converted back
 to code properly), based on date and current git revision number, producing
 something like "12.04.58" (year.month.revision-since-month-start).
 
-Also generates README.pypi (plaintext) from README.md (Markdown), if both are
-present and there's no README or README.rst.
+Also generates (and checks with docutils afterwards) README.txt (ReST) from
+README.md (Markdown) with pandoc, if both are present and there's no README or
+README.rst.
 
 Designed to be used from pre-commit hook, like `ln -s /path/to/distribute_regen
 .git/hooks/pre-commit`, to update version number before every commit.
