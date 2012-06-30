@@ -78,33 +78,35 @@ if regen_setup:
 		else: raise KeyError('Failed to find "setup(...)" call in AST')
 		for kw in line.value.keywords:
 			if kw.arg == 'version':
-				version_orig = kw.value.s
+				try: version_orig = kw.value.s
+				except AttributeError: version_orig = None
 				break
 		else:
 			raise KeyError('Failed to find "version=" keyword in setup(...) call')
 
-		src.seek(0)
-		version_re = re.compile( r'(?P<pre>\bversion\s*=\s*u?[\'"]+)'\
-			+ re.escape(repr(version_orig).strip('\'"')) + r'(?P<post>[\'"]+)' )
-		with NamedTemporaryFile(
-				dir=os.path.dirname(optz.setup),
-				prefix=os.path.basename(optz.setup + '.'), delete=False ) as tmp:
-			try:
-				verson_updated = False
-				for line in src:
-					line_org = line
-					line, changes = version_re.subn(r'\g<pre>{}\g<post>'.format(version), line)
-					if changes:
-						if verson_updated:
-							raise KeyError('Multiple lines matching "version=" regex')
-						else: verson_updated = True
-					tmp.write(line)
-				tmp.flush()
-				os.rename(tmp.name, src.name)
-			except:
-				try: os.unlink(tmp.name)
-				except (OSError, IOError): pass
-				raise
+		if version_orig:
+			src.seek(0)
+			version_re = re.compile( r'(?P<pre>\bversion\s*=\s*u?[\'"]+)'\
+				+ re.escape(repr(version_orig).strip('\'"')) + r'(?P<post>[\'"]+)' )
+			with NamedTemporaryFile(
+					dir=os.path.dirname(optz.setup),
+					prefix=os.path.basename(optz.setup + '.'), delete=False ) as tmp:
+				try:
+					verson_updated = False
+					for line in src:
+						line_org = line
+						line, changes = version_re.subn(r'\g<pre>{}\g<post>'.format(version), line)
+						if changes:
+							if verson_updated:
+								raise KeyError('Multiple lines matching "version=" regex')
+							else: verson_updated = True
+						tmp.write(line)
+					tmp.flush()
+					os.rename(tmp.name, src.name)
+				except:
+					try: os.unlink(tmp.name)
+					except (OSError, IOError): pass
+					raise
 
 if regen_docs:
 	## Regenerate README.txt (ReST) from README.md (Markdown)
