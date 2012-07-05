@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+
+import itertools as it, operator as op, functools as ft
+from subprocess import Popen
+import os, sys, re
+
+try: import simplejson as json
+except ImportError: import json
+
+
+def parse_tgmg(data):
+	for tab in it.imap(json.loads, data['tabs']):
+		yield tab['entries'][-1]['url'] # discarding tab history
+
+
+def relay_url(url):
+	err = Popen(['chrome', url]).wait()
+	if err: log.warn('Failed to relay URL to chrome (exit code: {}): {}'.format(err, url))
+
+
+def main():
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Import firefox tabgroup data (*.tgmg,'
+			' as produced by "TabGroups Manager" extension) into Google Chrome.')
+	parser.add_argument('tgmg_file', help='Path to a *.tgmg file.')
+	parser.add_argument('-f', '--filter-regex',
+		help='Regexp to filter URLs through, discarding unmatched ones.')
+	parser.add_argument('-r', '--range',
+		help='Numerical range of (filter-matched) tabs to'
+				' import in "FROM:TO" (integers, 0-indexed) format.'
+			' Open-ended ranges should be specified as "FROM:" or ":TO".')
+	parser.add_argument('-n', '--dry-run',
+		action='store_true', help='Do not relay the URLs, just process the dump.')
+	parser.add_argument('--debug',
+		action='store_true', help='Verbose operation mode.')
+	optz = parser.parse_args()
+
+	import logging
+	logging.basicConfig(
+		level=logging.DEBUG if optz.debug else logging.WARNING )
+	global log
+	log = logging.getLogger()
+
+	if optz.filter_regex:
+		log.debug('Using regex filter: {!r}'.format(optz.filter_regex))
+		optz.filter_regex = re.compile(optz.filter_regex)
+	if optz.range:
+		optz.range = tuple((i and int(i)) for i in optz.range.split(':'))
+		if len(optz.range) != 2: parser.error('--range should use FROM:TO format.')
+		optz.range = optz.range[0] or 0, optz.range[1] or 2**31
+
+	idx = 0
+	for tab_url in parse_tgmg(json.load(open(optz.tgmg_file))):
+		if optz.filter_regex and not optz.filter_regex.search(tab_url):
+			log.debug('Skipping URL (doesnt match filter regex): {}'.format(tab_url))
+			continue
+		if optz.range and optz.range[0] <= idx < optz.range[1]:
+			log.debug('Relaying URL: {}'.format(tab_url))
+			if not optz.dry_run: relay_url(tab_url)
+		else:
+			log.debug('Skipping URL (not in specified range): {}'.format(tab_url))
+		idx += 1
+
+if __name__ == '__main__': main()
