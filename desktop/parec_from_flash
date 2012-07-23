@@ -40,7 +40,7 @@ if [[ -z "$idx" ]]; then
 		pacmd list-sink-inputs |
 		awk '
 			match($0,/^\s*index: ([0-9]+)\s*$/,a) {idx=a[1]}
-			idx && $1=="application.process.binary" &&\
+			idx!="" && $1=="application.process.binary" &&\
 				match($0,/\<plugin-container\>/) {print idx}' )
 	[[ -z "$idx" ]] && {
 		echo >&2\
