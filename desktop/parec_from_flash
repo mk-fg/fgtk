@@ -3,7 +3,7 @@
 
 ### Process CLI
 
-idx= output= sink=wiretap
+idx= output= output_opts=() sink=wiretap
 
 while [[ -n "$1" ]]; do
 	case "$1" in
@@ -23,7 +23,11 @@ while [[ -n "$1" ]]; do
 		-s|--sink-name) shift; sink=$1 ;;
 		-o|--output) shift; output=$1 ;;
 		-i|--index) shift; idx=$1 ;;
-		*) echo "Unknown arg/option: $1" && exit 1 ;;
+		--) output_opts=true
+			[[ -z "$output" ]] && { echo >&2 "Need --output set to use oggenc"; exit 1; } ;;
+		*)
+			[[ -n "$output_opts" ]] && { output_opts=( "$@" ); break; }
+			echo "Unknown arg/option: $1" && exit 1 ;;
 	esac
 	shift
 done
@@ -67,7 +71,7 @@ pactl move-sink-input "$idx" "$sink"
 
 if [[ -z "$output" ]]
 then parec -d "$sink".monitor
-else parec -d "$sink".monitor | oggenc -o "$output" --raw -
+else parec -d "$sink".monitor | oggenc -o "$output" --raw "${output_opts[@]}" -
 fi
 
 trap "pactl unload-module $sink_idx" EXIT
