@@ -22,7 +22,7 @@ while [[ -n "$1" ]]; do
 		-d|--debug) set -x ;;
 		-s|--sink-name) shift; sink=$1 ;;
 		-o|--output) shift; output=$1 ;;
-		-i|--index) shift; idx=$1 ;;
+		-i|--index) shift; idx=( $1 ) ;;
 		--) output_opts=true
 			[[ -z "$output" ]] && { echo >&2 "Need --output set to use oggenc"; exit 1; } ;;
 		*)
@@ -36,12 +36,12 @@ done
 ### Try to auto-guess index
 
 if [[ -z "$idx" ]]; then
-	idx=$(
+	idx=( $(
 		pacmd list-sink-inputs |
 		awk '
 			match($0,/^\s*index: ([0-9]+)\s*$/,a) {idx=a[1]}
 			idx!="" && $1=="application.process.binary" &&\
-				match($0,/\<plugin-container\>/) {print idx}' )
+				match($0,/\<plugin-container\>/) {print idx}' ) )
 	[[ -z "$idx" ]] && {
 		echo >&2\
 			'Failed to get stream index from "pacmd list-sink-inputs",'\
@@ -67,11 +67,13 @@ sink_idx=$(
 	pactl load-module module-null-sink sink_name="$sink" )
 [[ -z "$sink_idx" ]] && { echo >&2 'Failed to get/open sink'; exit 1; }
 
-pactl move-sink-input "$idx" "$sink"
+trap "pactl unload-module $sink_idx" EXIT
+
+for i in "${idx[@]}"
+do pactl move-sink-input "$i" "$sink"
+done
 
 if [[ -z "$output" ]]
 then parec -d "$sink".monitor
 else parec -d "$sink".monitor | oggenc -o "$output" --raw "${output_opts[@]}" -
 fi
-
-trap "pactl unload-module $sink_idx" EXIT
