@@ -63,12 +63,14 @@ if regen_setup:
 	version = strftime('%y.%m.{}').lstrip('0').format(ver_minor)
 
 	from tempfile import NamedTemporaryFile
-	import re
+	import re, ast
+
+	ast_body = lambda src: ast.parse('\n'.join(
+		line for line in src if not line.strip().startswith('#') )).body
 
 	with open(optz.setup, 'r+b') as src:
 		# Find setup(...) call in module context
-		import ast
-		for line in reversed(ast.parse(src.read()).body):
+		for line in reversed(ast_body(src)):
 			if isinstance(line, ast.Expr):
 				try:
 					if line.value.func.id == 'setup': break
@@ -92,9 +94,9 @@ if regen_setup:
 			from glob import iglob
 			for mod_init in iglob(join(dirname(optz.setup), '*', '__init__.py')):
 				with open(mod_init) as src:
-					for line in reversed(ast.parse(src.read()).body):
+					for line in reversed(ast_body(src)):
 						if isinstance(line, ast.Assign)\
-								and '__version__' in map(op.attrgetter('id'), line.targets):
+								and '__version__' in (getattr(t, 'id', None) for t in line.targets):
 							version_orig = line.value.s
 							break
 			version_re = re.compile( r'(?P<pre>__version__\s*=\s*u?[\'"]+)'\
