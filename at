@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 if [[ "$1" == "-h" ]]; then
 	echo >&2 "Usage: $0 [ -h | -v ] when < sh_script"

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 PID="/tmp/.$(basename $0).$(echo "$1.$2" | md5sum | cut -b-5)"
 touch "$PID"

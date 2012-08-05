@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 PW_FLAG=/tmp/i_dont_give_a_fuck
 
