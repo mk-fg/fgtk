@@ -4,7 +4,8 @@ from __future__ import unicode_literals, print_function
 from optparse import OptionParser
 parser = OptionParser(usage='%prog [options] [PATH1 PATH2 ...]',
 	description="Update ACLs on given paths, so that they'd match"
-		' default ACLs. Usually needed after a chmod.')
+		' default ACLs and all entries will be effective (recalculate mask).'
+		' Usually needed after a chmod.')
 parser.add_option('-p', '--dry-run', action='store_true',
 	help='Just show what needs to be done.')
 parser.add_option('--debug', action='store_true',
@@ -12,7 +13,7 @@ parser.add_option('--debug', action='store_true',
 optz,argz = parser.parse_args()
 
 import itertools as it, operator as op, functools as ft
-from fgc.acl import get, apply, update_from_default
+from fgc import acl
 import os, sys
 
 import logging
@@ -23,9 +24,11 @@ logging.basicConfig(level=log)
 log = logging.getLogger()
 
 for path in argz:
-	acl_src = set(get(path))
-	acl_dst = set(update_from_default(acl_src))
+	acl_src = set(acl.get(path))
+	acl_dst = set(
+		acl.update_from_default(
+			acl.get(path, effective=False) ) )
 	if acl_src != acl_dst:
 		log.info( 'Updating ACL for path: {0}\n old: {1}\n new: {2}'\
 			.format(path, sorted(acl_src), sorted(acl_dst)) )
-		if not optz.dry_run: apply(acl_dst, path)
+		if not optz.dry_run: acl.apply(acl_dst, path)
