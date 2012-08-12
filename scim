@@ -147,10 +147,12 @@ feat_get, feat_set = lambda *a: None, lambda *a,**k: log.warn(
 try: from fgc.strcaps import get_file as strcaps_get, set_file as strcaps_set
 except ImportError:
 	strcaps_get, strcaps_set = feat_get, ft.partial(feat_set, feat='posix caps')
-try: from fgc.acl import get as acl_get, set as acl_set, is_mode as acl_is_mode
+try:
+	from fgc.acl import get as acl_get, unset as acl_unset,\
+		is_mode as acl_is_mode, get_mode as acl_get_mode
 except ImportError:
 	acl_get = acl_is_mode = feat_get
-	acl_rebase = ft.partial(feat_set, feat='acls')
+	acl_unset, acl_rebase = None, ft.partial(feat_set, feat='acls')
 
 import re, stat
 optz.meta_exclude = map(re.compile, optz.meta_exclude)
@@ -166,12 +168,12 @@ def meta_get(path):
 	try: caps = strcaps_get(path)
 	except OSError: caps = None # no kernel/fs support
 	try:
-		acls = acl_get(path)
+		acls = acl_get(path, effective=False)
 		if acl_is_mode(acls): raise OSError # just a mode reflection
 	except OSError: acls = None # no kernel/fs support
 	if caps or acls: meta += '/' + (caps.replace(' ', ';') if caps else '')
 	if acls:
-		mode = acl.get_mode(acls) | (fstat.st_mode & 07000)
+		mode = acl_get_mode(acls) | (fstat.st_mode & 07000)
 		meta += '/' + ','.join(acls)
 	else: mode = fstat.st_mode
 	setgid_recurse = False
@@ -202,6 +204,7 @@ def meta_set(path, meta):
 	try: sh.chown(path, uid, gid)
 	except KeyError as err:
 		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
+	if not acls and acl_unset: acl_unset(path)
 	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
 	else:
 		sh.chmod(path, mode, dereference=False)
