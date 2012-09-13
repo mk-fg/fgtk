@@ -1,0 +1,152 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+
+import itertools as it, operator as op, functools as ft
+from os.path import join, normpath
+import os, sys, re
+
+
+def main():
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Convert darcs bundle to a unified diff.')
+	parser.add_argument('bundle', nargs='?',
+		help='Path to darcs bundle file (default: use stdin).')
+	parser.add_argument('-s', '--skip-files',
+		metavar='regexp', action='append', default=list(),
+		help='Skip hunks from files with paths (as given by darcs),'
+			' matching given regexp. Can be specified multiple times.')
+	parser.add_argument('-n', '--limit', type=int, help='Max number of hunks to export.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	optz = parser.parse_args()
+
+	import logging
+	logging.basicConfig(
+		format='%(levelname)s :: %(message)s',
+		level=logging.WARNING
+			if not optz.debug else logging.DEBUG )
+	log = logging.getLogger()
+
+
+	def panic(msg='Invalid file format'):
+		raise ValueError(msg)
+
+	def skip_lines(src, empty=True, stop_on=list()):
+		src, src_peek = it.tee(src)
+		for line in src_peek:
+			line_is_empty = not line.strip()
+			if empty and line_is_empty: next(src)
+			elif not empty:
+				if stop_on:
+					for regexp in stop_on:
+						if re.search(regexp, line): return src
+					else: regexp = False
+				if not line_is_empty: next(src)
+				else:
+					skip_lines(src, empty=True)
+					return src
+			break
+		return src
+
+	def skip_to_hunk(src, line=''):
+		for line in it.chain([line], src):
+			if line.strip() == '}':
+				log.debug('No more hunks left - next commit')
+				return None
+			match = re.search(r'^hunk (?P<path>.*) (?P<line>\d+)$', line)
+			if match: break
+		else:
+			log.debug('No more lines left')
+			return None
+		log.debug('Next hunk start: {}'.format(line.strip()))
+		return match
+
+
+	with (sys.stdin if not optz.bundle else open(optz.bundle)) as src:
+		for line in src:
+			# section -- New patches:
+			if re.search(r'^New patches:$', line): break
+		else: panic()
+
+		while True:
+			src = skip_lines(src, empty=True)
+
+			# -- [interfaces.py: 'which -> that' grammar cleanup.
+			line = next(src)
+
+			if re.search(r'^Context:$', line):
+				log.debug('Reached darcs-context, all done')
+				return
+
+			log.debug('Next commit start: {}'.format(line.strip()))
+			match = re.search(r'\[(.*)$', line)
+			if not match: panic('Not a commit-start line, bailing out: {}'.format(line.strip()))
+			commit_summary = match.group(1)
+
+			# -- david-sarah@jacaranda.org**20111205024024
+			# --  Ignore-this: 2de8d902dd7b473fb5c15701fcd8e0f7
+			src = skip_lines(src, empty=False, stop_on=r'^[')
+			commit_message = list()
+			for line in src:
+				if line.startswith(']'): break
+				commit_message.append(line.strip())
+
+			for line in src:
+				# -- hunk ./src/allmydata/interfaces.py 33
+				match = re.search(r'^hunk (?P<path>.*) (?P<line>\d+)$', line)
+				if not match: continue
+				break
+
+
+			while match:
+				path, line_no = match.group('path'), int(match.group('line'))
+				log.debug('Hunk: {} {}'.format(path, line_no))
+
+				if optz.skip_files:
+					for regexp in optz.skip_files:
+						if re.search(regexp, path): break
+					else: regexp = None
+					if regexp:
+						log.debug('Skipping hunk')
+						match = skip_to_hunk(src)
+						continue
+
+				diff = list()
+				change_src = change_dst = 0
+				for line in src:
+					# -- -class RIStubClient(RemoteInterface):
+					if line[0] not in '-+ ':
+						match = skip_to_hunk(src, line)
+						break
+					else:
+						diff.append(line)
+						if line[0] in '- ': change_src += 1
+						if line[0] in '+ ': change_dst += 1
+
+				paths, new = list(normpath(join(k, path)) for k in 'ab'), False
+				line_no_src = line_no_dst = line_no
+				if line_no == 1 and change_src == 0:
+					log.debug('Detected file creation: {}'.format(path))
+					new, line_no_src = True, 0
+				print('diff --git {} {}'.format(*paths))
+				print('--- {}\n+++ {}'.format(*(paths if not new else ['/dev/null', paths[1]])))
+				print(
+					'@@ -{line_no_src},{change_src} +{line_no_dst},{change_dst} @@'\
+					.format( line_no_src=line_no_src, line_no_dst=line_no_dst,
+						change_src=change_src, change_dst=change_dst ) )
+				print(''.join(diff), end='')
+
+				if optz.limit is not None:
+					optz.limit -= 1
+					if optz.limit <= 0:
+						log.debug('Reached hunk-limit, exiting')
+						return
+
+
+
+
+
+
+if __name__ == '__main__': main()
