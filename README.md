@@ -150,6 +150,17 @@ README.rst.
 Designed to be used from pre-commit hook, like `ln -s /path/to/distribute_regen
 .git/hooks/pre-commit`, to update version number before every commit.
 
+##### darcs_bundle_to_diff
+
+Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
+hunks. Handles file creations and all sorts of updates, but probably not moves
+and removals, which were outside my use-case at the moment.
+
+Was written for just one occasion (re-working old bundles attached to tahoe-lafs
+tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
+out-of-date, but I imagine it shouldn't take much effort to make it work with
+any other bundles.
+
 
 ### Misc
 
