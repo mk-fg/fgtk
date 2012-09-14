@@ -37,16 +37,20 @@ def main():
 		src, src_peek = it.tee(src)
 		for line in src_peek:
 			line_is_empty = not line.strip()
-			if empty and line_is_empty: next(src)
+			if empty and line_is_empty:
+				next(src)
+				continue
 			elif not empty:
 				if stop_on:
 					for regexp in stop_on:
 						if re.search(regexp, line): return src
 					else: regexp = False
-				if not line_is_empty: next(src)
+				if not line_is_empty:
+					next(src)
+					continue
 				else:
 					skip_lines(src, empty=True)
-					return src
+					break
 			break
 		return src
 
