@@ -32,9 +32,11 @@ if regen_git: # break immediately if there's no changes
 	if not Popen(['git', 'diff', 'HEAD', '--quiet'], env=dict()).wait(): sys.exit()
 
 regen_setup = bool(optz.setup)
-regen_docs = os.path.exists('README.md')\
-	and not any(map(os.path.exists, ['README', 'README.rst']))\
-	and os.path.exists('README.txt')
+regen_docs = dict(
+	readme = os.path.exists('README.md')
+		and not any(map(os.path.exists, ['README', 'README.rst']))
+		and os.path.exists('README.txt'),
+	doc = os.path.exists('doc/Makefile') )
 
 
 ### Do the stuff
@@ -46,7 +48,7 @@ import py_compile
 for src in ( line.strip() for line in
 		Popen(['find', '-name', '*.py', '-print'], stdout=PIPE).stdout ):
 	if src.endswith('.tpl.py'): continue # templates are, by definition, incomplete
-	try: py_compile.compile(src, cfile='/dev/null', doraise=True)
+	try: py_compile.compile(src, cfile=os.devnull, doraise=True)
 	except py_compile.PyCompileError, err:
 		print(
 			'{} (file: {}):\n\t{}'.format(
@@ -135,25 +137,32 @@ if regen_setup:
 
 		src.close() # in case it was substituted with something else
 
-if regen_docs:
-	## Regenerate README.txt (ReST) from README.md (Markdown)
 
-	from tempfile import NamedTemporaryFile
-	with NamedTemporaryFile(dir='.', prefix='README.txt.', delete=False) as tmp:
-		try:
-			if Popen( ['pandoc', '-f', 'markdown', '-t', 'rst', 'README.md'],
-					stdout=tmp, env=dict(PATH=os.environ['PATH']) ).wait():
-				raise RuntimeError('pandoc process exited with error')
-			os.rename(tmp.name, 'README.txt')
-		except Exception as err:
-			try: os.unlink(tmp.name)
-			except (OSError, IOError): pass
-			raise
-	proc_desc = Popen([ 'python', 'setup.py',
-		'--long-description' ], stdout=PIPE, env=dict(PATH=os.environ['PATH']))
-	if Popen( ['rst2html.py'], stdin=proc_desc.stdout,
-			stdout=open('/dev/null', 'wb') ).wait() or proc_desc.wait():
-		raise RuntimeError('Failed to validate produced README.txt')
+if any(regen_docs.values()):
+	if regen_docs.get('readme'):
+		## Regenerate README.txt (ReST) from README.md (Markdown)
+		from tempfile import NamedTemporaryFile
+		with NamedTemporaryFile(dir='.', prefix='README.txt.', delete=False) as tmp:
+			try:
+				if Popen( ['pandoc', '-f', 'markdown', '-t', 'rst', 'README.md'],
+						stdout=tmp, env=dict(PATH=os.environ['PATH']) ).wait():
+					raise RuntimeError('pandoc process exited with error')
+				os.rename(tmp.name, 'README.txt')
+			except Exception as err:
+				try: os.unlink(tmp.name)
+				except (OSError, IOError): pass
+				raise
+		proc_desc = Popen([ 'python', 'setup.py',
+			'--long-description' ], stdout=PIPE, env=dict(PATH=os.environ['PATH']))
+		if Popen( ['rst2html.py'], stdin=proc_desc.stdout,
+				stdout=open(os.devnull, 'w') ).wait() or proc_desc.wait():
+			raise RuntimeError('Failed to validate produced README.txt')
+
+	if regen_docs.get('doc'):
+		## Rebuild "doc" path
+		if Popen(['make'], cwd='doc', stdout=open(os.devnull, 'w')).wait():
+			raise RuntimeError('Failed to rebuild stuff in "doc" dir')
+
 
 if regen_git:
 	## Check if no changes were made and ack the commit
