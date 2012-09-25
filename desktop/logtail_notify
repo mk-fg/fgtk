@@ -43,8 +43,9 @@ def notify( path, line, icon='',
 							if not unicodedata.category(c).startswith('C') ).encode('utf-8')
 				else: break
 		except dbus.exceptions.DBusException as err:
-			if retries < 0 or err.get_dbus_name() !=\
-				'org.freedesktop.DBus.Error.ServiceUnknown': raise
+			if retries < 0 or err.get_dbus_name() not in\
+				[ 'org.freedesktop.DBus.Error.ServiceUnknown',
+					'org.freedesktop.DBus.Error.Disconnected' ]: raise
 			_notifier = None # force reconnection
 			retries -= 1
 		else: break
