@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from glob import glob
 from fnmatch import fnmatch
 from hashlib import sha1
-import os, sys, re, pickle, types
+import os, sys, re, pickle, types, unicodedata
 
 from twisted.python.filepath import FilePath
 from twisted.internet import inotify, reactor, defer
@@ -32,8 +32,16 @@ def notify( path, line, icon='',
 					'/org/freedesktop/Notifications' ),
 				dbus_interface='org.freedesktop.Notifications' )
 		try:
-			_notifier.Notify( 'logtail_notify', 0, icon,
-				'log: {}'.format(path.basename()), line, actions, hints, timeout )
+			for attempt in xrange(2):
+				try:
+					_notifier.Notify( 'logtail_notify', 0, icon,
+						'log: {}'.format(path.basename()), line, actions, hints, timeout )
+				except UnicodeError: # sanitize output
+					if not attempt:
+						log.info('Got log line with binary data, sanitizing: {!r}'.format(line))
+						line = u''.join( c for c in line.decode('utf-8', 'replace')
+							if not unicodedata.category(c).startswith('C') ).encode('utf-8')
+				else: break
 		except dbus.exceptions.DBusException as err:
 			if retries < 0 or err.get_dbus_name() !=\
 				'org.freedesktop.DBus.Error.ServiceUnknown': raise
