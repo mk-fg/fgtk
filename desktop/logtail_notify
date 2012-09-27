@@ -6,6 +6,7 @@ import itertools as it, operator as op, functools as ft
 from glob import glob
 from fnmatch import fnmatch
 from hashlib import sha1
+from time import sleep
 import os, sys, re, pickle, types, unicodedata
 
 from twisted.python.filepath import FilePath
@@ -18,19 +19,29 @@ import dbus # gi.Notify seem to break when daemon instance exits
 
 _notifier = None
 
-def notify( path, line, icon='',
-		actions=list(), hints=dict(), timeout=-1, retries=2 ):
+def notify( path, line,
+		icon='', actions=list(), hints=dict(),
+		timeout=-1, retries=4, delay=0.3 ):
 	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
 			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
 		r'\g<channel> \g<msg>', line )
 	global _notifier
 	while True:
+		if retries <= 0:
+			log.fatal('Unable to use dbus for notifications, exiting')
+			reactor.stop()
+			break
 		if not _notifier:
-			_notifier = dbus.Interface(
-				dbus.SessionBus().get_object(
-					'org.freedesktop.Notifications',
-					'/org/freedesktop/Notifications' ),
-				dbus_interface='org.freedesktop.Notifications' )
+			try:
+				_notifier = dbus.Interface(
+					dbus.SessionBus().get_object(
+						'org.freedesktop.Notifications',
+						'/org/freedesktop/Notifications' ),
+					dbus_interface='org.freedesktop.Notifications' )
+			except dbus.exceptions.DBusException:
+				retries -= 1
+				sleep(delay)
+				continue
 		try:
 			for attempt in xrange(2):
 				try:
