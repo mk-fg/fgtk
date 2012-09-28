@@ -10,7 +10,7 @@ from time import sleep
 import os, sys, re, pickle, types, unicodedata
 
 from twisted.python.filepath import FilePath
-from twisted.internet import inotify, reactor, defer
+from twisted.internet import inotify, reactor, defer, error
 from twisted.python import log
 
 import dbus # gi.Notify seem to break when daemon instance exits
@@ -31,8 +31,9 @@ def notify( path, line,
 	global _notifier
 	while True:
 		if retries <= 0:
-			log.fatal('Unable to use dbus for notifications, exiting')
-			reactor.stop()
+			try: reactor.stop()
+			except error.ReactorNotRunning: pass
+			else: log.fatal('Unable to use dbus for notifications, exiting')
 			break
 		if not _notifier:
 			try:
