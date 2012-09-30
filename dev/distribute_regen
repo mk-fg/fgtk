@@ -59,10 +59,12 @@ for src in ( line.strip() for line in
 if regen_setup:
 	## Update version in setup.py
 
-	from time import strftime
+	from datetime import datetime, timedelta
+	ts = datetime.now().replace( day=1, hour=0,
+		minute=0, second=0, microsecond=0 ) - timedelta(0, 1)
 	ver_minor = len(list(Popen([ 'git', 'rev-list',
-		'--since=%s'%strftime('01.%m.%Y'), 'master' ], stdout=PIPE).stdout))
-	version = strftime('%y.%m.{}').lstrip('0').format(ver_minor)
+		'--since={}'.format(ts.strftime('%Y-%m-%dT%H:%M:%S')), 'master' ], stdout=PIPE).stdout))
+	version = datetime.now().strftime('%y.%m.{}').lstrip('0').format(ver_minor)
 
 	from tempfile import NamedTemporaryFile
 	import re, ast
