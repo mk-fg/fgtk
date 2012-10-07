@@ -5,17 +5,39 @@ from __future__ import unicode_literals, print_function
 import itertools as it, operator as op, functools as ft
 import os, sys, codecs
 
-# Yeah, argparse rocks ;)
-convert, flags = 4, ''
-try: action, path = sys.argv[1:]
-except ValueError:
-	try: convert, action, path = sys.argv[1:]
-	except ValueError: convert, flags, action, path = sys.argv[1:]
-enc, convert = 'utf-8', ['\t', int(convert)]
-if set(flags).difference('a'): raise ValueError('Unknown flags specified')
+
+def parse_cli( argv=sys.argv,
+		_flags='a', _actions={'clean', 'smudge', 'mangle'} ):
+	# Yeah, argparse rocks ;)
+	if not argv[1:]:
+		print(( 'Usage: {} [ space_num [ flags ] ]'
+			' ( clean | smudge | mangle ) path' ).format(argv[0]), file=sys.stderr)
+		print('Flags:\n'
+			'  a - remove or replace alignment spaces (non-divisable by indent).',
+			file=sys.stderr )
+		sys.exit(1)
+	convert, flags = 4, ''
+	argv = argv[1:]
+	try: action, path = argv
+	except ValueError:
+		try: convert, action, path = argv
+		except ValueError: convert, flags, action, path = argv
+	enc, convert = 'utf-8', ['\t', int(convert)]
+	if action not in _actions:
+		raise ValueError( 'Unknown action'
+			' ({}), allowed: {}'.format(action, ', '.join(_actions)) )
+	if set(flags).difference(_flags):
+		raise ValueError( 'Unknown flags specified'
+			' ({}), allowed: [{}]'.format(flags, '] ['.join(_flags)) )
+	return action, path, convert, flags, enc
+
+action, path, convert, flags, enc = parse_cli()
+
 
 codecs = list(getattr(codecs, k)(enc) for k in ['getreader', 'getwriter'])
-for k, codec in it.izip(['stdin', 'stdout'], codecs): setattr(sys, k, codec(getattr(sys, k)))
+for k, codec in it.izip(['stdin', 'stdout'], codecs):
+	setattr(sys, k, codec(getattr(sys, k)))
+
 
 def filter_base(src, seqs, dst=sys.stdout):
 	src_seq, dst_seq = (( (' '*seq)
@@ -26,18 +48,23 @@ def filter_base(src, seqs, dst=sys.stdout):
 		while line.startswith(src_seq):
 			indent, line = dst_seq+indent, line[src_seq_len:]
 		# Handle half-indents and weird space-alignment
-		if 'a' in flags and src_seq_len > 1\
-				and isinstance(seqs[0], int) and line.startswith(' '):
-			line, line_len = line.lstrip(' '), len(line)
-			if line_len - len(line) >= float(seqs[0]) / 2: indent += dst_seq
+		if 'a' in flags:
+			if src_seq_len > 1 and isinstance(seqs[0], int) and line.startswith(' '):
+				line, line_len = line.lstrip(' '), len(line)
+				if line_len - len(line) >= float(seqs[0]) / 2: indent += dst_seq
+		# Done
 		dst.write(indent + line)
 
+# convert = [from: str or int, to: str or int], where int is a number of spaces
 filter_clean = ft.partial(filter_base, seqs=convert)
 filter_smudge = ft.partial(filter_base, seqs=list(reversed(convert)))
 
+
+# git-friendly actions
 if action == 'clean': filter_clean(sys.stdin)
 elif action == 'smudge': filter_smudge(sys.stdin)
 
+# manual
 elif action == 'mangle':
 	from tempfile import NamedTemporaryFile
 	import io, stat, hashlib
