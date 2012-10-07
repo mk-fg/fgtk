@@ -3,7 +3,7 @@
 from __future__ import unicode_literals, print_function
 
 import itertools as it, operator as op, functools as ft
-import os, sys, codecs
+import os, sys, re, codecs
 
 
 def parse_cli( argv=sys.argv,
@@ -39,6 +39,18 @@ for k, codec in it.izip(['stdin', 'stdout'], codecs):
 	setattr(sys, k, codec(getattr(sys, k)))
 
 
+def get_cpos(line, cpos=0):
+	lb = line.split('#', 1)
+	if len(lb) > 1:
+		for s in '\'"':
+			lb[1] = re.sub(r"\b'\b", '', lb[1])
+			if lb[0].count(s) % 2 and lb[1].count(s) % 2:
+				break # not a comment (quoted hashmark)
+		else: return cpos + len(lb[0]) # genuine comment
+		if '#' not in lb[1]: return None
+		return dqc('!'.join(lb))
+	else: return None
+
 def filter_base(src, seqs, dst=sys.stdout):
 	src_seq, dst_seq = (( (' '*seq)
 		if isinstance(seq, int) else seq ) for seq in seqs)
@@ -47,11 +59,32 @@ def filter_base(src, seqs, dst=sys.stdout):
 		indent = ''
 		while line.startswith(src_seq):
 			indent, line = dst_seq+indent, line[src_seq_len:]
-		# Handle half-indents and weird space-alignment
-		if 'a' in flags:
-			if src_seq_len > 1 and isinstance(seqs[0], int) and line.startswith(' '):
-				line, line_len = line.lstrip(' '), len(line)
-				if line_len - len(line) >= float(seqs[0]) / 2: indent += dst_seq
+		# Quirky stuff
+		if isinstance(seqs[0], int): # spaces -> tabs
+			# Handle half-indents and space-alignment
+			if 'a' in flags:
+				if src_seq_len > 1 and line.startswith(' '):
+					line, line_len = line.lstrip(' '), len(line)
+					if line_len - len(line) >= float(seqs[0]) / 2: indent += dst_seq
+			elif path.endswith('.py') and line.startswith(' ')\
+					and not line.rstrip().endswith('\\') and not re.search(r'^.*#!as(\d+)(#.*?)?$', line):
+				# Insert "#!as2"-style mark to the end of the line to restore alignment indent later
+				alen = len(line)
+				line = line.lstrip(' ')
+				cpos = get_cpos(line) # detect comments
+				alen = '#!as{}'.format(alen - len(line))
+				line = line.rstrip('\r\n')
+				if cpos is None: line += ' ' + alen
+				else: line = line[:cpos] + alen + line[cpos:]
+				line += '\n'
+		else: # tabs -> spaces
+			if 'a' not in flags:
+				match = re.search(r'^.*#!as(?P<alen>\d+)(?P<c>(#.*?)?)$', line)
+				if match: # strip "#!as2"-style marks
+					alen = match.group('alen')
+					line = ' '*int(alen)\
+						+ re.sub( r'^(.*)({}#!as\d+)((#.*?)?)$'\
+							.format(' ' if not match.group('c') else ''), r'\1\3', line )
 		# Done
 		dst.write(indent + line)
 
