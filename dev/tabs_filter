@@ -48,7 +48,7 @@ def get_cpos(line, cpos=0):
 				break # not a comment (quoted hashmark)
 		else: return cpos + len(lb[0]) # genuine comment
 		if '#' not in lb[1]: return None
-		return dqc('!'.join(lb))
+		return get_cpos('!'.join(lb))
 	else: return None
 
 def filter_base(src, seqs, dst=sys.stdout):
@@ -93,9 +93,16 @@ filter_clean = ft.partial(filter_base, seqs=convert)
 filter_smudge = ft.partial(filter_base, seqs=list(reversed(convert)))
 
 
+def _dump_call_data_on_err(func, *argz, **kwz):
+	try: return func(*argz, **kwz)
+	except Exception as err:
+		print('sys.argv: {}'.format(sys.argv), file=sys.stderr)
+		raise
+
+
 # git-friendly actions
-if action == 'clean': filter_clean(sys.stdin)
-elif action == 'smudge': filter_smudge(sys.stdin)
+if action == 'clean': _dump_call_data_on_err(filter_clean, sys.stdin)
+elif action == 'smudge': _dump_call_data_on_err(filter_smudge, sys.stdin)
 
 # manual
 elif action == 'mangle':
