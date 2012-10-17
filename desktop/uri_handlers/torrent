@@ -134,6 +134,8 @@ def bencode(x):
 	return ''.join(r)
 
 
+
+
 _notify_init = False
 def try_notification(title, body, critical=False, timeout=None):
 	global _notify_init
@@ -150,33 +152,37 @@ def try_notification(title, body, critical=False, timeout=None):
 	except: pass
 
 
+
+
 def main():
+
+	import itertools as it, operator as op, functools as ft
 	from socket import gethostbyname, gaierror, setdefaulttimeout
 	from urlparse import urlparse
-	import sys, itertools as it
+	import os, sys
+
+	# CLI
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Download and process torrent link-file.' )
+	parser.add_argument('path_or_url',
+		nargs='?', help='Path or url of a file to process.')
+	parser.add_argument('-r', '--referer',
+		help='Referer header to use when downloading from web urls.')
+	parser.add_argument('-c', '--cookie', help='HTTP cookie header to pass on.')
+	parser.add_argument('-d', '--destination', help='Where to store the resulting file.')
+	optz = parser.parse_args()
 
 	# Long hangs are unacceptable here
 	setdefaulttimeout(10)
 
-	# CLI
-	headers = {'-r': 'Referer', '-c': 'Cookie'}
-	argz, key = dict(), 'url'
-	for arg in sys.argv[1:]:
-		if not arg: pass
-		elif arg in headers: key = headers[arg]
-		elif arg == '-d': key = 'dest'
-		elif key is None:
-			raise ValueError('Unrecognized value purpose: {0}'.format(arg))
-		else: argz[key], key = arg, None
-
 	# Get source
-	if not argz: torrent = sys.stdin.read()
+	if not optz.path_or_url: torrent = sys.stdin.read()
 	else:
 		import urllib2
-		source = urllib2.Request(argz['url'])
-		for arg in headers.itervalues():
-			try: source.add_header(arg, argz[arg])
-			except KeyError: pass
+		source = urllib2.Request(optz.path_or_url)
+		if optz.referer: source.add_header('Referer', optz.referer)
+		if optz.cookie: source.add_header('Cookie', optz.cookie)
 		torrent = urllib2.urlopen(source).read()
 
 	# URL checker
@@ -217,16 +223,16 @@ def main():
 	torrent = bencode(torrent_dec)
 
 	# Output
-	if 'dest' not in argz or 'url' not in argz: dest = sys.stdout
+	if not optz.destination or not optz.path_or_url: dest = sys.stdout
 	else:
 		from os.path import basename, join, exists, realpath
 		from string import letters, digits
 		from urllib import unquote_plus
 		name = set(letters + digits + r'!"#$%&\'()*+,-.<=>@[]_~')
 		name = unquote_plus(''.join( (chr if chr in name else '_')
-			for chr in basename(urlparse(argz['url']).path) ))
+			for chr in basename(urlparse(optz.path_or_url).path) ))
 		if name and not name.endswith('.torrent'): name += '.torrent'
-		name = join(argz['dest'], name)
+		name = join(optz.destination, name)
 		if exists(name):
 			from hashlib import md5
 			def samefile_check(name):
@@ -234,12 +240,12 @@ def main():
 					try_notification('Torrent already exists', 'Path: {0}'.format(name))
 					sys.exit()
 			name_from_url = lambda url,base: join(base, '{0}.torrent'.format(md5(url).hexdigest()))
-			if realpath(name) == realpath(argz['dest']):
-				name = name_from_url(argz['url'], argz['dest'])
+			if realpath(name) == realpath(optz.destination):
+				name = name_from_url(optz.path_or_url, optz.destination)
 				if exists(name): samefile_check(name)
 			else:
 				samefile_check(name)
-				name = name_from_url(argz['url'], argz['dest'])
+				name = name_from_url(optz.path_or_url, optz.destination)
 		# print >>sys.stderr, 'Name:', name
 		try: dest = open(name, 'w')
 		except (OSError, IOError) as err:
