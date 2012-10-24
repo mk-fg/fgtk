@@ -14,8 +14,8 @@ csync2 -C "ufs${ufs}" -M >"$cs_list" || exit 1
 tac "$cs_list" >"${cs_list}.bak" || exit 1
 mv "${cs_list}"{.bak,} || exit 1
 
-awk '!/\.(mp3|flac|ogg|aac|m4a)$/ {print $4}' "$cs_list" |
-while read p; do
+grep -v '\.\(mp3\|flac\|ogg\|aac\|m4a\)$' "$cs_list" |
+while read a b c p; do
 	[[ -e "$p" ]] && continue
 	$cs -rm "$p" && $cs -rf "$p" && $cs -ru "$p" || break
 done
