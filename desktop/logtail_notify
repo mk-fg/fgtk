@@ -25,6 +25,7 @@ def notify( path, line,
 	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
 			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
 		r'\g<channel> \g<msg>', line )
+	if 'logtail_notify' in line: return # to avoid exception loops
 	# Slow, can probably be optimized by compiling all these chars into a regexp
 	line = u''.join( c for c in line.decode('utf-8', 'replace')
 		if not unicodedata.category(c).startswith('C') ).encode('utf-8')
