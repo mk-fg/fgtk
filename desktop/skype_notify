@@ -28,11 +28,21 @@
 # -> paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
 # -> disable or enable the notifications you want to receive.
 
+args = 'type sname fname fpath smessage fsize sskype'.split()
+
 import argparse
 parser = argparse.ArgumentParser(
 	description='Bridge netween skype and desktop-notification daemon.')
-for arg in 'type sname fname fpath smessage fsize sskype'.split(): parser.add_argument(arg)
+for arg in args:
+	if arg != 'smessage': parser.add_argument(arg)
+	else:
+		# Try to work around skype failure to pass arguments properly
+		# For example, 'can you "take care" of the problem?'
+		#  might get passed as 'can you ' 'take care' 'of the problem?'
+		parser.add_argument(arg, nargs='+')
 optz = parser.parse_args()
+optz.smessage = ' '.join(optz.smessage)
+
 
 import itertools as it, operator as op, functools as ft
 from gi.repository import Gtk, Notify
