@@ -74,6 +74,15 @@ Copy ownership/mode from one file to another:
 
 	fs cps /file1 /file2
 
+##### urlparse
+
+Simple script to parse long URL with lots of parameters, decode and print it out
+in an easily readable ordered YAML format or diff (that is, just using "diff"
+command on two outputs) with another URL.
+
+No more squinting at some huge incomprehensible ecommerce URLs before scraping
+the hell out of them!
+
 
 ### Content
 
