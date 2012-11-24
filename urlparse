@@ -136,7 +136,7 @@ def main():
 
 	argv, diff_optz = sys.argv[1:], list()
 	try: idx = argv.index('--')
-	except IndexError: pass
+	except ValueError: pass
 	else: argv, diff_optz = argv[:idx], argv[idx+1:]
 	optz = parser.parse_args(argv)
 
