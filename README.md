@@ -321,6 +321,20 @@ Somewhat advanced usage example:
 	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
 	  /var/log/messages
 
+##### firefox_tgm2_tool
+
+Tool to work with data (list of tabs, basically) stored by Firefox
+TabGroupManager (2+) extension in firefox profile dir.
+
+Default acton is to produce [pretty ordered YAML](https://github.com/mk-fg/pretty-yaml)
+of group-tabname-url structure, which I backup on a daily basis, if only to
+remember which tabs I've looked at, related to events of some specific day
+(e.g. remember seeing useful thing while implementing X - look up time of
+X-related commits in git-log and see which tabs were open at the time).
+
+Also helpful if other people tend to use your browser, closing and overriding
+(potentially useful) tabs at random.
+
 
 ### UFS
 
