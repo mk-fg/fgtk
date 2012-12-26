@@ -167,9 +167,9 @@ def main():
 		description='Download and process torrent link-file.' )
 	parser.add_argument('path_or_url',
 		nargs='?', help='Path or url of a file to process.')
-	parser.add_argument('-r', '--referer',
+	parser.add_argument('-r', '--referer', nargs='?',
 		help='Referer header to use when downloading from web urls.')
-	parser.add_argument('-c', '--cookie', help='HTTP cookie header to pass on.')
+	parser.add_argument('-c', '--cookie', nargs='?', help='HTTP cookie header to pass on.')
 	parser.add_argument('-d', '--destination', help='Where to store the resulting file.')
 	optz = parser.parse_args()
 
