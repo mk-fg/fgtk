@@ -155,13 +155,12 @@ transformation to make sure of that), as long as code intentation is correct.
 .git/config:
 
 	[filter "golang"]
-		clean = golang_filter uncurl %f
-		smudge = golang_filter curl %f
+		clean = golang_filter git-clean %f
+		smudge = golang_filter git-smudge %f
 
 .gitattributes:
 
-	*.py filter=golang
-	*.tac filter=golang
+	*.go filter=golang
 
 .gitignore:
 
