@@ -1,0 +1,220 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
+from collections import defaultdict
+from tempfile import NamedTemporaryFile
+from os.path import dirname, basename, join, exists
+from subprocess import Popen, PIPE
+import os, sys, re
+
+import pyparsing as pp
+
+
+class Actions(object):
+
+	@classmethod
+	def skip_comment_block(cls, src): pass
+
+
+	@classmethod
+	def curl(cls, path):
+		with open(path) as src:
+			## Find all places where indentation changes or case-blocks
+			cancer, brace_stack = defaultdict(lambda: defaultdict(str)), list()
+			pos_prev_tabs, pos_prev = None, src.tell()
+			case_block = False
+			for line in iter(src.readline, ''):
+				ls = line.strip()
+				if not ls or ls.startswith('//'): continue # comments / empty lines
+				pos_tabs = len(line) - len(line.lstrip('\t'))
+
+				if pos_prev_tabs is None: # first meaningful line
+					pos_prev_tabs, pos_prev = pos_tabs, src.tell() - len(line)
+					continue
+
+				if pos_tabs > pos_prev_tabs: # block start (indent++)
+					assert pos_tabs - pos_prev_tabs == 1
+					if case_block: case_block = False # "case:" insides
+					else:
+						pos = src.tell()
+						src.seek(pos_prev)
+						ls_prev = src.readline().strip()
+						src.seek(pos)
+						bo, bc = '()' if re.search(r'^import\b', ls_prev) else '{}'
+						brace_stack.append((pos_prev, bo, bc))
+						cancer[pos_prev]['open'] += bo
+
+				elif pos_tabs < pos_prev_tabs: # block end (indent--)
+					for n in xrange(pos_prev_tabs - pos_tabs):
+						pos_open, bo, bc = brace_stack[-1]
+						if bo is None and bc is None: # "case:" end
+							if not re.search(r'^(case\b.*|default\s*):$', ls):
+								brace_stack.pop()
+								cancer[pos_prev]['close'] += '}'
+							else: case_block = True # next "case:" follows
+						else: # block end proper
+							brace_stack.pop()
+							if re.search(r'^else\b', ls): # special case - "} else {"
+								cancer[src.tell() - len(line)]['soft_close'] += bc
+							else: cancer[pos_prev]['close'] += bc
+
+				else:
+					if re.search(r'^(case\b.*|default\s*):$', ls): # detect same-indent "case:" blocks
+						if not case_block:
+							pos = src.tell()
+							src.seek(pos_prev)
+							ls_prev = src.readline().strip()
+							src.seek(pos)
+							assert re.search(r'^(switch|select)\b', ls_prev), ls_prev
+							brace_stack.append((pos_prev, None, None))
+							case_block = True
+							cancer[pos_prev]['open'] += '{'
+					else: assert not case_block
+
+				pos_prev_tabs, pos_prev = pos_tabs, src.tell() - len(line)
+
+			## Close any remaining blocks
+			if brace_stack:
+				for pos_open, bo, bc in brace_stack:
+					cancer[pos_prev]['close'] += bc
+
+			## Bloatify source
+			src.seek(0)
+			result, pos_prev = list(), src.tell()
+			for pos_line, braces in sorted(cancer.viewitems()):
+				# Read to the next brace-line
+				assert pos_line >= pos_prev
+				result.append(src.read(pos_line - pos_prev))
+				assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
+				# Append cancer
+				line = src.readline()
+				bo, bc = it.imap(braces.get, ['open', 'close'])
+				pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip()
+				if braces.get('soft_close'): # "} else {"
+					line = braces.get('soft_close') + ' ' + line
+				result.append(
+					'\t'*pos_tabs + line
+					+ ((' ' + bo) if bo else '')
+					+ (''.join( ('\n' + '\t'*(pos_tabs-n) + b)
+						for n,b in enumerate(bc, 1) ) if bc else '') + '\n' )
+				pos_prev = src.tell()
+			result.append(src.read())
+
+		return ''.join(result)
+
+
+
+	@classmethod
+	def uncurl(cls, path):
+		with open(path) as src:
+			## Find position of every to-be-removed brace
+			blanks, pos_prev = defaultdict(bytes), src.tell()
+			for line in iter(src.readline, ''):
+				for bo,bc in it.izip('{(', '})'):
+					if line.strip().endswith(bo): # opening block-brace at eol
+						pos, pos_open_line = src.tell(), pos_prev
+						pos_tabs, pos_line = len(line) - len(line.lstrip('\t')), line.strip()
+						# Find tab or a closing brace
+						pos_prev = src.tell()
+						for line in iter(src.readline, ''):
+							ls = line.strip()
+							if ls and not ls.startswith('//'): # skip comments and emptylines
+								line_tabs = len(line) - len(line.lstrip('\t'))
+								if line_tabs == pos_tabs and re.search(r'^\{}(\s+else\b)?'.format(bc), ls):
+									# Found closing brace (and maybe opening one on the same line)
+									blanks[pos_open_line] += bo + bc
+									blanks[pos_prev] += bo + bc
+									break
+								elif line_tabs <= pos_tabs: # case in either switch or select, otherwise error
+									assert re.search(r'^(switch|select)\b', pos_line), pos_line
+									assert re.search(r'^(case|default)\b', ls), ls
+							pos_prev = src.tell()
+						else: raise ValueError(['No closing brace', pos_tabs])
+						src.seek(pos) # return to next line within the block
+				pos_prev = src.tell()
+
+			## Build a clean version of source
+			src.seek(0)
+			result, pos_prev = list(), src.tell()
+			for pos_line, braces in sorted(blanks.viewitems()):
+				# Read to the next brace-line
+				assert pos_line >= pos_prev
+				result.append(src.read(pos_line - pos_prev))
+				assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
+				# Drop braces and spaces near these
+				line = src.readline()
+				pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip().strip(braces).strip()
+				if line: result.append('\t'*pos_tabs + line + '\n')
+				pos_prev = src.tell()
+			result.append(src.read())
+
+		return ''.join(result)
+
+
+	@classmethod
+	def replace(cls, path, contents):
+		assert exists(path)
+		## Replace curly version with a clean one
+		with NamedTemporaryFile( dir=dirname(path),
+				prefix=basename(path)+'.', delete=False ) as tmp:
+			try:
+				tmp.write(contents)
+				os.rename(tmp.name, path)
+			finally:
+				try: os.unlink(tmp.name)
+				except OSError: pass
+
+
+
+def main(argv=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Pythonify Go sources by removing all brace-cancer.'
+			' Operation is perfectly reversible and is checked with "diff -u"'
+				' (reverse vs original) on "uncurl" command (unless --force is specified).')
+	cmds = parser.add_subparsers(
+		title='Supported operations (have their own suboptions as well)')
+
+	@contextmanager
+	def subcommand(name, **kwz):
+		cmd = cmds.add_parser(name, **kwz)
+		cmd.set_defaults(call=name)
+		yield cmd
+
+	with subcommand('curl', help='Add curly braces.') as cmd:
+		cmd.add_argument('path', help='File to process.')
+
+	with subcommand('uncurl', help='Remove curly braces.') as cmd:
+		cmd.add_argument('path', help='File to process.')
+		cmd.add_argument('-f', '--force',
+			help='Dont run "diff" to check whether changes are perfectly reversible.')
+
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Dont replace the files, just output mangled source.')
+	optz = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+	source = getattr(Actions, optz.call)(optz.path)
+	if not optz.dry_run:
+		if optz.call == 'uncurl' and not optz.force:
+			with NamedTemporaryFile() as tmp1,\
+					NamedTemporaryFile() as tmp2:
+				tmp1.write(source)
+				tmp1.flush()
+				proc = Popen(['diff', '-u', optz.path, tmp1.name], stdout=PIPE)
+				diff = proc.stdout.read()
+				if not diff and not proc.wait(): sys.exit(0) # nothing to do
+				tmp2.write(Actions.curl(tmp1.name))
+				tmp2.flush()
+				proc = Popen(['diff', '-u', optz.path, tmp2.name], stdout=PIPE)
+				diff = proc.stdout.read()
+				if diff or proc.wait():
+					print('Failed to do reverse-transformation flawlessly\n')
+					print(diff, end='')
+					sys.exit(1)
+		Actions.replace(optz.path, source)
+	else: print(source, end='')
+
+if __name__ == '__main__': main()

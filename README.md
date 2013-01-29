@@ -143,6 +143,34 @@ designed to be used from git content filters, and occasionally by hand.
 Not sure why people have such strong opinions on that trivial matter, but I find
 it easier never to mention that I use such script ;)
 
+##### golang_filter
+
+Same idea as in "tabs_filter", but on a larger scale - basically does to
+[Go](http://golang.org/) what
+[coffee-script](http://jashkenas.github.com/coffee-script/) does to the syntax
+of javascript - drops all the unnecessary brace-cancer, with the ability to
+restore original perfectly ("diff -u reverse original" is checked upon
+transformation to make sure of that), as long as code intentation is correct.
+
+.git/config:
+
+	[filter "golang"]
+		clean = golang_filter uncurl %f
+		smudge = golang_filter curl %f
+
+.gitattributes:
+
+	*.py filter=golang
+	*.tac filter=golang
+
+.gitignore:
+
+	/.gitignore
+	/.gitattributes
+
+Again, ideally no one should even notice that I actually don't have that crap in
+the editor, while repo and compiler will see the proper (bloated) code.
+
 ##### distribute_regen
 
 Tool to auto-update python package metadata in setup.py and README files.
