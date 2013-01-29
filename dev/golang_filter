@@ -8,7 +8,7 @@ from collections import defaultdict
 from tempfile import NamedTemporaryFile
 from os.path import dirname, basename, join, exists
 from subprocess import Popen, PIPE
-import os, sys, re, io
+import os, sys, re, io, stat
 
 import pyparsing as pp
 
@@ -153,13 +153,17 @@ class Actions(object):
 
 
 	@classmethod
-	def replace(cls, path, contents):
+	def replace(cls, path, contents, update_mtime=False):
 		assert exists(path)
 		with NamedTemporaryFile( dir=dirname(path),
 				prefix=basename(path)+'.', delete=False ) as tmp:
+			pstat = os.stat(path)
 			try:
 				tmp.write(contents)
 				tmp.flush()
+				os.fchmod(tmp.fileno(), stat.S_IMODE(pstat.st_mode))
+				if not update_mtime:
+					os.utime(tmp.name, (pstat.st_mtime, pstat.st_mtime))
 				os.fsync(tmp.fileno())
 				os.rename(tmp.name, path)
 			finally:
@@ -210,6 +214,9 @@ def main(argv=None, optz=None):
 
 		parser.add_argument('-n', '--dry-run', action='store_true',
 			help='Dont replace the files, just output mangled source. Ignored with git-* commands.')
+		parser.add_argument('-t', '--update-mtime', action='store_true',
+			help='Dont restore original timestamps of changed files'
+				' (done to work better with make, editors). Ignored with git-* commands.')
 		optz = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
 	if optz.call.startswith('git-'):
@@ -244,7 +251,8 @@ def main(argv=None, optz=None):
 				if diff or proc.wait():
 					raise IrreversibleOperation(diff)
 
-		if dst is None: Actions.replace(optz.path, result)
+		if dst is None:
+			Actions.replace(optz.path, result, update_mtime=optz.update_mtime)
 		else: dst.write(result)
 
 	except Exception as err:
