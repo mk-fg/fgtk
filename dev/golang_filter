@@ -17,7 +17,7 @@ class Actions(object):
 
 
 	@classmethod
-	def skip_comment_block(cls, src): pass
+	def skip_comment_block(cls, src): pass # TODO: actually skip processing these
 
 
 	@classmethod
@@ -168,77 +168,97 @@ class Actions(object):
 
 
 
-def main(argv=None):
-	import argparse
-	parser = argparse.ArgumentParser(
-		description='Pythonify Go sources by removing all brace-cancer.'
-			' Operation is perfectly reversible and is checked with "diff -u"'
-				' (reverse vs original) on "uncurl" command (unless --force is specified).')
-	cmds = parser.add_subparsers(
-		title='Supported operations (have their own suboptions as well)')
+class NoChange(Exception): pass
+class IrreversibleOperation(Exception): pass
 
-	@contextmanager
-	def subcommand(name, call=None, **kwz):
-		cmd = cmds.add_parser(name, **kwz)
-		cmd.set_defaults(call=call or name)
-		yield cmd
 
-	with subcommand('uncurl', help='Remove curly braces.') as cmd:
-		cmd.add_argument('path', help='File to process.')
-		cmd.add_argument('-f', '--force',
-			help='Dont run "diff" to check whether changes are perfectly reversible.')
-	with subcommand('curl', help='Add curly braces.') as cmd:
-		cmd.add_argument('path', help='File to process.')
+def main(argv=None, optz=None):
+	if not optz:
+		import argparse
+		parser = argparse.ArgumentParser(
+			description='Pythonify Go sources by removing all brace-cancer.'
+				' Operation is perfectly reversible and is checked with "diff -u"'
+					' (reverse vs original) on "uncurl" command (unless --force is specified).')
+		cmds = parser.add_subparsers(
+			title='Supported operations (have their own suboptions as well)')
 
-	with subcommand('git-smudge', call='git-uncurl',
-			help='Same as "uncurl", but git-filter friendly'
-				' - works with stdin/stdout, different error handling.') as cmd:
-		cmd.add_argument('path', help='Filename. Ignored - git'
-			' supplies contents on stdin and expects processing results on stdout.')
-		cmd.add_argument('-f', '--force',
-			help='Dont run "diff" to check whether changes are perfectly reversible.')
-	with subcommand('git-clean', call='git-curl',
-			help='Same as "curl", but git-filter friendly'
-				' - works with stdin/stdout, different error handling.') as cmd:
-		cmd.add_argument('path', help='Filename. Ignored - git'
-			' supplies contents on stdin and expects processing results on stdout.')
+		@contextmanager
+		def subcommand(name, call=None, **kwz):
+			cmd = cmds.add_parser(name, **kwz)
+			cmd.set_defaults(call=call or name)
+			yield cmd
 
-	parser.add_argument('-n', '--dry-run', action='store_true',
-		help='Dont replace the files, just output mangled source. Ignored with git-* commands.')
-	optz = parser.parse_args(sys.argv[1:] if argv is None else argv)
+		with subcommand('uncurl', help='Remove curly braces.') as cmd:
+			cmd.add_argument('path', help='File to process.')
+			cmd.add_argument('-f', '--force',
+				help='Dont run "diff" to check whether changes are perfectly reversible.')
+		with subcommand('curl', help='Add curly braces.') as cmd:
+			cmd.add_argument('path', help='File to process.')
+
+		with subcommand('git-smudge', call='git-uncurl',
+				help='Same as "uncurl", but git-filter friendly'
+					' - works with stdin/stdout, different error handling.') as cmd:
+			cmd.add_argument('path', help='Filename. Ignored - git'
+				' supplies contents on stdin and expects processing results on stdout.')
+			cmd.add_argument('-f', '--force',
+				help='Dont run "diff" to check whether changes are perfectly reversible.')
+		with subcommand('git-clean', call='git-curl',
+				help='Same as "curl", but git-filter friendly'
+					' - works with stdin/stdout, different error handling.') as cmd:
+			cmd.add_argument('path', help='Filename. Ignored - git'
+				' supplies contents on stdin and expects processing results on stdout.')
+
+		parser.add_argument('-n', '--dry-run', action='store_true',
+			help='Dont replace the files, just output mangled source. Ignored with git-* commands.')
+		optz = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
 	if optz.call.startswith('git-'):
-		optz.call = optz.call.split('-', 1)[-1]
-		src, dst = io.BytesIO(sys.stdin.read()), sys.stdout
-	else: src, dst = open(optz.path), None if not optz.dry_run else sys.stdout
+		git_mode, optz.call = True, optz.call.split('-', 1)[-1]
+	else: git_mode = False
 
-	result = getattr(Actions, optz.call)(src)
+	try:
+		src, dst = (io.BytesIO(sys.stdin.read()), sys.stdout)\
+			if git_mode else (open(optz.path), None if not optz.dry_run else sys.stdout)
 
-	if optz.call == 'uncurl' and not optz.force:
-		# Make sure that it's possible to restore original source
-		with NamedTemporaryFile() as tmp1,\
-				NamedTemporaryFile() as tmp2:
-			src.seek(0)
-			tmp1.write(src.read())
-			tmp1.flush()
-			if dst is not sys.stdout: # check if contents were changed
-				tmp2.write(result)
+		result = getattr(Actions, optz.call)(src)
+
+		if optz.call == 'uncurl' and not optz.force:
+			# Make sure that it's possible to restore original source
+			with NamedTemporaryFile() as tmp1,\
+					NamedTemporaryFile() as tmp2:
+				src.seek(0)
+				tmp1.write(src.read())
+				tmp1.flush()
+				if dst is not sys.stdout: # check if contents were changed
+					tmp2.write(result)
+					tmp2.flush()
+					proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
+					diff = proc.stdout.read()
+					if not diff and not proc.wait(): raise NoChange()
+					tmp2.seek(0)
+				src_rev = io.BytesIO(result)
+				tmp2.write(Actions.curl(src_rev))
 				tmp2.flush()
 				proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
 				diff = proc.stdout.read()
-				if not diff and not proc.wait(): sys.exit(0) # nothing to do
-				tmp2.seek(0)
-			src_rev = io.BytesIO(result)
-			tmp2.write(Actions.curl(src_rev))
-			tmp2.flush()
-			proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
-			diff = proc.stdout.read()
-			if diff or proc.wait():
-				print('Failed to do reverse-transformation flawlessly', end='\n\n')
-				print(diff, end='')
-				sys.exit(1)
+				if diff or proc.wait():
+					raise IrreversibleOperation(diff)
 
-	if dst is None: Actions.replace(optz.path, result)
-	else: dst.write(result)
+		if dst is None: Actions.replace(optz.path, result)
+		else: dst.write(result)
 
-if __name__ == '__main__': main()
+	except Exception as err:
+		if not git_mode: raise
+		# Less verbose errors for git, as there can potentially be a lot of these
+		if isinstance(err, IrreversibleOperation): err = 'Irreversible operation'
+		print(' -- Failed processing path: {} - {}'.format(optz.path, err), file=sys.stderr)
+		sys.exit(1)
+
+
+if __name__ == '__main__':
+	try: main()
+	except NoChange: sys.exit(0)
+	except IrreversibleOperation:
+		print('Failed to do reverse-transformation flawlessly', file=sys.stderr, end='\n\n')
+		print(diff, file=sys.stderr, end='')
+		sys.exit(1)
