@@ -22,6 +22,11 @@ class Actions(object):
 			yield line, line.strip(), len(line) - len(line.lstrip('\t'))
 
 	@classmethod
+	def check_noncode(cls, ls, src, blocks=True):
+		return not ls or ls.startswith('//')\
+			or (blocks and cls.skip_block(ls, src))
+
+	@classmethod
 	def skip_block(cls, line, src):
 		res = False
 		if line.count('`')%2: # string blocks
@@ -42,7 +47,7 @@ class Actions(object):
 		pos_prev_tabs, pos_prev = None, src.tell()
 		case_block = False
 		for line, ls, pos_tabs in cls.itercode(src.readline):
-			if not ls or ls.startswith('//'): continue # comments / empty lines
+			if cls.check_noncode(ls, src.readline): continue # comments / empty lines
 			if cls.skip_block(line, src.readline): continue # block comments/strings
 			if pos_prev_tabs is None: # first meaningful line
 				pos_prev_tabs, pos_prev = pos_tabs, src.tell() - len(line)
@@ -125,26 +130,28 @@ class Actions(object):
 		## Find position of every to-be-removed brace
 		blanks, pos_prev = defaultdict(bytes), src.tell()
 		for line, pos_line, pos_tabs in cls.itercode(src.readline):
+			if cls.check_noncode(pos_line, src.readline):
+				pos_prev = src.tell()
+				continue
 			for bo,bc in it.izip('{(', '})'):
-				if pos_line.endswith(bo): # opening block-brace at eol
-					pos, pos_open_line = src.tell(), pos_prev
-					# Find tab or a closing brace
+				if not pos_line.endswith(bo): continue # opening block-brace at eol
+				pos, pos_open_line = src.tell(), pos_prev
+				# Find tab or a closing brace
+				pos_prev = src.tell()
+				for line, ls, line_tabs in cls.itercode(src.readline):
+					if not cls.check_noncode(ls, src.readline):
+						line_tabs = len(line) - len(line.lstrip('\t'))
+						if line_tabs == pos_tabs and re.search(r'^\{}(\s+else\b)?'.format(bc), ls):
+							# Found closing brace (and maybe opening one on the same line)
+							blanks[pos_open_line] += bo + bc
+							blanks[pos_prev] += bo + bc
+							break
+						elif line_tabs <= pos_tabs: # case in either switch or select, otherwise error
+							assert re.search(r'^(switch|select)\b', pos_line), pos_line
+							assert re.search(r'^(case|default)\b', ls), ls
 					pos_prev = src.tell()
-					for line, ls, line_tabs in cls.itercode(src.readline):
-						if ls and not ls.startswith('//')\
-								and not cls.skip_block(line, src.readline): # skip comments and emptylines
-							line_tabs = len(line) - len(line.lstrip('\t'))
-							if line_tabs == pos_tabs and re.search(r'^\{}(\s+else\b)?'.format(bc), ls):
-								# Found closing brace (and maybe opening one on the same line)
-								blanks[pos_open_line] += bo + bc
-								blanks[pos_prev] += bo + bc
-								break
-							elif line_tabs <= pos_tabs: # case in either switch or select, otherwise error
-								assert re.search(r'^(switch|select)\b', pos_line), pos_line
-								assert re.search(r'^(case|default)\b', ls), ls
-						pos_prev = src.tell()
-					else: raise ValueError(['No closing brace', pos_tabs])
-					src.seek(pos) # return to next line within the block
+				else: raise ValueError('No closing brace found for line: {!r}'.format(line))
+				src.seek(pos) # return to next line within the block
 			pos_prev = src.tell()
 
 		## Build a clean version of source
@@ -157,6 +164,7 @@ class Actions(object):
 			assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
 			# Drop braces and spaces near these
 			line = src.readline()
+			assert any((c in line) for c in braces)
 			pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip().strip(braces).strip()
 			if line: result.append('\t'*pos_tabs + line + '\n')
 			pos_prev = src.tell()
@@ -207,7 +215,7 @@ def main(argv=None, optz=None):
 
 		with subcommand('uncurl', help='Remove curly braces.') as cmd:
 			cmd.add_argument('path', help='File to process.')
-			cmd.add_argument('-f', '--force',
+			cmd.add_argument('-f', '--force', action='store_true',
 				help='Dont run "diff" to check whether changes are perfectly reversible.')
 		with subcommand('curl', help='Add curly braces.') as cmd:
 			cmd.add_argument('path', help='File to process.')
@@ -217,7 +225,7 @@ def main(argv=None, optz=None):
 					' - works with stdin/stdout, different error handling.') as cmd:
 			cmd.add_argument('path', help='Filename. Ignored - git'
 				' supplies contents on stdin and expects processing results on stdout.')
-			cmd.add_argument('-f', '--force',
+			cmd.add_argument('-f', '--force', action='store_true',
 				help='Dont run "diff" to check whether changes are perfectly reversible.')
 		with subcommand('git-clean', call='git-curl',
 				help='Same as "curl", but git-filter friendly'
