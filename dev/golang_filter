@@ -17,7 +17,22 @@ class Actions(object):
 
 
 	@classmethod
-	def skip_comment_block(cls, src): pass # TODO: actually skip processing these
+	def itercode(cls, src):
+		for line in iter(src, ''):
+			yield line, line.strip(), len(line) - len(line.lstrip('\t'))
+
+	@classmethod
+	def skip_block(cls, line, src):
+		res = False
+		if line.count('`')%2: # string blocks
+			for line in iter(src, ''):
+				if line.count('`')%2: break
+			res = True
+		if re.search(r'^\s*/\*\s', line): # comment blocks
+			for line in iter(src, ''):
+				if re.search(r'^(.*\s+)?\*/\s*$', line): break
+			res = True
+		return res
 
 
 	@classmethod
@@ -26,11 +41,9 @@ class Actions(object):
 		cancer, brace_stack = defaultdict(lambda: defaultdict(str)), list()
 		pos_prev_tabs, pos_prev = None, src.tell()
 		case_block = False
-		for line in iter(src.readline, ''):
-			ls = line.strip()
+		for line, ls, pos_tabs in cls.itercode(src.readline):
 			if not ls or ls.startswith('//'): continue # comments / empty lines
-			pos_tabs = len(line) - len(line.lstrip('\t'))
-
+			if cls.skip_block(line, src.readline): continue # block comments/strings
 			if pos_prev_tabs is None: # first meaningful line
 				pos_prev_tabs, pos_prev = pos_tabs, src.tell() - len(line)
 				continue
@@ -97,6 +110,7 @@ class Actions(object):
 				line = braces.get('soft_close') + ' ' + line
 			result.append(
 				'\t'*pos_tabs + line
+				# + (((' ' if not re.search(r'\[\S*\]\w+\s*$', line) else '') + bo) if bo else '')
 				+ ((' ' + bo) if bo else '')
 				+ (''.join( ('\n' + '\t'*(pos_tabs-n) + b)
 					for n,b in enumerate(bc, 1) ) if bc else '') + '\n' )
@@ -110,16 +124,15 @@ class Actions(object):
 	def uncurl(cls, src):
 		## Find position of every to-be-removed brace
 		blanks, pos_prev = defaultdict(bytes), src.tell()
-		for line in iter(src.readline, ''):
+		for line, pos_line, pos_tabs in cls.itercode(src.readline):
 			for bo,bc in it.izip('{(', '})'):
-				if line.strip().endswith(bo): # opening block-brace at eol
+				if pos_line.endswith(bo): # opening block-brace at eol
 					pos, pos_open_line = src.tell(), pos_prev
-					pos_tabs, pos_line = len(line) - len(line.lstrip('\t')), line.strip()
 					# Find tab or a closing brace
 					pos_prev = src.tell()
-					for line in iter(src.readline, ''):
-						ls = line.strip()
-						if ls and not ls.startswith('//'): # skip comments and emptylines
+					for line, ls, line_tabs in cls.itercode(src.readline):
+						if ls and not ls.startswith('//')\
+								and not cls.skip_block(line, src.readline): # skip comments and emptylines
 							line_tabs = len(line) - len(line.lstrip('\t'))
 							if line_tabs == pos_tabs and re.search(r'^\{}(\s+else\b)?'.format(bc), ls):
 								# Found closing brace (and maybe opening one on the same line)
