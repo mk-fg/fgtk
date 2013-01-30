@@ -279,7 +279,7 @@ def main(argv=None, optz=None):
 if __name__ == '__main__':
 	try: main()
 	except NoChange: sys.exit(0)
-	except IrreversibleOperation:
+	except IrreversibleOperation as err:
 		print('Failed to do reverse-transformation flawlessly', file=sys.stderr, end='\n\n')
-		print(diff, file=sys.stderr, end='')
+		print(err.args[0], file=sys.stderr, end='')
 		sys.exit(1)
