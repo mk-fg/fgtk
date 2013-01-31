@@ -102,6 +102,7 @@ class Actions(object):
 		## Bloatify source
 		src.seek(0)
 		result, pos_prev = list(), src.tell()
+		brace_stack = list()
 		for pos_line, braces in sorted(cancer.viewitems()):
 			# Read to the next brace-line
 			assert pos_line >= pos_prev
@@ -111,14 +112,26 @@ class Actions(object):
 			line = src.readline()
 			bo, bc = it.imap(braces.get, ['open', 'close'])
 			pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip()
-			if braces.get('soft_close'): # "} else {"
+			# Keep stack of braces to skip corresponding open/close ones
+			if bo:
+				if line.endswith(bo): bo = None
+				brace_stack.append(bo)
+			if bc and not brace_stack.pop(): bc = None # opening brace skipped
+			if braces.get('soft_close') and brace_stack.pop(): # "} else {"
 				line = braces.get('soft_close') + ' ' + line
+			# Result line(s) composition
+			eol = '\n'
+			if bc: # special handling for defers, which end in "}()"
+				pos = src.tell()
+				line_next = src.readline()
+				if line_next.strip() != '()': src.seek(pos)
+				else: eol = line_next.lstrip()
 			result.append(
 				'\t'*pos_tabs + line
 				# + (((' ' if not re.search(r'\[\S*\]\w+\s*$', line) else '') + bo) if bo else '')
 				+ ((' ' + bo) if bo else '')
 				+ (''.join( ('\n' + '\t'*(pos_tabs-n) + b)
-					for n,b in enumerate(bc, 1) ) if bc else '') + '\n' )
+					for n,b in enumerate(bc, 1) ) if bc else '') + eol )
 			pos_prev = src.tell()
 		result.append(src.read())
 
@@ -197,7 +210,7 @@ class NoChange(Exception): pass
 class IrreversibleOperation(Exception): pass
 
 
-def main(argv=None, optz=None):
+def main(argv=None, optz=None, detect_nochange=False):
 	if not optz:
 		import argparse
 		parser = argparse.ArgumentParser(
@@ -274,20 +287,21 @@ def main(argv=None, optz=None):
 				src.seek(0)
 				tmp1.write(src.read())
 				tmp1.flush()
-				if dst is not sys.stdout: # check if contents were changed
-					tmp2.write(result)
-					tmp2.flush()
-					proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
-					diff = proc.stdout.read()
-					if not diff and not proc.wait(): raise NoChange()
-					tmp2.seek(0)
-				src_rev = io.BytesIO(result)
-				tmp2.write(Actions.curl(src_rev))
+				tmp2.write(result)
 				tmp2.flush()
 				proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
 				diff = proc.stdout.read()
-				if diff or proc.wait():
-					raise IrreversibleOperation(diff)
+				if not diff and not proc.wait():
+					if detect_nochange: raise NoChange(result)
+				else:
+					tmp2.seek(0)
+					src_rev = io.BytesIO(result)
+					tmp2.write(Actions.curl(src_rev))
+					tmp2.flush()
+					proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
+					diff = proc.stdout.read()
+					if diff or proc.wait():
+						raise IrreversibleOperation(diff)
 
 		if dst is None:
 			Actions.replace(optz.path, result, update_mtime=optz.update_mtime)
@@ -315,7 +329,6 @@ def main(argv=None, optz=None):
 
 if __name__ == '__main__':
 	try: main()
-	except NoChange: sys.exit(0)
 	except IrreversibleOperation as err:
 		print('Failed to do reverse-transformation flawlessly', file=sys.stderr, end='\n\n')
 		print(err.args[0], file=sys.stderr, end='')
