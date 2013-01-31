@@ -219,6 +219,20 @@ def main(argv=None, optz=None):
 				help='Dont run "diff" to check whether changes are perfectly reversible.')
 		with subcommand('curl', help='Add curly braces.') as cmd:
 			cmd.add_argument('path', help='File to process.')
+			cmd.add_argument('-n', '--line', type=int,
+				help='Print only specific line from the resulting source.')
+			cmd.add_argument('-c', '--context', type=int,
+				help='Used with --line will print given number of context lines around it.')
+			cmd.add_argument('-p', '--pretty', action='store_true',
+				help='With --line, will pretty-print line numbers on the left of each printed line.')
+		with subcommand('show', help='Dont change file, just show lines from it.') as cmd:
+			cmd.add_argument('path', help='File to process.')
+			cmd.add_argument('-n', '--line', type=int,
+				help='Print only specific line from the resulting source.')
+			cmd.add_argument('-c', '--context', type=int,
+				help='Used with --line will print given number of context lines around it.')
+			cmd.add_argument('-p', '--pretty', action='store_true',
+				help='With --line, will pretty-print line numbers on the left of each printed line.')
 
 		with subcommand('git-smudge', call='git-uncurl',
 				help='Same as "uncurl", but git-filter friendly'
@@ -246,9 +260,12 @@ def main(argv=None, optz=None):
 
 	try:
 		src, dst = (io.BytesIO(sys.stdin.read()), sys.stdout)\
-			if git_mode else (open(optz.path), None if not optz.dry_run else sys.stdout)
+			if git_mode else ( open(optz.path),
+				None if not (optz.dry_run or (optz.call in ['curl', 'show'] and optz.line))
+				else sys.stdout )
 
-		result = getattr(Actions, optz.call)(src)
+		if optz.call == 'show': result = src.read()
+		else: result = getattr(Actions, optz.call)(src)
 
 		if optz.call == 'uncurl' and not optz.force:
 			# Make sure that it's possible to restore original source
@@ -274,7 +291,19 @@ def main(argv=None, optz=None):
 
 		if dst is None:
 			Actions.replace(optz.path, result, update_mtime=optz.update_mtime)
-		else: dst.write(result)
+		else:
+			if not git_mode and optz.call in ['curl', 'show'] and optz.line:
+				a, b = max(0, ( optz.line - 1
+					- (optz.context or 0) )), (optz.line + (optz.context or 0))
+				try: result = result.splitlines()[a:b]
+				except IndexError:
+					print( 'Unable to find specified lines'
+						' ({}-{}) in a resulting file'.format(a+1, b+1), file=sys.stderr )
+					sys.exit(1)
+				result = '\n'.join(
+					('{}{}:'.format('> ' if n == optz.line else '  ', n) + line)
+					for n, line in enumerate(result, a+1) ) + '\n'
+			dst.write(result)
 
 	except Exception as err:
 		if not git_mode: raise
