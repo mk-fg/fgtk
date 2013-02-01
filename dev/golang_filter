@@ -10,8 +10,6 @@ from os.path import dirname, basename, join, exists
 from subprocess import Popen, PIPE
 import os, sys, re, io, stat
 
-import pyparsing as pp
-
 
 class Actions(object):
 
@@ -61,7 +59,7 @@ class Actions(object):
 					src.seek(pos_prev)
 					ls_prev = src.readline().strip()
 					src.seek(pos)
-					bo, bc = '()' if re.search(r'^import\b', ls_prev) else '{}'
+					bo, bc = '()' if re.search(r'^(import|var)\s*$', ls_prev) else '{}'
 					brace_stack.append((pos_prev, bo, bc))
 					cancer[pos_prev]['open'] += bo
 
@@ -123,7 +121,7 @@ class Actions(object):
 			if braces.get('soft_close') and brace_stack.pop(): # "} else {"
 				line = braces.get('soft_close') + ' ' + line
 			# Result line(s) composition
-			eol = '\n'
+			eol = braces.get('eol', '\n')
 			if bc: # special handling for ad-hoc closures, which end in "}()"
 				pos = src.tell()
 				line_next = src.readline()
@@ -135,7 +133,7 @@ class Actions(object):
 					pos_line, braces = cancer[-1]
 					if pos_line < src.tell():
 						if braces.get('close'):
-							braces['close'] = list(braces['close'])
+							braces['close'], braces['eol'] = list(braces['close']), ''
 							braces['close'][0] = '\t' * pos_next_tabs + braces['close'][0]
 						cancer[-1] = None, braces # don't do seek on next iteration
 			result.append(
