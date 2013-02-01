@@ -102,14 +102,17 @@ class Actions(object):
 		## Bloatify source
 		src.seek(0)
 		result, pos_prev = list(), src.tell()
-		brace_stack = list()
-		for pos_line, braces in sorted(cancer.viewitems()):
-			# Read to the next brace-line
-			assert pos_line >= pos_prev
-			result.append(src.read(pos_line - pos_prev))
-			assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
+		brace_stack, cancer = list(), sorted(cancer.viewitems(), reverse=True)
+		while cancer:
+			pos_line, braces = cancer.pop()
+			if pos_line is not None:
+				# Read to the next brace-line
+				assert pos_line >= pos_prev
+				result.append(src.read(pos_line - pos_prev))
+				assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
+				line = src.readline()
+			else: line = ''
 			# Append cancer
-			line = src.readline()
 			bo, bc = it.imap(braces.get, ['open', 'close'])
 			pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip()
 			# Keep stack of braces to skip corresponding open/close ones
@@ -121,11 +124,20 @@ class Actions(object):
 				line = braces.get('soft_close') + ' ' + line
 			# Result line(s) composition
 			eol = '\n'
-			if bc: # special handling for defers, which end in "}()"
+			if bc: # special handling for ad-hoc closures, which end in "}()"
 				pos = src.tell()
 				line_next = src.readline()
 				if line_next.strip() != '()': src.seek(pos)
-				else: eol = line_next.lstrip()
+				else:
+					pos_next_tabs = len(line_next)
+					eol = line_next.lstrip('\t')
+					pos_next_tabs -= len(eol) + 1
+					pos_line, braces = cancer[-1]
+					if pos_line < src.tell():
+						if braces.get('close'):
+							braces['close'] = list(braces['close'])
+							braces['close'][0] = '\t' * pos_next_tabs + braces['close'][0]
+						cancer[-1] = None, braces # don't do seek on next iteration
 			result.append(
 				'\t'*pos_tabs + line
 				# + (((' ' if not re.search(r'\[\S*\]\w+\s*$', line) else '') + bo) if bo else '')
