@@ -13,6 +13,8 @@ import os, sys, re, io, stat
 
 class Actions(object):
 
+	bak_suffix = '.src-bak'
+
 
 	@classmethod
 	def itercode(cls, src):
@@ -21,8 +23,9 @@ class Actions(object):
 
 	@classmethod
 	def check_noncode(cls, ls, src, blocks=True):
-		return not ls or ls.startswith('//')\
-			or (blocks and cls.skip_block(ls, src))
+		return not ls\
+			or (blocks and cls.skip_block(ls, src))\
+			or ls.startswith('//')
 
 	@classmethod
 	def skip_block(cls, line, src):
@@ -34,6 +37,10 @@ class Actions(object):
 		if re.search(r'^\s*/\*\s', line): # comment blocks
 			for line in iter(src, ''):
 				if re.search(r'^(.*\s+)?\*/\s*$', line): break
+			res = True
+		if re.search(r'//\+as-is\s*$', line): # verbatim blocks
+			for line in iter(src, ''):
+				if re.search(r'//-as-is\s*$', line): break
 			res = True
 		return res
 
@@ -52,7 +59,7 @@ class Actions(object):
 				continue
 
 			if pos_tabs > pos_prev_tabs: # block start (indent++)
-				assert pos_tabs - pos_prev_tabs == 1
+				# assert pos_tabs - pos_prev_tabs == 1
 				if case_block: case_block = False # "case:" insides
 				else:
 					pos = src.tell()
@@ -65,6 +72,7 @@ class Actions(object):
 
 			elif pos_tabs < pos_prev_tabs: # block end (indent--)
 				for n in xrange(pos_prev_tabs - pos_tabs):
+					if not brace_stack: continue # might cause mismatched indent for braces
 					pos_open, bo, bc = brace_stack[-1]
 					if bo is None and bc is None: # "case:" end
 						if not re.search(r'^(case\b.*|default\s*):$', ls):
@@ -97,10 +105,27 @@ class Actions(object):
 			for pos_open, bo, bc in brace_stack:
 				cancer[pos_prev]['close'] += bc
 
+		## Some templating to get rid of ultra-long function sigs
+		src.seek(0)
+		type_tpls, pos_prev = dict(), src.tell()
+		for line in iter(src.readline, ''):
+			match = re.search(r'^type (?P<name>\S+) func(?P<sig>\(.+\S)\s*$', line)
+			if match: type_tpls[match.group('name')] = match.group('sig')
+			match = re.search(r'^func [\w\d_]+<<(?P<name>\S+)>>(?P<ret>\s+\S.*)?\s*$', line)
+			if match:
+				if not match.group('ret'): template = type_tpls['name']
+				else:
+					template = type_tpls[match.group('name')]
+					template = ( (template.rsplit(')', 2)[0] + ')')\
+						if template.endswith(')') else (template.rsplit(')', 1)[0] + ')') )
+				cancer[pos_prev]['template'] = '<<{}>>'.format(match.group('name')), template
+			pos_prev = src.tell()
+
 		## Bloatify source
 		src.seek(0)
 		result, pos_prev = list(), src.tell()
 		brace_stack, cancer = list(), sorted(cancer.viewitems(), reverse=True)
+		tpl_tweaks = list()
 		while cancer:
 			pos_line, braces = cancer.pop()
 			if pos_line is not None:
@@ -110,12 +135,17 @@ class Actions(object):
 				assert pos_line == src.tell(), [result[-1][-100:], pos_line, src.tell(), pos_prev]
 				line = src.readline()
 			else: line = ''
+			# Do some templating, if necessary here
+			if line and braces.get('template'):
+				line_new = line.replace(*braces['template'])
+				tpl_tweaks.append((line_new, line))
+				line = line_new
 			# Append cancer
 			bo, bc = it.imap(braces.get, ['open', 'close'])
 			pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip()
 			# Keep stack of braces to skip corresponding open/close ones
 			if bo:
-				for c in [bo, '+', ',']: # long lines, calls and already-curled blocks
+				for c in [bo, '+', ',', '(']: # long lines, calls and already-curled blocks
 					if line.endswith(c):
 						bo = None
 						break
@@ -148,7 +178,7 @@ class Actions(object):
 			pos_prev = src.tell()
 		result.append(src.read())
 
-		return ''.join(result)
+		return ''.join(result), tpl_tweaks
 
 
 	@classmethod
@@ -196,11 +226,11 @@ class Actions(object):
 			pos_prev = src.tell()
 		result.append(src.read())
 
-		return ''.join(result)
+		return ''.join(result), list()
 
 
 	@classmethod
-	def replace(cls, path, contents, update_mtime=False):
+	def replace(cls, path, contents, update_mtime=False, backup=False):
 		assert exists(path)
 		with NamedTemporaryFile( dir=dirname(path),
 				prefix=basename(path)+'.', delete=False ) as tmp:
@@ -212,6 +242,7 @@ class Actions(object):
 				if not update_mtime:
 					os.utime(tmp.name, (pstat.st_mtime, pstat.st_mtime))
 				os.fsync(tmp.fileno())
+				if backup: os.rename(path, path + cls.bak_suffix)
 				os.rename(tmp.name, path)
 			finally:
 				try: os.unlink(tmp.name)
@@ -243,14 +274,21 @@ def main(argv=None, optz=None, detect_nochange=False):
 			cmd.add_argument('path', help='File to process.')
 			cmd.add_argument('-f', '--force', action='store_true',
 				help='Dont run "diff" to check whether changes are perfectly reversible.')
+			cmd.add_argument('-b', '--backup', action='store_true',
+				help=( 'Try to restore "*{}" file instead'
+					' of performing operation.'.format(Actions.bak_suffix) ))
 		with subcommand('curl', help='Add curly braces.') as cmd:
 			cmd.add_argument('path', help='File to process.')
+			cmd.add_argument('-f', '--force', action='store_true',
+				help='Dont run "diff" to check whether changes are perfectly reversible.')
 			cmd.add_argument('-n', '--line', type=int,
 				help='Print only specific line from the resulting source.')
 			cmd.add_argument('-c', '--context', type=int,
 				help='Used with --line will print given number of context lines around it.')
 			cmd.add_argument('-p', '--pretty', action='store_true',
 				help='With --line, will pretty-print line numbers on the left of each printed line.')
+			cmd.add_argument('-b', '--backup', action='store_true',
+				help='Create "*{}" file with the original source.'.format(Actions.bak_suffix))
 		with subcommand('show', help='Dont change file, just show lines from it.') as cmd:
 			cmd.add_argument('path', help='File to process.')
 			cmd.add_argument('-n', '--line', type=int,
@@ -267,11 +305,18 @@ def main(argv=None, optz=None, detect_nochange=False):
 				' supplies contents on stdin and expects processing results on stdout.')
 			cmd.add_argument('-f', '--force', action='store_true',
 				help='Dont run "diff" to check whether changes are perfectly reversible.')
+			cmd.add_argument('-b', '--backup', action='store_true',
+				help=( 'Try to restore "*{}" file instead'
+					' of performing operation.'.format(Actions.bak_suffix) ))
 		with subcommand('git-clean', call='git-curl',
 				help='Same as "curl", but git-filter friendly'
 					' - works with stdin/stdout, different error handling.') as cmd:
 			cmd.add_argument('path', help='Filename. Ignored - git'
 				' supplies contents on stdin and expects processing results on stdout.')
+			cmd.add_argument('-f', '--force', action='store_true',
+				help='Dont run "diff" to check whether changes are perfectly reversible.')
+			cmd.add_argument('-b', '--backup', action='store_true',
+				help='Create "*{}" file with the original source.'.format(Actions.bak_suffix))
 
 		parser.add_argument('-n', '--dry-run', action='store_true',
 			help='Dont replace the files, just output mangled source. Ignored with git-* commands.')
@@ -291,9 +336,9 @@ def main(argv=None, optz=None, detect_nochange=False):
 				else sys.stdout )
 
 		if optz.call == 'show': result = src.read()
-		else: result = getattr(Actions, optz.call)(src)
+		else: result, tpl_tweaks = getattr(Actions, optz.call)(src)
 
-		if optz.call == 'uncurl' and not optz.force:
+		if optz.call in ['curl', 'uncurl'] and not optz.force:
 			# Make sure that it's possible to restore original source
 			with NamedTemporaryFile() as tmp1,\
 					NamedTemporaryFile() as tmp2:
@@ -308,16 +353,29 @@ def main(argv=None, optz=None, detect_nochange=False):
 					if detect_nochange: raise NoChange(result)
 				else:
 					tmp2.seek(0)
+					tmp2.truncate()
 					src_rev = io.BytesIO(result)
-					tmp2.write(Actions.curl(src_rev))
+					result_rev, tpl_tweaks_rev = ( Actions.curl
+						if optz.call == 'uncurl' else Actions.uncurl )(src_rev)
+					for tweak in tpl_tweaks: # revert templating
+						assert tweak[0] in result_rev
+						result_rev = result_rev.replace(*tweak)
+					tmp2.write(result_rev)
 					tmp2.flush()
 					proc = Popen(['diff', '-u', tmp1.name, tmp2.name], stdout=PIPE)
 					diff = proc.stdout.read()
 					if diff or proc.wait():
 						raise IrreversibleOperation(diff)
 
+		if optz.call == 'uncurl' and optz.backup: # restore result from backup
+			path = optz.path + Actions.bak_suffix
+			if exists(path):
+				with open(path) as bak: result = bak.read()
+
 		if dst is None:
-			Actions.replace(optz.path, result, update_mtime=optz.update_mtime)
+			Actions.replace( optz.path, result,
+				update_mtime=optz.update_mtime,
+				backup=(optz.call == 'curl' and optz.backup) )
 		else:
 			if not git_mode and optz.call in ['curl', 'show'] and optz.line:
 				a, b = max(0, ( optz.line - 1
@@ -330,6 +388,9 @@ def main(argv=None, optz=None, detect_nochange=False):
 				result = '\n'.join(
 					('{}{}:'.format('> ' if n == optz.line else '  ', n) + line)
 					for n, line in enumerate(result, a+1) ) + '\n'
+			if optz.call == 'curl' and optz.backup: # backup source
+				src.seek(0)
+				with open(optz.path + Actions.bak_suffix, 'w') as bak: bak.write(src.read())
 			dst.write(result)
 
 	except Exception as err:
