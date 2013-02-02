@@ -112,6 +112,8 @@ class Actions(object):
 			match = re.search(r'^type (?P<name>\S+) func(?P<sig>\(.+\S)\s*$', line)
 			if match: type_tpls[match.group('name')] = match.group('sig')
 			match = re.search(r'^func [\w\d_]+<<(?P<name>\S+)>>(?P<ret>\s+\S.*)?\s*$', line)
+			if not match:
+				match = re.search(r'^\s*\S+\s+:?=\s+func<<(?P<name>\S+)>>(?P<ret>\s+\S.*)?\s*$', line)
 			if match:
 				if not match.group('ret'): template = type_tpls['name']
 				else:
