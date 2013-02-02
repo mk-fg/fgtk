@@ -115,7 +115,10 @@ class Actions(object):
 			pos_tabs, line = len(line) - len(line.lstrip('\t')), line.strip()
 			# Keep stack of braces to skip corresponding open/close ones
 			if bo:
-				if line.endswith(bo): bo = None
+				for c in [bo, '+', ',']: # long lines, calls and already-curled blocks
+					if line.endswith(c):
+						bo = None
+						break
 				brace_stack.append(bo)
 			if bc and not brace_stack.pop(): bc = None # opening brace skipped
 			if braces.get('soft_close') and brace_stack.pop(): # "} else {"
