@@ -121,7 +121,7 @@ class Actions(object):
 			if not match:
 				match = re.search(r'^\s*\S+\s+:?=\s+func<<(?P<name>\S+)>>(?P<ret>\s+\S.*)?\s*$', line)
 			if match:
-				if not match.group('ret'): template = type_tpls['name']
+				if not match.group('ret'): template = type_tpls[match.group('name')]
 				else:
 					template = type_tpls[match.group('name')]
 					template = ( (template.rsplit(')', 2)[0] + ')')\
