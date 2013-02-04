@@ -109,6 +109,12 @@ class Actions(object):
 		src.seek(0)
 		type_tpls, pos_prev = dict(), src.tell()
 		for line in iter(src.readline, ''):
+			if line.strip().endswith(','): # handle multiline func signatures
+				line = line.strip()
+				for line_ext in iter(src.readline, ''):
+					line_ext = line_ext.strip()
+					line += ' ' + line_ext
+					if not line_ext.endswith(','): break
 			match = re.search(r'^type (?P<name>\S+) func(?P<sig>\(.+\S)\s*$', line)
 			if match: type_tpls[match.group('name')] = match.group('sig')
 			match = re.search(r'^func [\w\d_]+<<(?P<name>\S+)>>(?P<ret>\s+\S.*)?\s*$', line)
