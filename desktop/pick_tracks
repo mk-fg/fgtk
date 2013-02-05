@@ -15,6 +15,12 @@ def main(argv=None):
 	parser.add_argument('dst', help='Destination path.')
 	parser.add_argument('-s', '--min-df',
 		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
+	parser.add_argument('-c', '--clean-df',
+		type=float, metavar='MiB', help='Before copying stuff, clean up files from'
+			' destination path (also see --clean-path) up to specified free-space'
+			' threshold (or until theres nothing left). Files to remove are picked at random.')
+	parser.add_argument('-r', '--clean-path',
+		help='Clean stuff from the specified path instead of destination.')
 	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual "cp" part.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -28,22 +34,54 @@ def main(argv=None):
 		local['mkdir']('-p', optz.dst)
 		log.debug('Created: {}'.format(optz.dst))
 	if optz.min_df: optz.min_df = optz.min_df * MiB
+	if optz.clean_df:
+		optz.clean_df = optz.clean_df * MiB
+		if not optz.clean_path: optz.clean_path = optz.dst
 
+	def free(path=optz.dst):
+		df = os.statvfs(path)
+		return float(df.f_bavail * df.f_bsize)
+
+	def pop_path(path_list):
+		idx = random.randint(0, len(path_list) - 1)
+		path = path_list.pop(idx)
+		return path
+
+	# Cleanup, if requested
+	if optz.clean_df:
+		if not exists(optz.clean_path):
+			log.info('Cleanup path does not exists: {}'.format(optz.clean_path))
+		else:
+			log.debug(
+				'Starting cleanup (up to: {:.1f} MiB) of the path: {!r}'\
+				.format(optz.clean_df / MiB, optz.clean_path) )
+			code, cleanup, err = local['find'].run([optz.clean_path, '-type', 'f'])
+			cleanup = cleanup.splitlines()
+			while True:
+				df = free(optz.clean_path)
+				if df >= optz.clean_df: break
+				path = pop_path(cleanup)
+				log.debug(
+					'Removing file (df: {:.1f} / {:.1f} MiB): {!r}'\
+					.format(df / MiB, optz.clean_df / MiB, path) )
+				try: os.unlink(path)
+				except OSError as err:
+					log.warn('Failed to remove file ({}): {}'.format(path, err))
+
+	# Build file list
 	log.debug('Building list of files in source paths')
-	code, out, err = local['find'].run(list(optz.src) + ['-type', 'f'])
+	code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
 	if code or err:
 		sys.stderr.write(err)
-		raise RuntimeError('find (paths: {}) exited with non-zero status'.format(optz.src))
-	src_files = out.splitlines()
+		raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
+	src_files = src_files.splitlines()
 	log.debug(' - found {} files'.format(len(src_files)))
 
-	def free():
-		df = os.statvfs(optz.dst)
-		return float(df.f_bavail * df.f_bsize)
+	# Stats
+	df0, ts0 = free(), time()
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
-	df0, ts0 = free(), time()
-
+	# Copy files
 	while True:
 		df = free()
 		rate = (df0 - df) / (time() - ts0)
@@ -56,9 +94,9 @@ def main(argv=None):
 			log.debug(
 				' - space left to fill: {:.1f} MiB, rate: {:.2f} MiB/s, left: {}'\
 				.format(to_fill / MiB, rate / MiB, time_left) )
-		path = random.choice(src_files)
+		path = pop_path(src_files)
 
-		log.debug('Copying: {}'.format(path))
+		log.debug('Copying: {!r}'.format(path))
 		path_dst = join(optz.dst, basename(path))
 		if not optz.dry_run:
 			try: local['cp'](path, path_dst)
@@ -68,6 +106,7 @@ def main(argv=None):
 				log.info('Aborted. {}'.format(stats()))
 				sys.exit()
 
+	# Success
 	rate = (df0 - free()) / (time() - ts0)
 	log.info(stats())
 

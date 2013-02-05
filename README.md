@@ -322,6 +322,15 @@ cp/rsync will do the dumb "we'll copy same first things every time", while this
 tool will create the dst path for you, copy always-new selection there and - due
 to "-s 200" - leave 200 MiB there for podcasts you might want to also upload.
 
+As with "cp", "pick_tracks /path1 /path2 /dst" is perfectly valid.
+
+And there are neat cleaup flags for cases when I need to cram something new to
+the destination, preserving as much of the stuff that's already there as
+possible. Cleanup (if requested) also picks stuff at random up to necessary df.
+
+Uses [plumbum](http://plumbum.readthedocs.org) to call "cp" and "find" to
+copy/list files.
+
 ##### link
 
 ssh wrapper, to save time on typing something like `exec ssh -X -A -p3542
