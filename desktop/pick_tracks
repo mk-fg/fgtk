@@ -58,6 +58,7 @@ def main(argv=None):
 			code, cleanup, err = local['find'].run([optz.clean_path, '-type', 'f'])
 			cleanup = cleanup.splitlines()
 			while True:
+				if not cleanup: break # nothing more to remove
 				df = free(optz.clean_path)
 				if df >= optz.clean_df: break
 				path = pop_path(cleanup)
@@ -83,6 +84,7 @@ def main(argv=None):
 
 	# Copy files
 	while True:
+		if not src_files: break # nothing more to copy
 		df = free()
 		rate = (df0 - df) / (time() - ts0)
 

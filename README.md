@@ -317,6 +317,9 @@ Use-case is simple - insert an SD card from a player and do:
 	% pick_tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/music
 	INFO:root:Done: 1673.1 MiB, rate: 1.29 MiB/s
 
+"--debug" also keeps track of what's being done and calculates how much time is
+left based on df-goal and median rate.
+
 Source dir has like [3k files](http://ocremix.org/torrents/) in many dirs, and
 cp/rsync will do the dumb "we'll copy same first things every time", while this
 tool will create the dst path for you, copy always-new selection there and - due
@@ -328,8 +331,8 @@ And there are neat cleaup flags for cases when I need to cram something new to
 the destination, preserving as much of the stuff that's already there as
 possible. Cleanup (if requested) also picks stuff at random up to necessary df.
 
-Uses [plumbum](http://plumbum.readthedocs.org) to call "cp" and "find" to
-copy/list files.
+Uses [plumbum](http://plumbum.readthedocs.org) to call "rsync --inplace" (faster
+than "cp" in most cases) and "find" to do the actual copy/listing.
 
 ##### link
 
