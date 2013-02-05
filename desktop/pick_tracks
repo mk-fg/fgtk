@@ -101,7 +101,7 @@ def main(argv=None):
 		log.debug('Copying: {!r}'.format(path))
 		path_dst = join(optz.dst, basename(path))
 		if not optz.dry_run:
-			try: local['cp'](path, path_dst)
+			try: local['rsync']('--inplace', '--size-only', path, path_dst)
 			except KeyboardInterrupt:
 				try: os.unlink(path_dst)
 				except OSError: pass
