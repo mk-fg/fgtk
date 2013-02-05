@@ -57,8 +57,7 @@ def main(argv=None):
 				.format(optz.clean_df / MiB, optz.clean_path) )
 			code, cleanup, err = local['find'].run([optz.clean_path, '-type', 'f'])
 			cleanup = cleanup.splitlines()
-			while True:
-				if not cleanup: break # nothing more to remove
+			while cleanup:
 				df = free(optz.clean_path)
 				if df >= optz.clean_df: break
 				path = pop_path(cleanup)
@@ -83,8 +82,7 @@ def main(argv=None):
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
 	# Copy files
-	while True:
-		if not src_files: break # nothing more to copy
+	while src_files:
 		df = free()
 		rate = (df0 - df) / (time() - ts0)
 
