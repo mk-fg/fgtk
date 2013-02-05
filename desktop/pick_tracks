@@ -1,0 +1,75 @@
+#!/usr/bin/env python
+
+import itertools as it, operator as op, functools as ft
+from plumbum import local
+from time import time
+from os.path import basename, dirname, join, exists
+import os, sys, re, random
+
+
+def main(argv=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Randomly pick and copy tracks from source to destination.')
+	parser.add_argument('src', nargs='+', help='Source path(s).')
+	parser.add_argument('dst', help='Destination path.')
+	parser.add_argument('-s', '--min-df',
+		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
+	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual "cp" part.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+	import logging
+	logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
+	log = logging.getLogger()
+
+	MiB = 2**20
+	if not exists(optz.dst):
+		local['mkdir']('-p', optz.dst)
+		log.debug('Created: {}'.format(optz.dst))
+	if optz.min_df: optz.min_df = optz.min_df * MiB
+
+	log.debug('Building list of files in source paths')
+	code, out, err = local['find'].run(list(optz.src) + ['-type', 'f'])
+	if code or err:
+		sys.stderr.write(err)
+		raise RuntimeError('find (paths: {}) exited with non-zero status'.format(optz.src))
+	src_files = out.splitlines()
+	log.debug(' - found {} files'.format(len(src_files)))
+
+	def free():
+		df = os.statvfs(optz.dst)
+		return float(df.f_bavail * df.f_bsize)
+	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
+
+	df0, ts0 = free(), time()
+
+	while True:
+		df = free()
+		rate = (df0 - df) / (time() - ts0)
+
+		if optz.min_df:
+			if df < optz.min_df: break
+			to_fill = df - optz.min_df
+			time_left = int(to_fill / rate) if rate != 0 else 0
+			time_left = '{}m {}s'.format(time_left / 60, time_left % 60)
+			log.debug(
+				' - space left to fill: {:.1f} MiB, rate: {:.2f} MiB/s, left: {}'\
+				.format(to_fill / MiB, rate / MiB, time_left) )
+		path = random.choice(src_files)
+
+		log.debug('Copying: {}'.format(path))
+		path_dst = join(optz.dst, basename(path))
+		if not optz.dry_run:
+			try: local['cp'](path, path_dst)
+			except KeyboardInterrupt:
+				try: os.unlink(path_dst)
+				except OSError: pass
+				log.info('Aborted. {}'.format(stats()))
+				sys.exit()
+
+	rate = (df0 - free()) / (time() - ts0)
+	log.info(stats())
+
+
+if __name__ == '__main__': main()

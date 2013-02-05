@@ -301,6 +301,27 @@ transmission for bittorrent (with some processing of .torrent files to drop
 long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
 
+##### pick_tracks
+
+A simple tool to randomly pick and copy files (intended usage is music tracks)
+from source to destination.
+
+Difference from "cp" is that it will stop when destination will be filled (to
+the configurable --min-df threshold) and will pick files in arbitrary order from
+arbitrary path hierarchy.
+
+Use-case is simple - insert an SD card from a player and do:
+
+	% mount /mnt/sd_card
+	% rm -rf /mnt/sd_card/music
+	% pick_tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/music
+	INFO:root:Done: 1673.1 MiB, rate: 1.29 MiB/s
+
+Source dir has like [3k files](http://ocremix.org/torrents/) in many dirs, and
+cp/rsync will do the dumb "we'll copy same first things every time", while this
+tool will create the dst path for you, copy always-new selection there and - due
+to "-s 200" - leave 200 MiB there for podcasts you might want to also upload.
+
 ##### link
 
 ssh wrapper, to save time on typing something like `exec ssh -X -A -p3542
