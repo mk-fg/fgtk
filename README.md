@@ -395,6 +395,19 @@ X-related commits in git-log and see which tabs were open at the time).
 Also helpful if other people tend to use your browser, closing and overriding
 (potentially useful) tabs at random.
 
+##### e_config_backup
+
+[Yapps2](https://github.com/mk-fg/yapps)-based (grammar as-is in *.g file)
+parser script for Enlightenment (E17) config file (doing eet-decoding
+beforehand) for the purposes of it's backup [in
+git](https://github.com/mk-fg/de-setup) alongside other DE-related
+configuration.
+
+Whole purpose of decoding/encoding dance is to sort the sections (which E orders
+at random) and detect/filter-out irrelevant changes like remembered window
+positions or current ([auto-rotated](http://desktop-aura.sourceforge.net/))
+wallpaper path.
+
 
 ### UFS
 
