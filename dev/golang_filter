@@ -188,6 +188,13 @@ class Actions(object):
 
 		return ''.join(result), tpl_tweaks
 
+	@classmethod
+	def curl_postproc(cls, data):
+		'Irreversible post-processing'
+		return '\n'.join(it.imap(
+			ft.partial(re.sub, r'//(\+|-)as-is\s*$', ''),
+			''.join(data).splitlines() )) + '\n'
+
 
 	@classmethod
 	def uncurl(cls, src):
@@ -384,6 +391,7 @@ def main(argv=None, optz=None, detect_nochange=False):
 			Actions.replace( optz.path, result,
 				update_mtime=optz.update_mtime,
 				backup=(optz.call == 'curl' and optz.backup) )
+
 		else:
 			if not git_mode and optz.call in ['curl', 'show'] and optz.line:
 				a, b = max(0, ( optz.line - 1
@@ -396,9 +404,14 @@ def main(argv=None, optz=None, detect_nochange=False):
 				result = '\n'.join(
 					('{}{}:'.format('> ' if n == optz.line else '  ', n) + line)
 					for n, line in enumerate(result, a+1) ) + '\n'
-			if optz.call == 'curl' and optz.backup: # backup source
-				src.seek(0)
-				with open(optz.path + Actions.bak_suffix, 'w') as bak: bak.write(src.read())
+
+			if optz.call == 'curl':
+				if optz.backup: # backup source
+					src.seek(0)
+					with open(optz.path + Actions.bak_suffix, 'w') as bak: bak.write(src.read())
+				if git_mode: # remove processing-related comments from final source
+					result = Actions.curl_postproc(result)
+
 			dst.write(result)
 
 	except Exception as err:
