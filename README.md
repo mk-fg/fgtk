@@ -329,7 +329,8 @@ As with "cp", "pick_tracks /path1 /path2 /dst" is perfectly valid.
 
 And there are neat cleaup flags for cases when I need to cram something new to
 the destination, preserving as much of the stuff that's already there as
-possible. Cleanup (if requested) also picks stuff at random up to necessary df.
+possible (and removing least important stuff).
+Cleanup (if requested) also picks stuff at random up to necessary df.
 
 Uses [plumbum](http://plumbum.readthedocs.org) to call "rsync --inplace" (faster
 than "cp" in most cases) and "find" to do the actual copy/listing.

@@ -19,9 +19,13 @@ def main(argv=None):
 		type=float, metavar='MiB', help='Before copying stuff, clean up files from'
 			' destination path (also see --clean-path) up to specified free-space'
 			' threshold (or until theres nothing left). Files to remove are picked at random.')
+	parser.add_argument('-a', '--clean-as-necessary',
+		action='store_true', help='Clean up files from destination path'
+			' (also see --clean-path) as necessary to copy *all* the source files.'
+			' Files to remove are picked at random. Mutually exclusive with --min-df.')
 	parser.add_argument('-r', '--clean-path',
 		help='Clean stuff from the specified path instead of destination.')
-	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual "cp" part.')
+	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -29,14 +33,23 @@ def main(argv=None):
 	logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
 	log = logging.getLogger()
 
+	if optz.clean_as_necessary and optz.min_df:
+		parser.error('Options --min-df and --clean-as-necessary do not make sense together')
+
 	MiB = 2**20
 	if not exists(optz.dst):
 		local['mkdir']('-p', optz.dst)
 		log.debug('Created: {}'.format(optz.dst))
 	if optz.min_df: optz.min_df = optz.min_df * MiB
-	if optz.clean_df:
-		optz.clean_df = optz.clean_df * MiB
+
+	optz.clean = optz.clean_df or optz.clean_as_necessary
+	if optz.clean:
+		if optz.clean_df: optz.clean_df = optz.clean_df * MiB
 		if not optz.clean_path: optz.clean_path = optz.dst
+
+	def force_bytes(path):
+		if isinstance(path, unicode): return path.encode('utf-8')
+		return path
 
 	def free(path=optz.dst):
 		df = os.statvfs(path)
@@ -47,26 +60,32 @@ def main(argv=None):
 		path = path_list.pop(idx)
 		return path
 
-	# Cleanup, if requested
-	if optz.clean_df:
+	def do_cleanup(df_goal=optz.clean_df):
+		if optz.dry_run: return
+		while cleanup:
+			df = free(optz.clean_path)
+			if df >= df_goal: break
+			path = force_bytes(pop_path(cleanup))
+			log.debug(
+				'Removing file (df: {:.1f} / {:.1f} MiB): {!r}'\
+				.format(df / MiB, df_goal / MiB, path) )
+			try: os.unlink(path)
+			except OSError as err:
+				log.warn('Failed to remove file ({}): {}'.format(path, err))
+
+	# Build a list of files we're allowed to remove, if any cleanup is requested
+	if optz.clean:
+		cleanup = list()
 		if not exists(optz.clean_path):
 			log.info('Cleanup path does not exists: {}'.format(optz.clean_path))
 		else:
-			log.debug(
-				'Starting cleanup (up to: {:.1f} MiB) of the path: {!r}'\
-				.format(optz.clean_df / MiB, optz.clean_path) )
+			if optz.clean_df:
+				log.debug(
+					'Starting cleanup (up to: {:.1f} MiB) of the path: {!r}'\
+					.format(optz.clean_df / MiB, optz.clean_path) )
 			code, cleanup, err = local['find'].run([optz.clean_path, '-type', 'f'])
 			cleanup = cleanup.splitlines()
-			while cleanup:
-				df = free(optz.clean_path)
-				if df >= optz.clean_df: break
-				path = pop_path(cleanup)
-				log.debug(
-					'Removing file (df: {:.1f} / {:.1f} MiB): {!r}'\
-					.format(df / MiB, optz.clean_df / MiB, path) )
-				try: os.unlink(path)
-				except OSError as err:
-					log.warn('Failed to remove file ({}): {}'.format(path, err))
+			if optz.clean_df: do_cleanup() # do pre-cleanup, if enabled
 
 	# Build file list
 	log.debug('Building list of files in source paths')
@@ -94,17 +113,21 @@ def main(argv=None):
 			log.debug(
 				' - space left to fill: {:.1f} MiB, rate: {:.2f} MiB/s, left: {}'\
 				.format(to_fill / MiB, rate / MiB, time_left) )
-		path = pop_path(src_files)
 
+		path = force_bytes(pop_path(src_files))
 		log.debug('Copying: {!r}'.format(path))
+
 		path_dst = join(optz.dst, basename(path))
-		if not optz.dry_run:
-			try: local['rsync']('--inplace', '--size-only', path, path_dst)
-			except KeyboardInterrupt:
-				try: os.unlink(path_dst)
-				except OSError: pass
-				log.info('Aborted. {}'.format(stats()))
-				sys.exit()
+		try:
+			if optz.clean_as_necessary: # free space for a file, if requested
+				df_path = os.stat(path).st_size
+				if df < df_path: do_cleanup(df_path)
+			if not optz.dry_run: local['rsync']('--inplace', '--size-only', path, path_dst)
+		except KeyboardInterrupt:
+			try: os.unlink(path_dst)
+			except OSError: pass
+			log.info('Aborted. {}'.format(stats()))
+			sys.exit()
 
 	# Success
 	rate = (df0 - free()) / (time() - ts0)
