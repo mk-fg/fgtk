@@ -130,15 +130,10 @@ designed to be used from git content filters, and occasionally by hand.
 		clean = tabs_filter clean %f
 		smudge = tabs_filter smudge %f
 
-.gitattributes:
+.git/info/attributes or .gitattributes:
 
 	*.py filter=tabs
 	*.tac filter=tabs
-
-.gitignore:
-
-	/.gitignore
-	/.gitattributes
 
 Not sure why people have such strong opinions on that trivial matter, but I find
 it easier never to mention that I use such script ;)
@@ -158,14 +153,9 @@ transformation to make sure of that), as long as code intentation is correct.
 		clean = golang_filter git-clean %f
 		smudge = golang_filter git-smudge %f
 
-.gitattributes:
+.git/info/attributes or .gitattributes:
 
 	*.go filter=golang
-
-.gitignore:
-
-	/.gitignore
-	/.gitattributes
 
 Again, ideally no one should even notice that I actually don't have that crap in
 the editor, while repo and compiler will see the proper (bloated) code.
