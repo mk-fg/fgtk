@@ -85,7 +85,8 @@ if regen_setup:
 				try: version_orig = kw.value.s
 				except AttributeError:
 					try: # check if it's properly imported from somewhere as __version__
-						if '__version__' in kw.value.id: version_orig = False
+						if (hasattr(kw.value, 'attr') and kw.value.attr == '__version__')\
+							or '__version__' in kw.value.id: version_orig = False
 						else: raise AttributeError(kw.value.id)
 					except AttributeError: version_orig = None
 				break
