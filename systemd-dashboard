@@ -2,105 +2,74 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals, print_function
 
-import argparse
-parser = argparse.ArgumentParser(
-	description='Tool to compare the set of enabled'
-		' systemd services against currently running ones.\n'
-	'If started without parameters, it\'ll just show all the enabled services'
-		' that should be running (Type != oneshot) yet for some reason they aren\'t.')
-parser.add_argument('-s', '--status',
-	action='store_true', help='Show status report on found services.')
-parser.add_argument('-u', '--unknown',
-	action='store_true', help='Show enabled but unknown (not loaded) services.')
-parser.add_argument('-n', '--not-enabled',
-	action='store_true', help='Show list of services that are running but are not enabled directly.')
-parser.add_argument('-x', '--systemd-internals',
-	action='store_true', help='Dont exclude systemd internal services from the output.')
-optz = parser.parse_args()
-
-
 import itertools as it, operator as op, functools as ft
-import os, sys
-
-
-from glob import iglob
-
-class Service(object):
-
-	_cache = dict()
-
-	def __new__(cls, unit=None, id=None):
-		if unit: id = unicode(unit[0])
-		try: self = cls._cache[id]
-		except KeyError:
-			self = super(Service, cls).__new__(cls)
-			self.id = id
-			cls._cache[id] = self
-		if unit:
-			self.obj = unit[6]
-			self.state = tuple(it.imap(unicode, unit[3:5]))
-		return self
-
-	def __repr__(self): return self.id
-	def __eq__(self, other): return hash(self) == hash(other)
-	def __hash__(self):
-		if self.id is None: raise ValueError
-		return hash(self.id)
-
-	@property
-	def type(self):
-		return unicode(bus.get_object('org.freedesktop.systemd1', self.obj)\
-			.Get( 'org.freedesktop.systemd1.Service', 'Type',
-				dbus_interface='org.freedesktop.DBus.Properties' ))
-
-class ServiceLink(object):
-
-	def __init__(self, path):
-		self.path = path
-		self.eid = unicode(self.path).split('/', 4)[-1]
-		self.id = self.eid.split('/', 1)[-1]
-		self.masked = os.readlink(self.path) == '/dev/null'
-
-	def __hash__(self):
-		if self.eid is None: raise ValueError
-		return hash(self.eid)
-
-	def to_service(self): return Service(id=self.id)
-
-
-svc_links_list = set(it.imap(ServiceLink, it.chain.from_iterable(it.imap( iglob,
-	('/etc/systemd/system/*/*.service', '/lib/systemd/system/*/*.service') ))))
-
-svc_links_masked = set(it.ifilter(op.attrgetter('masked'), svc_links_list))
-svc_links_enabled = svc_links_list - svc_links_masked
-
-svc_enabled = set(it.imap(op.methodcaller('to_service'), svc_links_enabled))
-
+from subprocess import Popen, PIPE, STDOUT
+import os, sys, unicodedata
 
 import dbus
 
-bus = dbus.SystemBus()
-svc_known = set( Service(unit)
-	for unit in bus.get_object(
-		'org.freedesktop.systemd1',
-		'/org/freedesktop/systemd1' ).ListUnits()
-	if unit[0].endswith('.service') )
 
-if optz.unknown:
-	for svc in svc_enabled.difference(svc_known): print('{}'.format(svc))
+def main(argv=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to compare the set of enabled'
+			' systemd services against currently running ones.\n'
+		'If started without parameters, it\'ll just show all the enabled services'
+			' that should be running (Type != oneshot) yet for some reason they aren\'t.')
+	parser.add_argument('-s', '--status', action='store_true',
+		help='Show status report on found services.')
+	parser.add_argument('-n', '--not-enabled', action='store_true',
+		help='Show list of services that are running but are not enabled directly.')
+	parser.add_argument('-x', '--systemd-internals', action='store_true',
+		help='Dont exclude systemd internal services from the output.')
+	optz = parser.parse_args()
 
-elif optz.not_enabled:
-	for svc in svc_known.difference(svc_enabled):
-		if not optz.systemd_internals and svc.id.startswith('systemd-'): continue
-		if svc.state == ('active', 'running'): print(svc)
+	bus = dbus.SystemBus()
+	systemd = bus.get_object(
+		'org.freedesktop.systemd1', '/org/freedesktop/systemd1' )
 
-else:
-	for svc in svc_enabled.intersection(svc_known):
-		if svc.state[0] == 'active' or svc.type == 'oneshot': continue
-		if not optz.systemd_internals and svc.id.startswith('systemd-'): continue
-		if optz.status:
-			from subprocess import Popen, STDOUT
+	if optz.not_enabled:
+		not_enabled = set( unicode(unit[0])
+			for unit in systemd.ListUnits()
+			if unit[0].endswith('.service') and unit[3] != 'inactive' )
+
+	def show_status(unit_name):
+		if not optz.systemd_internals and unit_name.startswith('systemd-'): return
+		if not optz.status: print(unit_name)
+		else:
 			print()
-			Popen(['systemctl', 'status', unicode(svc)], stdout=sys.stderr, stderr=STDOUT).wait()
-		else: print(svc)
-	if optz.status: print()
+			Popen(['systemctl', 'status', unicode(unit_name)]).wait()
+
+	proc = Popen(['systemctl', '--full', 'list-dependencies'], stdout=PIPE)
+
+	for line in proc.stdout:
+		line = line.strip().decode('utf-8')
+		for i,c in enumerate(line):
+			if unicodedata.category(c) not in ['Zs', 'So']: break
+		else: continue
+		unit_name = line[i:]
+
+		# Not really interested in anything else
+		if not unit_name.endswith('.service'): continue
+
+		if optz.not_enabled:
+			not_enabled.discard(unit_name)
+			continue
+
+		obj = systemd.GetUnit(unit_name)
+		unit = bus.get_object('org.freedesktop.systemd1', systemd.GetUnit(unit_name))
+		if unit.Get('org.freedesktop.systemd1.Service', 'Type') == 'oneshot': continue
+		state = dict(
+			( k.lower(),
+				unicode(unit.Get('org.freedesktop.systemd1.Unit', '{}State'.format(k))) )
+			for k in ['Load', 'Active', 'Sub'] )
+		if state['load'] != 'error' and state['active'] != 'active': show_status(unit_name)
+
+	if proc.wait():
+		raise RuntimeError('list-dependencies command failed')
+
+	if optz.not_enabled:
+		for unit_name in not_enabled: show_status(unit_name)
+
+
+if __name__ == '__main__': sys.exit(main())
