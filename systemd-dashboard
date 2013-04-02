@@ -31,7 +31,7 @@ def main(argv=None):
 	if optz.not_enabled:
 		not_enabled = set( unicode(unit[0])
 			for unit in systemd.ListUnits()
-			if unit[0].endswith('.service') and unit[3] != 'inactive' )
+			if unit[0].endswith('.service') and unit[3] == 'active' )
 
 	def show_status(unit_name):
 		if not optz.systemd_internals and unit_name.startswith('systemd-'): return
@@ -56,7 +56,6 @@ def main(argv=None):
 			not_enabled.discard(unit_name)
 			continue
 
-		obj = systemd.GetUnit(unit_name)
 		unit = bus.get_object('org.freedesktop.systemd1', systemd.GetUnit(unit_name))
 		if unit.Get('org.freedesktop.systemd1.Service', 'Type') == 'oneshot': continue
 		state = dict(
@@ -69,7 +68,10 @@ def main(argv=None):
 		raise RuntimeError('list-dependencies command failed')
 
 	if optz.not_enabled:
-		for unit_name in not_enabled: show_status(unit_name)
+		for unit_name in not_enabled:
+			unit = bus.get_object('org.freedesktop.systemd1', systemd.GetUnit(unit_name))
+			if unit.Get('org.freedesktop.systemd1.Service', 'Type') == 'oneshot': continue
+			show_status(unit_name)
 
 
 if __name__ == '__main__': sys.exit(main())
