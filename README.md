@@ -74,14 +74,24 @@ Copy ownership/mode from one file to another:
 
 	fs cps /file1 /file2
 
-##### urlparse
+##### fatrace_pipe
 
-Simple script to parse long URL with lots of parameters, decode and print it out
-in an easily readable ordered YAML format or diff (that is, just using "diff"
-command on two outputs) with another URL.
+[fatrace](https://launchpad.net/fatrace)-based script to read filesystem write
+events via linux [fanotify](http://lwn.net/Articles/339253/) system and match
+them against specific path and app name, sending matches to a FIFO pipe.
 
-No more squinting at some huge incomprehensible ecommerce URLs before scraping
-the hell out of them!
+Use-case is to, for example, setup watcher for development project dir changes,
+sending instant "refresh" signals to something that renders the project or shows
+changes' results otherwise.
+
+FIFO is there because fanotify requires root privileges, and running some
+potentially-rm-rf-/ ops as uid=0 is a damn bad idea.
+User's pid can read lines from the fifo and react to these safely instead.
+
+Example - run "make" on any change to `~user/hatch/project` files:
+
+	(root) ~# fatrace_pipe ~user/hatch/project
+	(user) project% xargs -in1 </tmp/fatrace.fifo make
 
 
 ### Content
@@ -276,6 +286,15 @@ on some "magnet:..." link was successfully processed or discarded.
 	  -v, --notify-on-success
 	                        Issue notification upon successful execution as well.
 	  -d, --dump            Include stdou/stderr for all notifications.
+
+##### urlparse
+
+Simple script to parse long URL with lots of parameters, decode and print it out
+in an easily readable ordered YAML format or diff (that is, just using "diff"
+command on two outputs) with another URL.
+
+No more squinting at some huge incomprehensible ecommerce URLs before scraping
+the hell out of them!
 
 
 ### Desktop
