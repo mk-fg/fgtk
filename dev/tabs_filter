@@ -7,11 +7,11 @@ import os, sys, re, codecs
 
 
 def parse_cli( argv=sys.argv,
-		_flags='a', _actions={'clean', 'smudge', 'mangle'} ):
+		_flags='a', _actions={'clean', 'smudge', 'mangle', 'unmangle'} ):
 	# Yeah, argparse rocks ;)
 	if not argv[1:]:
 		print(( 'Usage: {} [ space_num [ flags ] ]'
-			' ( clean | smudge | mangle ) path' ).format(argv[0]), file=sys.stderr)
+			' ( clean | smudge | mangle | unmangle ) path' ).format(argv[0]), file=sys.stderr)
 		print('Flags:\n'
 			'  a - remove or replace alignment spaces (non-divisable by indent).',
 			file=sys.stderr )
@@ -104,8 +104,8 @@ def _dump_call_data_on_err(func, *argz, **kwz):
 if action == 'clean': _dump_call_data_on_err(filter_clean, sys.stdin)
 elif action == 'smudge': _dump_call_data_on_err(filter_smudge, sys.stdin)
 
-# manual
-elif action == 'mangle':
+# manual ones
+elif action in ['mangle', 'unmangle']:
 	from tempfile import NamedTemporaryFile
 	import io, stat, hashlib
 
@@ -114,7 +114,8 @@ elif action == 'mangle':
 			dir=os.path.dirname(path),
 			prefix=os.path.basename(path + '.') )) as tmp:
 		try:
-			filter_smudge(io.open(path, encoding=enc), dst=tmp)
+			(filter_smudge if action == 'mangle' else filter_clean)\
+				(io.open(path, encoding=enc), dst=tmp)
 			tmp.flush()
 			if not op.eq(*(hashlib.sha1(
 					io.open(path, 'rb').read() ).digest() for path in [path, tmp.name])):
