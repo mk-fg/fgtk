@@ -1,0 +1,19 @@
+#!/bin/bash
+
+[[ -z "$1" || "$1" =~ ^-?-h(elp)?$ ]] && { echo >&2 "Usage: $0 site [port]"; exit 1; }
+site=$1 port=${2:-443}
+
+tmpdir=$(mktemp -d)
+mkfifo "$tmpdir"/openssl.fifo
+
+openssl s_client -connect "${site}:${port}" >"$tmpdir"/openssl.fifo 2>/dev/null &
+
+awk '
+			/--BEGIN CERT/ {cert=1}
+			!cert {next}
+			/--END CERT/ {print; exit}
+			cert {print}'\
+		< "$tmpdir"/openssl.fifo |
+	openssl x509 -fingerprint -noout -sha1
+
+kill %1

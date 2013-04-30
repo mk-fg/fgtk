@@ -296,6 +296,12 @@ command on two outputs) with another URL.
 No more squinting at some huge incomprehensible ecommerce URLs before scraping
 the hell out of them!
 
+##### openssl-fingerprint
+
+Do `openssl s_client -connect somesite | openssl x509 -fingerprint -noout
+-sha1`, only openssl cli tool doesn't seem to have an easy way to do it without
+injecting awk between these.
+
 
 ### Desktop
 
