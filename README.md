@@ -122,6 +122,38 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 	t -f /var/log/app2.log | color green - &
 	t -f /var/log/app2.log | color blue - &
 
+##### znc-log-aggregator
+
+Tool to process znc chat logs, produced by "log" module (global, per-user or
+per-network - looks everywhere) and store them using following schema:
+
+	<net>/chat/<channel>__<yy>-<mm>.log.xz
+	<net>/priv/<nick>__<yy>-<mm>.log.xz
+
+Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
+Values there are parsed according to any one of these (whichever matches first):
+
+ - `users/<net>/moddata/log/<chan>_<date>.log`
+ - `moddata/log/<net>_default_<chan>_<date>.log` (no "_" in `<net>` allowed)
+ - `moddata/log/<user>_<net>_<chan>_<date>.log` (no "_" in `<user>` or `<net>` allowed)
+
+Each line gets processed by regexp to do `[HH:MM:SS] <nick> some msg` ->
+`[yy-mm-dd HH:MM:SS] <nick> some msg`.
+
+Latest (current day) logs are skipped.
+New logs for each run are concatenated to the monthly .xz file.
+
+Should be safe to stop at any time without any data loss - all the resulting
+.xz's get written to temporary files and renamed at the very end (followed only
+by unlinking of the source files).
+
+All temp files are produced in the destination dir and should be cleaned-up on
+any abort/exit/finish.
+
+Idea is to have more convenient hierarchy and less files for easier shell
+navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
+usage in the long run.
+
 
 ### Dev
 

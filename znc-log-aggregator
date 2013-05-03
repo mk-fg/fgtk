@@ -1,0 +1,244 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from subprocess import Popen, PIPE, STDOUT
+from collections import namedtuple
+from os.path import expanduser, realpath, join, isdir, exists
+from datetime import date, datetime, timedelta
+import os, sys, re, glob, types, tempfile
+
+
+class LogDate(namedtuple('LogDate', 'year month day')):
+
+	def __new__(cls, year_or_str, month=None, day=None):
+		if month == day == None and isinstance(year_or_str, types.StringTypes):
+			assert len(year_or_str) == 8, year_or_str
+			year, month, day = int(year_or_str[:4]), int(year_or_str[4:6]), int(year_or_str[6:8])
+		else: year = year_or_str
+		assert all(it.imap(lambda x: isinstance(x, int), [year, month, day])), [year, month, day]
+		assert 2100 > year >= 1900, year
+		year %= 100
+		return super(LogDate, cls).__new__(cls, year, month, day)
+
+
+def sort_logfiles(files):
+	'Order files with possible-duplicate LogDate.'
+	files_dup = dict()
+
+	for ts, path in files:
+		if ts not in files_dup: files_dup[ts] = list()
+		assert path not in files_dup[ts], path
+		files_dup[ts].append(path)
+
+	for ts, paths in sorted(files_dup.viewitems()):
+		assert len(paths) > 0, ts
+		if len(paths) == 1: yield ts, paths
+		yield ts, sorted( paths,
+			key=lambda path: open(path).readline() )
+
+
+def main_core(argv=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Collect ZNC logs in a single place, aggregating and compressing them as well.')
+	parser.add_argument('-s', '--znc-home', default='~znc',
+		help='Path to ZNC home directory (default: %(default)s).')
+	parser.add_argument('-d', '--log-dir', default='~znc/logs',
+		help='Path to destination directory to store aggregated logs to (default: %(default)s).')
+	parser.add_argument('--dry-run', action='store_true',
+		help='Do all the stuff, but dont actually create any non-tmp files.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args()
+
+	opts.znc_home = expanduser(opts.znc_home)
+	opts.log_dir = expanduser(opts.log_dir)
+
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	log = logging.getLogger()
+
+
+	## Find all the logs
+	log.debug('Finding and normalizing log sources')
+	os.chdir(opts.znc_home)
+	ts_now = datetime.now()
+
+	logs = dict()
+	def logs_append(net, chan, ts, path):
+		if net not in logs: logs[net] = dict()
+		if chan not in logs[net]: logs[net][chan] = list()
+		logs[net][chan].append((LogDate(ts), realpath(path)))
+
+	# Prehistoric logs
+	for path in glob.glob('users/*/moddata/log/*.log'):
+		match = re.search( r'^users/(?P<net>[^/]+)/'
+			'moddata/log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
+		logs_append(net, chan, ts, path)
+
+	# Modern logs for old-style setup with user=network
+	for path in glob.glob('moddata/log/*.log'):
+		match = re.search( '^moddata/log/(?P<net>[^/]+?)'
+			'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
+		assert '_' not in net, [net, path]
+		logs_append(net, chan, ts, path)
+
+	# Modern logs and multi-network users
+	for path in glob.glob('moddata/log/*.log'):
+		match = re.search( '^moddata/log/(?P<user>[^/]+?)'
+			'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
+		if net == 'default': continue
+		assert '_' not in user and '_' not in net, [user, net, path]
+		assert user not in logs, user
+		logs_append(net, chan, ts, path)
+
+	# from pprint import pprint
+	# pprint(logs)
+
+
+	## Read all the data to tempfiles
+	log.debug('Aggregating log data')
+	if not isdir(opts.log_dir): os.mkdir(opts.log_dir)
+	os.chdir(opts.log_dir)
+
+	chat_prefixes = '#&' # chars that are not in user nicks
+	bs = 2 * 2**20 # read/write block size
+
+	xz_tuples = list() # (sources, tmp_xz, dst_xz) tuples for final mv+rm
+
+	for net, chans in sorted(logs.viewitems()):
+		log.debug('Processing logs for network: {} ({} channels)'.format(net, len(chans)))
+
+		# This distinction is important for human, but not to irc
+		dir_chat, dir_priv = '{}/chat'.format(net), '{}/priv'.format(net)
+		for path in [dir_chat, dir_priv]:
+			if not isdir(path): os.makedirs(path, 0755)
+
+		chats = set() # to detect duplicates with diff in cancer-chars
+
+		for chan, files in sorted(chans.viewitems()):
+			priv = not any(it.imap(chan.startswith, chat_prefixes)) # private messages
+			chan_dir = dir_chat if not priv else dir_priv
+			chan_agg = dict() # aggregation - {(chan, year, month): source_files}
+
+			if not priv:
+				# "#" and "&" prefixes don't work well with shells, so strip these,
+				#  taking care that there are no duplicate names as a result
+				chan = chan.lstrip('#&')
+				assert chan not in chats, chan
+				chats.add(chan)
+
+			for ts, paths in sort_logfiles(files):
+				# Skip current logs
+				if (ts.year, ts.month, ts.day) ==\
+					(ts_now.year%100, ts_now.month, ts_now.day): continue
+
+				name = '{0}__{1.year:02}-{1.month:02}-{1.day:02}.log'.format(chan, ts)
+				name_dst = join(chan_dir, name)
+
+				agg_files, agg_key = set(), (chan, ts.year, ts.month)
+				if agg_key not in chan_agg: chan_agg[agg_key] = set()
+
+				with tempfile.NamedTemporaryFile(
+						dir=chan_dir, prefix=name+'.', delete=False ) as tmp:
+					tmpfiles_cleanup.add(tmp.name)
+					for path in paths:
+						# Append contents to the tmp file
+						agg_files.add(path)
+						with open(path) as src:
+							for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
+							# Make sure each written file ends with newline
+							tmp.seek(-1, os.SEEK_END)
+							last_byte = tmp.read(1)
+							assert last_byte and not tmp.read(), path
+							if last_byte != b'\n': tmp.write(b'\n')
+
+				# Ok, now we have plaintext log *for-day*
+				os.rename(tmp.name, name_dst)
+				tmpfiles_cleanup.add(name_dst)
+				chan_agg[agg_key].update(agg_files)
+
+			log.debug('Aggregating channel (private: {}): {}'.format(priv, chan))
+
+			# Aggregate plain logs into .xz
+			for (chan, year, month), xz_files in sorted(chan_agg.viewitems()):
+				name_base = '{}__{:02}-{:02}.log'.format(chan, year, month)
+				name_xz = '{}.xz'.format(name_base)
+				name_sub_re = re.compile('__(?P<y>\d{2})-(?P<mo>\d{2})-(?P<d>\d{2})\.log$')
+
+				# Aggregate all the logfiles to tmp file, prefixing each line with full timestamp
+				with tempfile.NamedTemporaryFile(
+						dir=chan_dir, prefix=name_base+'.', delete=False ) as tmp:
+					tmpfiles_cleanup.add(tmp.name)
+					for path in sorted(glob.glob(join( chan_dir,
+							'{}__{:02}-{:02}-[0-9][0-9].log'.format(chan, year, month) ))):
+						match = name_sub_re.search(path)
+						assert match, path
+						line_pat = re.compile(br'^(\s*\[)(\d{2}:\d{2}(:\d{2})?\]\s+)')
+						line_sub = br'\g<1>{:02}-{:02}-{:02} \g<2>'\
+							.format(*(int(match.group(g)) for g in ['y', 'mo', 'd']))
+						with open(path) as src:
+							for line in iter(src.readline, b''):
+								tmp.write(line_pat.sub(line_sub, line))
+				# Plaintext log *tail* *for-month*
+				name_dst = join(chan_dir, name_base)
+				os.rename(tmp.name, name_dst)
+				tmpfiles_cleanup.add(name_dst)
+
+				# Compress and concatenate with the old xz file
+				with tempfile.NamedTemporaryFile(
+						dir=chan_dir, prefix=name_xz+'.', delete=False ) as tmp:
+					tmpfiles_cleanup.add(tmp.name)
+					name_dst_xz = join(chan_dir, name_xz)
+					# write older part first
+					if exists(name_dst_xz):
+						with open(name_dst_xz) as src:
+							for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
+						tmp.flush()
+					# compress
+					assert not Popen(
+						['xz', '--compress', '--format=xz', '--check=sha256'],
+						stdin=open(name_dst), stdout=tmp ).wait(), ['xz cat', name_dst, tmp.name]
+					# check if decompression works
+					tmp.seek(0)
+					assert not Popen(
+						['xz', '--test', '--format=xz', '--check=sha256'],
+						stdin=tmp ).wait(), ['xz test', tmp.name, name_dst]
+
+				# Done with this month
+				if exists(name_dst_xz):
+					assert os.stat(tmp.name).st_size > os.stat(name_dst_xz).st_size, name_dst_xz
+				assert xz_files, name_dst_xz
+				xz_tuples.append((xz_files, tmp.name, name_dst_xz))
+
+			# Done with the chan
+		# Done with the net
+
+
+	## Done with the aggregation into tempfiles, commit changes
+	if not opts.dry_run:
+		log.debug('Moving all produced files into place')
+		for xz_files, src, dst in xz_tuples:
+			os.rename(src, dst)
+			tmpfiles_cleanup.update(xz_files)
+
+	log.debug('Finished')
+
+
+tmpfiles_cleanup = set()
+
+def main(argv=None):
+	try: main_core(argv)
+	finally:
+		for path in tmpfiles_cleanup:
+			try: os.unlink(path)
+			except: pass
+
+if __name__ == '__main__': sys.exit(main())
