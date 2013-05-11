@@ -1,0 +1,162 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
+import os, sys, re, socket
+
+
+class AddressError(Exception): pass
+
+
+def sock_enum_val(name_or_num, prefix=None):
+	name_or_num = name_or_num.upper()
+	if prefix: prefix = prefix.upper()
+	try:
+		return getattr( socket, name_or_num
+			if not prefix else '{}_{}'.format(prefix, name_or_num) )
+	except AttributeError: pass
+	try: return int(name_or_num)
+	except ValueError: pass
+	raise AddressError(( 'Failed to resolve'
+		' socket parameter name/value: {!r}' ).format(name_or_num))
+
+
+def get_socket_info(host, port=0, family=0, socktype=0, protocol=0):
+	log_params = [port, family, socktype, protocol]
+	log.debug('Resolving: {} (params: {})'.format(host, log_params))
+	try: addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
+	except socket.gaierror as err:
+		log.debug('Failed to resolve host: {} (params: {}) - {}'.format(host, log_params, err))
+		raise
+
+	if not addrinfo:
+		log.fatal('Failed to match host to a socket address: {}'.format(host))
+		raise AddressError
+
+	ai_af, ai_addr = set(), list()
+	for family, _, _, hostname, addr in addrinfo:
+		ai_af.add(family)
+		ai_addr.append((addr[0], family))
+
+	if len(ai_af) > 1:
+		af_names = dict((v, k) for k,v in vars(socket).viewitems() if k.startswith('AF_'))
+		ai_af_names = list(af_names.get(af, str(af)) for af in ai_af)
+		if socket.AF_INET not in ai_af:
+			log.fatal(
+				( 'Ambiguous socket host specification (matches address famlies: {}),'
+					' refusing to pick one at random - specify socket family instead. Addresses: {}' )
+				.format(', '.join(ai_af_names), ', '.join(ai_addr)) )
+			raise AddressError
+		log.warn( 'Specified host matches more than'
+			' one address family ({}), using it as IPv4 (AF_INET).'.format(ai_af_names) )
+		af = socket.AF_INET
+	else: af = list(ai_af)[0]
+
+	for addr, family in ai_addr:
+		if family == af: break
+	else: raise AddressError
+	if len(ai_addr) > 1:
+		log.warn( 'Specified host matches more than'
+			' one address ({}), using first one: {}'.format(ai_addr, addr) )
+
+	return addr, port
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Resolve all provided hostnames (or hostname-patterns,'
+				' may have port number in them) in the input text to their addresses.'
+			' Result is dumped to stdout.' )
+
+	parser.add_argument('hosts', nargs='*', metavar='host[:port]',
+		help='Hosts to find/resolve in an input file/stream.'
+			' Matched there only when separated by non-hostname char boundary,'
+				' so that "host.tld" will be matched in "name host.tld;", but not in "mail.host.tld".')
+	parser.add_argument('-s', '--skip-unresolved',
+		action='store_true', help='Do not stop on any unresolvable hosts.')
+
+	parser.add_argument('-f', '--file',
+		metavar='path', help='File to resolve stuff in (default: use stdin).')
+	parser.add_argument('-p', '--port', type=int,
+		metavar='number/service_name',
+		help='Append the port to all passed hosts as "<host>:<port>".')
+	parser.add_argument('-m', '--match', metavar='regexp',
+		help='Regexp (python) to match host/port by.'
+			' Must contain at least named "host" group, can also contain "port" and "protocol" group.')
+
+	parser.add_argument('-l', '--protocol', metavar='protocol_name/num', default='tcp',
+		help='Name of a protocol to get address'
+				' for (default: %(default)s), except if matched by --match.'
+			' Should correspond directly to SOL_* names or be an integer. Empty or "0" = any.')
+	parser.add_argument('-a', '--addr-family', metavar='family_name/num', default='inet',
+		help='Address family to resolve name to'
+				' (inet = IPv4, inet6 = IPv6, etc; default: %(default)s).'
+			' Should correspond directly to AF_* names or be an integer. Empty or "0" = any.')
+	parser.add_argument('-t', '--sock-type', metavar='socket_type/num', default='stream',
+		help='Socket type (stream, dgram, raw, etc; default: %(default)s).'
+			' Should correspond directly to SOCK_* names or be an integer. Empty or "0" = any.')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if (opts.match and opts.hosts) or not (opts.match or opts.hosts):
+		parser.error('Either --match or list of hosts should be specified (but not both).')
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	for k, pre in [('protocol', 'sol'), ('addr_family', 'af'), ('sock_type', 'sock')]:
+		val = getattr(opts, k)
+		val = 0 if not val else sock_enum_val(val, pre)
+		setattr(opts, k, val)
+
+	if not opts.match:
+		hc, names = r'[\w\d.-]', list()
+		for name in opts.hosts:
+			port = opts.port
+			if re.search(r'^{}+:\d+$'.format(hc), name): name, port = name.rsplit(':', 1)
+			else: assert re.search(r'^{}+$'.format(hc), name), name
+			name = r'(?P<name>{})'.format(re.escape(name))
+			if port: name += r':(?P<port>{})'.format(re.escape(bytes(port)))
+			names.append(name)
+		opts.match = re.compile(
+			r'(?<!{hc})({names})(?!{hc})'.format(hc=hc, names='|'.join(names)) )
+	else: opts.match = re.compile(opts.match)
+
+	src = open(opts.file).read() if opts.file else sys.stdin.read()
+	src_diff = 0
+
+	for match in opts.match.finditer(src):
+		# Get
+		name = match.group('name')
+		try: port = match.group('port')
+		except IndexError: port = 0
+		try: protocol = match.group('protocol')
+		except IndexError: protocol = opts.protocol
+
+		# Resolve
+		try:
+			res_addr, res_port = get_socket_info( name, port=port,
+				protocol=protocol, family=opts.addr_family, socktype=opts.sock_type )
+		except socket.gaierror:
+			if not opts.skip_unresolved: raise
+			continue
+
+		# Replace
+		src = src[:match.start('name') + src_diff]\
+			+ res_addr + src[match.end('name') + src_diff:]
+		src_diff += len(res_addr) - len(name)
+		if port:
+			src = src[:match.start('port') + src_diff]\
+				+ res_port + src[match.end('port') + src_diff:]
+			src_diff += len(bytes(res_port)) - len(bytes(port))
+
+	sys.stdout.write(src)
+
+
+if __name__ == '__main__': main()

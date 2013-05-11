@@ -154,6 +154,48 @@ Idea is to have more convenient hierarchy and less files for easier shell
 navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
 usage in the long run.
 
+##### resolve-hostnames
+
+Scrpt to find all the specified (either directly, or by regexp) hostnames and
+replace these with corresponding IP addresses (resolved through getaddrinfo).
+
+Examples:
+
+	% cat cjdroute.conf
+	... "fraggod.net:21987": { ... },
+		"localhost:21987": { ... },
+		"fraggod.net:12345": { ... }, ...
+
+	% resolve-hostnames fraggod.net < cjdroute.conf
+	... "192.168.0.11:21987": { ... },
+		"localhost:21987": { ... },
+		"192.168.0.11:12345": { ... }, ...
+
+	% resolve-hostnames fraggod.net localhost < cjdroute.conf
+	... "192.168.0.11:21987": { ... },
+		"127.0.0.1:21987": { ... },
+		"192.168.0.11:12345": { ... }, ...
+
+	% resolve-hostnames -m '"(?P<name>[\w.]+):\d+"' < cjdroute.conf
+	... "192.168.0.11:21987": { ... },
+		"127.0.0.1:21987": { ... },
+		"192.168.0.11:12345": { ... }, ...
+
+	% resolve-hostnames fraggod.net:12345 < cjdroute.conf
+	... "fraggod.net:21987": { ... },
+		"localhost:21987": { ... },
+		"192.168.0.11:12345": { ... }, ...
+
+	% resolve-hostnames -a inet6 fraggod.net localhost < cjdroute.conf
+	... "2001:470:1f0b:11de::1:21987": { ... },
+		"::1:21987": { ... },
+		"2001:470:1f0b:11de::1:12345": { ... }, ...
+
+Useful for tools that cannot or should not handle names or to just convert lists
+of names (in some arbitrary format) to IP addresses.
+Has all sorts of failure-handling and getaddrinfo-control cli options, can
+resolve port/protocol names as well.
+
 
 ### Dev
 
