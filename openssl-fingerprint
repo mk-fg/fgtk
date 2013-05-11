@@ -1,7 +1,21 @@
 #!/bin/bash
 
-[[ -z "$1" || "$1" =~ ^-?-h(elp)?$ ]] && { echo >&2 "Usage: $0 site [port]"; exit 1; }
-site=$1 port=${2:-443}
+[[ -z "$1" || "$1" =~ ^-?-h(elp)?$ ]] && {
+	echo >&2 "Usage: $0 site[:port] [socks_host:port]"; exit 1; }
+
+site=${1%:*} port=${1#*:}
+[[ "$site" = "$port" ]] && port=443
+
+[[ -n $2 ]] && {
+	sockshost=${2%:*} socksport=${2#*:}
+	[[ "$sockshost" = "$socksport" ]] && socksport=1080
+
+	socat "TCP4-LISTEN:3334,bind=127.0.0.1,reuseaddr"\
+		"SOCKS4A:$sockshost:$site:$port,socksport=$socksport" &
+	trap "kill $! 2>/dev/null" EXIT
+
+	site=127.0.0.1 port=3334
+}
 
 openssl s_client -connect "${site}:${port}" </dev/null 2>/dev/null |
 	openssl x509 -fingerprint -noout -sha1

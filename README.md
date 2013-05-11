@@ -372,9 +372,15 @@ the hell out of them!
 
 ##### openssl-fingerprint
 
-Do `openssl s_client -connect somesite | openssl x509 -fingerprint -noout
--sha1`, only openssl cli tool doesn't seem to have an easy way to do it without
-injecting awk between these.
+Do `openssl s_client -connect somesite </dev/null | openssl x509 -fingerprint
+-noout -sha1` in a nicer way - openssl cli tool doesn't seem to have that.
+
+Also can be passed socks proxy IP:PORT to use socat and pipe openssl connection
+through it - for example, to get fingerprint over Tor (with `SocksAddress
+localhost:1080`) link:
+
+	% openssl-fingerprint google.com localhost:1080
+	SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
 
 
 ### Desktop
