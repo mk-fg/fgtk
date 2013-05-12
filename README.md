@@ -514,3 +514,13 @@ replicas, maintained by csync2, unified via some sort of unionfs.
 
 So far, seem to be the simpliest and by far the most robust, predictable and
 reliable distributed filesystem configuration for my simple use-case.
+
+
+### Hyperboria
+
+Tools to work with [hyperboria](http://hyperboria.net/) darknet.
+
+##### nodeinfo
+
+Tool to register a node in [NodeInfo](https://wiki.projectmeshnet.org/NodeInfo)
+database and process some misc metadata.

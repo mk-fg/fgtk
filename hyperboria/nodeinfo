@@ -1,0 +1,86 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
+from contextlib import contextmanager
+import os, sys
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Various NodeInfo and DNS helper utilities for Hyperboria node.' )
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	cmds = parser.add_subparsers(
+		title='Supported operations (have their own suboptions as well)')
+
+	@contextmanager
+	def subcommand(name, **kwz):
+		cmd = cmds.add_parser(name, **kwz)
+		cmd.set_defaults(call=name)
+		yield cmd
+
+	with subcommand('ipv6-to-record',
+			help='Convert IPv6 address to "*.ip6.arpa" (or other) domain name format.') as cmd:
+		cmd.add_argument('ipv6_address', help='Address to convert.')
+		cmd.add_argument('-d', '--djbdns',
+			action='store_true', help='Convert to canonical djbdns record format.')
+
+	with subcommand('update',
+			help='Update node registration in NodeInfo database.') as cmd:
+		cmd.add_argument('ipv6_address', help='Address to register/update.')
+		cmd.add_argument('--hostname', help='Hostname of the node.')
+		cmd.add_argument('--location', help='Physical location of the node.')
+		cmd.add_argument('--os', help='Operating system (and version) node is running.')
+		cmd.add_argument('--hardware', help='Hardware the node is running on.')
+		cmd.add_argument('--mx', help='Mail exchanger node to use for the this hostname/node.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	if opts.call == 'ipv6-to-record':
+		import ipaddr
+		addr = ipaddr.IPv6Address(opts.ipv6_address).exploded
+		log.debug('Exploded address: {}'.format(addr))
+		addr = addr.replace(':', '')
+		if not opts.djbdns:
+			print('.'.join(reversed(addr)) + '.ip6.arpa')
+		else: print(addr)
+
+	elif opts.call == 'update':
+		import ipaddr, requests
+		host_nodeinfo = 'fc5d:baa5:61fc:6ffd:9554:67f0:e290:7535' # nodeinfo.hype
+
+		def get_url(path='', addr=host_nodeinfo, https=False):
+			return 'http{}://[{}]{}'.format('s' if https else '', addr, path)
+
+		addr = ipaddr.IPv6Address(opts.ipv6_address).exploded
+		log.debug('Exploded address: {}'.format(addr))
+
+		base_url = '/node/details/{}/'.format(addr)
+		headers = { 'Referer': get_url(base_url),
+			'Origin': get_url(), 'Host': host_nodeinfo }
+		data = { 'is_submit': '1',
+			'hostname': opts.hostname, 'location': opts.location,
+			'os': opts.os, 'hardware': opts.hardware, 'mx': opts.mx }
+
+		res = requests.post(get_url(base_url + 'save'), headers=headers, data=data)
+		if res.status_code != requests.codes.ok:
+			log.error(( 'Failure updating NodeInfo data.'
+				' Status code: {}, response: {!r}' ).format(res.status_code, res.text))
+			return 1
+
+		log.debug('Response: {!r}'.format(res.text))
+		log.info('Details URL: {}'.format(get_url(base_url)))
+
+	else: parser.error('Unrecognized command: {}'.format(opts.call))
+
+
+if __name__ == '__main__': sys.exit(main())
