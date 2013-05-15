@@ -37,6 +37,7 @@ def main(args=None):
 		cmd.add_argument('--os', default='', help='Operating system (and version) node is running.')
 		cmd.add_argument('--hardware', default='', help='Hardware the node is running on.')
 		cmd.add_argument('--mx', default='', help='Mail exchanger node to use for the this hostname/node.')
+		cmd.add_argument('--connect-info', default='', help='Public connect/contact/peer info.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -69,7 +70,7 @@ def main(args=None):
 		base_url = '/node/details/{}/'.format(addr)
 		headers = { 'Referer': get_url(base_url),
 			'Origin': get_url(), 'Host': host_nodeinfo }
-		data = { 'is_submit': '1',
+		data = { 'is_submit': '1', 'connect_info': opts.connect_info,
 			'hostname': opts.hostname, 'location': opts.location,
 			'os': opts.os, 'hardware': opts.hardware, 'mx': opts.mx }
 
