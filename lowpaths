@@ -1,0 +1,25 @@
+#!/bin/bash
+
+all=
+[[ "$1" = '-a' ]] && { all=true; shift; }
+[[ -z "$1" ]] && { echo >&2 "Usage: $0 [-a] PATH"; exit 1; }
+
+while [[ -n "$1" ]]; do
+	pushd "$1" >/dev/null || exit 1
+	while read fn; do
+		dir=${fn%/*} base=${fn##*/}
+		base_lc=$(echo "$base" | tr [A-Z] [a-z])
+		[[ "$base" = "$base_lc" ]] && continue
+		mv "$dir"/"$base" "$dir"/"$base_lc"
+	done < <(find . -depth -xdev)
+	popd >/dev/null
+
+	[[ -n "$all" ]] && {
+		dir=${1%/*} base=${1##*/}
+		[[ "$dir" = "$base" ]] && dir=.
+		base_lc=$(echo "$base" | tr [A-Z] [a-z])
+		[[ "$base" = "$base_lc" ]] && continue
+		mv "$dir"/"$base" "$dir"/"$base_lc"
+	}
+	shift
+done
