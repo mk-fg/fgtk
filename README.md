@@ -161,6 +161,12 @@ Idea is to have more convenient hierarchy and less files for easier shell
 navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
 usage in the long run.
 
+##### znc-log-reader
+
+Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
+or time range (with additional filtering by channel/nick and network) from all
+the current and aggregated logs.
+
 ##### resolve-hostnames
 
 Scrpt to find all the specified (either directly, or by regexp) hostnames and
