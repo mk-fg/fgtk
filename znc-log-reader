@@ -98,7 +98,7 @@ def chan_match(name, chans, fuzzy=False):
 	if not fuzzy and name in chans: return True
 	if fuzzy:
 		for chan in chans:
-			if name in chan: return True
+			if chan in name: return True
 	return False
 
 
