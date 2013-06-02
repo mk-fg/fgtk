@@ -141,10 +141,13 @@ def main(argv=None):
 	parser = argparse.ArgumentParser(
 		description='Concatenate and print ZNC logs for matching nets/chans to stdout.')
 
-	parser.add_argument('channels', nargs='+',
-		help='Channel(s) to harvest logs for (parts of names, see also -x option).')
+	parser.add_argument('channels', nargs='*',
+		help='Channel(s) to harvest logs for (parts of names, see also -x option).'
+			' No names - all channels (see also -d option).')
 	parser.add_argument('-n', '--network',
 		help='IRC network to harvest logs for (only required on channel name conflicts).')
+	parser.add_argument('-d', '--conf', action='store_true',
+		help='Use/match only non-detached channels in znc.conf.')
 	parser.add_argument('-x', '--exact', action='store_true',
 		help='Channel name must match given string(s) exactly.')
 	parser.add_argument('-s', '--service-msgs', action='store_true',
@@ -167,6 +170,7 @@ def main(argv=None):
 	opts.znc_home = expanduser(opts.znc_home)
 	opts.log_dir = expanduser(opts.log_dir)
 	opts.channels = list(chan_name(name) for name in opts.channels)
+	chan_filter = ft.partial(chan_match, fuzzy=not opts.exact)
 
 	for k in 'ts_from', 'ts_to':
 		val = getattr(opts, k)
@@ -176,6 +180,18 @@ def main(argv=None):
 	import logging
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
 	log = logging.getLogger()
+
+
+	## Find the subset of channels to work with, if necessary
+	if opts.conf:
+		conf_chans = set()
+		with open(join(opts.znc_home, 'configs', 'znc.conf')) as src:
+			for chan, conf in re.findall('<Chan (?P<name>\S+)>(.*?)</Chan>', src.read(), re.DOTALL):
+				if not re.search('\bDetached\s*=\s*true\b', conf): conf_chans.add(chan_name(chan))
+		for chan in list(conf_chans):
+			if not chan_filter(chan, opts.channels): conf_chans.remove(chan)
+		opts.channels = sorted(conf_chans)
+		log.debug('Channels: {}'.format(', '.join(opts.channels)))
 
 
 	## Find all the relevant logs
@@ -189,8 +205,6 @@ def main(argv=None):
 		if net not in logs: logs[net] = dict()
 		if chan not in logs[net]: logs[net][chan] = list()
 		logs[net][chan].append((LogDate(ts), realpath(path)))
-
-	chan_filter = ft.partial(chan_match, fuzzy=not opts.exact)
 
 	# Prehistoric logs
 	for path in glob.glob('users/*/moddata/log/*.log'):
