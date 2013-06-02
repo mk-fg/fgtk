@@ -1,0 +1,285 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from subprocess import Popen, PIPE
+from collections import namedtuple
+from os.path import expanduser, realpath, join, isdir, exists
+from datetime import datetime, timedelta
+import os, sys, re, glob, types, tempfile
+
+try: import lzma
+except ImportError: lzma = None
+
+
+class LogDate(namedtuple('LogDate', 'year month day')):
+	year_cutoff = 80
+
+	def __new__(cls, year_or_str, month=None, day=None):
+		if month == day == None and isinstance(year_or_str, types.StringTypes):
+			if re.search(r'^\d{2}-\d{2}$', year_or_str):
+				year, month, day = int(year_or_str[:2]), int(year_or_str[3:5]), 1
+				year += 1900 if year > cls.year_cutoff else 2000
+			else:
+				assert len(year_or_str) == 8, year_or_str
+				year, month, day = int(year_or_str[:4]), int(year_or_str[4:6]), int(year_or_str[6:8])
+		else: year = year_or_str
+		assert all(it.imap(lambda x: isinstance(x, int), [year, month, day])), [year, month, day]
+		assert 2100 > year >= 1900, year
+		year %= 100
+		return super(LogDate, cls).__new__(cls, year, month, day)
+
+	def to_datetime(self):
+		year = self.year + (2000 if self.year < self.year_cutoff else 1900)
+		return datetime(year, self.month, self.day)
+
+
+try: from dateutil import parser as dateutil_parser
+except ImportError: dateutil_parser = None
+
+_short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
+_short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
+
+def _short_ts_regexp():
+	'''Generates regexp for parsing of
+		shortened relative timestamps, as shown in the table.'''
+	ago_re = list('^-?')
+	for k in it.chain(_short_ts_days, _short_ts_s):
+		ago_re.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
+	ago_re.append(r'(\s+ago\b)?$')
+	return re.compile(''.join(ago_re), re.I | re.U)
+_short_ts_regexp = _short_ts_regexp()
+
+def parse_timestamp(val):
+	'''Match time either in human-readable format (as accepted by dateutil),
+		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
+	val = val.replace('_', ' ')
+
+	# Try to parse time offset in short format, similar to how it's presented
+	match = _short_ts_regexp.search(val)
+	if match:
+		delta = list()
+		parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
+		for units in [_short_ts_days, _short_ts_s]:
+			val = 0
+			for k, v in units.iteritems():
+				try:
+					if not match.group(k): continue
+					n = parse_int(match.group(k))
+				except IndexError: continue
+				val += n * v
+			delta.append(val)
+		return datetime.now() - timedelta(*delta)
+
+	# Fallback to other generic formats
+	ts = None
+	if dateutil_parser: # try dateutil module, if available
+		# dateutil fails to parse textual dates like "yesterday"
+		try: ts = dateutil_parser.parse(val)
+		except ValueError: pass
+	if not ts:
+		# coreutils' "date" parses virtually everything, but is more expensive to use
+		with open(os.devnull, 'w') as devnull:
+			proc = Popen(['date', '+%s', '-d', val], stdout=PIPE, stderr=devnull)
+			val = proc.stdout.read()
+			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
+
+	if ts: return ts
+	raise ValueError('Unable to parse date/time string: {0}'.format(val))
+
+
+def chan_name(name):
+	return name.lstrip('#')
+
+def chan_match(name, chans, fuzzy=False):
+	if not chans: return True
+	name = chan_name(name)
+	if not fuzzy and name in chans: return True
+	if fuzzy:
+		for chan in chans:
+			if name in chan: return True
+	return False
+
+
+def iter_lines(path, bs=2 * 2**20):
+	if path.endswith('.xz'):
+		assert lzma, 'Missing lzma module'
+		dec = lzma.LZMADecompressor()
+		line = ''
+		with open(path) as src:
+			for buff in iter(ft.partial(src.read, bs), ''):
+				line += dec.decompress(buff)
+				while '\n' in line:
+					res, line = line.split('\n', 1)
+					yield res
+			else: line += dec.flush()
+		while '\n' in line:
+			res, line = line.split('\n', 1)
+			yield res
+		yield line
+	else:
+		for line in open(path): yield line.rstrip('\n')
+
+def sort_logfiles(files):
+	'Order files with possible-duplicate LogDate.'
+	files_dup = dict()
+
+	for ts, path in files:
+		if ts not in files_dup: files_dup[ts] = list()
+		assert path not in files_dup[ts], path
+		files_dup[ts].append(path)
+
+	for ts, paths in sorted(files_dup.viewitems()):
+		assert len(paths) > 0, ts
+		if len(paths) == 1: yield ts, paths
+		else: yield ts, sorted(paths, key=lambda p: next(iter_lines(p)))
+
+
+def main(argv=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Concatenate and print ZNC logs to stdout.')
+
+	parser.add_argument('channels', nargs='+', help='Channel(s) to harvest logs for.')
+	parser.add_argument('-n', '--network',
+		help='IRC network to harvest logs for (only required on channel name conflicts).')
+	parser.add_argument('-x', '--fuzzy', action='store_true',
+		help='Channel name must contain (one of) the given string(s), not match it exactly.')
+	parser.add_argument('-s', '--service-msgs', action='store_true',
+		help='Do not remove service messages (renames, joins/leaves, etc).')
+
+	parser.add_argument('-c', '--count', type=int, help='Max number of latest lines to print.')
+	parser.add_argument('-f', '--ts-from', default='-12h',
+		help='Print lines since that time (can be relative, default: %(default)s).')
+	parser.add_argument('-t', '--ts-to', default='now',
+		help='Print lines until that time (can be relative, default: %(default)s).')
+
+	parser.add_argument('--znc-home', default='~znc',
+		help='Path to ZNC home directory (default: %(default)s).')
+	parser.add_argument('--log-dir', default='~znc/logs',
+		help='Path to destination directory to store aggregated logs to (default: %(default)s).')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args()
+
+	opts.znc_home = expanduser(opts.znc_home)
+	opts.log_dir = expanduser(opts.log_dir)
+	opts.channels = list(chan_name(name) for name in opts.channels)
+
+	for k in 'ts_from', 'ts_to':
+		val = getattr(opts, k)
+		if not val: continue
+		setattr(opts, k, parse_timestamp(val))
+
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	log = logging.getLogger()
+
+
+	## Find all the relevant logs
+	log.debug('Finding and normalizing log sources')
+	os.chdir(opts.znc_home)
+	ts_now = datetime.now()
+
+	logs = dict()
+	def logs_append(net, chan, ts, path):
+		chan = chan_name(chan)
+		if net not in logs: logs[net] = dict()
+		if chan not in logs[net]: logs[net][chan] = list()
+		logs[net][chan].append((LogDate(ts), realpath(path)))
+
+	chan_filter = ft.partial(chan_match, fuzzy=opts.fuzzy)
+
+	# Prehistoric logs
+	for path in glob.glob('users/*/moddata/log/*.log'):
+		match = re.search( r'^users/(?P<net>[^/]+)/'
+			'moddata/log/#?(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
+		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
+
+	# Modern logs for old-style setup with user=network
+	for path in glob.glob('moddata/log/*.log'):
+		match = re.search( '^moddata/log/(?P<net>[^/]+?)'
+			'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
+		assert '_' not in net, [net, path]
+		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
+
+	# Modern logs and multi-network users
+	for path in glob.glob('moddata/log/*.log'):
+		match = re.search( '^moddata/log/(?P<user>[^/]+?)'
+			'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		assert match, path
+		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
+		if net == 'default': continue
+		assert '_' not in user and '_' not in net, [user, net, path]
+		assert user not in logs, user
+		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
+
+	# Archived logs
+	os.chdir(opts.log_dir)
+	for path in glob.glob('*/*/*.log.xz'):
+		match = re.search( r'^(?P<net>[^/]+?)/[^/]+/'
+			r'(?P<chan>[^/]+)__(?P<ts>\d{2}-\d{2})\.log\.xz$', path )
+		assert match, path
+		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
+		assert '_' not in net, [net, path]
+		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
+
+	os.chdir('/')
+
+	# from pprint import pprint
+	# pprint(logs)
+
+	## Read logs in reverse order, building "lines" buffer
+	lines = list()
+
+	class Finished(Exception): pass
+
+	try:
+		for net, chans in sorted(logs.viewitems()):
+			if opts.network and opts.network != net:
+				log.debug('Skipping network: {!r} (does not match {!r})'.format(net, opts.network))
+				continue
+
+			for chan, files in sorted(chans.viewitems()):
+				for ts, paths in reversed(list(sort_logfiles(files))):
+
+					# Discard way-too-old xz archives (they hold one month at most)
+					if opts.ts_from and (ts.to_datetime() + timedelta(62)) < opts.ts_from:
+						log.debug('Skipping xz logs from: {} (paths: {})'.format(ts, paths))
+						break
+
+					for path in reversed(paths):
+						log.debug('Processing path: {} ({}/{})'.format(path, net, chan))
+						for line in reversed(list(iter_lines(path))):
+							if not line.strip(): continue
+
+							# Skip service msgs
+							if not opts.service_msgs and re.search(r'^\s*\[[^]]+\]\s+[*]{3}\s+', line): continue
+							# Append full date, if missing
+							if not re.search(r'^\s*\[\d{2}-\d{2}-\d{2}\s+[^]]+\]\s+', line):
+								line = re.sub( r'^(\s*\[)([^]]+\]\s+)',
+									r'\g<1>{0.year:02}-{0.month:02}-{0.day:02} \g<2>'.format(ts), line )
+
+							# ts/count checks
+							match = re.search(r'^\s*\[([^]]+)\]\s+', line)
+							assert match, line
+							line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+							if opts.ts_from and line_ts < opts.ts_from: raise Finished # next ones are older
+							if opts.ts_to and line_ts > opts.ts_to: continue
+							if opts.count:
+								if opts.count < 0: raise Finished
+								opts.count -= 1
+
+							lines.append(line)
+
+	except Finished: pass
+
+	## Print lines in ts-order
+	for line in reversed(lines): print(line)
+
+
+if __name__ == '__main__': sys.exit(main())

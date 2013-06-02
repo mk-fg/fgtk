@@ -35,8 +35,9 @@ def sort_logfiles(files):
 	for ts, paths in sorted(files_dup.viewitems()):
 		assert len(paths) > 0, ts
 		if len(paths) == 1: yield ts, paths
-		yield ts, sorted( paths,
-			key=lambda path: open(path).readline() )
+		else:
+			yield ts, sorted( paths,
+				key=lambda path: open(path).readline() )
 
 
 def main_core(argv=None):
@@ -81,8 +82,8 @@ def main_core(argv=None):
 
 	# Modern logs for old-style setup with user=network
 	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( '^moddata/log/(?P<net>[^/]+?)'
-			'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		match = re.search( r'^moddata/log/(?P<net>[^/]+?)'
+			r'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
 		assert match, path
 		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
 		assert '_' not in net, [net, path]
@@ -90,8 +91,8 @@ def main_core(argv=None):
 
 	# Modern logs and multi-network users
 	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( '^moddata/log/(?P<user>[^/]+?)'
-			'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		match = re.search( r'^moddata/log/(?P<user>[^/]+?)'
+			r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
 		assert match, path
 		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
 		if net == 'default': continue
@@ -171,7 +172,7 @@ def main_core(argv=None):
 			for (chan, year, month), xz_files in sorted(chan_agg.viewitems()):
 				name_base = '{}__{:02}-{:02}.log'.format(chan, year, month)
 				name_xz = '{}.xz'.format(name_base)
-				name_sub_re = re.compile('__(?P<y>\d{2})-(?P<mo>\d{2})-(?P<d>\d{2})\.log$')
+				name_sub_re = re.compile(r'__(?P<y>\d{2})-(?P<mo>\d{2})-(?P<d>\d{2})\.log$')
 
 				# Aggregate all the logfiles to tmp file, prefixing each line with full timestamp
 				with tempfile.NamedTemporaryFile(
