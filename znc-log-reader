@@ -186,8 +186,8 @@ def main(argv=None):
 	if opts.conf:
 		conf_chans = set()
 		with open(join(opts.znc_home, 'configs', 'znc.conf')) as src:
-			for chan, conf in re.findall('<Chan (?P<name>\S+)>(.*?)</Chan>', src.read(), re.DOTALL):
-				if not re.search('\bDetached\s*=\s*true\b', conf): conf_chans.add(chan_name(chan))
+			for chan, conf in re.findall(r'<Chan (?P<name>\S+)>(.*?)</Chan>', src.read(), re.DOTALL):
+				if not re.search(r'\bDetached\s*=\s*true\b', conf): conf_chans.add(chan_name(chan))
 		for chan in list(conf_chans):
 			if not chan_filter(chan, opts.channels): conf_chans.remove(chan)
 		opts.channels = sorted(conf_chans)
@@ -216,8 +216,8 @@ def main(argv=None):
 
 	# Modern logs for old-style setup with user=network
 	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( '^moddata/log/(?P<net>[^/]+?)'
-			'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		match = re.search( r'^moddata/log/(?P<net>[^/]+?)'
+			r'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
 		assert match, path
 		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
 		assert '_' not in net, [net, path]
@@ -225,8 +225,8 @@ def main(argv=None):
 
 	# Modern logs and multi-network users
 	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( '^moddata/log/(?P<user>[^/]+?)'
-			'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
+		match = re.search( r'^moddata/log/(?P<user>[^/]+?)'
+			r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
 		assert match, path
 		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
 		if net == 'default': continue
