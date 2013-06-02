@@ -90,7 +90,7 @@ def parse_timestamp(val):
 
 
 def chan_name(name):
-	return name.lstrip('#')
+	return name.lstrip('#').lower()
 
 def chan_match(name, chans, fuzzy=False):
 	if not chans: return True
@@ -139,18 +139,20 @@ def sort_logfiles(files):
 def main(argv=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Concatenate and print ZNC logs to stdout.')
+		description='Concatenate and print ZNC logs for matching nets/chans to stdout.')
 
-	parser.add_argument('channels', nargs='+', help='Channel(s) to harvest logs for.')
+	parser.add_argument('channels', nargs='+',
+		help='Channel(s) to harvest logs for (parts of names, see also -x option).')
 	parser.add_argument('-n', '--network',
 		help='IRC network to harvest logs for (only required on channel name conflicts).')
-	parser.add_argument('-x', '--fuzzy', action='store_true',
-		help='Channel name must contain (one of) the given string(s), not match it exactly.')
+	parser.add_argument('-x', '--exact', action='store_true',
+		help='Channel name must match given string(s) exactly.')
 	parser.add_argument('-s', '--service-msgs', action='store_true',
 		help='Do not remove service messages (renames, joins/leaves, etc).')
 
-	parser.add_argument('-c', '--count', type=int, help='Max number of latest lines to print.')
-	parser.add_argument('-f', '--ts-from', default='-12h',
+	parser.add_argument('-c', '--count', type=int,
+		help='Max number of latest lines to print per channel.')
+	parser.add_argument('-f', '--ts-from', default='-18h',
 		help='Print lines since that time (can be relative, default: %(default)s).')
 	parser.add_argument('-t', '--ts-to', default='now',
 		help='Print lines until that time (can be relative, default: %(default)s).')
@@ -188,7 +190,7 @@ def main(argv=None):
 		if chan not in logs[net]: logs[net][chan] = list()
 		logs[net][chan].append((LogDate(ts), realpath(path)))
 
-	chan_filter = ft.partial(chan_match, fuzzy=opts.fuzzy)
+	chan_filter = ft.partial(chan_match, fuzzy=not opts.exact)
 
 	# Prehistoric logs
 	for path in glob.glob('users/*/moddata/log/*.log'):
@@ -233,18 +235,24 @@ def main(argv=None):
 	# from pprint import pprint
 	# pprint(logs)
 
+	if not logs:
+		parser.error('No channel logs found matching: {}'.format(', '.join(opts.channels)))
+
 	## Read logs in reverse order, building "lines" buffer
-	lines = list()
+	lines, lines_chan, lines_net = list(), set(), set()
 
 	class Finished(Exception): pass
 
-	try:
-		for net, chans in sorted(logs.viewitems()):
-			if opts.network and opts.network != net:
-				log.debug('Skipping network: {!r} (does not match {!r})'.format(net, opts.network))
-				continue
+	for net, chans in sorted(logs.viewitems()):
+		if opts.network and opts.network != net:
+			log.debug('Skipping network: {!r} (does not match {!r})'.format(net, opts.network))
+			continue
 
-			for chan, files in sorted(chans.viewitems()):
+		for chan, files in sorted(chans.viewitems()):
+			log.debug('Processing channel: {}/{} ({} files)'.format(net, chan, len(files)))
+
+			count = opts.count
+			try:
 				for ts, paths in reversed(list(sort_logfiles(files))):
 
 					# Discard way-too-old xz archives (they hold one month at most)
@@ -265,21 +273,27 @@ def main(argv=None):
 									r'\g<1>{0.year:02}-{0.month:02}-{0.day:02} \g<2>'.format(ts), line )
 
 							# ts/count checks
-							match = re.search(r'^\s*\[([^]]+)\]\s+', line)
-							assert match, line
-							line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
-							if opts.ts_from and line_ts < opts.ts_from: raise Finished # next ones are older
-							if opts.ts_to and line_ts > opts.ts_to: continue
-							if opts.count:
-								if opts.count < 0: raise Finished
-								opts.count -= 1
+							if opts.ts_from or opts.ts_to:
+								match = re.search(r'^\s*\[([^]]+)\]\s+', line)
+								assert match, line
+								line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+								if opts.ts_from and line_ts < opts.ts_from: raise Finished # next ones are older
+								if opts.ts_to and line_ts > opts.ts_to: continue
+							if count is not None:
+								if count < 0: raise Finished
+								count -= 1
 
-							lines.append(line)
+							lines.append((line, chan, net))
+							lines_chan.add((net, chan)), lines_net.add(net)
+			except Finished: pass
 
-	except Finished: pass
-
-	## Print lines in ts-order
-	for line in reversed(lines): print(line)
+	## Print lines in ts-order, "[[net/]chan] line" format
+	lines_chan, lines_net = len(lines_chan) > 1, len(lines_net) > 1
+	for line, chan, net in reversed(lines):
+		if lines_chan:
+			if lines_net: print('{}/'.format(net), end='')
+			print('{} {}'.format(chan, line))
+		else: print(line)
 
 
 if __name__ == '__main__': sys.exit(main())
