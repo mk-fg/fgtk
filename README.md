@@ -537,3 +537,30 @@ Tools to work with [hyperboria](http://hyperboria.net/) darknet.
 
 Tool to register a node in [NodeInfo](https://wiki.projectmeshnet.org/NodeInfo)
 database and process some misc metadata.
+
+##### path-decode
+
+Simple script to decode cjdns "Path" to a sequence of integer "peer indexes",
+one for each hop.
+
+Relies on encoding schema described in NumberCompress.h of cjdns.
+Nodes are not required to use it in theory, and there are other encoding schemas
+implemented which should break this tool's operation, but in practice no one
+bothers to change that default.
+
+Example: path-decode 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30
+
+##### conf-paste
+
+Obfuscates cjdns config file (cjdroute.conf) in a secure and deterministic way.
+
+Should be useful to pastebin your config file without revealing most sensitive
+data (passwords and keys) in it.
+Might still reveal some peer info like IP endpoints, contacts, comments, general
+list of nodes you're peered with. Use with caution.
+
+Sensitive bits are regexp-matched (by their key) and then value is processed
+through pbkdf2-sha256 and output is truncated to appear less massive.
+pbkdf2 parameters are configurable (see --help output), and at least
+--pbkdf2-salt should be passed for output to be deterministic, otherwise random
+salt value will be used.
