@@ -1,0 +1,56 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import string, os, sys
+
+
+digs = string.digits + string.lowercase
+
+def int2base(x, base):
+	if x < 0: sign = -1
+	elif x==0: return '0'
+	else: sign = 1
+	x *= sign
+	digits = []
+	while x:
+		digits.append(digs[x % base])
+		x /= base
+	if sign < 0: digits.append('-')
+	digits.reverse()
+	return ''.join(digits)
+
+printbin = lambda v: print(int2base(v, 2))
+
+def path2int(path):
+	return int(path.replace('.', ''), 16)
+
+def path_breakdown(path):
+	res, pint = list(), '000' + int2base(path2int(path), 2)
+	while True:
+		if pint.endswith('0001'): return res
+		elif pint.endswith('1'): chop = 4
+		elif pint.endswith('10'): chop = 7
+		elif pint.endswith('00'): chop = 10
+		else: raise ValueError('Unknown hop encoding: {}'.format(pint))
+		res.append(int(pint[-chop:], 2))
+		pint = pint[:-chop]
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Decode cjdns hex path string.')
+	parser.add_argument('path', nargs='+',
+		help='Hex-encoded path string, possibly with dots in it (example: 0000.013c.bed9.5363).')
+	parser.add_argument('-e', '--echo',
+		action='store_true', help='Force echo input path(s) as well.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if len(opts.path) > 1: opts.echo = True
+	for path in opts.path:
+		if opts.echo: print(path + ' ', end='')
+		print(' '.join(it.imap(bytes, path_breakdown(path))))
+
+if __name__ == '__main__': main()
