@@ -1,0 +1,114 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, re
+
+
+def pbkdf2(password, salt, iterations, dklen=0):
+	'PBKDF2 (RFC 2898, section 5.2), as implemented in django.'
+	assert iterations > 0
+	from hashlib import sha256
+	import binascii, struct
+	digest, hlen, hb = sha256, long(32), long(64)
+	_long_to_bin = lambda x, hex_format_string:\
+		binascii.unhexlify(hex_format_string % x)
+	_bin_to_long = lambda x: long(x.encode('hex'), 16)
+	def _fast_hmac(key, msg):
+		dig1, dig2 = digest(), digest()
+		if len(key) > hb:
+			key = digest(key).digest()
+		key += chr(0) * (hb - len(key))
+		dig1.update(key.translate(_trans_36))
+		dig1.update(msg)
+		dig2.update(key.translate(_trans_5c))
+		dig2.update(dig1.digest())
+		return dig2
+	_trans_5c = "".join([chr(x ^ 0x5C) for x in xrange(256)])
+	_trans_36 = "".join([chr(x ^ 0x36) for x in xrange(256)])
+	if not dklen: dklen = hlen
+	if dklen > (2 ** 32 - 1) * hlen: raise OverflowError('dklen too big')
+	l = -(-dklen // hlen)
+	r = dklen - (l - 1) * hlen
+	hex_format_string = "%%0%ix" % (hlen * 2)
+	def F(i):
+		def U():
+			u = salt + struct.pack('>I', i)
+			for j in xrange(int(iterations)):
+				u = _fast_hmac(password, u).digest()
+				yield _bin_to_long(u)
+		return _long_to_bin(reduce(op.xor, U()), hex_format_string)
+	T = [F(x) for x in range(1, l + 1)]
+	return ''.join(T[:-1]) + T[-1][:r]
+
+
+def main(args=None):
+	checklist = {'privateKey', 'publicKey', 'password'}
+	checklist_optional = {'password'}
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Obfuscate cjdns config (cjdroute.conf) in a secure and deterministic way.')
+	parser.add_argument('config', help='Path to source cjdroute.conf configuration file.')
+	parser.add_argument('-f', '--peer-password-regexp',
+		default=r'^[^.]+\.(?P<password>.*)$',
+		help='Regexp to obfuscate only "password"'
+			' match group (if matches the entry at all). Default: %(default)s')
+	parser.add_argument('-s', '--pbkdf2-salt', metavar='any_string',
+		help='Use fixed PBKDF2 salt value for all operations (default is to use random string).'
+			' Must remain same between runs to produce'
+				' same output - which is not the case without this option.')
+	parser.add_argument('-i', '--pbkdf2-iteratiions',
+		metavar='integer', type=int, default=int(1e5),
+		help='Number of PBKDF2 iterations to produce hashed data (default: %(default)s).'
+			' Must remain same between runs to produce same output.')
+	parser.add_argument('-l', '--truncate', metavar='integer', type=int, default=10,
+		help='Truncate obfuscated base64-encoded values to this length.')
+	parser.add_argument('-x', '--skip', metavar='keyword', action='append', default=list(),
+		help='Skip obfuscating certain values. Can be specified multiple times.'
+			' Possible keywords: {}.'.format(', '.join(checklist)))
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if not opts.pbkdf2_salt: opts.pbkdf2_salt = os.urandom(16)
+
+	src = open(opts.config).read()
+
+	def regexp_for_key(key, _space_like=r'(\s+|//.*?\n)*'):
+		return re.compile(r'(?s)"{1}"{0}:{0}"(?P<val>[^"]*)"'.format(_space_like, k))
+
+	def nice_b64(val):
+		return val.encode('base64').rstrip('=\n').replace('/', '-')[:opts.truncate]
+
+	checklist.difference_update(opts.skip)
+
+	for k in list(checklist):
+		for match in reversed(list(regexp_for_key(k).finditer(src))):
+			a, b = match.span('val')
+			val, salt = src[a:b], opts.pbkdf2_salt
+
+			val_match = re.search(opts.peer_password_regexp, val)\
+				if k == 'password' else None
+			if val_match:
+				# Rest of the value will be added to salt,
+				#  so that same password for diff names should produce diff values
+				c, d = val_match.span('password')
+				subst = nice_b64(pbkdf2(
+					val_match.group('password'),
+					salt + val[:c] + val[d:], opts.pbkdf2_iteratiions ))
+				val = val[:c] + subst + val[d:]
+			else:
+				val = nice_b64(pbkdf2(val, salt, opts.pbkdf2_iteratiions))
+
+			src = src[:a] + val + src[b:]
+			checklist.discard(k)
+
+	checklist.difference_update(checklist_optional)
+	if checklist:
+		print( 'Failed to make mandatory replacements'
+			' for keywords: {}'.format(', '.join(checklist)), file=sys.stderr )
+		sys.exit(1)
+
+	sys.stdout.write(src)
+
+if __name__ == '__main__': sys.exit(main())

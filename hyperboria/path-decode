@@ -53,4 +53,4 @@ def main(args=None):
 		if opts.echo: print(path + ' ', end='')
 		print(' '.join(it.imap(bytes, path_breakdown(path))))
 
-if __name__ == '__main__': main()
+if __name__ == '__main__': sys.exit(main())
