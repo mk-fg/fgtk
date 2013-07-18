@@ -552,7 +552,8 @@ Example: path-decode 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30
 
 ##### conf-paste
 
-Obfuscates cjdns config file (cjdroute.conf) in a secure and deterministic way.
+Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
+deterministic way.
 
 Should be useful to pastebin your config file without revealing most sensitive
 data (passwords and keys) in it.
