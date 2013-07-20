@@ -167,6 +167,11 @@ def main(argv=None):
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args()
 
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	log = logging.getLogger()
+
 	opts.znc_home = expanduser(opts.znc_home)
 	opts.log_dir = expanduser(opts.log_dir)
 	opts.channels = list(chan_name(name) for name in opts.channels)
@@ -175,11 +180,9 @@ def main(argv=None):
 	for k in 'ts_from', 'ts_to':
 		val = getattr(opts, k)
 		if not val: continue
-		setattr(opts, k, parse_timestamp(val))
-
-	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
-	log = logging.getLogger()
+		ts = parse_timestamp(val)
+		log.debug('Timestamp {} ({}) parsed as: {}'.format(val, k, ts))
+		setattr(opts, k, ts)
 
 
 	## Find the subset of channels to work with, if necessary
