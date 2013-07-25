@@ -3,18 +3,24 @@
 import itertools as it, operator as op, functools as ft
 from plumbum import local
 from time import time
-from os.path import basename, dirname, join, exists
-import os, sys, re, random
+from os.path import basename, dirname, join, exists, normpath
+import os, sys, re, random, tempfile, traceback, shutil, math
 
+
+cleanup_ops = list() # list of callbacks to reliably run on exit
 
 def main(argv=None):
+	default_shuffle_percentage = 30.0
+
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Randomly pick and copy tracks from source to destination.')
-	parser.add_argument('src', nargs='+', help='Source path(s).')
+	parser.add_argument('src', nargs='?', help='Source path(s).')
 	parser.add_argument('dst', help='Destination path.')
+
 	parser.add_argument('-s', '--min-df',
 		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
+
 	parser.add_argument('-c', '--clean-df',
 		type=float, metavar='MiB', help='Before copying stuff, clean up files from'
 			' destination path (also see --clean-path) up to specified free-space'
@@ -23,8 +29,23 @@ def main(argv=None):
 		action='store_true', help='Clean up files from destination path'
 			' (also see --clean-path) as necessary to copy *all* the source files.'
 			' Files to remove are picked at random. Mutually exclusive with --min-df.')
-	parser.add_argument('-r', '--clean-path',
+	parser.add_argument('-r', '--clean-path', metavar='path',
 		help='Clean stuff from the specified path instead of destination.')
+
+	parser.add_argument('--shuffle',
+		nargs='?', metavar='percentage', default=False,
+		help=( 'Special operation mode, which will:'
+				' (1) Lookup all paths in src, build a set of basenames for these.'
+				' (2) Lookup all paths in dst, find difference with src set.'
+				' (3) Copy missing files from dst to src (or staging area with -t option).'
+				' (4) Remove random files in dst, leaving specified count percentage (default: {:.1f}%%).'
+				' (5) Pick random files from src and staging area and upload to dst.' )\
+			.format(default_shuffle_percentage))
+	parser.add_argument('-t', '--shuffle-staging',
+		nargs='?', metavar='path', default='/var/tmp/pick_tracks.XXXXXX',
+		help='Path to temporarily copy files from dst during --shuffle operation, removed afterwards.'
+			' Will be generated in mktemp(1)-fashion if name contains >4 X letters in a row.')
+
 	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -33,8 +54,13 @@ def main(argv=None):
 	logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
 	log = logging.getLogger()
 
+	if optz.shuffle is None: optz.shuffle = True
 	if optz.clean_as_necessary and optz.min_df:
 		parser.error('Options --min-df and --clean-as-necessary do not make sense together')
+	if optz.shuffle and (optz.clean_df or optz.clean_as_necessary or optz.clean_path):
+		parser.error('Options --clean* and --shuffle do not make sense together')
+	if not optz.src and not optz.shuffle:
+		parser.error('At least one "src" path must be specified, unless --shuffle is used.')
 
 	MiB = 2**20
 	if not exists(optz.dst):
@@ -45,7 +71,7 @@ def main(argv=None):
 	optz.clean = optz.clean_df or optz.clean_as_necessary
 	if optz.clean:
 		if optz.clean_df: optz.clean_df = optz.clean_df * MiB
-		if not optz.clean_path: optz.clean_path = optz.dst
+	if not optz.clean_path: optz.clean_path = optz.dst
 
 	def force_bytes(path):
 		if isinstance(path, unicode): return path.encode('utf-8')
@@ -74,7 +100,7 @@ def main(argv=None):
 				log.warn('Failed to remove file ({}): {}'.format(path, err))
 
 	# Build a list of files we're allowed to remove, if any cleanup is requested
-	if optz.clean:
+	if optz.clean or optz.shuffle:
 		cleanup = list()
 		if not exists(optz.clean_path):
 			log.info('Cleanup path does not exists: {}'.format(optz.clean_path))
@@ -89,12 +115,47 @@ def main(argv=None):
 
 	# Build file list
 	log.debug('Building list of files in source paths')
-	code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
-	if code or err:
-		sys.stderr.write(err)
-		raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
-	src_files = src_files.splitlines()
+	if optz.src:
+		code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
+		if code or err:
+			sys.stderr.write(err)
+			raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
+		src_files = src_files.splitlines()
+	else: src_files = list()
 	log.debug(' - found {} files'.format(len(src_files)))
+
+	# Shuffle operation
+	if optz.shuffle:
+		# Drop some percentage of files that will be left alone
+		optz.shuffle = default_shuffle_percentage\
+			if optz.shuffle is True else float(optz.shuffle)
+		for n in xrange(int(math.ceil(len(cleanup) * (optz.shuffle / 100.0)))): pop_path(cleanup)
+		# Compare src to cleanup
+		src_basenames = set(it.imap(basename, src_files))
+		cleanup_move = set(path for path in cleanup if basename(path) not in src_basenames)
+		if cleanup_move:
+			if 'XXXX' in optz.shuffle_staging:
+				prefix, suffix = optz.shuffle_staging.split('XXXX', 1)
+				prefix, suffix = prefix.rsplit(os.sep, 1), suffix.lstrip('X')
+				prefix_path, prefix = ('.', prefix) if len(prefix) == 1 else prefix
+				optz.shuffle_staging = tempfile.mkdtemp(suffix, prefix, prefix_path)
+				cleanup_ops.append( lambda:\
+					shutil.rmtree(optz.shuffle_staging, ignore_errors=True) )
+				log.debug('Using tmp shuffle-path: {}'.format(optz.shuffle_staging))
+			# move non-src-matching stuff to staging
+			rsync_opts = [ '--inplace', '-r', '--remove-source-files',
+				'--size-only', '--include-from', '-', '--exclude', '*',
+				join(normpath(optz.dst), '.'), optz.shuffle_staging ]
+			if optz.debug: rsync_opts.append('-P')
+			if optz.dry_run: rsync_opts.append('--dry-run')
+			((local['rsync'] << '\n'.join(it.imap(basename, cleanup_move))) > sys.stdout)(*rsync_opts)
+			local['sync']() # so that fat will purge these entries from old places reliably
+			src_files.extend(join(optz.shuffle_staging, basename(p)) for p in cleanup_move)
+			# cleanup_move paths should be removed by rsync's --remove-source-files by now
+			cleanup = list(p for p in cleanup if p not in cleanup_move)
+		# remove src-matching stuff
+		if not optz.dry_run:
+			for path in cleanup: os.unlink(path)
 
 	# Stats
 	df0, ts0 = free(), time()
@@ -134,4 +195,10 @@ def main(argv=None):
 	log.info(stats())
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+	try: err = main()
+	finally:
+		for func in cleanup_ops:
+			try: func()
+			except: traceback.print_exc()
+	sys.exit(err)

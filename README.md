@@ -440,6 +440,10 @@ the destination, preserving as much of the stuff that's already there as
 possible (and removing least important stuff).
 Cleanup (if requested) also picks stuff at random up to necessary df.
 
+"--shuffle" option allows to shuffle paths on fat by temporarily copying them
+off the media to some staging area and back in random order.
+Use-case is dump mp3 players that don't have that option.
+
 Uses [plumbum](http://plumbum.readthedocs.org) to call "rsync --inplace" (faster
 than "cp" in most cases) and "find" to do the actual copy/listing.
 
