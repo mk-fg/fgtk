@@ -1,0 +1,319 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import itertools as it, operator as op, functools as ft
+from collections import OrderedDict, defaultdict
+import sys, re, random, time
+
+
+import logging
+log = logging.getLogger(__name__)
+
+
+def _grammar():
+	# Copy-pasted from graphite as-is, don't know a jack shit about pyparsing
+	import pyparsing as pyp
+	pyp.ParserElement.enablePackrat()
+
+	grammar = pyp.Forward()
+	expression = pyp.Forward()
+
+	# Literals
+	intNumber = pyp.Combine(pyp.Optional('-') + pyp.Word(pyp.nums))('integer')
+	floatNumber = pyp.Combine(
+		pyp.Optional('-') + pyp.Word(pyp.nums) + pyp.Literal('.') + pyp.Word(pyp.nums) )('float')
+	aString = pyp.quotedString('string')
+
+	# Use lookahead to match only numbers in a list (can't remember why this is necessary)
+	afterNumber = pyp.FollowedBy(",") ^ pyp.FollowedBy(")") ^ pyp.FollowedBy(pyp.LineEnd())
+	number = pyp.Group((floatNumber + afterNumber) | (intNumber + afterNumber))('number')
+	boolean = pyp.Group(pyp.CaselessKeyword("true") | pyp.CaselessKeyword("false"))('boolean')
+
+	# Function calls
+	arg = pyp.Group(boolean | number | aString | expression)
+	args = pyp.delimitedList(arg)('args')
+
+	func = pyp.Word(pyp.alphas+'_', pyp.alphanums+'_')('func')
+	call = pyp.Group(func + pyp.Literal('(').suppress() + args + pyp.Literal(')').suppress())('call')
+
+	# Metric pattern (aka. pathExpression)
+	validMetricChars = pyp.alphanums + r'''!#$%&"'*+-.:;<=>?@[\]^_`|~'''
+	pathExpression = pyp.Combine(
+		pyp.Word(validMetricChars) +
+		pyp.Combine(
+			pyp.ZeroOrMore(
+				pyp.Group(
+					pyp.Literal('{') +
+					pyp.Word(validMetricChars + ',') +
+					pyp.Literal('}') + pyp.Optional(pyp.Word(validMetricChars)) ) ) ) )('pathExpression')
+
+	expression << pyp.Group(call | pathExpression)('expression')
+	grammar << expression
+	return grammar
+
+
+def process_val(val, splice_lists=False):
+	if isinstance(val, list):
+		return process_val(val[0])\
+			if splice_lists and len(val) == 1\
+			else map(process_val, val)
+	val = val.strip()
+
+	for conv in int, float:
+		try: val = conv(val)
+		except ValueError: pass
+		else: return val
+
+	try: return dict(true=True, false=False)[val]
+	except KeyError: pass
+
+	return val
+
+def process_target(val, _grammar=_grammar()):
+	descend = ft.partial(process_target, _grammar=None)
+	if _grammar: val = _grammar.parseString(val)
+	if 'expression' in val: return descend(val.expression)
+	if 'call' in val:
+		return tuple([val.call.func] + map(descend, val.call.args))
+	if 'pathExpression' in val:
+		return val.pathExpression
+	if 'boolean' in val: print 'VAL', val.boolean
+	if 'number' in val: print 'VAL', val.number
+	if 'string' in val: return val.string.strip('"\'')
+	raise NotImplementedError
+
+
+_extra_data = dict(_source='base', _profile_id='profile_id')
+
+def clean_data(data):
+	extras = dict((v, data.pop(k, None)) for k,v in _extra_data.viewitems())
+	return data, extras
+
+
+# These are folded into one function with multiple args
+_targets_fold = {'stacked', 'secondYAxis'}
+
+def process_targets(targets):
+	fold, idx_cleanup = dict(), set()
+	targets = map(process_target, targets)
+	for k,v in enumerate(list(targets)):
+		if isinstance(v, tuple) and v[0] in _targets_fold:
+			fold.setdefault(v[0], list()).append(v[1])
+			idx_cleanup.add(k)
+	for func,folds in fold.viewitems():
+		targets.append(tuple(it.chain([func], folds)))
+	targets = list(t for idx,t in enumerate(targets) if idx not in idx_cleanup)
+	return targets
+
+def dump_target(target):
+	if isinstance(target, list):
+		if target[0] in _targets_fold:
+			for args in target[1:]:
+				yield '{}({})'.format(target[0], ','.join(dump_target(args)))
+		elif target[0] == 'alias': # quoted alias name
+			yield '{}({}, {!r})'.format(target[0], next(dump_target(target[1])), target[2])
+		else:
+			yield '{}({})'.format(target[0], ','.join(
+				it.chain.from_iterable(it.imap(dump_target, target[1:])) ))
+	else: yield str(target)
+
+def dump_targets(targets):
+	return list(it.chain.from_iterable(it.imap(dump_target, targets)))
+
+
+def dump_dash_graphs(data):
+	for graph in data['graphs']:
+		params = graph.copy()
+		params['target'] = dump_targets(params['target'])
+		gid, _ = dump_url(dict(target=params['target']), extras=dict())
+		for k in 'width', 'height':
+			if k not in params: params[k] = data['graphSize'][k]
+			else: del graph[k]
+		for k in 'from', 'until':
+			if k not in params:
+				graph[k] = params[k] = data['defaultGraphParams'][k]
+		params['uniq'] = random.random()
+		url, _ = dump_url(params)
+		yield gid, graph, url
+
+def process_dash_graphs(data):
+	gfrom, guntil = op.itemgetter('from', 'until')(data['defaultGraphParams'])
+	for graph in data['graphs']:
+		gid, params, url = graph # id/url are derived from global params and targets
+		params['target'] = process_targets(params['target'])
+		if params.get('from') == gfrom: params.pop('from', None)
+		if params.get('until') == guntil: params.pop('until', None)
+		yield params
+
+
+
+def dump_yaml(data, dst):
+	import pyaml
+	return pyaml.dump(data, dst, force_embed=True, vspacing=[1])
+
+def load_yaml(src):
+	import yaml
+	data = yaml.load(src)
+	if 'target' in data:
+		data['target'] = dump_targets(data['target'])
+	return data
+
+
+def load_url(src, profile_id=None):
+	if src.startswith('http://') or src.startswith('https://'): pass
+	elif src.startswith('//'): src = 'http:{}'.format(src)
+	elif not src.startswith('/'): src='/?{}'.format(src.lstrip('?'))
+	from urlparse import urlparse, urlunparse, parse_qs
+	src = urlparse(src)
+	data = parse_qs(src.query)
+	for k,v in data.items():
+		data[k] = process_val(v, splice_lists=k != 'target')
+		if k in _extra_data: raise KeyError('"{}" should NOT be there!'.format(k))
+	if 'target' in data: data['target'] = process_targets(data['target'])
+	data['_source'] = urlunparse(tuple(it.chain(src[:4], it.repeat('', 2))))
+	data['_profile_id'] = profile_id
+	return data
+
+def dump_url(src, dst=str, extras=None):
+	if extras is None:
+		src, extras = clean_data(src)
+	from urllib import quote
+	def encode_val(v):
+		if isinstance(v, bool): v = str(v).lower()
+		return quote(str(v), '()*,')
+	url = list()
+	for k,v in src.viewitems():
+		if isinstance(v, list):
+			for v in v: url.append('{}={}'.format(k, encode_val(v)))
+		else: url.append('{}={}'.format(k, encode_val(v)))
+	src = '&'.join(url)
+	if extras.get('base'): src = '{}?{}'.format(extras['base'], src)
+	if dst is str: return src, extras
+	else: dst.write(src + '\n')
+
+
+def load_json(src):
+	import json
+	data = json.loads(src)
+	data['graphs'] = list(process_dash_graphs(data))
+	return data
+
+def dump_json(src, dst):
+	import json
+	src['graphs'] = list(dump_dash_graphs(src))
+	src = json.dumps(src)
+	if dst is str: return src
+	else: dst.write(src)
+
+
+def load(src, db, obj_type):
+	db_type, db = db.split(':', 1)
+	if db_type == 'pgsql':
+		import psycopg2
+		conn, vs = psycopg2.connect(db), '%s'
+	elif db_type == 'sqlite3':
+		import sqlite3
+		conn, vs = sqlite3.connect(db), '?'
+	else:
+		raise ValueError('Unknown db type: {}'.format(db_type))
+	cur = conn.cursor()
+	if obj_type == 'graph': v, t = ['url', 'profile_id'], 'account_mygraph'
+	elif obj_type == 'dash': v, t = ['state'], 'dashboard_dashboard'
+	else: raise ValueError('No loader for object type: {}'.format(obj_type))
+	cur.execute(( 'select {} from {} where'
+		'  name = {}' ).format(','.join(v), t, vs), (src,) )
+	if cur.rowcount != 1:
+		raise IndexError( 'Unable to find unique'
+			' {} (found: {})'.format(obj_type, cur.rowcount) )
+	if obj_type == 'graph':
+		url, profile_id = cur.fetchone()
+		res = load_url(url, profile_id=profile_id)
+	elif obj_type == 'dash':
+		json, = cur.fetchone()
+		res = load_json(json)
+	return res
+
+load_graph = ft.partial(load, obj_type='graph')
+load_dash = ft.partial(load, obj_type='dash')
+
+def dump_dash(src, dst, db):
+	if not isinstance(dst, str):
+		raise ValueError('Destination must be a dashboard name')
+	src = dump_json(src, str)
+	import psycopg2
+	conn = psycopg2.connect(db)
+	cur = conn.cursor()
+	cur.execute( 'select 1 from'
+		' dashboard_dashboard where name = %s for update', (dst,) )
+	if cur.rowcount != 1:
+		raise IndexError('Unable to find unique dashboard (found: {})'.format(cur.rowcount))
+	cur.execute('update dashboard_dashboard set state = %s where name = %s', (src, dst))
+	conn.commit()
+
+def dump_graph(src, dst, db):
+	if not isinstance(dst, str):
+		raise ValueError('Destination must be a graph name')
+	if '_salt' in src: src['_salt'] = time.time()
+	src, extras = dump_url(src, str)
+	import psycopg2
+	conn = psycopg2.connect(db)
+	cur = conn.cursor()
+	cur.execute('select 1 from account_mygraph where name = %s for update', (dst,))
+	if cur.rowcount > 1:
+		raise IndexError('Unable to find unique graph (found: {})'.format(cur.rowcount))
+	elif cur.rowcount == 0:
+		profile_id = extras.get('profile_id')
+		if not profile_id: raise KeyError('No profile_id stored in graph data')
+		cur.execute( 'insert into account_mygraph '
+			'(url, name, profile_id) values (%s, %s, %s)', (src, dst, profile_id) )
+	else: cur.execute('update account_mygraph set url = %s where name = %s', (src, dst))
+	conn.commit()
+
+
+def main():
+	src_handlers = dict(
+		yaml=load_yaml, json=load_json, url=load_url,
+		dash=load_dash, graph=load_graph )
+	dst_handlers = dict(
+		yaml=dump_yaml, json=dump_json, url=dump_url,
+		dash=dump_dash, graph=dump_graph )
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Convert between YAML and various graphite graph-representation formats.\n'
+			'Available formats - source: {}, destination: {}.'\
+				.format(list(src_handlers), list(dst_handlers)) )
+	parser.add_argument('src', metavar='<FORMAT>[:<DATA or PATH or "-">]', help='Source.')
+	parser.add_argument('dst', nargs='?', metavar='<FORMAT>[:<PATH or "-">]',
+		default='yaml', help='Destination (default: %(default)s).')
+	parser.add_argument('--db', metavar='conn_string',
+		default='pgsql:host=localhost dbname=graphite',
+		help='db connection string, starting in one of the following formats:'
+			' pgsql:<psycopg2_conn_string>; sqlite3:<path to db>.  Default: %(default)s')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	optz = parser.parse_args()
+
+	for fmt in 'dash', 'graph':
+		src_handlers[fmt] = ft.partial(src_handlers[fmt], db=optz.db)
+		dst_handlers[fmt] = ft.partial(dst_handlers[fmt], db=optz.db)
+
+	logging.basicConfig(
+		level=logging.WARNING if not optz.debug else logging.DEBUG,
+		format='%(levelname)s :: %(name)s :: %(message)s' )
+
+	try: src_fmt, src = optz.src.split(':')
+	except ValueError: src_fmt, src = optz.src, sys.stdin
+	if not src or src == '-': src = sys.stdin
+	if src_fmt.lower() in ['http', 'https']: src_fmt = 'url'
+	src_handler = src_handlers[src_fmt.lower()]
+
+	try: dst_fmt, dst = optz.dst.split(':')
+	except ValueError: dst_fmt, dst = optz.dst, sys.stdout
+	if not dst or dst == '-': dst = sys.stdout
+	dst_handler = dst_handlers[dst_fmt.lower()]
+
+	if src_fmt == dst_fmt:
+		parser.error('Load/dump from/to the same format is not supported')
+	dst_handler(src_handler(src), dst)
+
+if __name__ == '__main__': main()

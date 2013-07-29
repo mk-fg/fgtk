@@ -395,6 +395,47 @@ localhost:1080`) link:
 	% openssl-fingerprint google.com localhost:1080
 	SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
 
+##### graphite-scratchpad
+
+Tool to load/dump stored [graphite](http://graphite.readthedocs.org/) graphs
+through formats easily editable by hand.
+
+For example, creating even one dashboard there is a lot of clicky-clicks, and 10
+slightly different dashboards is mission impossible, but do `graphite-scratchpad
+dash:top` (loaded straight from graphite db) and you get:
+
+    name: top
+
+    defaultGraphParams:
+      from: -24hours
+      height: 250
+      until: -20minutes
+      width: 400
+
+    ...
+
+    graphs:
+      - target:
+          - *.memory.allocation.reclaimable
+      - target:
+          - *.disk.load.sdb.utilization
+          - *.disk.load.sda.utilization
+        yMax: 100
+        yMin: 0
+      - target:
+          - *.cpu.all.idle
+        yMax: 100
+        yMin: 0
+    ...
+
+That's all graph-building data in an easily readable, editable and parseable
+format (yaml, nicely-spaced with [pyaml](https://github.com/mk-fg/pretty-yaml)
+module).
+
+Edit that and do `graphite-scratchpad yaml dash:top < dash.yaml` to replace the
+thing in graphite db with an updated thing.
+Much easier than doing anything with GUI.
+
 
 ### Desktop
 
