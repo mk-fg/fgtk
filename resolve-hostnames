@@ -22,7 +22,8 @@ def sock_enum_val(name_or_num, prefix=None):
 		' socket parameter name/value: {!r}' ).format(name_or_num))
 
 
-def get_socket_info(host, port=0, family=0, socktype=0, protocol=0):
+def get_socket_info( host, port=0, family=0,
+		socktype=0, protocol=0, force_unique_address=False ):
 	log_params = [port, family, socktype, protocol]
 	log.debug('Resolving: {} (params: {})'.format(host, log_params))
 	try: addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
@@ -56,9 +57,12 @@ def get_socket_info(host, port=0, family=0, socktype=0, protocol=0):
 	for addr, family in ai_addr:
 		if family == af: break
 	else: raise AddressError
-	if len(ai_addr) > 1:
+	ai_addr_unique = set(ai_addr)
+	if len(ai_addr_unique) > 1:
+		if force_unique_address:
+			raise AddressError('Address matches more than one host: {}'.format(ai_addr_unique))
 		log.warn( 'Specified host matches more than'
-			' one address ({}), using first one: {}'.format(ai_addr, addr) )
+			' one address ({}), using first one: {}'.format(ai_addr_unique, addr) )
 
 	return addr, port
 
