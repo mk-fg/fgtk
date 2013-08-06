@@ -80,7 +80,7 @@ def process_target(val, _grammar=_grammar()):
 	if 'boolean' in val: print 'VAL', val.boolean
 	if 'number' in val: print 'VAL', val.number
 	if 'string' in val: return val.string.strip('"\'')
-	raise NotImplementedError
+	raise NotImplementedError(val)
 
 
 _extra_data = dict(_source='base', _profile_id='profile_id')
@@ -206,30 +206,44 @@ def dump_json(src, dst):
 	else: dst.write(src)
 
 
-def load(src, db, obj_type):
+def db_link(db):
 	db_type, db = db.split(':', 1)
 	if db_type == 'pgsql':
 		import psycopg2
-		conn, vs = psycopg2.connect(db), '%s'
+		return psycopg2.connect(db), '%s'
 	elif db_type == 'sqlite3':
 		import sqlite3
-		conn, vs = sqlite3.connect(db), '?'
+		return sqlite3.connect(db), '?'
 	else:
 		raise ValueError('Unknown db type: {}'.format(db_type))
+
+def load(src, db, obj_type):
+	conn, vs = db_link(db)
 	cur = conn.cursor()
 	if obj_type == 'graph': v, t = ['url', 'profile_id'], 'account_mygraph'
 	elif obj_type == 'dash': v, t = ['state'], 'dashboard_dashboard'
 	else: raise ValueError('No loader for object type: {}'.format(obj_type))
-	cur.execute(( 'select {} from {} where'
-		'  name = {}' ).format(','.join(v), t, vs), (src,) )
-	if cur.rowcount != 1:
+	query, params = 'select {{}} from {} where name = {}'.format(t, vs), (src,)
+	log.debug('Load query: {!r}, params: {}'.format(query.format('<stuff>'), params))
+	cur.execute(query.format(','.join(v)), params)
+	rows = cur.fetchall()
+	if len(rows) != 1:
+		if debug:
+			log.debug('-'*20)
+			cur.execute('select name from {}'.format(t))
+			log.debug('All objects of type {!r}:'.format(obj_type))
+			for row in cur: log.debug('  - {}'.format(row[0]))
+			log.debug('Objects found:')
+			cur.execute(query.format('name'), params)
+			for row in cur: log.debug('  - {}'.format(row[0]))
+			log.debug('-'*20)
 		raise IndexError( 'Unable to find unique'
-			' {} (found: {})'.format(obj_type, cur.rowcount) )
+			' {} (found: {}): {}'.format(obj_type, len(rows), src) )
 	if obj_type == 'graph':
-		url, profile_id = cur.fetchone()
+		url, profile_id = rows[0]
 		res = load_url(url, profile_id=profile_id)
 	elif obj_type == 'dash':
-		json, = cur.fetchone()
+		json, = rows[0]
 		res = load_json(json)
 	return res
 
@@ -240,14 +254,13 @@ def dump_dash(src, dst, db):
 	if not isinstance(dst, str):
 		raise ValueError('Destination must be a dashboard name')
 	src = dump_json(src, str)
-	import psycopg2
-	conn = psycopg2.connect(db)
+	conn, vs = db_link(db)
 	cur = conn.cursor()
-	cur.execute( 'select 1 from'
-		' dashboard_dashboard where name = %s for update', (dst,) )
-	if cur.rowcount != 1:
+	cur.execute('select 1 from dashboard_dashboard where name = {}'.format(vs), (dst,))
+	if len(cur.fetchall()) != 1:
 		raise IndexError('Unable to find unique dashboard (found: {})'.format(cur.rowcount))
-	cur.execute('update dashboard_dashboard set state = %s where name = %s', (src, dst))
+	cur.execute( 'update dashboard_dashboard'
+		' set state = {0} where name = {0}'.format(vs), (src, dst) )
 	conn.commit()
 
 def dump_graph(src, dst, db):
@@ -255,18 +268,21 @@ def dump_graph(src, dst, db):
 		raise ValueError('Destination must be a graph name')
 	if '_salt' in src: src['_salt'] = time.time()
 	src, extras = dump_url(src, str)
-	import psycopg2
-	conn = psycopg2.connect(db)
+	conn, vs = db_link(db)
 	cur = conn.cursor()
-	cur.execute('select 1 from account_mygraph where name = %s for update', (dst,))
-	if cur.rowcount > 1:
+	cur.execute( 'select 1 from account_mygraph'
+		' where name = {} for update'.format(vs), (dst,) )
+	rows = cur.fetchall()
+	if len(rows) > 1:
 		raise IndexError('Unable to find unique graph (found: {})'.format(cur.rowcount))
-	elif cur.rowcount == 0:
+	elif len(rows) == 0:
 		profile_id = extras.get('profile_id')
 		if not profile_id: raise KeyError('No profile_id stored in graph data')
 		cur.execute( 'insert into account_mygraph '
-			'(url, name, profile_id) values (%s, %s, %s)', (src, dst, profile_id) )
-	else: cur.execute('update account_mygraph set url = %s where name = %s', (src, dst))
+			'(url, name, profile_id) values ({0}, {0}, {0})'.format(vs), (src, dst, profile_id) )
+	else:
+		cur.execute( 'update account_mygraph'
+			' set url = {0} where name = {0}'.format(vs), (src, dst) )
 	conn.commit()
 
 
@@ -286,7 +302,7 @@ def main():
 	parser.add_argument('src', metavar='<FORMAT>[:<DATA or PATH or "-">]', help='Source.')
 	parser.add_argument('dst', nargs='?', metavar='<FORMAT>[:<PATH or "-">]',
 		default='yaml', help='Destination (default: %(default)s).')
-	parser.add_argument('--db', metavar='conn_string',
+	parser.add_argument('-d', '--db', metavar='conn_string',
 		default='pgsql:host=localhost dbname=graphite',
 		help='db connection string, starting in one of the following formats:'
 			' pgsql:<psycopg2_conn_string>; sqlite3:<path to db>.  Default: %(default)s')
@@ -300,6 +316,8 @@ def main():
 	logging.basicConfig(
 		level=logging.WARNING if not optz.debug else logging.DEBUG,
 		format='%(levelname)s :: %(name)s :: %(message)s' )
+	global debug
+	debug = optz.debug
 
 	try: src_fmt, src = optz.src.split(':')
 	except ValueError: src_fmt, src = optz.src, sys.stdin
