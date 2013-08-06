@@ -121,11 +121,11 @@ def main(args=None):
 			port = opts.port
 			if re.search(r'^{}+:\d+$'.format(hc), name): name, port = name.rsplit(':', 1)
 			else: assert re.search(r'^{}+$'.format(hc), name), name
-			name = r'(?P<name>{})'.format(re.escape(name))
-			if port: name += r':(?P<port>{})'.format(re.escape(bytes(port)))
+			name = re.escape(name)
+			if port: name += ':{}'.format(re.escape(bytes(port)))
 			names.append(name)
 		opts.match = re.compile(
-			r'(?<!{hc})({names})(?!{hc})'.format(hc=hc, names='|'.join(names)) )
+			r'(?<!{hc})(?P<name>{names})(?!{hc})'.format(hc=hc, names='|'.join(names)) )
 	else: opts.match = re.compile(opts.match)
 
 	src = open(opts.file).read() if opts.file else sys.stdin.read()
@@ -133,9 +133,8 @@ def main(args=None):
 
 	for match in opts.match.finditer(src):
 		# Get
-		name = match.group('name')
-		try: port = match.group('port')
-		except IndexError: port = 0
+		name = match.group('name').rsplit(':', 1)
+		name, port = name if len(name) > 1 else (name[0], 0)
 		try: protocol = match.group('protocol')
 		except IndexError: protocol = opts.protocol
 
