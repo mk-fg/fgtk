@@ -87,8 +87,9 @@ def main(args=None):
 		metavar='number/service_name',
 		help='Append the port to all passed hosts as "<host>:<port>".')
 	parser.add_argument('-m', '--match', metavar='regexp',
-		help='Regexp (python) to match host/port by.'
-			' Must contain at least named "host" group, can also contain "port" and "protocol" group.')
+		help='Regexp (python) to match host/port by, without ^ and $ matchers.'
+			' Must contain at least named "name" group, can also contain'
+				' "port" and "protocol" group. Example: "(?P<name>.*\.(my\.tld1|my.tld2)):\d+":')
 
 	parser.add_argument('-l', '--protocol', metavar='protocol_name/num', default='tcp',
 		help='Name of a protocol to get address'
