@@ -62,7 +62,8 @@ def main(argv=None):
 			( k.lower(),
 				unicode(unit.Get('org.freedesktop.systemd1.Unit', '{}State'.format(k))) )
 			for k in ['Load', 'Active', 'Sub'] )
-		if state['load'] != 'error' and state['active'] != 'active': show_status(unit_name)
+		if state['load'] not in ['error', 'not-found'] and state['active'] != 'active':
+			show_status(unit_name)
 
 	if proc.wait():
 		raise RuntimeError('list-dependencies command failed')
