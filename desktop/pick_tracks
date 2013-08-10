@@ -15,7 +15,7 @@ def main(argv=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Randomly pick and copy tracks from source to destination.')
-	parser.add_argument('src', nargs='?', help='Source path(s).')
+	parser.add_argument('src', nargs='*', help='Source path(s).')
 	parser.add_argument('dst', help='Destination path.')
 
 	parser.add_argument('-s', '--min-df',
