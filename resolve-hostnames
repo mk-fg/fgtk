@@ -26,14 +26,12 @@ def get_socket_info( host, port=0, family=0,
 		socktype=0, protocol=0, force_unique_address=False ):
 	log_params = [port, family, socktype, protocol]
 	log.debug('Resolving: {} (params: {})'.format(host, log_params))
-	try: addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
-	except socket.gaierror as err:
-		log.debug('Failed to resolve host: {} (params: {}) - {}'.format(host, log_params, err))
-		raise
-
-	if not addrinfo:
-		log.fatal('Failed to match host to a socket address: {}'.format(host))
-		raise AddressError
+	try:
+		addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
+		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
+	except (socket.gaierror, socket.error) as err:
+		raise AddressError( 'Failed to resolve host:'
+			' {} (params: {}) - {}'.format(host, log_params, err) )
 
 	ai_af, ai_addr = set(), list()
 	for family, _, _, hostname, addr in addrinfo:
