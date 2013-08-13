@@ -291,9 +291,13 @@ def main(argv=None):
 
 							# ts/count checks
 							if opts.ts_from or opts.ts_to:
-								match = re.search(r'^\s*\[([^]]+)\]\s+', line)
-								assert match, line
-								line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+								try:
+									match = re.search(r'^\s*\[([^]]+)\]\s+', line)
+									if not match: raise ValueError(line)
+									line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+								except:
+									log.warn('Failed to match line format, skipping: {!r}'.format(line))
+									continue
 								if opts.ts_from and line_ts < opts.ts_from: raise Finished # next ones are older
 								if opts.ts_to and line_ts > opts.ts_to: continue
 							if count is not None:
