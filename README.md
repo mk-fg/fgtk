@@ -220,7 +220,8 @@ way to (re-)add it without doing "ip link down && ip link up", which is a red
 flag for a remote machine over such trivial matter.
 
 `ipv6-link-local` subcommand handles that particular case, generating
-ipv6-lladdr from mac, as per RFC 4291 (as implemented in "netaddr" module):
+ipv6-lladdr from mac, as per RFC 4291 (as implemented in "netaddr" module) and
+can assign resulting address to the interface, if missing:
 
 ```console
 # ip-ext --debug ipv6-link-local -i enp0s9 -x
@@ -228,8 +229,9 @@ DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
 DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
 ```
 
-I expect more "harder than 3 lines of bash" commands might be here in the
-future.
+`ip-check` subcommand allows to check if address (ipv4/ipv6) is assigned to any
+of the interfaces and/or run "ip add" (with specified parameters) to assign it,
+if not.
 
 
 ### Dev

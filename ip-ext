@@ -3,7 +3,8 @@
 
 from __future__ import print_function
 from contextlib import contextmanager
-import os, sys, socket
+from subprocess import Popen, PIPE
+import os, sys, socket, netifaces, netaddr
 
 
 def main(args=None):
@@ -20,10 +21,23 @@ def main(args=None):
 		cmd.set_defaults(call=name)
 		yield cmd
 
+	with subcommand('ip-check',
+			help='Check if os/interface has specified address configured.') as cmd:
+		cmd.add_argument('addr',
+			help='IP address to look for. Exits with non-zero status if not found.')
+		cmd.add_argument('-i', '--iface', metavar='dev', help='Interface to limit check to.')
+		cmd.add_argument('-x', '--assign', metavar='[/cidr ][ip-add extras]',
+			help='Assign address to interface, if missing. Requires --iface option to be used.'
+				' Option argument must specify CIDR netmask and can also have'
+					' additional command-line parameters to pass to "ip add" line (except for "dev"),'
+					' examples: "/24", "/24 primary label main", "peer 1.2.3.4 scope global".')
+
 	with subcommand('ipv6-link-local',
 			help='Generate and/or assign link-local IPv6 address to the interface.') as cmd:
-		cmd.add_argument('-i', '--iface', help='Interface name to generate address for.')
-		cmd.add_argument('-l', '--lladdr', help='MAC address to convert to link-local address.')
+		cmd.add_argument('-i', '--iface', metavar='dev',
+			help='Interface name to generate address for.')
+		cmd.add_argument('-l', '--lladdr', metavar='mac',
+			help='MAC address to convert to link-local address.')
 		cmd.add_argument('-x', '--assign', action='store_true',
 			help='Assign address to interface,'
 				' unless already there. Requires --iface option to be used.')
@@ -35,8 +49,48 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
-	if opts.call == 'ipv6-link-local':
-		import netifaces, netaddr
+
+	if opts.call == 'ip-check':
+		if opts.assign and not opts.iface:
+			parser.error('--assign requires --iface option to be specified.')
+
+		addr_seek = netaddr.IPAddress(opts.addr)
+		af = {4: netifaces.AF_INET, 6: netifaces.AF_INET6}[addr_seek.version]
+		found, ifaces = False, [opts.iface] if opts.iface else netifaces.interfaces()
+
+		for iface in ifaces:
+			addrs = netifaces.ifaddresses(iface)
+			for addr in addrs.get(af, list()):
+				if 'addr' not in addr: continue
+				addr = netaddr.IPAddress(addr['addr'].split('%', 1)[0])
+				if addr == addr_seek:
+					found = iface
+					break
+			if found: break
+
+		if found:
+			log.debug('Address (%s) found on interface: %s', addr_seek, iface)
+			return 0
+		elif not opts.assign:
+			log.debug(
+				'Address (%s, family: %s) not found on interfaces: %s',
+				addr_seek, netifaces.address_families[af], ', '.join(ifaces) )
+			return 1
+
+		opts.assign = opts.assign.strip().split()
+		if opts.assign[0].startswith('/'):
+			addr = '{}{}'.format(addr_seek, opts.assign[0])
+			opts.assign = opts.assign[1:]
+		else: addr = addr_seek.format()
+		cmd = ['ip', 'addr', 'add', addr, 'dev', opts.iface] + opts.assign
+		log.debug('Assign command: {}'.format(' '.join(cmd)))
+		if Popen(cmd).wait():
+			raise RuntimeError( 'Failed to assign address'
+				' ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
+		log.debug('Assigned address (%s) to interface: %s', addr, opts.iface)
+
+
+	elif opts.call == 'ipv6-link-local':
 		if opts.assign and not opts.iface:
 			parser.error('--assign requires --iface option to be specified.')
 		if not opts.lladdr and opts.iface:
@@ -59,13 +113,12 @@ def main(args=None):
 						' assigned to interface, skipping: %s', ipv6_lladdr, opts.iface)
 					break
 			else:
-				from subprocess import Popen, PIPE
-				ipv6_lladdr = ipv6_lladdr.format()
 				if Popen([ 'ip', 'addr', 'add',
 						'{}/64'.format(ipv6_lladdr), 'dev', opts.iface, 'scope', 'link' ]).wait():
 					raise RuntimeError( 'Failed to assign link-local'
 						' address ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
 				log.debug('Assigned ipv6_lladdr (%s) to interface: %s', ipv6_lladdr, opts.iface)
+
 
 	else: parser.error('Action {!r} is not implemented.'.format(opts.call))
 
