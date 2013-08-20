@@ -1,0 +1,73 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+from contextlib import contextmanager
+import os, sys, socket
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to manipulate network interfaces and misc IP settings.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	cmds = parser.add_subparsers(title='Supported actions')
+
+	@contextmanager
+	def subcommand(name, **kwz):
+		cmd = cmds.add_parser(name, **kwz)
+		cmd.set_defaults(call=name)
+		yield cmd
+
+	with subcommand('ipv6-link-local',
+			help='Generate and/or assign link-local IPv6 address to the interface.') as cmd:
+		cmd.add_argument('-i', '--iface', help='Interface name to generate address for.')
+		cmd.add_argument('-l', '--lladdr', help='MAC address to convert to link-local address.')
+		cmd.add_argument('-x', '--assign', action='store_true',
+			help='Assign address to interface,'
+				' unless already there. Requires --iface option to be used.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	if opts.call == 'ipv6-link-local':
+		import netifaces, netaddr
+		if opts.assign and not opts.iface:
+			parser.error('--assign requires --iface option to be specified.')
+		if not opts.lladdr and opts.iface:
+			addrs = netifaces.ifaddresses(opts.iface)
+			lladdr, = addrs[netifaces.AF_PACKET]
+			opts.lladdr = lladdr['addr']
+			log.debug('Got lladdr from interface (%s): %s', opts.iface, opts.lladdr)
+
+		ipv6_lladdr = netaddr.EUI(opts.lladdr).ipv6_link_local()
+
+		if not opts.assign: print(ipv6_lladdr)
+		else:
+			addrs = netifaces.ifaddresses(opts.iface)
+			for addr in addrs.get(netifaces.AF_INET6, list()):
+				addr = addr.get('addr', '')
+				if '%' not in addr: continue
+				addr = netaddr.IPAddress(addr.split('%', 1)[0])
+				if addr == ipv6_lladdr:
+					log.debug('ipv6_lladdr (%s) already'
+						' assigned to interface, skipping: %s', ipv6_lladdr, opts.iface)
+					break
+			else:
+				from subprocess import Popen, PIPE
+				ipv6_lladdr = ipv6_lladdr.format()
+				if Popen([ 'ip', 'addr', 'add',
+						'{}/64'.format(ipv6_lladdr), 'dev', opts.iface, 'scope', 'link' ]).wait():
+					raise RuntimeError( 'Failed to assign link-local'
+						' address ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
+				log.debug('Assigned ipv6_lladdr (%s) to interface: %s', ipv6_lladdr, opts.iface)
+
+	else: parser.error('Action {!r} is not implemented.'.format(opts.call))
+
+
+if __name__ == '__main__': sys.exit(main())

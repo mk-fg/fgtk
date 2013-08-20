@@ -209,6 +209,28 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
+##### ip-ext
+
+Some minor tools for network configuration from scripts, which iproute2 seem to
+be lacking.
+
+For instance, if network interface on a remote machine was (mis-)configured in
+initramfs or wherever to not have link-local IPv6 address, there seem to be no
+way to (re-)add it without doing "ip link down && ip link up", which is a red
+flag for a remote machine over such trivial matter.
+
+`ipv6-link-local` subcommand handles that particular case, generating
+ipv6-lladdr from mac, as per RFC 4291 (as implemented in "netaddr" module):
+
+```console
+# ip-ext --debug ipv6-link-local -i enp0s9 -x
+DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
+DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
+```
+
+I expect more "harder than 3 lines of bash" commands might be here in the
+future.
+
 
 ### Dev
 
