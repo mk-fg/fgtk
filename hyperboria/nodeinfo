@@ -7,6 +7,38 @@ from contextlib import contextmanager
 import os, sys
 
 
+def public_to_ipv6(key,
+		_cjdns_b32_map = [ # directly from util/Base32.h
+			99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,
+			99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,
+			0, 1, 2, 3, 4, 5, 6, 7, 8, 9,99,99,99,99,99,99,
+			99,99,10,11,12,99,13,14,15,99,16,17,18,19,20,99,
+			21,22,23,24,25,26,27,28,29,30,31,99,99,99,99,99,
+			99,99,10,11,12,99,13,14,15,99,16,17,18,19,20,99,
+			21,22,23,24,25,26,27,28,29,30,31,99,99,99,99,99 ]):
+	if key.endswith('.k'): key = key[:-2]
+
+	bits, byte, res = 0, 0, list()
+	for c in key:
+		n = _cjdns_b32_map[ord(c)]
+		if n > 31: raise ValueError('Invalid key: {!r}, char: {!r}'.format(key, n))
+		byte |= n << bits
+		bits += 5
+		if bits >= 8:
+			bits -= 8
+			res.append(chr(byte & 0xff))
+			byte >>= 8
+	if bits >= 5 or byte:
+		raise ValueError('Invalid key length: {!r} (leftover bits: {})'.format(key, bits))
+	res = ''.join(res)
+
+	from hashlib import sha512
+	addr = sha512(sha512(res).digest()).hexdigest()[:32]
+	assert addr[:2] == 'fc', addr
+	return addr
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -28,6 +60,14 @@ def main(args=None):
 		cmd.add_argument('ipv6_address', help='Address to convert.')
 		cmd.add_argument('-d', '--djbdns',
 			action='store_true', help='Convert to canonical djbdns record format.')
+
+	with subcommand('key-to-ipv6',
+			help='Convert public cjdns key to IPv6 address.') as cmd:
+		cmd.add_argument('key', help='Key to convert.')
+		cmd.add_argument('-d', '--djbdns',
+			action='store_true', help='Convert to canonical djbdns record format.')
+		cmd.add_argument('-r', '--record',
+			action='store_true', help='Convert to "*.ip6.arpa" (or other) domain name format.')
 
 	with subcommand('update',
 			help='Update node registration in NodeInfo database.') as cmd:
@@ -51,9 +91,14 @@ def main(args=None):
 		addr = ipaddr.IPv6Address(opts.ipv6_address).exploded
 		log.debug('Exploded address: {}'.format(addr))
 		addr = addr.replace(':', '')
-		if not opts.djbdns:
-			print('.'.join(reversed(addr)) + '.ip6.arpa')
+		if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
 		else: print(addr)
+
+	if opts.call == 'key-to-ipv6':
+		addr = public_to_ipv6(opts.key)
+		if opts.djbdns: print(addr)
+		elif opts.record: print('.'.join(reversed(addr)) + '.ip6.arpa')
+		else: print(':'.join(addr[n*4:(n+1)*4] for n in xrange(8)))
 
 	elif opts.call == 'update':
 		import ipaddr, requests, httplib
