@@ -57,7 +57,9 @@ def main():
 	groups = OrderedDict()
 	for session in tg['active']:
 		for tab in session['windows'][0]['tabs']:
-			group_name = tab['extData']['TabGroupsManagerGroupName']
+			try: group_name = tab['extData']['TabGroupsManagerGroupName']
+			except KeyError:
+				group_name = 'group_{}'.format(tab['extData']['TabGroupsManagerGroupId'])
 			if not tab['entries']: continue
 			tab = tab['entries'][0]
 			if group_name not in groups:
