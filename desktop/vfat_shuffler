@@ -1,0 +1,415 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+from construct import (
+	Struct, Byte, Bytes, ULInt8, ULInt16, ULInt32, Enum,
+	Array, Padding, Embed, Pass, BitStruct, Flag, Const,
+	ExprAdapter )
+
+import itertools as it, operator as op, functools as ft
+from io import BytesIO, BufferedReader
+from os.path import normpath
+import os, sys, types, random
+
+
+def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
+	if not isinstance(bytes_or_unicode, types.StringTypes):
+		return bytes(bytes_or_unicode)
+	elif isinstance(bytes_or_unicode, bytes):
+		return bytes_or_unicode
+	return bytes_or_unicode.encode(encoding, errors)
+
+def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
+	if not isinstance(bytes_or_unicode, types.StringTypes):
+		return unicode(bytes_or_unicode)
+	elif isinstance(bytes_or_unicode, unicode):
+		return bytes_or_unicode
+	return bytes_or_unicode.decode(encoding, errors)
+
+f2uni = lambda field: force_unicode(field.rstrip()).rstrip()
+
+
+Fat32Header = Struct( 'fat_header',
+	Bytes('jumpInstruction', 3), # Boot Sector start
+	Bytes('creatingSystemId', 8),
+	ULInt16('sectorSize'), # FAT32 Extended BIOS Parameter Block start
+	Byte('sectorsPerCluster'),
+	ULInt16('reservedSectorCount'),
+	Byte('fatCount'),
+	ULInt16('rootdirEntryCount'),
+	ULInt16('sectorCount_small'),
+	Byte('mediaId'),
+	ULInt16('sectorsPerFat'), # 0 for FAT32, BIOS Parameter Block end
+	ULInt16('sectorsPerTrack'),
+	ULInt16('sideCount'),
+	ULInt32('hiddenSectorCount'),
+	ULInt32('sectorCount_large'), # DOS 3.31 BPB end
+	ULInt32('sectorsPerFat_large'),
+	Bytes('driveFlags', 2),
+	Bytes('Version', 2),
+	ULInt32('clusterOfRoot'),
+	ULInt16('fsInfoSectorNo'),
+	ULInt16('bsCopySectorNo'),
+	Bytes('Reserved', 12),
+	Byte('physicalDriveNumber'),
+	Byte('currentHead'),
+	Byte('extendedBootSignature'),
+	Bytes('volumeId', 4),
+	Bytes('volumeLabel', 11),
+	Const(Bytes('fsType', 8), 'FAT32   '), # FAT32 Extended BIOS Parameter Block end
+	Bytes('bootCode', 419),
+	Byte('physicalDriveNumber_old'),
+	Const(Bytes('bootSectorSignature', 2), '\x55\xaa') )
+
+BootSector = Struct( 'boot_sector',
+	Embed(Fat32Header),
+	Padding(lambda ctx: ctx.sectorSize - Fat32Header.sizeof()) )
+
+FatEntry = Enum(
+	ExprAdapter(
+		ULInt32('fats'),
+		encoder=lambda obj,ctx: obj,
+		decoder=lambda obj,ctx: obj & 0x0fffffff ), # upper nibble is reserved
+	free=0x0000000,
+	reserved=0x0000001,
+	reserved_nb=0xffffff6,
+	bad=0xffffff7,
+	_default_=Pass )
+
+# Should have Switch in it for LFN, but not sure how to integrate it
+DirEntry = Struct( 'dir_entry',
+	Bytes('name', 8),
+	Bytes('extension', 3),
+	BitStruct( 'attributes',
+		Flag('unused'),
+		Flag('device'),
+		Flag('archive'),
+		Flag('subDirectory'),
+		Flag('volumeLabel'),
+		Flag('system'),
+		Flag('hidden'),
+		Flag('readonly') ),
+	# reserved
+	Padding(10),
+	ULInt16('timeRecorded'),
+	ULInt16('dateRecorded'),
+	ULInt16('firstCluster'),
+	ULInt32('fileSize') )
+
+LFNEntry = Struct( 'lfn_entry',
+	ULInt8('seq'),
+	Bytes('name1', 10),
+	BitStruct( 'attributes', # always 0xfd for LFN
+		Flag('unused'),
+		Flag('device'),
+		Flag('archive'),
+		Flag('subDirectory'),
+		Flag('volumeLabel'),
+		Flag('system'),
+		Flag('hidden'),
+		Flag('readonly') ),
+	Byte('type'), # always 0x00
+	ULInt8('checksum'),
+	Bytes('name2', 12),
+	Bytes('first_cluster', 2), # always 0x0000
+	Bytes('name3', 4) )
+
+
+def PreDataRegion(fsinfo=False, fats=True):
+	entries = [Embed(BootSector)]
+	reserved_padding = Padding(lambda ctx: (ctx.reservedSectorCount - 1) * ctx.sectorSize)
+	if fsinfo:
+		entries.append(Padding(lambda ctx: (ctx.fsInfoSectorNo - 1) * ctx.sectorSize))
+		# https://en.wikipedia.org/wiki/File_Allocation_Table#FS_Information_Sector
+		# entries.append(Embed(FSInfoSector('fsInfoSector')))
+		reserved_padding = Padding(
+			lambda ctx: (ctx.reservedSectorCount - ctx.fsInfoSectorNo - 1) * ctx.sectorSize )
+		raise NotImplementedError
+	if fats:
+		entries.append(reserved_padding)
+		entries.append(Array( lambda ctx: ctx.fatCount,
+			Array(lambda ctx: ctx.sectorsPerFat_large * ctx.sectorSize / FatEntry.sizeof(), FatEntry) ))
+	return Struct('pdr', *entries)
+
+
+class File(object):
+
+	def __init__(self, dirEntry, fs):
+		self.dirEntry, self.fs = dirEntry, fs
+
+	def parseDirEntries(self, dirEntries, fs):
+		# LFN logic should be in DirEntry, but not sure how to put it there
+		lfn_csum, lfn_cache = None, list()
+		is_lfn = lambda e, attrs=op.attrgetter(
+			'system', 'hidden', 'readonly' ): all(attrs(e.attributes))
+
+		for entry in dirEntries:
+			entry_id = 'DirEntry[{}]'.format(entry.clidx)
+
+			if entry.name[0] == '\xe5': continue # deleted
+			if entry.name[0] in '\x2e': # dot-entries
+				entry.lfns, entry.name_long = list(), f2uni(entry.name)
+				assert not entry.name_long.strip(u'.'), repr(entry.name_long)
+				yield DotEntry(entry, fs)
+				continue
+			assert entry.name[0] != '\0', repr(entry.name)
+
+			stream, pos = entry.pop('_stream') # if only to free the ref
+			log.debug('DirEnty[%s] at %s', entry.clidx, pos)
+			if is_lfn(entry): # has to be re-parsed as LFN here
+				if not lfn_cache: log.debug('Detected long-name %s', entry_id)
+				stream.seek(pos)
+				entry_lfn = LFNEntry.parse_stream(stream)
+				entry_lfn.seq_num = entry_lfn.seq
+				if not lfn_cache:
+					if not entry_lfn.seq_num & 0x40:
+						log.error( 'Unset bit-6 of seq in last'
+							' (logical, first physical) LFN entry:\n%s', entry_lfn )
+						raise ValueError(entry_lfn.seq_num)
+					entry_lfn.seq_num ^= 0x40
+					lfn_csum = entry_lfn.checksum
+				else:
+					assert lfn_csum == entry_lfn.checksum
+				lfn_cache.append(entry_lfn)
+				log.debug('  LFN entry seq: %s (hex: %s)', entry_lfn.seq_num, hex(entry_lfn.seq_num))
+				continue
+
+			elif lfn_cache:
+				lfn_name = it.chain.from_iterable(
+					[lfn.name1, lfn.name2, lfn.name3]
+					for lfn in sorted(lfn_cache, key=op.attrgetter('seq_num')) )
+				entry.name_long = ''.join(lfn_name).decode('utf-16').split(u'\0')[0]
+				lfn_cache, entry.lfns = list(), lfn_cache
+				## Doesn't match for me, algo is wrong?
+				# csum, name = 0, iter(entry.name + '\0' * (len(entry.name) - 8) + entry.extension)
+				# for i in xrange(11, 0, -1):
+				# 	csum = ((csum & 1) << 7) + (csum >> 1) + ord(next(name))
+				# assert csum == lfn_csum, [csum, lfn_csum]
+			else:
+				name = entry.name
+				if name[0] == '\x05': name = '\xe5' + name[1:] # 0x05 - Initial character is actually 0xE5
+				entry.lfns, entry.name_long = list(),\
+					u'{}.{}'.format(f2uni(name), f2uni(entry.extension))
+
+			is_dir = entry.attributes.subDirectory
+			log.debug('Parsing %s: %r (%s)', entry_id, entry.name_long, 'dir' if is_dir else 'file')
+			yield (Directory if is_dir else File)(entry, fs)
+
+	def toStream(self, stream):
+		self.fs.fileToStream(self.firstCluster, stream)
+
+	def getClusters(self):
+		return self.fs.getLinkedClusters(self.firstCluster)
+
+	def getOffsets(self):
+		return map(self.fs.getClusterSlice, self.getClusters())
+
+	@property
+	def firstCluster(self): return self.dirEntry.firstCluster
+
+	@property
+	def name(self): return self.name_tpl.format(self.dirEntry, self)
+	def __str__(self): return self.name
+
+	name_tpl = u'[{1.firstCluster}] {0.name_long}'
+
+
+class DotEntry(File):
+
+	name_tpl = u'[ ] {0.name_long}'
+
+
+class Directory(File):
+
+	def __init__(self, dirEntry, fs):
+		super(Directory, self).__init__(dirEntry, fs)
+		self.children = list(self.parseDirEntries(self.fs.getDirEntries(self.firstCluster), fs))
+
+	def shuffled_structs( self,
+			group_dirs='first',
+			order_func=random.shuffle,
+			order_dirs=lambda dirs: sorted(dirs, key=op.attrgetter('dirEntry.name_long')) ):
+		assert group_dirs in [None, False, 'first', 'last'], group_dirs
+
+		parts = [list(), list(), list(), list()]
+		for obj in self.children:
+			if group_dirs and isinstance(obj, Directory):
+				if group_dirs == 'first': dst = parts[1]
+				elif group_dirs == 'last': dst = parts[3]
+				else: raise ValueError(group_dirs)
+			elif isinstance(obj, DotEntry): dst = parts[0]
+			else: dst = parts[2]
+			dst.append(obj)
+
+		for n, entries in enumerate(parts):
+			if n == 0: continue # dotentries
+			res = (order_func if n == 2 else order_dirs)(entries)
+			if res is None: continue # assuming it's in-place list sorter
+			parts[n] = res
+
+		log.debug('Resulting order:')
+		for obj in it.chain(*parts):
+			log.debug('  %s', obj)
+			for lfn in obj.dirEntry.lfns: yield (LFNEntry, lfn)
+			yield (DirEntry, obj.dirEntry)
+
+	def __getitem__(self, name):
+		for obj in self.children:
+			if obj.dirEntry.name_long == name: return obj
+		raise KeyError(name)
+
+	def __iter__(self):
+		return iter(self.children)
+
+	name_tpl = u'[{1.firstCluster}] {0.name_long}/'
+
+
+class FatFs(Directory):
+
+	def __init__(self, stream):
+		self.stream = stream
+		self.pdr = PreDataRegion().parse_stream(stream)
+		super(FatFs, self).__init__(None, self)
+
+	def fileToStream(self, clidx, stream):
+		for clidx in self.getLinkedClusters(clidx):
+			self.clusterToStream(clidx, stream)
+
+	def clusterToStream(self, clidx, stream):
+		start, length = self.getClusterSlice(clidx)
+		self.stream.seek(start)
+		while length > 0:
+			read = self.stream.read(length)
+			if not len(read):
+				log.error('Failed to read %s bytes at %s', length, self.stream.tell())
+				raise EOFError()
+			length -= len(read)
+			stream.write(read)
+
+	def getClusterSlice(self, clidx):
+		startSector = (
+			self.pdr.reservedSectorCount
+				+ self.pdr.fatCount * self.pdr.sectorsPerFat_large
+				+ (clidx-2) * self.pdr.sectorsPerCluster )
+		start = startSector * self.pdr.sectorSize
+		length = self.pdr.sectorSize * self.pdr.sectorsPerCluster
+		# log.debug(
+		# 	'Cluster slice (clidx: %s): %s (hex: %s, len: %s)',
+		# 	clidx, start, hex(start), length )
+		return start, length
+
+	def getLinkedClusters(self, clidx):
+		res, clidx_start = [], clidx
+		while clidx < 0xffffff8: # last cluster is 0xffffff8-0xfffffff
+			assert isinstance(clidx, (int, long)), clidx
+			assert 2 <= clidx <= 0xfffffef, 'Non-data cluster: {}'.format(hex(clidx))
+			res.append(clidx)
+			clidx = self.getNextCluster(clidx)
+			assert clidx not in res, [clidx, res]
+		log.debug('Linked clusters from %s: %s', clidx_start, res)
+		return res
+
+	def getNextCluster(self, clidx):
+		ress = set([fat[clidx] for fat in self.pdr.fats])
+		if len(ress) == 1: return ress.pop()
+		log.error('Inconsistencie between FATs: %s points to', clidx)
+		for i, fat in enumerate(self.pdr.fats):
+			log.error('    %s according to fat #%s' , fat[clidx], i)
+		res = ress.pop()
+		log.error('  assuming %s', res)
+		return res
+
+	def getDirEntries(self, clidx):
+		try:
+			for de in self._getDirEntries(clidx): yield de
+		except IOError:
+			log.exception('Failed to read directory entries at %s', clidx)
+
+	def _getDirEntries(self, clidx):
+		with BytesIO() as mem:
+			self.fileToStream(clidx, mem)
+			mem.seek(0)
+			while True:
+				if not mem.read(1): break
+				mem.seek(-1, os.SEEK_CUR)
+				pos = mem.tell()
+				obj = DirEntry.parse_stream(mem)
+				if obj.name[0] == '\0': break # marks last entry
+				obj.clidx, obj._stream = clidx, (mem, pos)
+				yield obj
+
+	@property
+	def firstCluster(self): return self.pdr.clusterOfRoot
+
+	name_tpl = '[{1.pdr.clusterOfRoot}] /'
+
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(description='FAT32 tool.')
+	parser.add_argument('dev', help='Path to FAT32 device.')
+	parser.add_argument('path',
+		help='Directory to shuffle. Must start from /, example: /some/my/dir')
+	parser.add_argument('-g', '--group-dirs', default='first',
+		help='Group and sort directories at the beginning/end of the file entries.'
+			' Possible values: no, first, last. Default: %(default)s')
+	parser.add_argument('-l', '--list', action='store_true',
+		help='List path without shuffling anything, in entry-order.')
+	parser.add_argument('-n', '--dry-run',
+		action='store_true', help='Dont write the data out, only print what goes where.')
+	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Even more verbose operation.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.group_dirs == 'no': opts.group_dirs = None
+	if not opts.path.startswith(os.sep):
+		parser.error( 'Path argument must begin with'
+			' slash (for typo-safety reasons): {!r}'.format(opts.path) )
+
+	global log
+	import logging
+	if opts.debug: log = logging.DEBUG
+	elif opts.verbose: log = logging.INFO
+	else: log = logging.WARNING
+	logging.basicConfig(level=log)
+	log = logging.getLogger()
+
+	with open(opts.dev, 'r' if opts.list else 'r+') as src:
+		fs = path = FatFs(src)
+
+		for k in it.ifilter( None,
+				normpath(opts.path).lstrip(os.sep).split(os.sep) ):
+			path = path[k]
+
+		if opts.list:
+			for entry in path: print(entry)
+			return 0
+
+		with BytesIO() as mem:
+			for struct, data in path.shuffled_structs(group_dirs=opts.group_dirs):
+				# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
+				struct.build_stream(data, mem)
+			cluster_offsets = path.getOffsets()
+			len_structs, len_clusters = mem.tell(), sum(it.imap(op.itemgetter(1), cluster_offsets))
+			assert len_structs <= len_clusters, [len_structs, len_clusters]
+
+			# Actual write operation
+			mem.seek(0)
+			for start, length in cluster_offsets:
+				src.seek(start)
+				chunk = mem.read(length)
+				log.info(
+					'Writing %sB to offset: %s (hex: %s, len_left: %s)',
+					len(chunk), start, hex(start), length )
+				if not opts.dry_run: src.write(chunk)
+				length -= len(chunk)
+				if length > 0:
+					chunk = '\0'*length
+					log.info('Padding remaining %sB with zeroes', len(chunk))
+					if not opts.dry_run: src.write(chunk)
+
+			assert mem.tell() == len_structs, [mem.tell(), len_structs]
+
+if __name__ == '__main__': sys.exit(main())

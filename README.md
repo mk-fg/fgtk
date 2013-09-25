@@ -586,6 +586,36 @@ at random) and detect/filter-out irrelevant changes like remembered window
 positions or current ([auto-rotated](http://desktop-aura.sourceforge.net/))
 wallpaper path.
 
+##### vfat_shuffler
+
+Tool to shuffle entries inside a vfat (filesystem) directory.
+
+Some crappy cheap mp3 players don't have shuffle functionality and play files
+strictly in the same order as their [dentries](https://en.wikipedia.org/wiki/File_Allocation_Table#Directory_entry)
+appear on the device blocks.
+
+Naturally, as same order gets boring, one way to "shuffle" them is to re-upload
+same files in random order (as "pick_tracks" tool does here), but if it's a few
+gigs of files, such method is slow and wears-out flash drive unnecessarily.
+
+So easy fix is just to swap dentries' places, which unfortunately requires
+re-implementing a bit of vfat driver code, which (fortunately) isn't that
+complex.
+
+Tool takes a device name and directory to shuffle as arguments (see --help) and
+has --list and --dry-run flags to make sure it'll do what one wants it to, and
+not bug-out halfway there on parsing fs.
+
+One limitation is that it works *only* with "vfat" fs type, which can be created
+with "mkfs.vfat" tool, *not* the types that "mkdosfs" tool creates, *not* fat16
+or whatever other variations are there.
+Reason is just that I didn't bother to learn the differences between these, just
+checked and saw parser bug out on mkdosfs-created fs format.
+
+Might be useful baseline to hack some fat32-related tool, as it has everything
+necessary for full r/w implementation - e.g. a tool to hardlink files on fat32,
+create infinite dir loops, undelete tool, etc.
+
 
 ### UFS
 
