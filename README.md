@@ -308,6 +308,15 @@ tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
 out-of-date, but I imagine it shouldn't take much effort to make it work with
 any other bundles.
 
+##### git-nym
+
+Script to read NYM env var and run git using that ssh id instead of whatever
+ssh-agent or e.g. `~/.ssh/id_rsa` provides.
+
+NYM var is checked for either full path to the key, basename in `~/.ssh`, name
+like `~/.ssh/id_{rsa,ecdsa}__${NYM}` or unique (i.e. two matches will cause
+error, not random pick) match for one of `~/.ssh/id_*` name part.
+
 
 ### Misc
 

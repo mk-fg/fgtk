@@ -1,0 +1,29 @@
+#!/bin/bash
+
+[[ -n "$NYM_RUN" ]] && exec ssh -o PasswordAuthentication=no -i "$NYM" "$@"
+[[ -z "$NYM" ]] && { echo >&2 "No NYM env var set"; exit 1; }
+
+[[ ! -e "${NYM}" ]] && {
+	p="${HOME}/.ssh/${NYM}"
+	[[ -e "$p" ]] && export NYM_RUN=true NYM=$p
+	[[ -z "${NYM_RUN}" ]] && {
+		for t in rsa ecdsa; do
+			p="${HOME}/.ssh/id_${t}__${NYM}"
+			[[ ! -e "$p" ]] && continue
+			export NYM_RUN=true NYM=$p
+			break
+		done
+	}
+	[[ -z "${NYM_RUN}" ]] && {
+		readarray -t ids < <(ls -1 "$HOME"/.ssh/id_* | grep -F "$NYM" | grep -v ".pub$")
+		[[ ${#ids[@]} -gt 1 ]] && {
+			echo >&2 "More than one ID matching NYM ('${NYM}'): ${ids[@]}"
+			exit 2; }
+		[[ ${#ids[@]} -le 0 ]] && {
+			echo >&2 "Failed to find ID matching NYM ('${NYM}'): ${ids[@]}"
+			exit 2; }
+		export NYM_RUN=true NYM=${ids[0]}
+	}
+}
+
+GIT_SSH=$0 exec git "$@"
