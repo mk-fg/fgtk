@@ -94,7 +94,7 @@ def main(args=None):
 		if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
 		else: print(addr)
 
-	if opts.call == 'key-to-ipv6':
+	elif opts.call == 'key-to-ipv6':
 		addr = public_to_ipv6(opts.key)
 		if opts.djbdns: print(addr)
 		elif opts.record: print('.'.join(reversed(addr)) + '.ip6.arpa')
