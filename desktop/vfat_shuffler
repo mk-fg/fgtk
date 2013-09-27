@@ -3,9 +3,9 @@
 from __future__ import print_function
 
 from construct import (
-	Struct, Byte, Bytes, ULInt8, ULInt16, ULInt32, Enum,
-	Array, Padding, Embed, Pass, BitStruct, Flag, Const,
-	ExprAdapter )
+	Struct, Byte, Bytes, ULInt8, ULInt16, ULInt32, Enum, Array,
+	Padding, Embed, Pass, BitStruct, Flag, Const, ExprAdapter )
+from construct.core import FieldError
 
 import itertools as it, operator as op, functools as ft
 from io import BytesIO, BufferedReader
@@ -77,6 +77,19 @@ FatEntry = Enum(
 	bad=0xffffff7,
 	_default_=Pass )
 
+
+def ts_hms(name):
+	return ExprAdapter(
+		ULInt16(name),
+		encoder=lambda ts,ctx: (ts[0] << 11) + (ts[1] << 5) + ts[2] / 2,
+		decoder=lambda n,ctx: (n >> 11, (n >> 5) & (2**6 - 1), (n & (2**5 - 1)) * 2) )
+
+def ts_ymd(name):
+	return ExprAdapter(
+		ULInt16(name),
+		encoder=lambda ts,ctx: ((ts[0] - 1980) << 9) + (ts[1] << 5) + ts[2],
+		decoder=lambda n,ctx: (1980 + (n >> 9), (n >> 5) & (2**4 - 1), n & (2**5 - 1)) )
+
 # Should have Switch in it for LFN, but not sure how to integrate it
 DirEntry = Struct( 'dir_entry',
 	Bytes('name', 8),
@@ -90,10 +103,15 @@ DirEntry = Struct( 'dir_entry',
 		Flag('system'),
 		Flag('hidden'),
 		Flag('readonly') ),
-	Bytes('misc_stuff', 10),
-	ULInt16('timeRecorded'),
-	ULInt16('dateRecorded'),
-	ULInt16('firstCluster'),
+	Byte('reserved_flags'),
+	Byte('undelete_char_or_ctime_ms'),
+	ts_hms('ctime_hms'),
+	ts_ymd('ctime_ymd'),
+	ts_ymd('atime_ymd'),
+	ULInt16('firstCluster_high'),
+	ts_hms('mtime_hms'),
+	ts_ymd('mtime_ymd'),
+	ULInt16('firstCluster_low'),
 	ULInt32('fileSize') )
 
 LFNEntry = Struct( 'lfn_entry',
@@ -205,7 +223,8 @@ class File(object):
 		return map(self.fs.getClusterSlice, self.getClusters())
 
 	@property
-	def firstCluster(self): return self.dirEntry.firstCluster
+	def firstCluster(self):
+		return (self.dirEntry.firstCluster_high << 16) + self.dirEntry.firstCluster_low
 
 	@property
 	def name(self): return self.name_tpl.format(self.dirEntry, self)
@@ -389,7 +408,10 @@ def main(args=None):
 		with BytesIO() as mem:
 			for struct, data in path.shuffled_structs(group_dirs=opts.group_dirs):
 				# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
-				struct.build_stream(data, mem)
+				try: struct.build_stream(data, mem)
+				except FieldError:
+					log.error('Failed to serialize construct: %s', data)
+					raise
 			cluster_offsets = path.getOffsets()
 			len_structs, len_clusters = mem.tell(), sum(it.imap(op.itemgetter(1), cluster_offsets))
 			assert len_structs <= len_clusters, [len_structs, len_clusters]
