@@ -64,6 +64,10 @@ parser.add_option('--cmd-diff',
 parser.add_option('--numeric-ids',
 	action='store_true', dest='numeric',
 	help='Use numeric ids instead of user/group names.')
+parser.add_option('-x', '--posix-subset', action='store_true',
+	help='Dont raise errors on failures of ops like chmod/chown'
+			' and try workarounds for some file creation/open flags like O_TRUNC.'
+		' Intended for usage with not-quite-posix filesystems, e.g. mounted via fuse drivers.')
 
 parser.add_option('--debug',
 	action='store_true', dest='debug',
@@ -77,7 +81,7 @@ if optz.links_meta: optz.links = True
 import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE
 from fgc import sh
-import os, sys, logging
+import os, sys, errno, logging
 
 if optz.check: log = logging.CRITICAL
 elif optz.debug: log = logging.DEBUG
@@ -160,6 +164,7 @@ optz.reverse_meta ^= optz.reverse
 _meta_updates = 0 # count of changes-to-make in scim-meta file, mostly aesthetic
 
 ## Helpers
+
 def meta_get(path):
 	fstat = os.lstat(path)
 	meta = '{0}:{1}:{{0}}'.format( # mode part is acl-dependant
@@ -205,7 +210,10 @@ def meta_set(path, meta):
 	except KeyError as err:
 		raise OSError('No such id - {0}:{1} ({2}): {3}'.format(uid, gid, path, err))
 	if not acls and acl_unset: acl_unset(path)
-	if not setgid_recurse: sh.chmod(path, mode, dereference=False)
+	if not setgid_recurse:
+		try: sh.chmod(path, mode, dereference=False)
+		except OSError as err:
+			if not optz.posix_subset or err.errno != errno.EPERM: raise
 	else:
 		sh.chmod(path, mode, dereference=False)
 		sh.chown(path, gid=gid)
@@ -325,9 +333,16 @@ if optz.meta:
 ### Links-check
 
 ## Helpers
+
 from hashlib import md5
 
 optz.cmd_diff = optz.cmd_diff.split()
+
+def cp_data(src, dst):
+	try: sh.cp_data(src, dst)
+	except IOError as err:
+		if not optz.posix_subset or err.errno != errno.EPERM: raise
+		sh.cp_data(src, dst, trunc_call=True)
 
 def digest_file(path, bs=8192):
 	stream, hc = open(path, 'rb'), md5()
@@ -453,7 +468,7 @@ def update_links():
 			else:
 				sh.cp_p(src, bak_path)
 				try:
-					if not os.path.samefile(dst, src): sh.cp_data(*optional_reverse(dst, src))
+					if not os.path.samefile(dst, src): cp_data(*optional_reverse(dst, src))
 				except OSError: pass # broken symlink
 				sh.rm(dst)
 				if ltype == T_RSYM: src = rel_src(src, dst)
@@ -500,7 +515,7 @@ def update_links():
 				log.error('Different content: {0}'.format(src))
 				if not optz.fix: show_diff(diff)
 				else:
-					sh.cp_data(*optional_reverse(dst, src))
+					cp_data(*optional_reverse(dst, src))
 					log.info('Corrected: {0} {1} {2}'.format(dst, '><'[int(optz.reverse)], src))
 
 	## Reverse check that all files are listed in linkz, incorrectable
