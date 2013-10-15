@@ -1,0 +1,78 @@
+#!/bin/bash
+
+tmpdir=/tmp/.git-meld
+lock="$tmpdir"/.lock
+lock_timeout=30
+link=meld-git
+umask 077
+
+
+if [[ "$(basename "$0")" = git-meld ]]
+then
+	mkdir -p "$tmpdir"
+
+	exec 4>>"$lock"
+	flock -w "$lock_timeout" -E 43 4
+	[[ $? -eq 43 ]] && {
+		echo >&2 "Failed to acquire lock for git-meld: $lock"
+		# notify-send -i meld\
+		# 	'Failed to acquire lock for git-meld'\
+		# 	"Lock path: ${lock}, timeout: ${lock_timeout}s"
+		exit 1
+	}
+	:>"$lock" # flush old contents
+
+	GIT_EXTERNAL_DIFF=$link GIT_PAGER= git diff "$@" || exit
+
+	lock_meld="$lock".$$
+	readarray -t files <"$lock"
+	cp "$lock" "$lock_meld"
+
+	exec 5>>"$lock_meld"
+	flock -n 5 || exit 2
+
+	src= meld_args=()
+	for p in "${files[@]}"; do
+		[[ -z "$src" ]] && { src=$p; continue; }
+		meld_args+=( --diff "$src" "$p" ) src=
+	done
+	[[ -n "$src" ]] && {
+		echo >&2 "Uneven number of diff-files (leftover: $src)"
+		exit 1
+	}
+
+	# Do cleanup for old diffs
+	for p in "$lock".*; do
+		pid=${p##*.}
+		exec 6>>"$p"
+		flock -n 6 || continue # meld is still alive
+		readarray -t files <"$p"
+		rm -f "$p"
+		for p in "${files[@]}"; do
+			[[ "$p" =~ ^"$tmpdir"/ ]] && { rm -f "$p"; continue; }
+			echo >&2 "BUG: tried to remove non-tmpdir ($tmpdir) file - $p (left from pid: $pid)"
+			exit 3
+		done
+	done
+
+	exec meld "${meld_args[@]}"
+
+else
+	# Gather files into tmpdir, pushing names to lockfile
+	# Expected to be called multiple times by git-diff
+	[[ ! -f "$2" || ! -f "$5" || "$3" = "$6" ]] && {
+		echo >&2 "Skipping diff for: $2 ($3) $5 ($6)"
+		exit 0
+	}
+
+	base="${tmpdir}/$$.$(basename "$1")"
+
+	dst="$base"."$3" # base.oldhash
+	cp "$2" "$dst" || exit
+	echo "$dst" >>"$lock"
+
+	dst="$base"."$6" # base.newhash
+	cp "$5" "$dst" || exit
+	echo "$dst" >>"$lock"
+
+fi

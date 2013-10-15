@@ -317,6 +317,28 @@ NYM var is checked for either full path to the key, basename in `~/.ssh`, name
 like `~/.ssh/id_{rsa,ecdsa}__${NYM}` or unique (i.e. two matches will cause
 error, not random pick) match for one of `~/.ssh/id_*` name part.
 
+Can be used as `NYM=project-x git-nym clone git@dev.project-x:component-y` to
+e.g. clone the specified repo using `~/.ssh/id_rsa__project-x` key or as
+`NYM=project-x git nym clone ...`.
+
+##### git-meld
+
+Git-command replacement for git-diff to run meld instead of regular
+(git-provided) textual diff, but aggregating all the files into one invocation.
+
+For instance, if diffs are in `server.py` and `client.py` files, running `git
+meld` will run something like:
+
+	meld \
+		--diff /tmp/.git-meld/server.py.hash1 /tmp/.git-meld/server.py.hash2 \
+		--diff /tmp/.git-meld/client.py.hash1 /tmp/.git-meld/client.py.hash2
+
+Point is to have all these diffs in meld tabs instead of running separate meld
+pid on each pair as setting GIT_EXTERNAL_DIFF would do.
+
+Should be installed as `git-meld` somewhere in PATH *and* symlinked as
+`meld-git` (git-meld runs `GIT_EXTERNAL_DIFF=meld-git git diff "$@"`) to work.
+
 
 ### Misc
 
