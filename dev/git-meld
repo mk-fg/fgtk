@@ -55,6 +55,7 @@ then
 		done
 	done
 
+	[[ "${#meld_args[@]}" -eq 0 ]] && exit 0
 	exec meld "${meld_args[@]}"
 
 else
