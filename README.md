@@ -333,8 +333,9 @@ meld` will run something like:
 		--diff /tmp/.git-meld/server.py.hash1 /tmp/.git-meld/server.py.hash2 \
 		--diff /tmp/.git-meld/client.py.hash1 /tmp/.git-meld/client.py.hash2
 
-Point is to have all these diffs in meld tabs instead of running separate meld
-pid on each pair as setting GIT_EXTERNAL_DIFF would do.
+Point is to have all these diffs in meld tabs (with one window per `git meld`)
+instead of running separate meld window/tab on each pair of files as setting
+GIT_EXTERNAL_DIFF would do.
 
 Should be installed as `git-meld` somewhere in PATH *and* symlinked as
 `meld-git` (git-meld runs `GIT_EXTERNAL_DIFF=meld-git git diff "$@"`) to work.

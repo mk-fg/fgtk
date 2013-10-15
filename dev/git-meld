@@ -56,23 +56,24 @@ then
 	done
 
 	[[ "${#meld_args[@]}" -eq 0 ]] && exit 0
+	exec 1>/dev/null 2>/dev/null # meld is very noisy ;(
 	exec meld "${meld_args[@]}"
 
 else
 	# Gather files into tmpdir, pushing names to lockfile
 	# Expected to be called multiple times by git-diff
-	[[ ! -f "$2" || ! -f "$5" || "$3" = "$6" ]] && {
+	[[ ! ( -f "$2" || "$2" = /dev/null ) || ! ( -f "$5" || "$5" = /dev/null ) || "$3" = "$6" ]] && {
 		echo >&2 "Skipping diff for: $2 ($3) $5 ($6)"
 		exit 0
 	}
 
-	base="${tmpdir}/$$.$(basename "$1")"
-
-	dst="$base"."$3" # base.oldhash
+	# old
+	dst="${tmpdir}/$$.$3.$(basename "$1")"
 	cp "$2" "$dst" || exit
 	echo "$dst" >>"$lock"
 
-	dst="$base"."$6" # base.newhash
+	# new
+	dst="${tmpdir}/$$.$6.$(basename "$1")"
 	cp "$5" "$dst" || exit
 	echo "$dst" >>"$lock"
 
