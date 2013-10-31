@@ -8,7 +8,7 @@ import os, sys, io, time, struct, logging, subprocess
 
 class HWPorts(object):
 
-	wait_tries = 1000 # polls to make on read/write checks
+	wait_tries = 10000 # polls to make on read/write checks
 	wait_delay = 0.01 # in seconds
 
 	ports = None # open /dev/port file object or None
@@ -45,6 +45,9 @@ class HWPorts(object):
 			raise RuntimeError
 		if not first_iter:
 			self.log.debug('Wait finished (attempt: %s)', attempt)
+			if attempt > tries * 0.75:
+				self.log.warn( 'Almost ran out of attempts'
+					' (%s/%s) waiting for "%s" port access', attempt, tries, r_or_w )
 
 	def write_wait_ec(self, port, val):
 		self.log.debug('write_wait_ec: {:x} -> {:x}'.format(val, port))
@@ -168,7 +171,9 @@ def main(args=None):
 	if opts.debug: log = logging.DEBUG
 	elif opts.verbose: log = logging.INFO
 	else: log = logging.WARNING
-	logging.basicConfig(level=log)
+	logging.basicConfig( level=log,
+		format='%(asctime)s :: %(name)s :: %(levelname)s: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S' )
 	log = logging.getLogger('fan_control.core')
 
 	if opts.temp_warn_desktop:
