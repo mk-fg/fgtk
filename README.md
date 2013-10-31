@@ -648,6 +648,15 @@ Might be useful baseline to hack some fat32-related tool, as it has everything
 necessary for full r/w implementation - e.g. a tool to hardlink files on fat32,
 create infinite dir loops, undelete tool, etc.
 
+##### fan_control
+
+Script to control speed of dying laptop fan on Acer S3 using direct reads/writes
+from/to `/dev/ports` to not run it too fast (causing loud screech and vibrating
+plastic) yet trying to keep cpu cool enough.
+
+Or, failing that, use cpupower tool to drop frequency (making it run cooler in
+general) and issue dire warnings to desktop.
+
 
 ### UFS
 

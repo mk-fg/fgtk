@@ -1,0 +1,246 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+from contextlib import closing
+import os, sys, io, time, struct, logging, subprocess
+
+
+class HWPorts(object):
+
+	wait_tries = 1000 # polls to make on read/write checks
+	wait_delay = 0.01 # in seconds
+
+	ports = None # open /dev/port file object or None
+
+
+	def __init__(self):
+		self.ports = io.open('/dev/port', 'rb+', buffering=0)
+		self.log = logging.getLogger('fan_control.hwports')
+
+	def close(self):
+		if self.ports:
+			self.ports.close()
+			self.ports = None
+
+	def __del__(self):
+		self.close()
+
+
+	def wait_ec(self, r_or_w, tries=None, delay=None):
+		if tries is None: tries = self.wait_tries
+		if delay is None: delay = self.wait_delay
+		first_iter, busy_check = True, dict(
+			r=lambda v: (v & 0x01) == 0, w=lambda v: (v & 0x02) )[r_or_w]
+		# Wait for read/write - some magical checks as per acer_ec.pl
+		for attempt in xrange(tries):
+			self.ports.seek(0x66) # "ec" addr?
+			val, = struct.unpack('=B', self.ports.read(1))
+			if not busy_check(val): break
+			if first_iter:
+				self.log.debug('Waiting for: %s', r_or_w)
+				first_iter = False
+			time.sleep(delay)
+		else:
+			raise RuntimeError
+		if not first_iter:
+			self.log.debug('Wait finished (attempt: %s)', attempt)
+
+	def write_wait_ec(self, port, val):
+		self.log.debug('write_wait_ec: {:x} -> {:x}'.format(val, port))
+		assert port < 0xff and val <= 0xff, (port, val)
+		self.wait_ec('w')
+		val_byte = struct.pack('=B', val)
+		self.ports.seek(port)
+		self.ports.write(val_byte)
+
+	def read_wait_ec(self, port):
+		self.log.debug('read_wait_ec: {:x}'.format(port))
+		assert port < 0xff, val
+		self.wait_ec('r')
+		self.ports.seek(port)
+		val, = struct.unpack('=B', self.ports.read(1))
+		return val
+
+	def read_ec(self, port):
+		self.log.debug('read_ec: {:x}'.format(port))
+		self.write_wait_ec(0x66, 0x80)
+		self.write_wait_ec(0x62, port)
+		return self.read_wait_ec(0x62)
+
+	def write_ec(self, port, val):
+		self.log.debug('read_ec: {:x}'.format(port))
+		self.write_wait_ec(0x66, 0x81)
+		self.write_wait_ec(0x62, port)
+		self.write_wait_ec(0x62, val)
+
+
+class HWControl(HWPorts):
+
+	fan_modes = dict(auto=0x04, manual=0x14)
+
+	def temp_get(self):
+		'Returns temperature in degrees C.'
+		return self.read_ec(0xa8)
+
+	def fan_get_mode(self):
+		'Returns fan mode of operation as string - "auto" or "manual".'
+		val_raw = self.read_ec(0x93)
+		val = val_raw & 0x14
+		for mode, mode_val in self.fan_modes.viewitems():
+			if mode_val == val: return mode
+		raise KeyError('Unknown fan mode value: {:x}'.format(val_raw))
+
+	def fan_get_speed(self):
+		'Returns current fan speed in percent (float in range 0-100).'
+		return 100 - (self.read_ec(0x94) / 255.0) * 100
+
+	def fan_set_mode(self, mode):
+		'Set fan mode of operation - "auto" or "manual".'
+		val = self.fan_modes[mode]
+		self.write_ec(0x93, val)
+
+	def fan_set_speed(self, percent):
+		'''Set fan speed, in percent (float in 0-100 range).
+			Fan mode should be set to "manual" separately before this call.'''
+		assert 0 <= percent <= 100, percent
+		val = int(round(255 * (1 - percent / 100.0), 0))
+		assert 0 <= val <= 0xff, val
+		return self.write_ec(0x94, val)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to control fan speed depending on temperature on Acer S3 laptop.')
+
+	parser.add_argument('-d', '--check-delay',
+		type=float, metavar='seconds', default=8,
+		help='Delay between temperature checks (default: %(default)s).')
+	parser.add_argument('-u', '--user', metavar='user',
+		help='User or uid to switch to after opening /dev/ports to run w/o extra privileges.')
+
+	parser.add_argument('-t', '--temp-ok',
+		type=int, metavar='n_deg_celsius', default=60,
+		help='Max temperature to do nothing about (default: %(default)s).')
+	parser.add_argument('-b', '--fan-min',
+		type=float, metavar='percent_float', default=45,
+		help='Minimal ("normal") fan speed (default: %(default)s).')
+
+	parser.add_argument('-w', '--temp-warn-thresh',
+		type=int, metavar='n_deg_celsius', default=68,
+		help='Warn if temperature goes above this value (default: %(default)s).')
+	parser.add_argument('-p', '--temp-warn-desktop', action='store_true',
+		help='Use desktop notifications (think libnotify) to issue critical-urgency warnings.')
+
+	parser.add_argument('-f', '--temp-freq-thresh',
+		type=int, metavar='n_deg_celsius', default=75,
+		help='Use "cpupower" to set min cpu frequency if'
+			' temperature goes above this value (default: %(default)s).')
+	parser.add_argument('--temp-freq-args',
+		metavar='args', default='-f 800',
+		help='Arguments to pass to "cpupower cpu-frequency-set"'
+			' to cool cpu down (default: %(default)s).')
+	parser.add_argument('--temp-freq-delay',
+		type=float, metavar='seconds', default=120,
+		help='Only use "cpupower cpu-frequency-set" again'
+			' after specified delay (default: %(default)s).')
+
+	parser.add_argument('-m', '--temp-max',
+		type=int, metavar='n_deg_celsius', default=80,
+		help='Temperature to set --fan-max speed at (default: %(default)s).')
+	parser.add_argument('-e', '--fan-max',
+		type=int, metavar='percent_float', default=80,
+		help='Fan speed to set at --temp-max (default: %(default)s).')
+
+	parser.add_argument('-l', '--list',
+		action='store_true', help='List temperature, fan mode, fan speed and exit.')
+	parser.add_argument('-s', '--fan-set',
+		type=float, metavar='percent_float',
+		help='Set specified fan speed (and manual-control mode) and exit.')
+
+	parser.add_argument('-v', '--verbose',
+		action='store_true', help='Verbose operation mode.')
+	parser.add_argument('--debug',
+		action='store_true', help='Even more verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.debug: log = logging.DEBUG
+	elif opts.verbose: log = logging.INFO
+	else: log = logging.WARNING
+	logging.basicConfig(level=log)
+	log = logging.getLogger('fan_control.core')
+
+	if opts.temp_warn_desktop:
+		from gi.repository import Gtk, Notify
+		Notify.init('fan_control')
+
+	if opts.user:
+		from pwd import getpwnam
+		user = getpwnam(opts.user)
+		uid, gid = user.pw_uid, user.pw_gid
+
+	with closing(HWControl()) as hw:
+		if opts.user:
+			os.setresgid(gid, gid, gid)
+			os.setresuid(uid, uid, uid)
+			log.info('Dropped privileges to %s:%s', uid, gid)
+
+		if opts.list:
+			print('Temperature: {}C'.format(hw.temp_get()))
+			print('Fan mode: {}'.format(hw.fan_get_mode()))
+			print('Fan speed: {:.1f}%'.format(hw.fan_get_speed()))
+			return 0
+		if opts.fan_set:
+			fan_manual = hw.fan_get_mode() == 'manual'
+			fan_speed = hw.fan_get_speed()
+			print('Setting oneshot fan speed: {:.1f}% -> {:.1f}%'.format(fan_speed, opts.fan_set))
+			if not fan_manual: hw.fan_set_mode('manual')
+			hw.fan_set_speed(opts.fan_set)
+			return 0
+
+		log.info('Setting fan to manual-control mode and min speed ({:.1f}%)'.format(opts.fan_min))
+		if not hw.fan_get_mode() == 'manual':
+			hw.fan_set_mode('manual')
+		hw.fan_set_speed(opts.fan_min)
+
+		temp_not_ok = False
+		cpu_freq_set = 0
+
+		while True:
+			temp = hw.temp_get()
+			log.info('Temperature: %sC', temp)
+
+			if temp >= opts.temp_warn_thresh:
+				msg = 'Temperature alert: {}C (threshold: {}C)'.format(temp, opts.temp_warn_thresh)
+				log.warn(msg)
+				if opts.temp_warn_desktop:
+					note = Notify.Notification(
+						summary='!!! Temperature Warning !!!',
+						icon_name='biohazard', body=msg )
+					note.set_urgency(Notify.Urgency.CRITICAL)
+					note.show()
+
+			if temp >= opts.temp_freq_thresh\
+					and cpu_freq_set < (time.time() - opts.temp_freq_delay):
+				log.warn( 'Using cpupower freq-drop'
+					' (at: %sC, thresh: %sC)', temp, opts.temp_freq_thresh )
+				err = subprocess.call(['cpupower', 'frequency-set'] + list(opts.temp_freq_args.split()))
+				if err: log.error('Failed to run "cpupower" tool to cool cpu down (code: %s)', err)
+				cpu_freq_set = time.time()
+
+			if temp >= opts.temp_ok:
+				temp_delta = (temp - opts.temp_ok) / float(opts.temp_max - opts.temp_ok)
+				fan_speed = opts.fan_min + (opts.fan_max - opts.fan_min) * temp_delta
+				log.info('Setting fan speed: %s', fan_speed)
+				hw.fan_set_speed(fan_speed)
+				temp_not_ok = True
+
+			elif temp_not_ok:
+				temp_not_ok = False
+				hw.fan_set_speed(opts.fan_min)
+
+			time.sleep(opts.check_delay)
+
+
+if __name__ == '__main__': sys.exit(main())
