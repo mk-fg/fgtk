@@ -112,6 +112,46 @@ class HWControl(HWPorts):
 		return self.write_ec(0x94, val)
 
 
+_notifier = None
+
+def notify( summary, body,
+		icon='', actions=list(), hints=dict(),
+		timeout=-1, retries=4, delay=0.3 ):
+	# gi.Notify seem to break when daemon
+	#  instance exits or whenever with error like this:
+	# gi._glib.GError: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown:
+	#  The name :1.26 was not provided by any .service files
+	# So use trusty and more predictable dbus module instead.
+	import dbus
+	global _notifier
+	while True:
+		if retries <= 0:
+			raise RuntimeError('Unable to use dbus for notifications, exiting')
+			break
+		if not _notifier:
+			try:
+				_notifier = dbus.Interface(
+					dbus.SessionBus().get_object(
+						'org.freedesktop.Notifications',
+						'/org/freedesktop/Notifications' ),
+					dbus_interface='org.freedesktop.Notifications' )
+			except dbus.exceptions.DBusException:
+				retries -= 1
+				time.sleep(delay)
+				continue
+		try:
+			_notifier.Notify( 'fan_control', 0, icon,
+				summary, body, actions, hints, timeout )
+		except dbus.exceptions.DBusException as err:
+			if retries < 0 or err.get_dbus_name() not in\
+				[ 'org.freedesktop.DBus.Error.ServiceUnknown',
+					'org.freedesktop.DBus.Error.Disconnected' ]: raise
+			_notifier = None # force reconnection
+			retries -= 1
+		else: break
+
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -176,10 +216,6 @@ def main(args=None):
 		datefmt='%Y-%m-%d %H:%M:%S' )
 	log = logging.getLogger('fan_control.core')
 
-	if opts.temp_warn_desktop:
-		from gi.repository import Gtk, Notify
-		Notify.init('fan_control')
-
 	if opts.user:
 		from pwd import getpwnam
 		user = getpwnam(opts.user)
@@ -220,11 +256,7 @@ def main(args=None):
 				msg = 'Temperature alert: {}C (threshold: {}C)'.format(temp, opts.temp_warn_thresh)
 				log.warn(msg)
 				if opts.temp_warn_desktop:
-					note = Notify.Notification(
-						summary='!!! Temperature Warning !!!',
-						icon_name='biohazard', body=msg )
-					note.set_urgency(Notify.Urgency.CRITICAL)
-					note.show()
+					notify('!!! Temperature Warning !!!', msg, icon='biohazard', hints=dict(urgency=2))
 
 			if temp >= opts.temp_freq_thresh\
 					and cpu_freq_set < (time.time() - opts.temp_freq_delay):
