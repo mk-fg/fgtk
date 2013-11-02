@@ -175,6 +175,8 @@ def main(args=None):
 		help='Warn if temperature goes above this value (default: %(default)s).')
 	parser.add_argument('-p', '--temp-warn-desktop', action='store_true',
 		help='Use desktop notifications (think libnotify) to issue critical-urgency warnings.')
+	parser.add_argument('--temp-warn-test', action='store_true',
+		help='Test enabled --temp-warn notifications shortly (one --check-delay) after start.')
 
 	parser.add_argument('-f', '--temp-freq-thresh',
 		type=int, metavar='n_deg_celsius', default=75,
@@ -252,11 +254,15 @@ def main(args=None):
 			temp = hw.temp_get()
 			log.info('Temperature: %sC', temp)
 
-			if temp >= opts.temp_warn_thresh:
+			if temp >= opts.temp_warn_thresh or opts.temp_warn_test is False:
 				msg = 'Temperature alert: {}C (threshold: {}C)'.format(temp, opts.temp_warn_thresh)
+				if opts.temp_warn_test is False: msg += ' -- test --'
 				log.warn(msg)
 				if opts.temp_warn_desktop:
 					notify('!!! Temperature Warning !!!', msg, icon='biohazard', hints=dict(urgency=2))
+				opts.temp_warn_test = None
+			elif opts.temp_warn_test:
+				opts.temp_warn_test = False # next time
 
 			if temp >= opts.temp_freq_thresh\
 					and cpu_freq_set < (time.time() - opts.temp_freq_delay):
