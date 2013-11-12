@@ -37,7 +37,6 @@ if [[ -n "$systemd" ]]; then
 		*) echo >&2 'Expecting "user service" or "service" spec'; exit 1 ;;
 	esac
 	systemd_unit="cron_${systemd}.service"
-	systemctl load "${systemd_unit}"
 	[[ $(systemctl is-active "${systemd_unit}") = activating ]] && exit 0
 else task_name="$*"
 fi
@@ -55,7 +54,6 @@ sleep=$(( ( $RANDOM * $delay ) / 32767 ))
 
 if [[ -n "$systemd" ]]
 then
-	systemctl load "${systemd_unit}"
 	[[ $(systemctl is-active "${systemd_unit}") = activating ]] && exit 0
 	output=$(mktemp task_pipe.XXXXXXXXXX)
 	pipe="/run/cron_tasks/${systemd}.fifo"
