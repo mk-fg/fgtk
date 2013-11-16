@@ -27,9 +27,15 @@ from random import random, choice
 aspell = Popen(['aspell', '-d', 'en', 'dump', 'master'], stdout=PIPE)
 aspell_words = list(set(map(op.methodcaller('strip'), aspell.stdout)))
 
-words = list(map(choice, it.repeat(aspell_words, optz.words)))
+def get_word():
+	word = choice(aspell_words)
+	if word.endswith("'s"): word = word[:-2]
+	return word
+
+words = list(get_word() for i in xrange(optz.words))
+
 for i in xrange(100):
-	words[choice(range(len(words)))] = choice(aspell_words)
+	words[choice(range(len(words)))] = get_word()
 	words_len = sum(map(len, words))
 	if words_len >= optz.char_count_min and words_len <= optz.char_count_max: break
 
