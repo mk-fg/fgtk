@@ -506,6 +506,23 @@ transmission for bittorrent (with some processing of .torrent files to drop
 long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
 
+##### media
+
+Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
+various media files and streams.
+
+"flv_merge" there can be used to merge multiple segments of video downloaded
+from some streaming service (e.g. twitch.tv) into one full flv via tricky ffmpeg h264/aac
+[stream concatenation functionality](http://ffmpeg.org/trac/ffmpeg/wiki/How%20to%20concatenate%20%28join%2C%20merge%29%20media%20files).
+
+"parec_from_flash" creates null-sink in pulseaudio and redirects browser flash
+plugin audio output stream to it, also starting "parec" and oggenc to
+record/encode whatever happens there.
+Can be useful to convert video to podcast if downloading flv is tricky for
+whatever reason.
+
+And other stuff doing similar things.
+
 ##### pick_tracks
 
 A simple tool to randomly pick and copy files (intended usage is music tracks)
