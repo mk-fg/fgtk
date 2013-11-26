@@ -550,7 +550,7 @@ Script to make Skype use desktop-notification protocol.
 * open the menu and press 'Options' or press Ctrl-O
 * go to 'Notifications' tab
 * hit the 'Advanced' button and check 'Execute the following script on _any_ event'
-* paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
+* paste: notify.skype "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
 * disable or enable the notifications you want to receive.
 
 Imported from [this gist](https://gist.github.com/1958564).
@@ -569,7 +569,7 @@ Somewhat advanced usage example:
 
 	notify.logtail\
 	  -i ~/media/appz/icons/biohazard_48x.png\
-	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
+	  -x "$XDG_RUNTIME_DIR"/notify.logtail.db\
 	  /var/log/messages
 
 ###### mail
