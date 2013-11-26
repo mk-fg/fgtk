@@ -579,6 +579,19 @@ via "mail_log" plugin), efficiently find delivered messages by their message-id
 and issue desktop notification to a remote host with parsed message details
 (path it was filed under, decoded from and subject headers).
 
+Things like rsyslog make it fairly easy to create a separate log with such
+notifications for just one user, e.g.:
+
+	if (
+	  $programname == 'dovecot'
+	  and $syslogfacility-text == 'mail'
+	  and $syslogseverity-text == 'info'
+	  and re_match($msg, '^lda\\(someuser\\): sieve: msgid=[^:]+: stored mail into mailbox .*') )
+	then action(
+	  type="omfile" FileCreateMode="0660"
+	  FileOwner="root" FileGroup="someuser"
+	  File="/var/log/processing/mail.deliver.someuser.log" )
+
 Remote notifications are delivered to desktop machines via robust zeromq pub/sub
 sockets as implemented in
 [notification-thing](https://github.com/mk-fg/notification-thing/#network-broadcasting)
