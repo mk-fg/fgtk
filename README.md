@@ -4,6 +4,7 @@ fgtk: a set of a misc tools to work with files and processes
 Various oldish helper binaries I wrote to help myself with day-to-day tasks.
 
 
+
 ### Files
 
 #### scim set
@@ -99,6 +100,7 @@ Simple (and wrong) bash script to lowercase all paths in given (as args) dirs
 and arguments themselves as well with "-a".
 Does not handle unicode filenames at all, will fail for filenames with newlines
 in them, plus all the othere caveats of quick-and-dirty *sh script apply.
+
 
 
 ### Content
@@ -234,6 +236,7 @@ of the interfaces and/or run "ip add" (with specified parameters) to assign it,
 if not.
 
 
+
 ### Dev
 
 ##### tabs_filter
@@ -341,6 +344,7 @@ Should be installed as `git-meld` somewhere in PATH *and* symlinked as
 `meld-git` (git-meld runs `GIT_EXTERNAL_DIFF=meld-git git diff "$@"`) to work.
 
 
+
 ### Misc
 
 ##### systemd-dashboard
@@ -407,29 +411,6 @@ Wrapper scripts to run stuff from cron:
 * Running job from a oneshot systemd service, to enforce any arbitrary cgroup
   limits via unit file, dependencies and prevent parallel execution.
 
-##### exec_notify
-
-Wrapper to run specified command and notify (via
-[desktop-notifications](http://developer.gnome.org/notification-spec/) only atm)
-if it fails (including "no such binary" errors) or produces any stderr.
-Optionally produces notification in any case.
-
-Useful mainly for wrapping hooks in desktop apps like firefox, to know if click
-on some "magnet:..." link was successfully processed or discarded.
-
-	% exec_notify -h --
-	usage: exec_notify: [ options... -- ] command [ arguments... ]
-
-	Wrapper for command execution results notification.
-
-	optional arguments:
-	  -h, --help            show this help message and exit
-	  -e, --exit-code-only  Issue notification only if exit code not equals zero,
-	                        despite stderr.
-	  -v, --notify-on-success
-	                        Issue notification upon successful execution as well.
-	  -d, --dump            Include stdou/stderr for all notifications.
-
 ##### urlparse
 
 Simple script to parse long URL with lots of parameters, decode and print it out
@@ -493,11 +474,13 @@ thing in graphite db with an updated thing.
 Much easier than doing anything with GUI.
 
 
+
 ### Desktop
 
 Helpers for more interactive (client) machine and/or DE.
 
-##### uri_handlers
+
+#### uri_handlers
 
 Scripts to delegate downloads from firefox to a more sensible download managers.
 
@@ -506,7 +489,8 @@ transmission for bittorrent (with some processing of .torrent files to drop
 long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
 
-##### media
+
+#### media
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
 various media files and streams.
@@ -522,6 +506,87 @@ Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
 And other stuff doing similar things.
+
+
+#### notifications
+
+A bunch of tools to issue various desktop notifications.
+
+###### exec
+
+Wrapper to run specified command and notify (via
+[desktop-notifications](http://developer.gnome.org/notification-spec/) only atm)
+if it fails (including "no such binary" errors) or produces any stderr.
+Optionally produces notification in any case.
+
+Useful mainly for wrapping hooks in desktop apps like firefox, to know if click
+on some "magnet:..." link was successfully processed or discarded.
+
+	% notify.exec -h --
+	usage: notify.exec [ options... -- ] command [ arguments... ]
+
+	Wrapper for command execution results notification.
+
+	optional arguments:
+	  -h, --help            show this help message and exit
+	  -e, --exit-code-only  Issue notification only if exit code not equals zero,
+	                        despite stderr.
+	  -v, --notify-on-success
+	                        Issue notification upon successful execution as well.
+	  -d, --dump            Include stdou/stderr for all notifications.
+
+
+###### power
+
+Script to spam sounds and desktop-notifications upon detecting low battery level.
+Not the only one to do somethng like that on my system, but saved me some work
+on many occasions.
+
+###### skype
+
+Script to make Skype use desktop-notification protocol.
+
+* open Skype
+* open the menu and press 'Options' or press Ctrl-O
+* go to 'Notifications' tab
+* hit the 'Advanced' button and check 'Execute the following script on _any_ event'
+* paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
+* disable or enable the notifications you want to receive.
+
+Imported from [this gist](https://gist.github.com/1958564).
+
+###### logtail
+
+Script to watch log files (as many as necessary) for changes with inotify and
+report any new lines appearing there via desktop notifications.
+
+Can remember last position in file either by recording it in file's xattrs or in
+a shelve db (specified via -x option).
+Doesn't do much with it by default though, starting to read files from the end,
+but that can be fixed by passing --keep-pos.
+
+Somewhat advanced usage example:
+
+	notify.logtail\
+	  -i ~/media/appz/icons/biohazard_48x.png\
+	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
+	  /var/log/messages
+
+###### mail
+
+Daemon script to monitor dovecot delivery logs (either generic ones, or produced
+via "mail_log" plugin), efficiently find delivered messages by their message-id
+and issue desktop notification to a remote host with parsed message details
+(path it was filed under, decoded from and subject headers).
+
+Remote notifications are delivered to desktop machines via robust zeromq pub/sub
+sockets as implemented in
+[notification-thing](https://github.com/mk-fg/notification-thing/#network-broadcasting)
+daemon I have for that purpose.
+
+Even idle-imap doesn't seem to provide proper push notifications with multiple
+folders yet, and this simple hack doesn't even require running a mail client.
+
 
 ##### pick_tracks
 
@@ -570,43 +635,6 @@ Also has the ability to "keep trying to connect", useful (to me, at least) for
 crappy shared-hosting servers, where botnets flood ssh with slowloris-like
 attacks on it's authentication, exceeding limit on unauthorized connections in
 sshd.
-
-##### power_alarm
-
-Script to spam sounds and desktop-notifications upon detecting low battery
-level.
-Not the only one to do somethng like that on my system, but saved me some work
-on many occasions.
-
-##### skype_notify
-
-Script to make Skype use desktop-notification protocol.
-
-* open Skype
-* open the menu and press 'Options' or press Ctrl-O
-* go to 'Notifications' tab
-* hit the 'Advanced' button and check 'Execute the following script on _any_ event'
-* paste: skype_notify "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"
-* disable or enable the notifications you want to receive.
-
-Imported from [this gist](https://gist.github.com/1958564).
-
-##### logtail_notify
-
-Script to watch log files (as many as necessary) for changes with inotify and
-report any new lines appearing there via desktop notifications.
-
-Can remember last position in file either by recording it in file's xattrs or in
-a shelve db (specified via -x option).
-Doesn't do much with it by default though, starting to read files from the end,
-but that can be fixed by passing --keep-pos.
-
-Somewhat advanced usage example:
-
-	logtail_notify\
-	  -i ~/media/appz/icons/biohazard_48x.png\
-	  -x "$XDG_RUNTIME_DIR"/logtail_notify.db\
-	  /var/log/messages
 
 ##### firefox_tgm2_tool
 
@@ -675,6 +703,7 @@ Or, failing that, use cpupower tool to drop frequency (making it run cooler in
 general) and issue dire warnings to desktop.
 
 
+
 ### UFS
 
 A few tools to work with a unionfs-based distributed filesystem.
@@ -684,6 +713,7 @@ replicas, maintained by csync2, unified via some sort of unionfs.
 
 So far, seem to be the simpliest and by far the most robust, predictable and
 reliable distributed filesystem configuration for my simple use-case.
+
 
 
 ### Hyperboria
