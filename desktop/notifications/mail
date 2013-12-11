@@ -5,6 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from os.path import join
+from xml.sax.saxutils import escape as xml_escape
 import email, email.header, email.errors
 import os, sys, re, iso8601, calendar, time, zmq, json
 
@@ -260,6 +261,8 @@ def main(args=None):
 
 	parser.add_argument('--test-message', action='store_true',
 		help='Issue test notification right after start.')
+	parser.add_argument('--pango-markup', action='store_true',
+		help='Use pango markup in issued notifications and escape other stuff.')
 	parser.add_argument('--dry-run', action='store_true',
 		help='Do not store/update log position - just parse and generate notifications.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -305,18 +308,27 @@ def main(args=None):
 
 			if opts.test_message:
 				log.debug('Dispatching test notification')
+				format_kws = dict( host=os.uname()[1],
+						pub=', '.join(opts.bind), sub=', '.join(opts.dst) )\
+					if not opts.pango_markup else\
+					dict( host='<b>{}</b>'.format(xml_escape(os.uname()[1])),
+						pub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.bind),
+						sub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.dst) )
 				zmq_send( 'Mail notification test',
 					( 'Mail notification daemon started successfully on host:'
 						' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )\
-					.format( host=os.uname()[1],
-						pub=', '.join(opts.bind), sub=', '.join(opts.dst) ) )
+					.format(**format_kws) )
 
 			for path, msg in mail_iter_log(log_tailer, opts.maildir_path, opts.filter):
 				msg_from, msg_subj = (header(msg, k) for k in ['from', 'subject'])
 				log.debug('Dispatching notification: (%s) %s - %s', path, msg_from, msg_subj)
+				if opts.pango_markup:
+					path, msg_from, msg_subj = map(xml_escape, [path, msg_from, msg_subj])
+					msg_path = '<b>{}</b>'.format(path)
+				else: msg_path = path
 				zmq_send(
 					'New mail ({})'.format(path),
-					u'Path: {}\nFrom: {}\nSubject: {}'.format(path, msg_from, msg_subj) )
+					u'Path: {}\nFrom: {}\nSubject: {}'.format(msg_path, msg_from, msg_subj) )
 
 	finally:
 		log.debug('Terminating zmq context...')
