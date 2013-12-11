@@ -314,7 +314,8 @@ def main():
 	tailer = Logtail( optz.monitor, ft.partial(notify, **note_attrs),
 		keep_pos=optz.keep_pos, exclude=optz.exclude )
 
-	log.debug('Starting event loop')
+	log.debug('Starting event loop...')
 	reactor.run()
+	log.debug('Event loop finished')
 
 if __name__ == '__main__': main()
