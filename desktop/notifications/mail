@@ -226,11 +226,11 @@ def main(args=None):
 		help='Timeout to wait for peer connections to'
 			' establish (default: %(default)s) and unsent messages to linger.')
 
-	parser.add_argument('-f', '--filter', action='append', metavar='[-/+]regexp',
-		help='Filter-pattern for mail path.'
+	parser.add_argument('-f', '--filter', action='append', metavar='spec',
+		help='Filter-pattern (format: [+/-]regexp) for mail path.'
 			' Patterns are evaluated in same order'
 				' as they are specified with "pass" as a default action.'
-			' "-" or "+" sign before regexp explicitly marks pattern as'
+			' Optional "-" or "+" sign before regexp explicitly marks pattern as'
 				' include or exclude one, otherwise patterns are treated as "exclude".')
 
 	parser.add_argument('-a', '--app-name', metavar='name', default='mail_notify',
