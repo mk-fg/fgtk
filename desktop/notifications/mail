@@ -242,6 +242,8 @@ def main(args=None):
 	parser.add_argument('-i', '--icon', action='append', metavar='icon',
 		help='Icon name, path or alias. Can be specified multiple times (for fallback icon names).')
 
+	parser.add_argument('--test-message', action='store_true',
+		help='Issue test notification right after start.')
 	parser.add_argument('--dry-run', action='store_true',
 		help='Do not store/update log position - just parse and generate notifications.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -265,7 +267,7 @@ def main(args=None):
 				sock.setsockopt(zmq.IPV4ONLY, False)
 			sock.setsockopt(zmq.RECONNECT_IVL_MAX, int(300 * 1000))
 			sock.setsockopt(zmq.LINGER, int(opts.wait_connect * 1000))
-			sock.setsockopt(zmq.HWM, 50)
+			sock.setsockopt(zmq.SNDHWM, 50)
 
 			if opts.bind:
 				for dst in it.imap(zmq_addr, opts.bind):
@@ -276,17 +278,29 @@ def main(args=None):
 				for dst in it.imap(zmq_addr, opts.dst): sock.connect(dst)
 			time.sleep(opts.wait_connect)
 
+			def zmq_send(summary, body):
+				msg = dict(
+					summary=summary, body=body,
+					app_name=opts.app_name, icon=','.join(opts.icon or []) )
+				msg = '\1' + json.dumps([opts.hostname, time.time(), msg])
+				try: sock.send(msg, zmq.DONTWAIT)
+				except zmq.ZMQError as err:
+					if err.errno != zmq.EAGAIN: raise
+
+			if opts.test_message:
+				log.debug('Dispatching test notification')
+				zmq_send( 'Mail notification test',
+					( 'Mail notification daemon started successfully on host:'
+						' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )\
+					.format( host=os.uname()[1],
+						pub=', '.join(opts.bind), sub=', '.join(opts.dst) ) )
+
 			for path, msg in mail_iter_log(log_tailer, opts.maildir_path, opts.filter):
 				msg_from, msg_subj = (header(msg, k) for k in ['from', 'subject'])
 				log.debug('Dispatching notification: (%s) %s - %s', path, msg_from, msg_subj)
-				msg = dict(
-					summary='New mail ({})'.format(path),
-					body=u'Path: {}\nFrom: {}\nSubject: {}'.format(path, msg_from, msg_subj),
-					app_name=opts.app_name, icon=','.join(opts.icon or []) )
-				msg = '\1' + json.dumps([opts.hostname, time.time(), msg])
-				try: sock.send(msg, zmq.NOBLOCK)
-				except zmq.ZMQError as err:
-					if err.errno != zmq.EAGAIN: raise
+				zmq_send(
+					'New mail ({})'.format(path),
+					u'Path: {}\nFrom: {}\nSubject: {}'.format(path, msg_from, msg_subj) )
 
 	finally:
 		log.debug('Terminating zmq context...')
