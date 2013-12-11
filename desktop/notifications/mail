@@ -5,7 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from os.path import join
-import email, email.header
+import email, email.header, email.errors
 import os, sys, re, iso8601, calendar, time, zmq, json
 
 
@@ -198,9 +198,25 @@ def zmq_addr(addr):
 		return 'tcp://{}'.format(addr)
 	return addr
 
+def header_decode(line):
+	# Doesn't pick up some badly-concatenated stuff
+	return ' '.join( val.decode(enc or 'utf-8', 'replace')
+		for val, enc in email.header.decode_header(line) )
+
 def header(msg, k):
-	return ' '.join( val.decode(enc or 'utf-8')
-		for val, enc in email.header.decode_header(msg.get(k, '')) )
+	res, header = list(), header_decode(msg.get(k, ''))
+	while True:
+		match = re.search('=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
+		if not match:
+			res.append(header)
+			break
+		start, end = match.span(0)
+		match = header[start:end]
+		try: match = header_decode(match)
+		except email.errors.HeaderParseError: pass
+		res.extend([header[:start], match])
+		header = header[end:]
+	return ''.join(res)
 
 
 def main(args=None):
