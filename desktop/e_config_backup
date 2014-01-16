@@ -150,7 +150,7 @@ def main(argv=None):
 			import re
 			for line in it.imap(op.methodcaller('strip'), diff_data.splitlines()):
 				# 'value "prop.pos_h" int: 291;' <-- numbers often change
-				if not re.search(r'^value\s+"prop\.(pos_)?[whxy]"\s+int:\s+\d+\s*;$', line): break
+				if not re.search(r'^value\s+"prop\.((pos|res)_)?[whxy]"\s+int:\s+\d+\s*;$', line): break
 			else: src_data = None
 
 		if src_data: open(optz.backup, 'w').write(src_data)
