@@ -29,6 +29,9 @@ parser.add_option('-w', '--reverse-meta',
 parser.add_option('-l', '--links', action='store_true',
 	help='Perform any links-manipulations.'
 		' Implied if none of --links or --meta specified explicitly.')
+parser.add_option('-b', '--links-broken', action='store_true',
+	help='Only process links that are "broken" in some way'
+		' without any diff involved - e.g. "Not a symlink" cases. Implies --links.')
 parser.add_option('--links-meta', action='store_true',
 	help='Sync metadata (repo -> live-fs) for linked files. Implies --links.')
 parser.add_option('-m', '--meta', action='store_true',
@@ -352,13 +355,20 @@ def digest_file(path, bs=8192):
 		hc.update(chunk)
 	return hc.digest()
 
-def get_diff(src, dst):
+def get_diff(src, dst, safe=False):
+	if safe:
+		try:
+			with open(src), open(dst): pass
+		except (OSError, IOError) as err:
+			return 'Unable to open file(s): {}'.format(err)
 	if optz.reverse: src, dst = dst, src
 	if digest_file(src) == digest_file(dst): return None # no difference on byte-level
 	if optz.summary: return True # contents doesn't matter in this case
 	try: proc = Popen(optz.cmd_diff + [src, dst], stdout=PIPE)
 	except OSError as err:
-		log.fatal('Unable to execute diff command: {0}'.format(err))
+		err = 'Unable to execute diff command: {}'.format(err)
+		if safe: return err
+		log.fatal(err)
 		sys.exit(1)
 	diff = proc.stdout.read()
 	proc.wait()
@@ -460,9 +470,13 @@ def update_links():
 
 		# Check if dst is the right type (symlink / reg file)
 		if (ltype & T_SYM and not os.path.islink(dst)) or (ltype & T_CR and os.path.islink(dst)):
-			errz += 1
-			if ltype & T_SYM: log.error('Not a symlink: {0}'.format(dst))
-			elif ltype & T_CR: log.error('Symlink in place of catref: {0}'.format(dst))
+			if ltype & T_SYM:
+				if optz.links_broken and get_diff(src, dst, safe=True): continue
+				log.error('Not a symlink: {}'.format(dst))
+				errz += 1
+			elif ltype & T_CR:
+				log.error('Symlink in place of catref: {}'.format(dst))
+				errz += 1
 			if not optz.fix:
 				if not ltype & T_CR: show_diff(src, dst)
 			else:
@@ -510,7 +524,7 @@ def update_links():
 						else: log.info('Corrected metadata for path: {0}'.format(tgt))
 			if optz.limit and errz > optz.limit: continue
 			diff = get_diff(src, dst) # content diff
-			if diff:
+			if diff and not optz.links_broken:
 				errz += 1
 				log.error('Different content: {0}'.format(src))
 				if not optz.fix: show_diff(diff)
