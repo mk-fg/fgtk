@@ -99,6 +99,7 @@ def dump(elm, indent=0):
 				dump(val, indent=indent+1)
 				for val in sorted(elm.contents, key=sort_func) )
 		if isinstance(elm, Group):
+			if elm.name.strip('"') == 'E_Remember': return ''
 			contents = '{{\n{}{}}}'.format(contents, ' '*indent*4)
 		else:
 			if elm.name == '"file"'\
@@ -116,8 +117,8 @@ def dump(elm, indent=0):
 def main(argv=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Tool to decode E config, replace transient values'
-				' (like desktop bg) and sort groups/values there to make it diff-friendly.'
+		description='Tool to decode E config, replace transient values (like desktop bg'
+				' or E_Remember settings) and sort groups/values there to make it diff-friendly.'
 			' With a second argument, also backup decoded config to a specified location.')
 	parser.add_argument('config',
 		help='Path to eet-encoded/compressed E config.')
