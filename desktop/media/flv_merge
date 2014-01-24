@@ -1,6 +1,11 @@
 #!/bin/bash
 
-[[ -z "$1" ]] && {
+[[ -z "$1" || -e "$1" ]] && {
+	[[ -e "$1" ]] && {
+		echo >&2 "ERROR: destination file already exists: $1"
+		echo >&2
+	}
+
 	echo >&2 "Usage: $0 <result> <twitch files to merge>"
 	echo >&2 "Example: $0 someuser_broadcast.flv ~/DLz/someuser*.flv"
 	echo >&2
