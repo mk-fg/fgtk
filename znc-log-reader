@@ -77,7 +77,7 @@ def parse_timestamp(val):
 	if dateutil_parser: # try dateutil module, if available
 		# dateutil fails to parse textual dates like "yesterday"
 		try: ts = dateutil_parser.parse(val)
-		except ValueError: pass
+		except: pass # dateutil isn't very good and throws various random crap
 	if not ts:
 		# coreutils' "date" parses virtually everything, but is more expensive to use
 		with open(os.devnull, 'w') as devnull:
