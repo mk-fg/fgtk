@@ -1,0 +1,154 @@
+#!/bin/bash
+
+
+### Management
+
+root=/mnt/volatiles/vms
+dst="$root"/debian/live.dump
+telnet_port=8200
+vde_mac=52:54:00:12:34:57
+vde_path=~/tmp/vde
+dump_inc=
+restore=
+
+case "$1" in
+	d|dump)
+		[[ "$2" = -i ]] && { dump_inc=-i; shift; }
+		[[ -n "$2" ]] && {
+			touch "$2" || exit 1
+			dst=$(realpath "$2")
+		}
+		echo "Dumping to: $dst"
+		ncat -t 127.0.0.1 "$telnet_port" <<EOF
+stop
+migrate_set_speed 4g
+migrate -d $dump_inc "exec:lzop -c > $dst"
+EOF
+		echo
+		while :; do
+			echo 'info migrate' | ncat -t 127.0.0.1 "$telnet_port" |
+				grep -qP '^Migration status:\s*completed\s*$'
+			pipe=( "${PIPESTATUS[@]}" )
+			[[ ${pipe[0]} -ne 0 || ${pipe[1]} -ne 0 ]] && exit 1
+			[[ ${pipe[2]} -eq 0 ]] && {
+				echo 'quit' | ncat -t 127.0.0.1 "$telnet_port"
+				echo "Done"
+				ls -lah "$dst"
+				exit 0
+			}
+			sleep 1 || exit 1
+		done ;;
+
+	r|restore)
+		[[ -n "$2" ]] && dst=$2
+		echo "Restoring from: $dst"
+		[[ -f "$dst" ]] || { echo >&2 "FIle not found: $dst"; exit 1; }
+		restore=t ;;
+
+	m|monitor) exec rlwrap ncat -t 127.0.0.1 "$telnet_port" ;;
+
+	'') ;;
+	*)
+		echo >&2 "Usage: $0 [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } ]"
+		exit 1 ;;
+esac
+
+cd "$root"
+
+
+### VDE
+
+mkdir -p "$vde_path"
+
+cgrc vm/misc vde_switch\
+	-s "$vde_path"/link.sock\
+	-M "$vde_path"/mgmt.sock &
+pid1=$!
+
+cgrc vm/misc sudo vde_plug2tap\
+	-s "$vde_path"/link.sock\
+	vde &
+pid2=$!
+
+# Add a little delay if vde stuff is just starting
+trap : USR1
+pid0=$$
+( sleep 0.5 && kill -USR1 $pid0 ) &
+wait $pid1 $pid2
+
+
+### Get latest kernel/initrd from vm
+
+mountpoint -q /mnt/nbd || {
+	modprobe nbd || exit 1
+	sudo qemu-nbd -c /dev/nbd0 -P1 debian/sd_inc.qcow2
+	mount /mnt/nbd || exit 1
+}
+
+rsync -Lt --inplace /mnt/nbd/vmlinuz debian/current__vmlinuz\
+	&& rsync -Lt --inplace /mnt/nbd/initrd.img debian/current__initramfs\
+	&& umount /mnt/nbd\
+	&& sudo qemu-nbd -d /dev/nbd0\
+	|| { echo >&2 "Failed to get kernel/initramfs from vm image"; exit 1; }
+
+
+### Run qemu
+
+qemu_opts=(
+	-name "$(basename "$0")"
+
+	-m 1024
+	-rtc base=utc,clock=host
+	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
+	-net nic,macaddr=${vde_mac},name=vde
+	-net vde,sock="$vde_path"/link.sock
+	-k en-us
+
+	-cpu cortex-a9
+	-machine vexpress-a9
+	-drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
+	-kernel debian/current__vmlinuz
+	-initrd debian/current__initramfs
+	-append "root=/dev/mmcblk0p2"
+
+	# -nographic
+	# -serial pty
+	# -append "root=/dev/mmcblk0p2 console=ttyAMA0 console=ttyS0"
+
+	# -cpu cortex-a9
+	# -machine vexpress-a9
+	# -drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
+	# -kernel debian/vmlinuz-3.2.0-4-vexpress
+	# -initrd debian/initrd-vexpress.gz
+
+	# -machine versatilepb
+	# -drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
+	# -kernel debian/vmlinuz-3.2.0-4-versatile
+	# -initrd debian/initrd-versatile.gz
+
+	# -cpu cortex-a9
+	# -machine vexpress-a9
+	# -drive file=ubuntu/sd_inc.qcow2,if=sd,aio=native,cache=writeback
+	# -kernel ubuntu/armhf_generic__vmlinuz
+	# -initrd ubuntu/armhf_generic__initrd.gz
+
+	# -nographic
+	# -serial pty
+	# -append "console=ttyAMA0 console=ttyS0"
+
+	-usb
+	# -device usb-kbd
+	# -device usb-mouse
+	# -device help
+
+	-no-reboot
+	-no-frame
+
+)
+
+ulimit -c 0
+export QEMU_AUDIO_DRV=none
+
+[[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
+
+exec cgrc vm/misc qemu-system-arm "${qemu_opts[@]}"

@@ -765,3 +765,16 @@ through pbkdf2-sha256 and output is truncated to appear less massive.
 pbkdf2 parameters are configurable (see --help output), and at least
 --pbkdf2-salt should be passed for output to be deterministic, otherwise random
 salt value will be used.
+
+
+
+### VM
+
+Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
+
+These include starting simple vde-based networking, syncing kernels and
+initramfs images out of vms, doing suspend/resume for running vms easily, etc.
+
+Probably exist just because I don't need anything but qemu/kvm and know these
+well enough, so don't really need abstractions libvirt provides, nothing really
+special.
