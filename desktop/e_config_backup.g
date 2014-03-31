@@ -1,10 +1,13 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from collections import namedtuple
+from subprocess import Popen, PIPE
 import os, sys, re
 
-Group = namedtuple('group', 'name type contents')
+Group = namedtuple('group', 'name type key contents')
 Value = namedtuple('value', 'name type contents')
 sort_func = lambda elm: (elm.__class__.__name__, elm)
 
@@ -16,7 +19,8 @@ parser eet_cfg:
 	token N: r'[+\-]?[\d.]+'
 	token S: r'"([^"\\]*(\\.[^"\\]*)*)"' # not tested for \\" vs \"
 	token VT: r'\w+:'
-	token GT: r'struct|list'
+	token GT: r'struct|list|hash'
+	token K: r'(key\s+"[^"]+"\s*;)?'
 
 	rule config: block END {{ return block }}
 
@@ -24,9 +28,9 @@ parser eet_cfg:
 		| block_value {{ return block_value }}
 
 	rule block_group:
-		'group' S GT r'\{' {{ contents = list() }}
+		K 'group' S GT r'\{' {{ contents = list() }}
 		( block {{ contents.append(block) }} )*
-		r'\}' {{ return Group(S, GT, contents) }}
+		r'\}' {{ return Group(S, GT, K, contents) }}
 
 	rule value: S {{ return S }} | N {{ return N }}
 	rule block_value: 'value' S VT value ';' {{ return Value(S, VT, value) }}
@@ -34,35 +38,55 @@ parser eet_cfg:
 
 
 def dump(elm, indent=0):
-	if isinstance(elm, (Group, Value)):
-		if isinstance(elm.contents, bytes): contents = elm.contents
+	assert isinstance(elm, (Group, Value)), elm
+	if hasattr(elm, 'contents'):
+		if isinstance(elm.contents, bytes):
+			contents = elm.contents
 		else:
 			contents = ''.join(
 				dump(val, indent=indent+1)
 				for val in sorted(elm.contents, key=sort_func) )
-		if isinstance(elm, Group):
-			contents = '{{\n{}{}}}'.format(contents, ' '*indent*4)
-		else:
-			if elm.name == '"file"'\
-					and elm.type == 'string:'\
-					and contents.startswith('"/tmp/.lqr_wpset_bg.'):
-				contents = '"/tmp/bg.png"'
-			contents += ';'
-		return ' '*indent*4 + ' '.join([
-			elm.__class__.__name__,
-			elm.name, elm.type, contents ]) + '\n'
-	else:
-		raise TypeError(type(elm))
+	eol = bol = ''
+	node = [elm.__class__.__name__, elm.name]
+	if isinstance(elm, Group):
+		if elm.key: bol = ' '*indent*4 + elm.key + '\n'
+		if elm.name.strip('"') in [
+			'E_Remember', 'E_Exehist_Item', 'Comp_Match',
+			'E_Randr_Crtc_Config' ]: return ''
+		contents = '{{\n{}{}}}'.format(contents, ' '*indent*4)
+	elif isinstance(elm, Value):
+		if elm.name == '"file"'\
+				and elm.type == 'string:'\
+				and contents.startswith('"/tmp/.lqr_wpset_bg.'):
+			contents = '"/tmp/bg.png"'
+		eol = ';'
+	node.extend([elm.type, contents])
+	return bol + ' '*indent*4 + ' '.join(node) + eol + '\n'
+
+def dump_config(path, name=False):
+	try:
+		if name:
+			if name is True: name = 'file: {}'.format(os.path.basename(path))
+			data = '----- {}\n'.format(name)
+		else: data = ''
+		src = Popen(['eet', '-d', path, 'config'], stdout=PIPE)
+		data += dump(parse('config', src.stdout.read()))
+		if src.wait(): raise RuntimeError('eet exited with non-zero status')
+		return data
+	except Exception as err:
+		print('Failed to process file: {}'.format(path), file=sys.stderr)
+		raise
 
 
 def main(argv=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Tool to decode E config, replace transient values'
-				' (like desktop bg) and sort groups/values there to make it diff-friendly.'
+		description='Tool to decode E config, replace transient values (like desktop bg'
+				' or E_Remember settings) and sort groups/values there to make it diff-friendly.'
 			' With a second argument, also backup decoded config to a specified location.')
 	parser.add_argument('config',
-		help='Path to eet-encoded/compressed E config.')
+		help='Path to eet-encoded/compressed E config.'
+			' If "-" (dash) is passed instead, list of paths to such configs will be read from stdin.')
 	parser.add_argument('backup', nargs='?',
 		help='Backup decoded config to the specified path.'
 			' Checks file at the destination path for irrelevant changes'
@@ -70,10 +94,12 @@ def main(argv=None):
 				' if only such diffs are detected.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
-	from subprocess import Popen, PIPE
-	src = Popen(['eet', '-d', optz.config, 'config'], stdout=PIPE)
-	src_data = dump(parse('config', src.stdout.read()))
-	if src.wait(): raise RuntimeError('eet exited with non-zero status')
+	if optz.config != '-': src_data = dump_config(optz.config)
+	else:
+		paths = sys.stdin.read()
+		sep = '\0' if '\0' in paths else '\n'
+		paths = sorted(filter(None, paths.split(sep)))
+		src_data = ''.join(map(ft.partial(dump_config, name=True), paths))
 
 	if not optz.backup: sys.stdout.write(src_data)
 	else:
@@ -89,10 +115,9 @@ def main(argv=None):
 				diff_data = diff.stdout.read()
 				diff.wait()
 
-			import re
 			for line in it.imap(op.methodcaller('strip'), diff_data.splitlines()):
 				# 'value "prop.pos_h" int: 291;' <-- numbers often change
-				if not re.search(r'^value\s+"prop\.(pos_)?[whxy]"\s+int:\s+\d+\s*;$', line): break
+				if not re.search(r'^value\s+"prop\.((pos|res)_)?[whxy]"\s+int:\s+\d+\s*;$', line): break
 			else: src_data = None
 
 		if src_data: open(optz.backup, 'w').write(src_data)
