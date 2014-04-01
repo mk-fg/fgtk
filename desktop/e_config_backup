@@ -30,7 +30,7 @@ class eet_cfgScanner(runtime.Scanner):
 		('S', re.compile('"([^"\\\\]*(\\\\.[^"\\\\]*)*)"')),
 		('VT', re.compile('\\w+:')),
 		('GT', re.compile('struct|list|hash')),
-		('K', re.compile('(key\\s+"[^"]+"\\s*;)?')),
+		('K', re.compile('(key\\s+"[^"]*"\\s*;)?')),
 	]
 	def __init__(self, str,*args,**kw):
 		runtime.Scanner.__init__(self,None,{'[ \\t\\r\\n]+':None,},str,*args,**kw)

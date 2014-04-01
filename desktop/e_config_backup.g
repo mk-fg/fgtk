@@ -20,7 +20,7 @@ parser eet_cfg:
 	token S: r'"([^"\\]*(\\.[^"\\]*)*)"' # not tested for \\" vs \"
 	token VT: r'\w+:'
 	token GT: r'struct|list|hash'
-	token K: r'(key\s+"[^"]+"\s*;)?'
+	token K: r'(key\s+"[^"]*"\s*;)?'
 
 	rule config: block END {{ return block }}
 
