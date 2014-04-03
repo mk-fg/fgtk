@@ -50,9 +50,8 @@ def dump(elm, indent=0):
 	node = [elm.__class__.__name__, elm.name]
 	if isinstance(elm, Group):
 		if elm.key: bol = ' '*indent*4 + elm.key + '\n'
-		if elm.name.strip('"') in [
-			'E_Remember', 'E_Exehist_Item', 'Comp_Match',
-			'E_Randr_Crtc_Config' ]: return ''
+		if elm.name.strip('"') in [ 'E_Remember',
+			'E_Exehist_Item', 'Comp_Match', 'E_Randr_Config' ]: return ''
 		contents = '{{\n{}{}}}'.format(contents, ' '*indent*4)
 	elif isinstance(elm, Value):
 		if elm.name == '"file"'\
@@ -117,9 +116,8 @@ def main(argv=None):
 
 			for line in it.imap(op.methodcaller('strip'), diff_data.splitlines()):
 				# 'value "prop.pos_h" int: 291;' <-- numbers often change
-				if not re.search( r'^value\s+"'
-					r'prop\.((pos|res)_)?[whxy]|startup_id|'
-					r'config_timestamp"\s+int:\s+\d+\s*;$', line ): break
+				if not re.search( r'^value\s+"prop\.((pos|res)_)?'
+					'[whxy]|startup_id"\s+int:\s+\d+\s*;$', line ): break
 			else: src_data = None
 
 		if src_data: open(optz.backup, 'w').write(src_data)
