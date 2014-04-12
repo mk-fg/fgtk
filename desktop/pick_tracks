@@ -8,6 +8,7 @@ import os, sys, re, random, tempfile, traceback, shutil, math
 
 
 cleanup_ops = list() # list of callbacks to reliably run on exit
+rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
 
 def main(argv=None):
 	default_shuffle_percentage = 30.0
@@ -159,12 +160,16 @@ def main(argv=None):
 
 	# Stats
 	df0, ts0 = free(), time()
+	df_last, ts_last = df0, ts0
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
 	# Copy files
 	while src_files:
-		df = free()
-		rate = (df0 - df) / (time() - ts0)
+		# ewma is used here reflect changing speeds
+		#  (due to cached writes and/or other activity) faster.
+		df, ts = free(), time()
+		rate = rate_a * (df_last - df) / ((ts - ts_last) or 0.001) + (1 - rate_a) * rate
+		df_last, ts_last = df, ts
 
 		if optz.min_df:
 			if df < optz.min_df: break
@@ -191,7 +196,7 @@ def main(argv=None):
 			sys.exit()
 
 	# Success
-	rate = (df0 - free()) / (time() - ts0)
+	rate = (df0 - free()) / (time() - ts0) # median rate
 	log.info(stats())
 
 
