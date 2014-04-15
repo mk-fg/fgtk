@@ -160,7 +160,7 @@ def main(argv=None):
 
 	# Stats
 	df0, ts0 = free(), time()
-	df_last, ts_last = df0, ts0
+	df_last, ts_last, rate = df0, ts0, None
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
 	# Copy files
@@ -168,7 +168,9 @@ def main(argv=None):
 		# ewma is used here reflect changing speeds
 		#  (due to cached writes and/or other activity) faster.
 		df, ts = free(), time()
-		rate = rate_a * (df_last - df) / ((ts - ts_last) or 0.001) + (1 - rate_a) * rate
+		rate_n = (df_last - df) / ((ts - ts_last) or 0.001)
+		rate = (rate_a * rate_n + (1 - rate_a) * rate)\
+			if rate is not None else rate_n
 		df_last, ts_last = df, ts
 
 		if optz.min_df:
