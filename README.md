@@ -715,6 +715,14 @@ plastic) yet trying to keep cpu cool enough.
 Or, failing that, use cpupower tool to drop frequency (making it run cooler in
 general) and issue dire warnings to desktop.
 
+##### emms_beets_enqueue
+
+Script to query [beets](http://beets.readthedocs.org/) music database (possibly
+on a remote host) with specified parameters and add found tracks to
+[EMMS](https://www.gnu.org/software/emms/) playlist (via emacsclient).
+
+Also allows to just dump resulting paths or enqueue a list of them from stdin.
+
 
 
 ### UFS
