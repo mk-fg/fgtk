@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.DEBUG
 	if optz.debug else logging.WARNING)
 log.PythonLoggingObserver().start()
 
-for lvl in 'debug', 'warning', 'error':
+for lvl in 'debug', 'info', 'warn', 'error', 'fatal':
 	assert not getattr(log, lvl, False)
 	setattr(log, lvl, ft.partial( log.msg,
 		logLevel=getattr(logging, lvl.upper()) ))
@@ -56,12 +56,11 @@ class TransmissionRemoteCLI(BufferedExec):
 
 	@classmethod
 	def relay(cls, link):
-		if not link: raise ValueError('Empty link passed')
 		cmdline = cls.cmd + [link]
 		log.debug('Spawning relay-process: {}'.format(cmdline))
 		proc = reactor.spawnProcess(
 			cls(link=link, cmdline=cmdline), cmdline[0], cmdline,
-			env=dict(HOME=os.environ['HOME']) )
+			env=dict(PATH=os.environ['PATH'], HOME=os.environ['HOME']) )
 		proc.sentinel = defer.Deferred()
 		return proc.sentinel
 
@@ -117,9 +116,13 @@ def handle_dropped_file(_, path, mask):
 	log.debug('Processing event: {}, {}'.format(
 		path, inotify.humanReadableMask(mask) ))
 	with path.open() as link_src:
-		yield TransmissionRemoteCLI.relay(link_src.read().strip())
-		os.rename(link_src.name, '{}.added'.format(link_src.name))
-		log.debug('Finished processing path: {}'.format(link_src.name))
+		link = link_src.read().strip()
+		if not link:
+			log.info('Empty file detected (path: {!r}), ignoring it'.format(path.path))
+		else:
+			yield TransmissionRemoteCLI.relay(link)
+			os.rename(link_src.name, '{}.added'.format(link_src.name))
+			log.debug('Finished processing path: {}'.format(link_src.name))
 
 notifier = inotify.INotify()
 notifier.startReading()
