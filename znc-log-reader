@@ -102,24 +102,42 @@ def chan_match(name, chans, fuzzy=False):
 	return False
 
 
-def iter_lines(path, bs=2 * 2**20):
-	if path.endswith('.xz'):
-		assert lzma, 'Missing lzma module'
-		dec = lzma.LZMADecompressor()
-		line = ''
-		with open(path) as src:
-			for buff in iter(ft.partial(src.read, bs), ''):
-				line += dec.decompress(buff)
-				while '\n' in line:
-					res, line = line.split('\n', 1)
-					yield res
-			else: line += dec.flush()
-		while '\n' in line:
-			res, line = line.split('\n', 1)
-			yield res
-		yield line
-	else:
-		for line in open(path): yield line.rstrip('\n')
+class IterLines(object):
+
+	def __init__(self, path, bs=2 * 2**20):
+		self.cache, self.path, self.bs = list(), path, bs
+		self._iter = self._get_iterator()
+
+	def __iter__(self):
+		for line in self.cache:
+			yield line
+		for line in self._iter:
+			self.cache.append(line)
+			yield line
+
+	def _get_iterator(self):
+		if self.path.endswith('.xz'):
+			assert lzma, 'Missing lzma module'
+			dec = lzma.LZMADecompressor()
+			line = ''
+			with open(self.path) as src:
+				for buff in iter(ft.partial(src.read, self.bs), ''):
+					line += dec.decompress(buff)
+					while '\n' in line:
+						res, line = line.split('\n', 1)
+						yield res
+				else: line += dec.flush()
+			while '\n' in line:
+				res, line = line.split('\n', 1)
+				yield res
+			yield line
+		else:
+			for line in open(self.path): yield line.rstrip('\n')
+
+def match_line_ts(line):
+	match = re.search(r'^\s*\[([^]]+)\]\s+', line)
+	if not match: raise ValueError(line)
+	return datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
 
 def sort_logfiles(files):
 	'Order files with possible-duplicate LogDate.'
@@ -133,7 +151,7 @@ def sort_logfiles(files):
 	for ts, paths in sorted(files_dup.viewitems()):
 		assert len(paths) > 0, ts
 		if len(paths) == 1: yield ts, paths
-		else: yield ts, sorted(paths, key=lambda p: next(iter_lines(p)))
+		else: yield ts, sorted(paths, key=lambda p: next(iter(IterLines(p))))
 
 
 def main(argv=None):
@@ -260,26 +278,58 @@ def main(argv=None):
 
 	class Finished(Exception): pass
 
+	## -- chans for net
 	for net, chans in sorted(logs.viewitems()):
 		if opts.network and opts.network != net:
 			log.debug('Skipping network: {!r} (does not match {!r})'.format(net, opts.network))
 			continue
 
+		## -- month-paths for chan
 		for chan, files in sorted(chans.viewitems()):
 			log.debug('Processing channel: {}/{} ({} files)'.format(net, chan, len(files)))
 
 			count = opts.count
 			try:
+				## -- month-lists of paths
 				for ts, paths in reversed(list(sort_logfiles(files))):
 
-					# Discard way-too-old xz archives (they hold one month at most)
-					if opts.ts_from and (ts.to_datetime() + timedelta(62)) < opts.ts_from:
-						log.debug('Skipping xz logs from: {} (paths: {})'.format(ts, paths))
+					# Discard all further way-too-old xz archives (they hold one month at most)
+					if opts.ts_from and (ts.to_datetime() + timedelta(63)) < opts.ts_from:
+						log.debug( 'Skipping too-old xz logs'
+							' from: {} (paths: {}, and beyond)'.format(ts, paths) )
 						break
+					# Skip way-too-new xz archives
+					if opts.ts_to and (ts.to_datetime() - timedelta(63)) > opts.ts_to:
+						log.debug('Skipping too-new xz logs from: {} (paths: {})'.format(ts, paths))
+						continue
 
+					## -- paths
 					for path in reversed(paths):
 						log.debug('Processing path: {} ({}/{})'.format(path, net, chan))
-						for line in reversed(list(iter_lines(path))):
+						path_lines = IterLines(path)
+
+						# Check that first/last line timestamps are within bounds we seek (if any)
+						if opts.ts_to or opts.ts_from:
+							path_skip = False
+							for path_lines_iter, ts_chk in [
+									( lambda: path_lines,
+										opts.ts_to and (lambda ts: ts > opts.ts_to) ), # should be first
+									( lambda: reversed(list(path_lines)),
+										opts.ts_from and (lambda ts: ts < opts.ts_from) ) ]:
+								if not ts_chk: continue
+								for line in it.islice(path_lines_iter(), 10):
+									try: line_ts = match_line_ts(line)
+									except ValueError: continue
+									if ts_chk(line_ts): path_skip = line_ts
+									break
+								if path_skip: break
+							if path_skip:
+								log.debug(( 'Skipping log (path: {}) due to first/last'
+									' line being ts out of bounds (too old/new): {}' ).format(path, ts))
+								continue
+
+						## -- lines
+						for line in reversed(list(path_lines)):
 							if not line.strip(): continue
 
 							# Skip service msgs
@@ -291,10 +341,7 @@ def main(argv=None):
 
 							# ts/count checks
 							if opts.ts_from or opts.ts_to:
-								try:
-									match = re.search(r'^\s*\[([^]]+)\]\s+', line)
-									if not match: raise ValueError(line)
-									line_ts = datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+								try: line_ts = match_line_ts(line)
 								except:
 									log.warn('Failed to match line format, skipping: {!r}'.format(line))
 									continue
