@@ -786,3 +786,13 @@ initramfs images out of vms, doing suspend/resume for running vms easily, etc.
 Probably exist just because I don't need anything but qemu/kvm and know these
 well enough, so don't really need abstractions libvirt provides, nothing really
 special.
+
+
+
+### sysdig
+
+Lua ["chisels"](https://github.com/draios/sysdig/wiki/Chisels%20User%20Guide)
+for [sysdig tool](https://github.com/draios/sysdig/).
+
+Basically simple scripts to filter and format data that sysdig reads or collects
+in real-time for various common tasks.
