@@ -34,8 +34,10 @@ done
 
 concat="" fifos=()
 cleanup() {
+	trap - SIGINT SIGTERM EXIT
+	[[ "$1" = nicely ]] && trap 'exit 0' SIGTERM
 	for fifo in "${fifos[@]}"; do rm -f "$fifo"; done
-	kill 0
+	kill 0 # should get rid of any leftover ffmpeg pids
 }
 trap cleanup SIGINT SIGTERM EXIT
 
@@ -60,3 +62,4 @@ done
 ffmpeg $log -f mpegts -i "concat:$concat" -c copy -bsf:a aac_adtstoasc "$dst"
 
 sleep 1 # let subpids die in peace
+cleanup nicely
