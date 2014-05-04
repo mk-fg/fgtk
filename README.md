@@ -343,6 +343,27 @@ GIT_EXTERNAL_DIFF would do.
 Should be installed as `git-meld` somewhere in PATH *and* symlinked as
 `meld-git` (git-meld runs `GIT_EXTERNAL_DIFF=meld-git git diff "$@"`) to work.
 
+##### catn
+
+Similar to "cat" (specifically coreutils' `cat -n file`), but shows specific
+line in a file with a few "context" lines around it:
+
+	% catn js/main.js 188
+	   185:     projectionTween = function(projection0, projection1) {
+	   186:       return function(d) {
+	   187:         var project, projection, t;
+	>> 188:         project = function(λ, φ) {
+	   189:           var p0, p1, _ref1;
+	   190:           λ *= 180 / Math.PI;
+	   191:           φ *= 180 / Math.PI;
+
+Above command is synonymous to `catn js/main.js 188 3`, `catn js/main.js:188`
+and `catn js/main.js:188:3`, where "3" means "3 lines of context" (can be
+omitted as 3 is the default value there).
+
+`catn -q ...` outputs line + context verbatim, so it'd be more useful for piping
+to another file/command or terminal copy-paste.
+
 
 
 ### Misc

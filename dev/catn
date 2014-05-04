@@ -1,0 +1,39 @@
+#!/bin/sh
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [-q] file line ctx_lines"
+	echo >&2 "  or: $bin [-q] file line[:ctx_lines]"
+	echo >&2 "  or: $bin [-q] file:line[:ctx_lines]"
+	exit ${1:-0}
+}
+
+q=
+[[ "$1" = '-q' ]] && { q=t; shift; }
+
+ctx=
+case "$#" in
+	3) file=$1 line=$2 ctx=$3 ;;
+	2) file=$1 line=$2 ;;
+	1)
+		[[ $1 =~ : ]] || usage 1
+		file=${1%:*} line=${1#*:} ;;
+	0) usage ;;
+	*) usage 1
+esac
+
+[[ -z "$file" || -z "$line" ]] && usage 1
+
+[[ -z "$ctx" ]] && {
+	[[ $line =~ : ]] && ctx=${line#*:} || ctx=3
+}
+line=${line%:*}
+
+line_min=$(( $line - $ctx ))
+line_max=$(( $line + $ctx ))
+
+[[ -z "$q" ]]\
+	&& line_fmt='{pre=NR=='"$line"' ? ">>" : "  "; printf("%s %d: %s\n", pre, NR, $0)}'\
+	|| line_fmt=''
+
+exec awk "NR>=${line_min} && NR<=${line_max} ${line_fmt}" "$file"
