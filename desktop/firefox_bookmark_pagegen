@@ -1,0 +1,92 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+from os.path import join, exists, isfile, isdir, expanduser
+from contextlib import closing
+import os, sys, sqlite3, ConfigParser
+
+
+AdHocException = type('AdHocException', (Exception,), {})
+
+def get_profile_dir(profile):
+	if profile:
+		if profile.startswith(os.sep): return profile
+		profile = profile.lower() # for ci comparisons
+
+	ff_home = expanduser('~/.mozilla/firefox')
+	profiles = ConfigParser.RawConfigParser()
+	profiles.read(join(ff_home, 'profiles.ini'))
+
+	profile_path, paths = None, list()
+	for k in profiles.sections():
+		if not k.startswith('Profile'): continue
+		name = profiles.get(k, 'Name').strip().lower()
+		path = profiles.get(k, 'Path')
+		if profile is not None and name == profile:
+			profile_path = path
+			break
+		if profile:
+			paths.append(path)
+			continue
+		if profile_path: continue
+		try:
+			if not profiles.getboolean(k, 'Default'): raise AdHocException
+		except (ConfigParser.NoOptionError, AdHocException): pass
+		else: profile_path = path
+	else:
+		for path in paths:
+			if profile in path.lower():
+				profile_path = path
+				break
+		assert profile_path, profile
+
+	profile_path = join(ff_home, profile_path)
+	assert isdir(profile_path), [name, profile_path]
+	return profile_path
+
+
+def get_bookmarks(db_path, timeout=30):
+	assert isfile(db_path), db_path
+	with sqlite3.connect(db_path, timeout=timeout) as conn:
+		conn.row_factory = sqlite3.Row
+		with closing(conn.cursor()) as c:
+			c.execute('SELECT * FROM moz_bookmarks')
+			print(c.fetchall())
+	# get stuff from moz_places by guid here
+	# ...as well as favicons (fetch if missing) and annotations
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to generate firefox homepage from bookmarks, history and other data.')
+
+	parser.add_argument('-P', '--profile', metavar='name/key/path',
+		help='Full firefox profile name, profile directory name'
+			' or its fragment, or a full path to profile dir (default: use default profile).')
+	parser.add_argument('-t', '--db-lock-timeout',
+		type=float, metavar='seconds', default=30,
+		help='Timeout to acquire sqlite transaction locks (default: %(default)ss).')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	profile_dir = get_profile_dir(opts.profile)
+	log.debug('Using ff profile dir: %s', profile_dir)
+
+	bookmarks = get_bookmarks(join(profile_dir, 'places.sqlite'), timeout=opts.db_lock_timeout)
+
+	import pyaml
+	pyaml.dump(bookmarks, sys.stdout)
+	exit()
+
+	generate_rst(bookmarks, places, backlog)
+
+
+if __name__ == '__main__': sys.exit(main())
