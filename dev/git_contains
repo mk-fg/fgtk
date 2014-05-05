@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
+from subprocess import Popen, PIPE, STDOUT, check_output, CalledProcessError
+import os, sys, string
+
+
+def results(found, missing, quiet=False):
+	err = 2 if missing else 0
+	if err and not quiet:
+		if found:
+			print('Found:{}'.format('\n  '.join([''] + sorted(found))))
+		if missing:
+			print('Missing:{}'.format('\n  '.join([''] + sorted(missing))))
+	return err
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Check if git repository contains specified tree-ish hashes.'
+			' Outputs hashes as they are found, stops after all are found,'
+			' exits with non-zero code if any are missing (by default, see "-1" and "-q" options).')
+
+	parser.add_argument('treeish', nargs='+',
+		help='git tree-ish to look for. Will be parsed by'
+			' "git rev-parse" and considered "not found" if rev-parse fails.')
+
+	parser.add_argument('-H', '--head', default='HEAD', metavar='tree-ish',
+		help='Look for hashes in specified tree-ish (default: %(default)s).')
+	parser.add_argument('-C', '--path', metavar='path',
+		help='Change dir to a specified repository path (default: use current dir).')
+
+	parser.add_argument('-1', '--any',
+		action='store_true', help='Stop on the first (any) hash found from the provided list.')
+	parser.add_argument('-q', '--quiet',
+		action='store_true', help='Produce no output, just exit with non-zero status if any'
+			' (or all with "-1" option) of the hashes were not found.')
+	parser.add_argument('-s', '--strict', action='store_true',
+		help='Exit with error if any of the passed tree-ish strings fail at rev-parse.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.path: os.chdir(opts.path)
+
+	# Makes sure that rev exists in any branch (fast check),
+	#  and removes the need to do regexps in grep (slower)
+	hashes, hashes0 = set(), set()
+	rev_parse_stderr = STDOUT if not opts.strict else None
+	for h in opts.treeish:
+		cmd = ['git', 'rev-parse', h]
+		try: hashes.add(check_output(cmd, stderr=rev_parse_stderr).strip().lower())
+		except CalledProcessError:
+			if opts.strict:
+				print('git rev-parse failed for tree-ish {!r} (command: {})'.format(h, cmd))
+				return 1
+			hashes.add(h)
+			hashes0.add(h)
+	if (not opts.any and hashes0) or hashes0 == hashes:
+		# Shortcut in case some of none of the unparsed treeish will guarantee fail
+		return results(list(), hashes0, quiet=opts.quiet)
+	hashes0.update(hashes)
+
+	rev_list_cmd = ['git', 'rev-list', opts.head]
+	rev_list = Popen(rev_list_cmd, stdout=PIPE)
+	rev_filter_cmd = ['grep', '-F'] + list(it.chain.from_iterable(['-e', h] for h in hashes))
+	rev_filter = Popen(rev_filter_cmd, stdout=PIPE, stdin=rev_list.stdout)
+
+	hash_last = None
+	for line in iter(rev_filter.stdout.readline, ''):
+		hash_last = line.strip().lower()
+		if opts.any:
+			hashes.clear()
+			break
+		hashes.remove(hash_last)
+		if not hashes: break
+
+	try: rev_list.terminate()
+	except: pass # can finish already
+	rev_filter.stdout.read()
+
+	err = rev_list.wait()
+	if err:
+		print( 'git rev-list command failed'
+			' (status: {}, command: {})'.format(err, rev_list_cmd), file=sys.stderr )
+		return 1
+	err = rev_filter.wait()
+	if err and not hashes:
+		print( 'grep subprocess failed'
+			' (status: {}, command: {})'.format(err, rev_filter_cmd), file=sys.stderr )
+		return 1
+
+	found = [hash_last] if opts.any else hashes0.difference(hashes)
+	return results(found, hashes, quiet=opts.quiet)
+
+
+if __name__ == '__main__': sys.exit(main())

@@ -364,6 +364,48 @@ omitted as 3 is the default value there).
 `catn -q ...` outputs line + context verbatim, so it'd be more useful for piping
 to another file/command or terminal copy-paste.
 
+##### git_terminate
+
+Script to permanently delete files/folders from repository and its history -
+including "dangling" objects where these might still exist.
+
+Should be used from repo root with a list of paths to delete,
+e.g. `git_terminate path1 path2`.
+
+WARNING: will do things like `git reflog expire` and `git gc` with agressive
+parameters on the whole repository, so any other possible history not stashed or
+linked to existing branches/remotes (e.g. stuff in `git reflog`) will be purged.
+
+##### git_contains
+
+Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
+"SPECIFYING REVISIONS" in git-rev-parse(1)) object(s) exist (e.g. merged) in a
+specified git repo/tree-ish.
+
+Essentially does `git rev-list <tree-ish2> | grep $(git rev-parse <tree-ish1>)`.
+
+	% git_contains -C /var/src/linux-git ee0073a1e7b0ec172
+	[exit status=0, hash was found]
+
+	% git_contains -C /var/src/linux-git ee0073a1e7b0ec172 HEAD notarealthing
+	Missing:
+	  notarealthing
+	[status=2 right when rev-parse fails before even starting rev-list]
+
+	% git_contains -C /var/src/linux-git -H v3.5 --quiet ee0073a1e7b0ec172
+	[status=2, this commit is in HEAD, but not in v3.5 (tag), --quiet doesn't produce stdout]
+
+	% git_contains -C /var/src/linux-git --any ee0073a1e7b0ec172 notarealthing
+	[status=0, ee0073a1e7b0ec172 was found, and it's enough with --any]
+
+	% git_contains -C /var/src/linux-git --strict notarealthing
+	fatal: ambiguous argument 'notarealting': unknown revision or path not in the working tree.
+	Use '--' to separate paths from revisions, like this:
+	'git <command> [<revision>...] -- [<file>...]'
+	git rev-parse failed for tree-ish 'notarealting' (command: ['git', 'rev-parse', 'notarealting'])
+
+Lines in square brackets above are comments, not actual output.
+
 
 
 ### Misc
