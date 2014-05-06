@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import itertools as it, operator as op, functools as ft
 from os.path import join, exists, isfile, isdir, expanduser
 from contextlib import closing
-from collections import defaultdict
-import os, sys, sqlite3, ConfigParser
+from collections import defaultdict, OrderedDict
+import os, sys, io, sqlite3, ConfigParser
 
 
 class AdHocException(Exception): pass
@@ -116,10 +117,52 @@ def get_bookmarks(db_path, timeout=30):
 	return bms
 
 
+def generate_rst(bookmarks): # XXX: also use places and some form(s) of backlog files
+	output = io.StringIO()
+	p = lambda line,end=u'\n': print(unicode(line), end=end, file=output)
+
+	def p_header(header, style=u'=', indent=u'', newlines=1):
+		p(indent, end=u'')
+		p(header)
+		p(indent, end=u'')
+		p(u'='*len(header))
+		p(u'\n'*newlines, end=u'')
+
+	links = OrderedDict()
+	def p_link(title, url, tpl=None, tpl_cb=None, end=u'\n'):
+		assert title not in links, title # XXX: append some token
+		for c in '`:': assert c not in title, title
+		link = u'`{}`_'.format(title)
+		links[title] = url
+		if tpl: p(unicode(tpl).format(link), end=end)
+		elif tpl_cb: p(tpl(link), end=end)
+		else: return link
+	def p_link_urls(newlines_pre=1, newlines=0):
+		p(u'\n'*newlines_pre, end=u'')
+		for title, url in links.viewitems():
+			p(u'.. _{}: {}'.format(title, url))
+		links.clear()
+		p(u'\n'*newlines, end=u'')
+
+	p_header('Bookmarks')
+	for bm in bookmarks.viewvalues():
+		title = bm['bm_title'].replace('`', '')
+		p_link(title, bm['url'], ' * {}')
+
+	p_link_urls()
+
+	return output.getvalue()
+
+
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Tool to generate firefox homepage from bookmarks, history and other data.')
+
+	parser.add_argument('-o', '--output', metavar='format', choices=['rst', 'html'], default='html',
+		help='Output format. Possible choices: rst, html (default: %(default)s).')
 
 	parser.add_argument('-P', '--profile', metavar='name/key/path',
 		help='Full firefox profile name, profile directory name'
@@ -137,6 +180,7 @@ def main(args=None):
 	log = logging.getLogger()
 
 	if opts.debug:
+		global pyaml, dump
 		try:
 			import pyaml
 		except ImportError:
@@ -147,17 +191,20 @@ def main(args=None):
 		else:
 			pyaml.UnsafePrettyYAMLDumper.add_representer(
 				sqlite3.Row, lambda s,o: s.represent_dict(dict((k, o[k]) for k in o.keys())) )
-
+		dump = ft.partial(pyaml.dump, dst=sys.stdout)
 
 	profile_dir = get_profile_dir(opts.profile)
 	log.debug('Using ff profile dir: %s', profile_dir)
 
 	bookmarks = get_bookmarks(join(profile_dir, 'places.sqlite'), timeout=opts.db_lock_timeout)
+	# XXX: get_places()
+	# XXX: get_backlog()
+	out = generate_rst(bookmarks)
+	if opts.output == 'html':
+		raise NotImplementedError
+		# XXX: generate_html(out)
 
-	pyaml.dump(bookmarks, sys.stdout)
-	exit()
-
-	generate_rst(bookmarks, places, backlog)
+	sys.stdout.write(out.encode('utf-8'))
 
 
 if __name__ == '__main__': sys.exit(main())
