@@ -4,10 +4,11 @@ from __future__ import print_function
 
 from os.path import join, exists, isfile, isdir, expanduser
 from contextlib import closing
+from collections import defaultdict
 import os, sys, sqlite3, ConfigParser
 
 
-AdHocException = type('AdHocException', (Exception,), {})
+class AdHocException(Exception): pass
 
 def get_profile_dir(profile):
 	if profile:
@@ -46,15 +47,73 @@ def get_profile_dir(profile):
 	return profile_path
 
 
+def sqlite_dict_row(cursor, row):
+	row = sqlite3.Row(cursor, row)
+	return dict((k, row[k]) for k in row.keys())
+
 def get_bookmarks(db_path, timeout=30):
 	assert isfile(db_path), db_path
+	bms = defaultdict(lambda: dict(bm_tags=set()))
+
 	with sqlite3.connect(db_path, timeout=timeout) as conn:
-		conn.row_factory = sqlite3.Row
+		conn.row_factory = sqlite_dict_row
 		with closing(conn.cursor()) as c:
-			c.execute('SELECT * FROM moz_bookmarks')
-			print(c.fetchall())
-	# get stuff from moz_places by guid here
-	# ...as well as favicons (fetch if missing) and annotations
+			c.execute('select * from moz_bookmarks')
+			bm_data = c.fetchall()
+
+			bms_meta = dict()
+			for r in bm_data:
+				t, fk = r['type'], r['fk']
+				if t == 1 and r['title'] is not None:
+					bm = dict(bm_title=r['title'], bm_added=r['dateAdded'], bm_folder=r['parent'])
+					c.execute('select * from moz_places where id = ?', (fk,))
+					p = c.fetchone()
+					if p is None or p['hidden']:
+						if p is None:
+							log.warn('Missing moz_places entry for bookmark, ignoring: %s', r)
+						bms[fk]['legit'] = False
+						continue
+					assert not set(bm).intersection(p), [bm, p]
+					bm.update(p)
+					bms[fk].update(bm)
+					bms[fk].setdefault('legit', True)
+				elif t == 1: bms[fk]['bm_tags'].add(r['parent']) # tag link
+				elif t == 2: bms_meta[r['id']] = r['title']
+				else: raise ValueError(r)
+
+			for fk in bms.keys():
+				if not bms[fk].pop('legit', False):
+					del bms[fk]
+					continue
+				bm = bms[fk]
+				# Tags
+				bm_tags, tags = bm['bm_tags'], set()
+				for t in bm_tags:
+					try: tags.add(bms_meta[t])
+					except KeyError:
+						log.warn( 'Unknown tag id in'
+							' bookmark-tag link, skipping: %s (bm: %s)', t, bm )
+				bm_tags.clear()
+				bm_tags.update(tags)
+				# Path
+				# XXX: subdir parents, if I'll ever use these
+				try: bm['bm_folder'] = bms_meta[bm['bm_folder']]
+				except KeyError:
+					log.warn( 'Unknown parent folder id in'
+						' bookmark-parent link, using "Unknown": %s (bm: %s)', bm['bm_folder'], bm )
+					bm['bm_folder'] = 'Unknown'
+				# Favicon
+				# XXX: fetch missing ones maybe?
+				favicon = bm.pop('favicon_id')
+				if favicon:
+					c.execute('select data, mime_type from moz_favicons where id = ?', (favicon,))
+					favicon = c.fetchone()
+				if favicon:
+					bm['favicon'] = dict(
+						mime_type=favicon['mime_type'],
+						data=bytes(favicon['data']).encode('base64') )
+
+	return bms
 
 
 def main(args=None):
@@ -77,12 +136,24 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
+	if opts.debug:
+		try:
+			import pyaml
+		except ImportError:
+			# Only crash when/if this debug printer actually gets used
+			err_type, err_val, err_tb = sys.exc_info()
+			def pyaml_dump(*args,**kws): raise err_type, err_val, err_tb
+			pyaml = type('pyaml_mock', (object,), dict(dump=pyaml_dump))()
+		else:
+			pyaml.UnsafePrettyYAMLDumper.add_representer(
+				sqlite3.Row, lambda s,o: s.represent_dict(dict((k, o[k]) for k in o.keys())) )
+
+
 	profile_dir = get_profile_dir(opts.profile)
 	log.debug('Using ff profile dir: %s', profile_dir)
 
 	bookmarks = get_bookmarks(join(profile_dir, 'places.sqlite'), timeout=opts.db_lock_timeout)
 
-	import pyaml
 	pyaml.dump(bookmarks, sys.stdout)
 	exit()
 
