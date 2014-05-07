@@ -1,0 +1,6 @@
+#!/bin/bash
+
+path="$(emacsclient -e "(emms-track-get (emms-playlist-current-selected-track) 'name)" | sed 's/\\"/"/g')"
+path=${path#\"}; path=${path%\"};
+
+echo "$path"

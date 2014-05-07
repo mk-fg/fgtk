@@ -788,6 +788,11 @@ on a remote host) with specified parameters and add found tracks to
 
 Also allows to just dump resulting paths or enqueue a list of them from stdin.
 
+##### emms_current
+
+Dumps path of the current track into terminal.
+Easy to do with emacsclient, but needs extra sed to fix the escaping that elisp does.
+
 
 
 ### UFS
