@@ -1,13 +1,23 @@
 #!/bin/bash
 
-[[ -n "$NYM_RUN" ]] && exec ssh -o PasswordAuthentication=no -i "$NYM" "$@"
+# NYM=... - part of *unique* key name of any ~/.ssh/id_*
+# NYM_CLEAN=flag - if set, uses "clean" ssh - without control/agent sockets
+
+[[ -n "$NYM_RUN" ]] && {
+	extras=
+	[[ -n "$NYM_CLEAN" ]] && {
+		extras=( -o ControlPath=none -o ControlMaster=no )
+		export SSH_AGENT_PID= SSH_AUTH_SOCK=
+	}
+	exec ssh "${extras[@]}" -o PasswordAuthentication=no -i "$NYM" "$@"
+}
 [[ -z "$NYM" ]] && { echo >&2 "No NYM env var set"; exit 1; }
 
 [[ ! -e "${NYM}" ]] && {
 	p="${HOME}/.ssh/${NYM}"
 	[[ -e "$p" ]] && export NYM_RUN=true NYM=$p
 	[[ -z "${NYM_RUN}" ]] && {
-		for t in rsa ecdsa; do
+		for t in rsa ecdsa ed25519; do
 			p="${HOME}/.ssh/id_${t}__${NYM}"
 			[[ ! -e "$p" ]] && continue
 			export NYM_RUN=true NYM=$p

@@ -317,12 +317,14 @@ Script to read NYM env var and run git using that ssh id instead of whatever
 ssh-agent or e.g. `~/.ssh/id_rsa` provides.
 
 NYM var is checked for either full path to the key, basename in `~/.ssh`, name
-like `~/.ssh/id_{rsa,ecdsa}__${NYM}` or unique (i.e. two matches will cause
-error, not random pick) match for one of `~/.ssh/id_*` name part.
+like `~/.ssh/id_{rsa,ecdsa,ed25519}__${NYM}` or unique (i.e. two matches will
+cause error, not random pick) match for one of `~/.ssh/id_*` name part.
 
 Can be used as `NYM=project-x git-nym clone git@dev.project-x:component-y` to
 e.g. clone the specified repo using `~/.ssh/id_rsa__project-x` key or as
 `NYM=project-x git nym clone ...`.
+Also to just test new keys with git, disregarding ssh-agent and lingering
+control sockets with NYM_CLEAN flag set.
 
 ##### git-meld
 
