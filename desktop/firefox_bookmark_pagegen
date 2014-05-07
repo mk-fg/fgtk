@@ -5,8 +5,8 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from os.path import join, exists, isfile, isdir, expanduser
 from contextlib import closing
-from collections import defaultdict, OrderedDict
-import os, sys, io, sqlite3, ConfigParser
+from collections import defaultdict, OrderedDict, namedtuple
+import os, sys, io, types, re, random, sqlite3, ConfigParser
 
 
 class AdHocException(Exception): pass
@@ -52,7 +52,7 @@ def sqlite_dict_row(cursor, row):
 	row = sqlite3.Row(cursor, row)
 	return dict((k, row[k]) for k in row.keys())
 
-def get_bookmarks(db_path, timeout=30):
+def bookmarks_get(db_path, timeout=30):
 	assert isfile(db_path), db_path
 	bms = defaultdict(lambda: dict(bm_tags=set()))
 
@@ -117,7 +117,90 @@ def get_bookmarks(db_path, timeout=30):
 	return bms
 
 
-def generate_rst(bookmarks): # XXX: also use places and some form(s) of backlog files
+detect_link = lambda slug:\
+	isinstance(slug, types.StringTypes)\
+		and bool(re.search(ur'^\s*((https?|spdy|file)://|about:)', slug))
+
+class LinkError(Exception): pass
+class LinkTypeError(LinkError): pass
+class LinkAmbiguity(LinkError): pass
+class LinkMissing(LinkError): pass
+
+class Link(namedtuple('Link', 'url title')):
+
+	def __new__(cls, str1, str2=None):
+		for val in str1, str2:
+			if not isinstance(val, (types.StringTypes, types.NoneType, int)):
+				raise LinkTypeError('Incorrect passed link/title type (%s): %s', type(val), val)
+		str2, str1 = sorted([str1, str2], key=bool)
+		url, title = str1, None
+		if str2:
+			str2, str1 = sorted([str1, str2], key=detect_link)
+			if detect_link(str2):
+				raise LinkAmbiguity('Two links passed instead of one: %s', [str1, str2])
+			url, title = str1, str2
+		if not detect_link(url):
+			raise LinkMissing('Failed to find link in passed tuple: %s', [str1, str2])
+		assert detect_link(url) and not detect_link(title), [url, title]
+		if title: title = unicode(title)
+		return super(Link, cls).__new__(cls, url, title)
+
+def backlog_get(path):
+	import yaml
+	with open(path) as src: backlog = yaml.load(src)
+
+	def process_layer(data, path=None):
+		if path is None: path = list()
+		if isinstance(data, types.StringTypes):
+			path += ['string']
+			# print('STR', repr(data)[:100])
+			try: return Link(data)
+			except LinkMissing:
+				log.warn('Dangling string not bound to any links (path: %s): %r', path, data)
+		elif isinstance(data, (list, tuple)):
+			if len(data) == 2:
+				# print('TUPLE', repr(data)[:100])
+				try: return Link(*data)
+				except LinkError: pass
+				if not isinstance(data[0], (list, dict, tuple))\
+						and isinstance(data[1], (list, dict, tuple))\
+						and not detect_link(data[0]):
+					return process_layer(data[1], path+[data[0]])
+			# print('LIST', repr(data)[:100])
+			return filter(None, list(process_layer(val, path+[n]) for n, val in enumerate(data)))
+		elif isinstance(data, dict):
+			path += ['dict']
+			# print('DICT', repr(data)[:100])
+			return process_layer(data.items(), path)
+		else:
+			log.warn( 'Unrecognized data structure'
+				' (path: %s, type: %s): %s', path, type(data), data )
+
+	def flatten(val):
+		if not isinstance(val, Link):
+			for val in val:
+				for val in flatten(val): yield val
+		else: yield val
+
+	return set(flatten(process_layer(backlog)))
+
+def backlog_process(backlog, spec):
+	if not backlog: return set()
+	match = re.search(r'^random-(\d+)$', spec)
+	if match:
+		random.seed()
+		backlog_subset = set()
+		for n in xrange(int(match.group(1))):
+			if not backlog: break
+			link = random.choice(list(backlog))
+			backlog.remove(link)
+			backlog_subset.add(link)
+		return backlog_subset
+	elif spec == 'all': return backlog
+	else: raise ValueError(spec)
+
+
+def generate_rst(bookmarks, backlog): # XXX: also recent/common places maybe?
 	output = io.StringIO()
 	p = lambda line,end=u'\n': print(unicode(line), end=end, file=output)
 
@@ -131,9 +214,11 @@ def generate_rst(bookmarks): # XXX: also use places and some form(s) of backlog 
 	links = OrderedDict()
 	def p_link(title, url, tpl=None, tpl_cb=None, end=u'\n'):
 		assert title not in links, title # XXX: append some token
-		for c in '`:': assert c not in title, title
-		link = u'`{}`_'.format(title)
-		links[title] = url
+		if not title: link = url
+		else:
+			title = title.replace('`', "'").replace(':', '_')
+			link = u'`{}`_'.format(title)
+			links[title] = url
 		if tpl: p(unicode(tpl).format(link), end=end)
 		elif tpl_cb: p(tpl(link), end=end)
 		else: return link
@@ -146,13 +231,15 @@ def generate_rst(bookmarks): # XXX: also use places and some form(s) of backlog 
 
 	p_header('Bookmarks')
 	for bm in bookmarks.viewvalues():
-		title = bm['bm_title'].replace('`', '')
-		p_link(title, bm['url'], ' * {}')
+		p_link(bm['bm_title'], bm['url'], ' * {}')
+	p_link_urls(newlines=2)
 
+	p_header('Backlog')
+	for link in backlog:
+		p_link(link.title, link.url, ' * {}')
 	p_link_urls()
 
 	return output.getvalue()
-
 
 
 
@@ -163,6 +250,16 @@ def main(args=None):
 
 	parser.add_argument('-o', '--output', metavar='format', choices=['rst', 'html'], default='html',
 		help='Output format. Possible choices: rst, html (default: %(default)s).')
+
+	parser.add_argument('-b', '--backlog', metavar='path',
+		help='Path to yaml with a backlog of random links to visit.'
+			' Format should be any depth of nested dicts or lists, with dicts or two-element'
+				' tuples of title + link, or just lists of links at the bottom ones.'
+			' Links get detected by the web url format, point is that any'
+				' obviously-tied string element will be considered to be a title for that link.')
+	parser.add_argument('-x', '--backlog-pick', metavar='spec', default='random-30',
+		help='How to pick/represent which backlog links to display.'
+			' Supported choices: random-<num>, all (default: %(default)s).')
 
 	parser.add_argument('-P', '--profile', metavar='name/key/path',
 		help='Full firefox profile name, profile directory name'
@@ -191,15 +288,23 @@ def main(args=None):
 		else:
 			pyaml.UnsafePrettyYAMLDumper.add_representer(
 				sqlite3.Row, lambda s,o: s.represent_dict(dict((k, o[k]) for k in o.keys())) )
+			pyaml.UnsafePrettyYAMLDumper.add_representer(
+				Link, lambda s,o: s.represent_dict(o._asdict()) )
 		dump = ft.partial(pyaml.dump, dst=sys.stdout)
 
 	profile_dir = get_profile_dir(opts.profile)
 	log.debug('Using ff profile dir: %s', profile_dir)
 
-	bookmarks = get_bookmarks(join(profile_dir, 'places.sqlite'), timeout=opts.db_lock_timeout)
+	bookmarks = bookmarks_get(join(profile_dir, 'places.sqlite'), timeout=opts.db_lock_timeout)
+
+	if opts.backlog:
+		backlog = backlog_get(opts.backlog)
+		backlog = backlog_process(backlog, opts.backlog_pick)
+	else: backlog = set()
+
 	# XXX: get_places()
-	# XXX: get_backlog()
-	out = generate_rst(bookmarks)
+
+	out = generate_rst(bookmarks, backlog)
 	if opts.output == 'html':
 		raise NotImplementedError
 		# XXX: generate_html(out)
