@@ -55,7 +55,8 @@ sleep=$(( ( $RANDOM * $delay ) / 32767 ))
 if [[ -n "$systemd" ]]
 then
 	[[ $(systemctl is-active "${systemd_unit}") = activating ]] && exit 0
-	output=$(mktemp task_pipe.XXXXXXXXXX)
+	mkdir -p -m 0700 /run/cron_tasks
+	output=$(mktemp /run/cron_tasks/task_pipe.XXXXXXXXXX)
 	pipe="/run/cron_tasks/${systemd}.fifo"
 	[[ ! -e "$pipe" ]] && mkfifo -m 0600 "$pipe"
 	shopt -s huponexit # clean up properly
@@ -66,7 +67,7 @@ else
 	if [[ -z "$erronlyout" ]]
 	then "$@"
 	else
-		output=$(mktemp task_pipe.XXXXXXXXXX)
+		output=$(mktemp /run/cron_tasks/task_pipe.XXXXXXXXXX)
 		"$@" >"$output" 2>&1
 	fi
 	err=$?
