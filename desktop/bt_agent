@@ -65,16 +65,27 @@ class Rejected(dbus.DBusException):
 class Agent(dbus.service.Object):
 
 	exit_on_release = True
-	auth_svc = False
+	auth_svc = interactive = False
 
-	def __init__(self, bus, path, auth_svc=None):
+	def __init__(self, bus, path, auth_svc=None, interactive=None):
 		if auth_svc is not None: self.auth_svc = auth_svc
+		if interactive is not None: self.interactive = interactive
 		super(Agent, self).__init__(bus, path)
 
 
-	def ask(self, prompt):
+	def ask(self, prompt, device=None):
+		if not self.interactive:
+			raise RuntimeError('Agent does not support interaction')
+		prompt = self.p(prompt, device, format_only=True)
 		try: return raw_input(prompt)
 		except: return input(prompt)
+
+	def p(self, line, device=None, format_only=False):
+		if device: line = '[{}] {}'.format(device, line)
+		if format_only: return line
+		if not self.interactive:
+			raise RuntimeError('Agent does not support display')
+		print(line)
 
 	def props(self, path, k, v=None, iface=iface_dev):
 		props = dbus.Interface(
@@ -99,7 +110,7 @@ class Agent(dbus.service.Object):
 	def AuthorizeService(self, device, uuid):
 		log.info('AuthorizeService (%s, %s)', device, uuid)
 		if not self.auth_svc:
-			authorize = ask('Authorize connection (yes/no, dev: {}, uuid: {}): '.format(device, uuid))
+			authorize = self.ask('Authorize connection: ', device)
 			if authorize == 'yes': return
 			raise Rejected('Connection rejected by user')
 		elif not isinstance(self.auth_svc, bool):
@@ -111,7 +122,7 @@ class Agent(dbus.service.Object):
 	@agent_method('o')
 	def RequestAuthorization(self, device):
 		log.info('RequestAuthorization (%s)', device)
-		auth = ask('Authorize? (yes/no): ')
+		auth = self.ask('Authorize? (yes/no): ', device)
 		if auth == 'yes': return
 		raise Rejected('Pairing rejected')
 
@@ -119,27 +130,29 @@ class Agent(dbus.service.Object):
 	def RequestPinCode(self, device):
 		log.info('RequestPinCode (%s)', device)
 		self.set_trusted(device)
-		return ask('Enter PIN Code: ')
+		return self.ask('Enter PIN Code: ', device)
 
 	@agent_method('o', 'u')
 	def RequestPasskey(self, device):
 		log.info('RequestPasskey (%s)', device)
 		self.set_trusted(device)
-		passkey = ask('Enter passkey: ')
+		passkey = self.ask('Enter passkey: ', device)
 		return dbus.UInt32(passkey)
 
 	@agent_method('ouq')
 	def DisplayPasskey(self, device, passkey, entered):
 		log.info('DisplayPasskey (%s, %06u entered %u)', device, passkey, entered)
+		self.p('Passkey (entered: {}): {:06}'.format(entered, passkey), device)
 
 	@agent_method('os')
 	def DisplayPinCode(self, device, pincode):
 		log.info('DisplayPinCode (%s, %s)', device, pincode)
+		self.p('PIN Code: {}'.format(pincode), device)
 
 	@agent_method('ou')
 	def RequestConfirmation(self, device, passkey):
 		log.info('RequestConfirmation (%s, %06d)', device, passkey)
-		confirm = ask('Confirm passkey (yes/no): ')
+		confirm = self.ask('Confirm passkey (yes/no): ', device)
 		if confirm == 'yes':
 			self.set_trusted(device)
 			return
@@ -170,7 +183,8 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
 	log = logging.getLogger()
 
-	cap = 'KeyboardDisplay' if not opts.non_interactive else 'NoInputNoOutput'
+	interactive = not opts.non_interactive
+	cap = 'KeyboardDisplay' if interactive else 'NoInputNoOutput'
 	auth = True if opts.authorize_services is None else opts.authorize_services
 	if not isinstance(auth, bool):
 		auth_path = auth
@@ -183,7 +197,7 @@ def main(args=None):
 
 	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 	bus, path = get_bus(), '/test/agent'
-	agent = Agent(bus, path, auth_svc=auth)
+	agent = Agent(bus, path, auth_svc=auth, interactive=interactive)
 	mainloop = GObject.MainLoop()
 
 	device = find_adapter()
