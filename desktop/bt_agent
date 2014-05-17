@@ -165,14 +165,16 @@ class Agent(dbus.service.Object):
 
 def main(args=None):
 	import argparse
-	parser = argparse.ArgumentParser()
+	parser = argparse.ArgumentParser(
+		description='BlueZ bluetooth authorization agent/daemon.')
 	parser.add_argument('-a', '--authorize-services',
 		default=False, nargs='?', metavar='whitelist_file',
 		help='Auto-autorize services from "trusted" (bluez concept) devices.'
 			' Optional argument for the option can be a path to a whitelist'
 				' file with bdaddrs (in xx:xx:xx:xx:xx:xx format) to allow connections from,'
 				' while explicitly blocking all others'
-				' (default with this option is to allow any one marked as "trusted").')
+				' (default with this option is to allow any one marked as "trusted").'
+			' File (if specified) will only be read once, on agent startup.')
 	parser.add_argument('-n', '--non-interactive', action='store_true',
 		help='Do not require any interactive input (to e.g. run as daemon).')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
