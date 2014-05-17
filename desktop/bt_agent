@@ -3,7 +3,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import dbus, dbus.service, dbus.mainloop.glib
 from gi.repository import GObject
-import sys, re
+import os, sys, io, re
 
 def get_bus():
 	global bus
@@ -187,8 +187,8 @@ def main(args=None):
 	cap = 'KeyboardDisplay' if interactive else 'NoInputNoOutput'
 	auth = True if opts.authorize_services is None else opts.authorize_services
 	if not isinstance(auth, bool):
-		auth_path = auth
-		with open(auth_path, 'rb') as src:
+		auth_path = os.path.expanduser(auth)
+		with io.open(auth_path, encoding='utf-8', errors='ignore') as src:
 			auth = set(filter(None, (line.strip().lower() for line in src.readlines())))
 		for bdaddr in auth:
 			if not re.match(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', bdaddr):
