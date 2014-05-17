@@ -542,7 +542,7 @@ Much easier than doing anything with GUI.
 
 ### Desktop
 
-Helpers for more interactive (client) machine and/or DE.
+Helpers for more interactive (client) machine, DE and apps there.
 
 
 #### uri_handlers
@@ -778,6 +778,17 @@ Also allows to just dump resulting paths or enqueue a list of them from stdin.
 
 Dumps path of the current track into terminal.
 Easy to do with emacsclient, but needs extra sed to fix the escaping that elisp does.
+
+##### ff_backup
+
+Script to backup various firefox settings in a diff/scm-friendly manner
+(i.e. decoded from horrible one-liner json into [pyaml](https://github.com/mk-fg/pretty-yaml)),
+so that they can be tracked in e.g. git.
+
+Written out of frustration about how YouTube Center seem to loose its shit and
+resets config sometimes.
+
+Can/should be extended to all sorts of other ff/ext settings in the future.
 
 
 

@@ -1,0 +1,177 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from os.path import ( join, exists, isfile, isdir, splitext,
+	expanduser, dirname, basename, realpath, abspath )
+from contextlib import contextmanager, closing
+from collections import defaultdict, OrderedDict, namedtuple
+from tempfile import NamedTemporaryFile
+from hashlib import sha384
+import os, sys, logging, io, types, re, random, json
+import sqlite3, ConfigParser
+
+import lya, pyaml
+
+
+class AdHocException(Exception): pass
+
+def get_profile_dir(profile):
+	if profile:
+		if profile.startswith(os.sep): return profile
+		profile = profile.lower() # for ci comparisons
+
+	ff_home = expanduser('~/.mozilla/firefox')
+	profiles = ConfigParser.RawConfigParser()
+	profiles.read(join(ff_home, 'profiles.ini'))
+
+	profile_path, paths = None, list()
+	for k in profiles.sections():
+		if not k.startswith('Profile'): continue
+		name = profiles.get(k, 'Name').strip().lower()
+		path = profiles.get(k, 'Path')
+		if profile is not None and name == profile:
+			profile_path = path
+			break
+		if profile:
+			paths.append(path)
+			continue
+		if profile_path: continue
+		try:
+			if not profiles.getboolean(k, 'Default'): raise AdHocException
+		except (ConfigParser.NoOptionError, AdHocException): pass
+		else: profile_path = path
+	else:
+		for path in paths:
+			if profile in path.lower():
+				profile_path = path
+				break
+		assert profile_path, profile
+
+	profile_path = join(ff_home, profile_path)
+	assert isdir(profile_path), [name, profile_path]
+	return profile_path
+
+
+class BackupStuff(object):
+
+	def __init__(self, cfg):
+		self.cfg = cfg
+
+	def sqlite_dict_row(self, cursor, row):
+		row = sqlite3.Row(cursor, row)
+		return dict((k, row[k]) for k in row.keys())
+
+	def sqlite_conn(self, *db_path):
+		db_path = join(self.cfg.common.profile_dir, *db_path)
+		assert isfile(db_path), db_path
+		conn = sqlite3.connect(db_path, timeout=self.cfg.common.sqlite_timeout)
+		conn.row_factory = self.sqlite_dict_row
+		return conn
+
+	def sane_hash(self, data, trim=20, prefix='ff_stuff_backup:'):
+		return sha384('{}\0{}'.format(prefix, bytes(data)))\
+			.digest().encode('base64').rstrip('=\n').replace('/', '-')[:trim]
+
+	def ytcenter_clean(self, data, strip, log=None):
+		assert isinstance(data, dict), [type(data), data]
+		if not strip: return data
+		for k, v in strip.viewitems():
+			if v is None:
+				if k not in data:
+					log.debug('Missing cleanup key %r, keys: %r', k, data.keys())
+				data.pop(k, None)
+			elif k not in data: continue
+			else:
+				self.ytcenter_clean( data[k], v,
+					log=log or logging.getLogger('ytcenter') )
+		return data
+
+	def ytcenter_get(self):
+		conf, log = self.cfg.ytcenter, logging.getLogger('ytcenter')
+		data = OrderedDict(_hashes=OrderedDict())
+		with self.sqlite_conn(conf.db.path) as conn:
+			with closing(conn.cursor()) as c:
+				c.execute('select * from scriptvals')
+				db_dump = c.fetchall()
+				if db_dump:
+					assert len(db_dump[0]) == 2\
+						and not set(db_dump[0].viewkeys()).difference(['name', 'value']),\
+						db_dump[0]
+				db_dump = dict(it.imap(op.itemgetter('name', 'value'), db_dump))
+			for name in conf.db.process:
+				if name not in db_dump:
+					log.error('Unable to find db key: %r', name)
+					continue
+				val = json.loads(json.loads(db_dump.pop(name))) # double-json \o/
+				assert name not in data, [name, data.keys()]
+				data[name] = self.ytcenter_clean(val, conf.strip, log=log)
+			for name, val in db_dump.viewitems():
+				if name not in conf.db.skip:
+					log.warn('Unmatched db key: %r', name)
+					continue
+				skip_conf = conf.db.skip[name]
+				if skip_conf.get('hash'):
+					data['_hashes'][name] = self.sane_hash(val)
+		return data
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to export various data from firefox profile dir.')
+
+	parser.add_argument('-P', '--profile', metavar='name/key/path',
+		help='Full firefox profile name, profile directory name'
+			' or its fragment, or a full path to profile dir (default: use default profile).')
+	parser.add_argument('-t', '--db-lock-timeout', type=float, metavar='seconds',
+		help='Timeout to acquire sqlite transaction locks (default: %(default)ss).')
+
+	parser.add_argument('-c', '--config',
+		action='append', metavar='path', default=list(),
+		help='YAML configuration files to process.'
+			' Can be specified more than once.'
+			' Values from the latter ones override values in the former.'
+			' Available CLI options override the values in any config.')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	cfg = lya.AttrDict.from_yaml('{}.yaml'.format(splitext(realpath(__file__))[0]))
+	for k in opts.config: cfg.update_yaml(k)
+
+	global log
+	import logging
+	lya.configure_logging(cfg.get('logging'), debug=opts.debug)
+	log = logging.getLogger()
+
+	if opts.profile is not None:
+		cfg.common.profile_dir = opts.profile
+	if opts.db_lock_timeout is not None:
+		cfg.common.sqlite_timeout = opts.db_lock_timeout
+
+	if opts.debug:
+		global pyaml, dump
+		try:
+			import pyaml
+		except ImportError:
+			# Only crash when/if this debug printer actually gets used
+			err_type, err_val, err_tb = sys.exc_info()
+			def pyaml_dump(*args,**kws): raise err_type, err_val, err_tb
+			pyaml = type('pyaml_mock', (object,), dict(dump=pyaml_dump))()
+		else:
+			pyaml.UnsafePrettyYAMLDumper.add_representer(
+				sqlite3.Row, lambda s,o: s.represent_dict(dict((k, o[k]) for k in o.keys())) )
+		dump = ft.partial(pyaml.dump, dst=sys.stdout, force_embed=True)
+
+	cfg.common.profile_dir = get_profile_dir(cfg.common.profile_dir)
+	log.debug('Using ff profile dir: %s', cfg.common.profile_dir)
+	backup = BackupStuff(cfg)
+
+	data = OrderedDict()
+	data['ytcenter'] = backup.ytcenter_get()
+	pyaml.dump(data, sys.stdout)
+
+
+if __name__ == '__main__': sys.exit(main())

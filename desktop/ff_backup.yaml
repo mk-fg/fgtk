@@ -1,0 +1,26 @@
+
+ytcenter:
+
+  db:
+    path: gm_scripts/YouTube_Center.db
+
+    process: # which json-dumps to backup (in that order)
+      - YouTubeCenterSettings
+
+    skip: # options for json-dumps to skip during parsing
+      ytcenter_v1.3_settings: # can be null
+        hash: true # dump hash of the value (to detect if it changes)
+
+  strip: # hierarchy of keys with null leaf values (those leaves will be removed)
+    videoThumbnailData:
+    cache:
+    watchedVideos:
+    updateCheckerLastUpdate:
+
+
+common:
+  profile_dir: # null - use default profile
+  sqlite_timeout: 30
+
+
+logging:
