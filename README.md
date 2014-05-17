@@ -790,6 +790,22 @@ resets config sometimes.
 
 Can/should be extended to all sorts of other ff/ext settings in the future.
 
+##### bt_agent
+
+BlueZ bluetooth authorization agent script/daemon.
+
+Usually included into DE-specific bluetooth applet or can be used from
+"bluetoothctl" shell (`agent on`), but I don't have former (plus just don't want
+to rely on any DE much) and latter isn't suitable to run daemonized.
+
+When run interactively (default), will ask permission (y/n) to authorize new
+pairings and PINs for these.
+
+With `--authorize-services` option (and optional list of bdaddrs), will allow
+any paired device to (re-)connect without asking, and `--non-interactive` flag
+will turn off any possible prompts, allowing to run it in the background to only
+authorize paired (and/or whitelisted) devices.
+
 
 
 ### UFS

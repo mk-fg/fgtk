@@ -1,0 +1,210 @@
+#!/usr/bin/python
+from __future__ import absolute_import, print_function, unicode_literals
+
+import dbus, dbus.service, dbus.mainloop.glib
+from gi.repository import GObject
+import sys, re
+
+def get_bus():
+	global bus
+	if not bus: bus = dbus.SystemBus()
+	return bus
+
+bus = None
+iface_base = 'org.bluez'
+iface_dev = '{}.Device1'.format(iface_base)
+iface_adapter = '{}.Adapter1'.format(iface_base)
+
+### ~bluezutils.py
+
+def get_managed_objects():
+	bus = get_bus()
+	manager = dbus.Interface(bus.get_object('org.bluez', '/'), 'org.freedesktop.DBus.ObjectManager')
+	return manager.GetManagedObjects()
+
+def find_adapter(pattern=None):
+	return find_adapter_in_objects(get_managed_objects(), pattern)
+
+def find_adapter_in_objects(objects, pattern=None):
+	bus = get_bus()
+	for path, ifaces in objects.iteritems():
+		adapter = ifaces.get(iface_adapter)
+		if adapter is None: continue
+		if not pattern or pattern == adapter['Address'] or path.endswith(pattern):
+			obj = bus.get_object(iface_base, path)
+			return dbus.Interface(obj, iface_adapter)
+	raise Exception('Bluetooth adapter not found')
+
+def find_device(device_address, adapter_pattern=None):
+	return find_device_in_objects(get_managed_objects(), device_address, adapter_pattern)
+
+def find_device_in_objects(objects, device_address, adapter_pattern=None):
+	bus = get_bus()
+	path_prefix = ''
+	if adapter_pattern:
+		adapter = find_adapter_in_objects(objects, adapter_pattern)
+		path_prefix = adapter.object_path
+	for path, ifaces in objects.iteritems():
+		device = ifaces.get(iface_dev)
+		if device is None: continue
+		if device['Address'] == device_address and path.startswith(path_prefix):
+			obj = bus.get_object(iface_base, path)
+			return dbus.Interface(obj, iface_dev)
+	raise Exception('Bluetooth device not found')
+
+
+### Agent
+
+def agent_method(sig_in='', sig_out=''):
+	return dbus.service.method(
+		'org.bluez.Agent1', in_signature=sig_in, out_signature=sig_out )
+
+class Rejected(dbus.DBusException):
+	_dbus_error_name = 'org.bluez.Error.Rejected'
+
+class Agent(dbus.service.Object):
+
+	exit_on_release = True
+	auth_svc = False
+
+	def __init__(self, bus, path, auth_svc=None):
+		if auth_svc is not None: self.auth_svc = auth_svc
+		super(Agent, self).__init__(bus, path)
+
+
+	def ask(self, prompt):
+		try: return raw_input(prompt)
+		except: return input(prompt)
+
+	def props(self, path, k, v=None, iface=iface_dev):
+		props = dbus.Interface(
+			get_bus().get_object('org.bluez', path),
+			'org.freedesktop.DBus.Properties' )
+		if v is not None: props.Set(iface, k, v)
+		else: return props.Get(iface, k)
+
+	def set_trusted(self, path):
+		self.props(path, 'Trusted', True)
+
+	def get_bdaddr(self, path):
+		return self.props(path, 'Address').lower()
+
+
+	@agent_method()
+	def Release(self):
+		log.info('Release')
+		if self.exit_on_release: mainloop.quit()
+
+	@agent_method('os')
+	def AuthorizeService(self, device, uuid):
+		log.info('AuthorizeService (%s, %s)', device, uuid)
+		if not self.auth_svc:
+			authorize = ask('Authorize connection (yes/no, dev: {}, uuid: {}): '.format(device, uuid))
+			if authorize == 'yes': return
+			raise Rejected('Connection rejected by user')
+		elif not isinstance(self.auth_svc, bool):
+			bdaddr = self.get_bdaddr(device)
+			if bdaddr not in self.auth_svc:
+				log.info('Rejecting service auth request from non-whitelisted device (bdaddr: %r)', bdaddr)
+				raise Rejected('Connection rejected by user')
+
+	@agent_method('o')
+	def RequestAuthorization(self, device):
+		log.info('RequestAuthorization (%s)', device)
+		auth = ask('Authorize? (yes/no): ')
+		if auth == 'yes': return
+		raise Rejected('Pairing rejected')
+
+	@agent_method('o', 's')
+	def RequestPinCode(self, device):
+		log.info('RequestPinCode (%s)', device)
+		self.set_trusted(device)
+		return ask('Enter PIN Code: ')
+
+	@agent_method('o', 'u')
+	def RequestPasskey(self, device):
+		log.info('RequestPasskey (%s)', device)
+		self.set_trusted(device)
+		passkey = ask('Enter passkey: ')
+		return dbus.UInt32(passkey)
+
+	@agent_method('ouq')
+	def DisplayPasskey(self, device, passkey, entered):
+		log.info('DisplayPasskey (%s, %06u entered %u)', device, passkey, entered)
+
+	@agent_method('os')
+	def DisplayPinCode(self, device, pincode):
+		log.info('DisplayPinCode (%s, %s)', device, pincode)
+
+	@agent_method('ou')
+	def RequestConfirmation(self, device, passkey):
+		log.info('RequestConfirmation (%s, %06d)', device, passkey)
+		confirm = ask('Confirm passkey (yes/no): ')
+		if confirm == 'yes':
+			self.set_trusted(device)
+			return
+		raise Rejected('Passkey doesnt match')
+
+	@agent_method('')
+	def Cancel(self):
+		log.info('Cancel')
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-a', '--authorize-services',
+		default=False, nargs='?', metavar='whitelist_file',
+		help='Auto-autorize services from "trusted" (bluez concept) devices.'
+			' Optional argument for the option can be a path to a whitelist'
+				' file with bdaddrs (in xx:xx:xx:xx:xx:xx format) to allow connections from,'
+				' while explicitly blocking all others'
+				' (default with this option is to allow any one marked as "trusted").')
+	parser.add_argument('-n', '--non-interactive', action='store_true',
+		help='Do not require any interactive input (to e.g. run as daemon).')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args()
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	log = logging.getLogger()
+
+	cap = 'KeyboardDisplay' if not opts.non_interactive else 'NoInputNoOutput'
+	auth = True if opts.authorize_services is None else opts.authorize_services
+	if not isinstance(auth, bool):
+		auth_path = auth
+		with open(auth_path, 'rb') as src:
+			auth = set(filter(None, (line.strip().lower() for line in src.readlines())))
+		for bdaddr in auth:
+			if not re.match(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', bdaddr):
+				log.warn('Invalid bdaddr (file: %r), skipped: %r', auth_path, bdaddr)
+		log.debug('Loaded bdaddr whitelist (entries: %s)', len(auth))
+
+	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+	bus, path = get_bus(), '/test/agent'
+	agent = Agent(bus, path, auth_svc=auth)
+	mainloop = GObject.MainLoop()
+
+	device = find_adapter()
+	dbus.Interface(
+			bus.get_object('org.bluez', device.object_path),
+			'org.freedesktop.DBus.Properties')\
+		.Set('org.bluez.Adapter1', 'Powered', True)
+	log.debug('Device powered on')
+
+	obj = bus.get_object('org.bluez', '/org/bluez')
+	manager = dbus.Interface(obj, 'org.bluez.AgentManager1')
+	manager.RegisterAgent(path, cap)
+	log.debug('Agent registered')
+
+	manager.RequestDefaultAgent(path)
+
+	log.debug('Entering main glib eventloop')
+	mainloop.run()
+	log.debug('glib eventloop finished')
+
+	adapter.UnregisterAgent(path)
+	log.debug('Agent unregistered')
+
+if __name__ == '__main__': sys.exit(main())
