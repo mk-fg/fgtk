@@ -180,7 +180,7 @@ def main(args=None):
 
 	global log
 	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
 	interactive = not opts.non_interactive
