@@ -1,0 +1,141 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+from collections import defaultdict, OrderedDict
+from os.path import join, basename, dirname, islink, isfile, isdir
+import os, sys, re
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to cleanup /boot'
+			' from older kernels and config/System.map files.')
+
+	parser.add_argument('-d', '--boot-dir', default='/boot',
+		help='Path to dir where kernels and'
+			' config/System.map files are stored (default: %(default)s).')
+
+	parser.add_argument('-f', '--free-space-min',
+		type=float, default=20, metavar='percent',
+		help='Target min free space amount after cleanup (default: %(default)s).')
+	parser.add_argument('-m', '--keep-min',
+		type=int, default=3, metavar='count',
+		help='Min number of older version to keep (default: %(default)s).')
+	parser.add_argument('-o', '--clean-old', action='store_true',
+		help='Remove all non-linked ".old" variants, if any.'
+			' These are treated same as slightly older versions by default.')
+	parser.add_argument('-c', '--keep-configs', action='store_true',
+		help='Keep config-* files, removing only vmlinuz-* and System.map-*.')
+
+	parser.add_argument('-n', '--dry-run',
+		action='store_true', help='Do not actually remove anything.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	os.chdir(opts.boot_dir)
+
+	path_re = re.compile(r'^(vmlinuz|config|System\.map)-(\d+\.\d+\.\d+)-.*?(\.old)?$')
+	path_v = lambda v,old: tuple(map(int, v.split('.'))) + (int(not bool(old)),)
+	format_v = lambda v: '.'.join(map(bytes, v))
+
+
+	## Prepare ordered by-version hashes
+
+	# Hash by-version-tuple (e.g. "3, 12, 20, 1" - last "1" is "0" for ".old")
+	# Values are lists of files (vmlinuz, config, System.map) corresponding to each version
+	vfiles = defaultdict(list)
+	for p in os.listdir('.'):
+		m = path_re.search(p)
+		if not m: continue
+		p_type, v = m.group(1), m.group(2)
+		if opts.keep_configs and p_type == 'config': continue
+		v = path_v(v, m.group(3))
+		vfiles[v].append(p)
+	vfiles = OrderedDict(sorted(vfiles.viewitems()))
+
+	# Keep linked version and its .old variant (if any)
+	p_linked = os.readlink('vmlinuz')
+	m = path_re.search(p_linked)
+	assert m, p_linked
+	v_linked = v = path_v(m.group(2), m.group(3))
+	v_linked_major = v_linked[:2]
+	assert v_linked in vfiles, [v, vfiles]
+	rmq_kept = list()
+	for old in 0, 1:
+		v = v[:3] + (old,)
+		if v in vfiles: rmq_kept.append((v, vfiles.pop(v)))
+
+	# Rehash by version_major-version
+	vfiles_by_major = OrderedDict()
+	for v, files in vfiles.viewitems():
+		v_major = v[:2]
+		if v_major not in vfiles_by_major:
+			vfiles_by_major[v_major] = OrderedDict()
+		vfiles_by_major[v_major][v] = files
+
+
+	## Build order in which stuff will be removed until there's enough space
+
+	rmq = OrderedDict()
+
+	# Prioritize .old variants removal for all but linked version
+	if opts.clean_old:
+		for v, files in vfiles.viewitems():
+			if v[4] == 0: rmq[v] = files
+
+	for v_major, files in vfiles_by_major.viewitems():
+		files = files.items()[:-1] # keep last patchset of each major ver, if possible
+		for v, files in files: rmq[v] = files
+
+	# Remove older majors completely as a last-resort
+	for v_major, files in vfiles_by_major.viewitems():
+		v, files = files.items()[-1]
+		rmq[v] = files
+
+	# Keep some number of older versions, if instructed
+	if opts.keep_min > 0:
+		rmq = rmq.items()
+		rmq_kept = OrderedDict(rmq[-opts.keep_min:] + rmq_kept)
+		rmq = OrderedDict(rmq[:-opts.keep_min])
+
+
+	## Removal
+
+	def free():
+		df = os.statvfs('.')
+		return (df.f_bavail * df.f_bsize / float(df.f_blocks * df.f_bsize)) * 100
+
+	rmq_set = set() # check to make sure these don't get repeated anywhere
+	if rmq_kept:
+		log.debug( 'Preserved versions (linked version,'
+			' its ".old" variant, --keep-min): %s', len(rmq_kept) )
+		for v, files in rmq_kept.viewitems():
+			for p in files:
+				log.debug(' - %s - %s', format_v(v), p)
+				rmq_set.add(p)
+
+	rmq_len_start = len(rmq)
+	for v, files in rmq.items():
+		df = free()
+		if df >= opts.free_space_min: break
+		log.debug('Removing files for version (df: %.1f%%): %s', df, format_v(v))
+		for p in files:
+			log.debug(' - %s', p)
+			assert p not in rmq_set, p
+			if not opts.dry_run: os.unlink(p)
+		del rmq[v]
+
+	rmq_len = len(rmq)
+	rmq_len_left = rmq_len + len(rmq_kept)
+	log.debug(
+		'Finished (df: %.1f%%, versions left: %s, versions removed: %s).',
+		df, rmq_len_left, rmq_len_start - rmq_len )
+
+if __name__ == '__main__': sys.exit(main())

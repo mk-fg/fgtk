@@ -101,6 +101,55 @@ and arguments themselves as well with "-a".
 Does not handle unicode filenames at all, will fail for filenames with newlines
 in them, plus all the othere caveats of quick-and-dirty *sh script apply.
 
+##### clean_boot
+
+Script to remove older kernel versions (as installed by /sbin/installkernel)
+from /boot or similar dir.
+
+Always keeps version linked as "vmlinuz", and prioritizes removal of older
+patchset versions from each major one, and only then latest per-major patchset,
+until free space goal (specified percentage, 20% by default) is met.
+
+Also keeps specified number of last-to-remove versions, can prioritize cleanup
+of ".old" verssion variants, keep `config-*` files... and other stuff (see --help).
+
+Example:
+
+	# clean_boot --debug --dry-run -f 100
+	DEBUG:root:Preserved versions (linked version, its ".old" variant, --keep-min): 4
+	DEBUG:root: - 3.9.9.1 - System.map-3.9.9-fg.mf_master
+	DEBUG:root: - 3.9.9.1 - config-3.9.9-fg.mf_master
+	DEBUG:root: - 3.9.9.1 - vmlinuz-3.9.9-fg.mf_master
+	DEBUG:root: - 3.10.27.1 - vmlinuz-3.10.27-fg.mf_master
+	...
+	DEBUG:root: - 3.12.19.1 - System.map-3.12.19-fg.mf_master
+	DEBUG:root: - 3.12.20.1 - config-3.12.20-fg.mf_master
+	DEBUG:root: - 3.12.20.1 - System.map-3.12.20-fg.mf_master
+	DEBUG:root: - 3.12.20.1 - vmlinuz-3.12.20-fg.mf_master
+	DEBUG:root:Removing files for version (df: 58.9%): 3.2.0.1
+	DEBUG:root: - System.map-3.2.0-fg.mf_master
+	DEBUG:root: - config-3.2.0-fg.mf_master
+	DEBUG:root: - vmlinuz-3.2.0-fg.mf_master
+	DEBUG:root:Removing files for version (df: 58.9%): 3.2.1.0
+	... (removal of older patchsets for each major version, 3.2 - 3.12)
+	DEBUG:root:Removing files for version (df: 58.9%): 3.12.18.1
+	... (this was the last non-latest patchset-per-major)
+	DEBUG:root:Removing files for version (df: 58.9%): 3.2.16.1
+	... (removing latest patchset for each major version, starting from oldest - 3.2 here)
+	DEBUG:root:Removing files for version (df: 58.9%): 3.7.9.1
+	...
+	DEBUG:root:Removing files for version (df: 58.9%): 3.8.11.1
+	...
+	DEBUG:root:Finished (df: 58.9%, versions left: 4, versions removed: 66).
+
+("df" doesn't rise here because of --dry-run, "-f 100" = "remove all
+non-preserved" - as df can't really get to 100%)
+
+Note how 3.2.0.1 (non-.old 3.2.0) gets removed first, then 3.2.1, 3.2.2, and so
+on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
+"latest patchset for major" versions, except those that are preserved
+unconditionally (listed at the top).
+
 
 
 ### Content
