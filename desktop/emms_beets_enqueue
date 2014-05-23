@@ -6,6 +6,10 @@ from plumbum import local, SshMachine
 import os, sys, types, yaml, json
 
 
+def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
+	if isinstance(bytes_or_unicode, bytes): return bytes_or_unicode
+	return bytes_or_unicode.encode(encoding, errors)
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -45,7 +49,7 @@ def main(args=None):
 	else:
 		paths = sys.stdin.read()
 
-	for path in filter(None, paths.splitlines()):
+	for path in map(force_bytes, filter(None, paths.splitlines())):
 		if opts.verbose: print(path)
 		if not os.path.exists(path):
 			log.warn('Skipping non-existing path: %s', path)
