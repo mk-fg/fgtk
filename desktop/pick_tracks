@@ -3,7 +3,7 @@
 import itertools as it, operator as op, functools as ft
 from plumbum import local
 from time import time
-from os.path import basename, dirname, join, exists, normpath
+from os.path import basename, dirname, join, exists, normpath, isfile
 import os, sys, re, random, tempfile, traceback, shutil, math
 
 
@@ -18,6 +18,9 @@ def main(argv=None):
 		description='Randomly pick and copy tracks from source to destination.')
 	parser.add_argument('src', nargs='*', help='Source path(s).')
 	parser.add_argument('dst', help='Destination path.')
+
+	parser.add_argument('-l', '--src-list', action='store_true',
+		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
 
 	parser.add_argument('-s', '--min-df',
 		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
@@ -117,11 +120,23 @@ def main(argv=None):
 	# Build file list
 	log.debug('Building list of files in source paths')
 	if optz.src:
-		code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
-		if code or err:
-			sys.stderr.write(err)
-			raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
-		src_files = src_files.splitlines()
+		if optz.src_list:
+			src_lists, src_files = list(), list()
+			for src in optz.src:
+				with open(src) as src: src_lists.append(src.read())
+			for path in '\0'.join(src_lists).replace('\n', '\0').split('\0'):
+				path = path.rstrip('\r')
+				if not path: continue
+				if not isfile(path):
+					log.warn('Skipping path %r: not a file', path)
+					continue
+				src_files.append(path)
+		else:
+			code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
+			if code or err:
+				sys.stderr.write(err)
+				raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
+			src_files = src_files.splitlines()
 	else: src_files = list()
 	log.debug(' - found {} files'.format(len(src_files)))
 
@@ -188,7 +203,7 @@ def main(argv=None):
 		path_dst = join(optz.dst, basename(path))
 		try:
 			if optz.clean_as_necessary: # free space for a file, if requested
-				df_path = os.stat(path).st_size
+				df_path = (os.stat(path).st_size + 1*2**20) * 1.2 # for any possible fs overhead
 				if df < df_path: do_cleanup(df_path)
 			if not optz.dry_run: local['rsync']('--inplace', '--size-only', path, path_dst)
 		except KeyboardInterrupt:
