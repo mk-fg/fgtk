@@ -260,30 +260,6 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-##### ip-ext
-
-Some minor tools for network configuration from scripts, which iproute2 seem to
-be lacking.
-
-For instance, if network interface on a remote machine was (mis-)configured in
-initramfs or wherever to not have link-local IPv6 address, there seem to be no
-way to (re-)add it without doing "ip link down && ip link up", which is a red
-flag for a remote machine over such trivial matter.
-
-`ipv6-link-local` subcommand handles that particular case, generating
-ipv6-lladdr from mac, as per RFC 4291 (as implemented in "netaddr" module) and
-can assign resulting address to the interface, if missing:
-
-```console
-# ip-ext --debug ipv6-link-local -i enp0s9 -x
-DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
-DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
-```
-
-`ip-check` subcommand allows to check if address (ipv4/ipv6) is assigned to any
-of the interfaces and/or run "ip add" (with specified parameters) to assign it,
-if not.
-
 
 
 ### Dev
@@ -586,6 +562,55 @@ module).
 Edit that and do `graphite-scratchpad yaml dash:top < dash.yaml` to replace the
 thing in graphite db with an updated thing.
 Much easier than doing anything with GUI.
+
+##### ip-ext
+
+Some minor tools for network configuration from scripts, which iproute2 seem to
+be lacking.
+
+For instance, if network interface on a remote machine was (mis-)configured in
+initramfs or wherever to not have link-local IPv6 address, there seem to be no
+way to (re-)add it without doing "ip link down && ip link up", which is a red
+flag for a remote machine over such trivial matter.
+
+`ipv6-link-local` subcommand handles that particular case, generating
+ipv6-lladdr from mac, as per RFC 4291 (as implemented in "netaddr" module) and
+can assign resulting address to the interface, if missing:
+
+```console
+# ip-ext --debug ipv6-link-local -i enp0s9 -x
+DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
+DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
+```
+
+`ip-check` subcommand allows to check if address (ipv4/ipv6) is assigned to any
+of the interfaces and/or run "ip add" (with specified parameters) to assign it,
+if not.
+
+##### adhocapd
+
+Picks first wireless dev from `iw dev` and runs hostapd + udhcpd (from busybox)
+on it.
+
+Use-case is plugging wifi usb dongle and creating temporary AP on it - kinda
+like "tethering" functionality in Android and such.
+
+Configuration for both is generated using reasonable defaults - distinctive
+(picked from `ssid_list` at the top of the script) AP name and random password
+(using `passgen` from this repo or falling back to `tr -cd '[:alnum:]'
+</dev/urandom | head -c10`).
+
+Dev, ssid, password, ip range and such can also be specified on the command line
+(see --help).
+
+If inet access thru local machine is needed, don't forget to also do something
+like this (with default ip range of 10.67.35.0/24 and "wlp0s18f2u2" interface
+name):
+
+	# sysctl -w net.ipv4.conf.all.forwarding=1
+	# iptables -t nat -A POSTROUTING -s 10.67.35.0/24 -j MASQUERADE
+	# iptables -A FORWARD -s 10.67.35.0/24 -i wlp0s18f2u2 -j ACCEPT
+	# iptables -A FORWARD -d 10.67.35.0/24 -o wlp0s18f2u2 -j ACCEPT
 
 
 

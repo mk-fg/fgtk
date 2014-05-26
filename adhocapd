@@ -1,0 +1,143 @@
+#!/bin/bash
+
+
+dev= ssid= pass= ip_base=
+
+ssid_list=(
+	'Police Surveillance Van 2'
+	'Abraham LinkSys'
+	'Series of Tubes'
+	'404NetworkUnavailable'
+	'PlzBringVodkaToApt131'
+	'Pretty Fly for a Wi - Fi'
+	'The Banana Stand'
+	'I have wifi and you dont'
+	'Use this one Mom'
+	'No Free Wi-Fi for You'
+	'SUPERthanksforasking'
+	'Network not found'
+	'Skynet Global Defense Network'
+	'youcanthazwireless'
+	'GET OFF MY LAN'
+	'Hide your kids, Hide your Wi-Fi'
+	'lookmanowires'
+	'AllYourBandWidthRbelongToUS'
+)
+
+
+run() {
+	[[ -z "$pass" ]] && pass=$(
+		passgen -w $(random 2 4) 2>/dev/null\
+			|| tr -cd '[:alnum:]' </dev/urandom | head -c10 )
+	[[ -z "$dev" ]] && dev=$(iw dev | awk '$1=="Interface" {print $2; exit}')
+	[[ -z "$ssid" ]] && ssid=${ssid_list[$(random ${#ssid_list[@]})]}
+	[[ -z "$ip_base" ]] && ip_base=10.67.35
+
+	ip_gw="$ip_base".1
+	ip_min="$ip_base".2 ip_max="$ip_base".254
+	ip_mask=255.255.255.0 ip_cidr=24
+
+	echo '--------------------'
+	echo "dev: $dev"
+	echo "ssid: $ssid"
+	echo "pass: $pass"
+	echo "ip: $ip_min - $ip_max ($ip_mask), gw: $ip_gw"
+	echo '--------------------'
+
+	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
+	trap "rm -rf '$conf'; pkill -g 0" EXIT
+	set -e
+
+#################### udhcpd.conf
+	udhcpd_conf="$conf"/udhcpd.conf
+	udhcpd_pid="$conf"/udhcpd.pid
+	udhcpd_leases="$conf"/udhcpd.leases
+	cat >"$udhcpd_conf" <<EOF
+start $ip_min
+end $ip_max
+option subnet $ip_mask
+option dns 8.8.8.8
+
+interface $dev
+
+pidfile $udhcpd_pid
+lease_file $udhcpd_leases
+EOF
+#################### udhcpd.conf
+
+#################### hostapd.conf
+	hostapd_conf="$conf"/hostapd.conf
+	cat >"$hostapd_conf" <<EOF
+# http://hostap.epitest.fi/gitweb/gitweb.cgi?p=hostap.git;a=blob_plain;f=hostapd/hostapd.conf
+
+interface=$dev
+
+driver=nl80211
+hw_mode=g
+channel=2
+
+country_code=RU
+ieee80211d=1
+
+ssid=$ssid
+
+macaddr_acl=0
+ignore_broadcast_ssid=0
+
+auth_algs=1
+wpa=3
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+wpa_passphrase=$pass
+
+logger_syslog=0
+logger_syslog_level=4
+logger_stdout=-1
+logger_stdout_level=1
+EOF
+#################### hostapd.conf
+
+	ip link set $dev up
+	ip addr add "${ip_gw}/${ip_cidr}" dev $dev ||:
+	hostapd "$hostapd_conf" &
+	touch "$udhcpd_leases"
+	busybox udhcpd -f "$udhcpd_conf" &
+	wait
+}
+
+
+random() {
+	local min="$1" max="$2"
+	[[ -z "$max" ]] && { min=0; max=$min; }
+	echo $(( ( $max - $min ) *  RANDOM  / 32767 + $min ))
+}
+
+
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-h|--help) echo "Usage: $0 $(awk\
+				'/^\s+case\>/ {parse=1; next}
+				/^\s+esac\>/ {exit}
+				!parse {next}
+				match($0, /^\s*([\-|a-z]+)\)/, a) {
+					if (ac==0 || ac<2) ac=""; else ac=sprintf(" ...(%s)", ac-1)
+					if (ap) printf("[ %s%s ] ", ap, ac)
+					ap=a[1]; ac=0 }
+				{for (i=1;i<NF;i++) if (match($i, /\<shift\>/)) ac++}' $0)"
+			exit 0 ;;
+
+		-x) shift; set -x ;;
+		-d|--dev) shift; dev="$1"; shift ;;
+		-s|--ssid) shift; ssid="$1"; shift ;;
+		-p|--pass) shift; pass="$1"; shift ;;
+		-a|--ip-base) shift; ip_base="$1"; shift ;;
+
+		welp) exit 1 ;;
+		*) echo "Unknown option: $1" && exit 1 ;;
+	esac
+done
+
+
+run
+exit 0
