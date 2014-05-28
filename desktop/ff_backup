@@ -59,6 +59,7 @@ class BackupStuff(object):
 	def __init__(self, cfg):
 		self.cfg = cfg
 
+
 	def sqlite_dict_row(self, cursor, row):
 		row = sqlite3.Row(cursor, row)
 		return dict((k, row[k]) for k in row.keys())
@@ -73,6 +74,32 @@ class BackupStuff(object):
 	def sane_hash(self, data, trim=20, prefix='ff_stuff_backup:'):
 		return sha384('{}\0{}'.format(prefix, bytes(data)))\
 			.digest().encode('base64').rstrip('=\n').replace('/', '-')[:trim]
+
+	def profile_file(self, *path, **opts):
+		return io.open(join(self.cfg.common.profile_dir, *path), **opts)
+
+	def _xml_to_py(self, tree):
+		root = dict()
+		if tree.items():
+			root['_attrs'] = dict(tree.items())
+		for node in tree:
+			ext_node = self._xml_to_py(node)
+			if node.tag in root:
+				if isinstance(root[node.tag], (list, tuple)):
+					root[node.tag].append(ext_node)
+				else:
+					root[node.tag] = [root[node.tag], ext_node]
+			else: root[node.tag] = ext_node
+		if tree.text is not None:
+			text = tree.text.strip()
+			root['_text'] = text
+		return root
+
+	def xml_to_py(self, xml_str):
+		from xml.etree import ElementTree
+		tree = ElementTree.fromstring(xml_str)
+		return {tree.tag: self._xml_to_py(tree)}
+
 
 	def ytcenter_clean(self, data, strip, log=None):
 		assert isinstance(data, dict), [type(data), data]
@@ -90,8 +117,11 @@ class BackupStuff(object):
 
 	def ytcenter_get(self):
 		conf, log = self.cfg.ytcenter, logging.getLogger('ytcenter')
+		if not conf.enabled: return
+
 		data = OrderedDict(_hashes=OrderedDict())
 		with self.sqlite_conn(conf.db.path) as conn:
+
 			with closing(conn.cursor()) as c:
 				c.execute('select * from scriptvals')
 				db_dump = c.fetchall()
@@ -100,6 +130,7 @@ class BackupStuff(object):
 						and not set(db_dump[0].viewkeys()).difference(['name', 'value']),\
 						db_dump[0]
 				db_dump = dict(it.imap(op.itemgetter('name', 'value'), db_dump))
+
 			for name in conf.db.process:
 				if name not in db_dump:
 					log.error('Unable to find db key: %r', name)
@@ -107,6 +138,7 @@ class BackupStuff(object):
 				val = json.loads(json.loads(db_dump.pop(name))) # double-json \o/
 				assert name not in data, [name, data.keys()]
 				data[name] = self.ytcenter_clean(val, conf.strip, log=log)
+
 			for name, val in db_dump.viewitems():
 				if name not in conf.db.skip:
 					log.warn('Unmatched db key: %r', name)
@@ -114,7 +146,24 @@ class BackupStuff(object):
 				skip_conf = conf.db.skip[name]
 				if skip_conf.get('hash'):
 					data['_hashes'][name] = self.sane_hash(val)
+
 		return data
+
+
+	def convergence_get(self):
+		conf, log = self.cfg.convergence, logging.getLogger('convergence')
+		if not conf.enabled: return
+
+		with self.sqlite_conn(conf.fingerprint_db) as conn:
+			with closing(conn.cursor()) as c:
+				c.execute('select * from fingerprints')
+				fp_list = sorted(c.fetchall(), key=op.itemgetter('id'))
+		for fp in fp_list: del fp['id']
+
+		with self.profile_file(conf.notaries_xml) as src:
+			notaries = self.xml_to_py(src.read())
+
+		return dict(fingerprints=fp_list, notaries=notaries)
 
 
 def main(args=None):
@@ -171,6 +220,7 @@ def main(args=None):
 
 	data = OrderedDict()
 	data['ytcenter'] = backup.ytcenter_get()
+	data['convergence'] = backup.convergence_get()
 	pyaml.dump(data, sys.stdout)
 
 

@@ -1,5 +1,6 @@
 
 ytcenter:
+  enabled: true
 
   db:
     path: gm_scripts/YouTube_Center.db
@@ -18,6 +19,11 @@ ytcenter:
     updateCheckerLastUpdate:
     experimentalFeatureTopGuide:
     resize-playersizes:
+
+convergence:
+  enabled: true
+  fingerprint_db: convergence.sqlite
+  notaries_xml: convergence.xml
 
 
 common:
