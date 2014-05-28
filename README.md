@@ -862,7 +862,8 @@ so that they can be tracked in e.g. git.
 Written out of frustration about how YouTube Center seem to loose its shit and
 resets config sometimes.
 
-Can/should be extended to all sorts of other ff/ext settings in the future.
+Can/should be extended to all sorts of other ff/ext settings in the future - and
+probably is already, see its yaml config for details.
 
 ##### bt_agent
 
