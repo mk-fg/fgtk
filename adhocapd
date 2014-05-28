@@ -36,12 +36,17 @@ run() {
 	ip_gw="$ip_base".1
 	ip_min="$ip_base".2 ip_max="$ip_base".254
 	ip_mask=255.255.255.0 ip_cidr=24
+	ip_net="${ip_base}.0/${ip_cidr}"
 
 	echo '--------------------'
 	echo "dev: $dev"
 	echo "ssid: $ssid"
 	echo "pass: $pass"
 	echo "ip: $ip_min - $ip_max ($ip_mask), gw: $ip_gw"
+	echo '--------------------'
+	echo "iptables -t nat -I POSTROUTING -s ${ip_net} -j MASQUERADE"
+	echo "iptables -I FORWARD -s ${ip_net} -i ${dev} -j ACCEPT"
+	echo "iptables -I FORWARD -d ${ip_net} -o ${dev} -j ACCEPT"
 	echo '--------------------'
 
 	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
