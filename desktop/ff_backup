@@ -58,6 +58,7 @@ class BackupStuff(object):
 
 	def __init__(self, cfg):
 		self.cfg = cfg
+		self.cfg_data = self.cfg.data_types
 
 
 	def sqlite_dict_row(self, cursor, row):
@@ -116,8 +117,7 @@ class BackupStuff(object):
 		return data
 
 	def ytcenter_get(self):
-		conf, log = self.cfg.ytcenter, logging.getLogger('ytcenter')
-		if not conf.enabled: return
+		conf, log = self.cfg_data.ytcenter, logging.getLogger('ytcenter')
 
 		data = OrderedDict(_hashes=OrderedDict())
 		with self.sqlite_conn(conf.db.path) as conn:
@@ -151,8 +151,7 @@ class BackupStuff(object):
 
 
 	def convergence_get(self):
-		conf, log = self.cfg.convergence, logging.getLogger('convergence')
-		if not conf.enabled: return
+		conf, log = self.cfg_data.convergence, logging.getLogger('convergence')
 
 		with self.sqlite_conn(conf.fingerprint_db) as conn:
 			with closing(conn.cursor()) as c:
@@ -166,10 +165,36 @@ class BackupStuff(object):
 		return dict(fingerprints=fp_list, notaries=notaries)
 
 
+	def tabs_get(self):
+		conf, log = self.cfg_data.tabs, logging.getLogger('tabs')
+
+		with self.profile_file(conf.file) as src: session = json.load(src)
+
+		tabs = dict()
+		for win in session['windows']:
+			for tab in win.get('tabs', list()):
+				if tab.get('hidden'): continue
+				entries = tab.get('entries')
+				if not entries: continue
+				last_entry = entries[-1]
+				title, url = (last_entry.get(k) for k in ['title', 'url'])
+				assert url, tab
+				tabs[title or url] = url
+
+		return tabs
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Tool to export various data from firefox profile dir.')
+
+	parser.add_argument('type', nargs='?',
+		help='Dump only specified data type, ignoring "enabled" parameters in config file.'
+			' Name corresponds directly to a config file section under "data_types"'
+				' - e.g. ytcenter, convergence, tabs.'
+			' Use-case is getting specific data from ff,'
+				' e.g. "ff_backup tabs" to get all currently open tabs.')
 
 	parser.add_argument('-P', '--profile', metavar='name/key/path',
 		help='Full firefox profile name, profile directory name'
@@ -199,6 +224,12 @@ def main(args=None):
 		cfg.common.profile_dir = opts.profile
 	if opts.db_lock_timeout is not None:
 		cfg.common.sqlite_timeout = opts.db_lock_timeout
+	if opts.type:
+		if opts.type not in cfg.data_types:
+			parser.error(( 'Specified data type ({!r}) is not supported.'
+				' Supported ones: {}' ).format(opts.type, ', '.join(cfg.data_types)))
+		for k, v in cfg.data_types.viewitems():
+			v.enabled = k == opts.type
 
 	if opts.debug:
 		global pyaml, dump
@@ -219,8 +250,9 @@ def main(args=None):
 	backup = BackupStuff(cfg)
 
 	data = OrderedDict()
-	data['ytcenter'] = backup.ytcenter_get()
-	data['convergence'] = backup.convergence_get()
+	for k, v in cfg.data_types.viewitems():
+		if not v.enabled: continue
+		data[k] = getattr(backup, '{}_get'.format(k))()
 	pyaml.dump(data, sys.stdout)
 
 

@@ -1,29 +1,35 @@
 
-ytcenter:
-  enabled: true
+data_types:
 
-  db:
-    path: gm_scripts/YouTube_Center.db
+  ytcenter:
+    enabled: true
 
-    process: # which json-dumps to backup (in that order)
-      - YouTubeCenterSettings
+    db:
+      path: gm_scripts/YouTube_Center.db
 
-    skip: # options for json-dumps to skip during parsing
-      ytcenter_v1.3_settings: # can be null
-        hash: true # dump hash of the value (to detect if it changes)
+      process: # which json-dumps to backup (in that order)
+        - YouTubeCenterSettings
 
-  strip: # hierarchy of keys with null leaf values (those leaves will be removed)
-    videoThumbnailData:
-    cache:
-    watchedVideos:
-    updateCheckerLastUpdate:
-    experimentalFeatureTopGuide:
-    resize-playersizes:
+      skip: # options for json-dumps to skip during parsing
+        ytcenter_v1.3_settings: # can be null
+          hash: true # dump hash of the value (to detect if it changes)
 
-convergence:
-  enabled: true
-  fingerprint_db: convergence.sqlite
-  notaries_xml: convergence.xml
+    strip: # hierarchy of keys with null leaf values (those leaves will be removed)
+      videoThumbnailData:
+      cache:
+      watchedVideos:
+      updateCheckerLastUpdate:
+      experimentalFeatureTopGuide:
+      resize-playersizes:
+
+  convergence:
+    enabled: true
+    fingerprint_db: convergence.sqlite
+    notaries_xml: convergence.xml
+
+  tabs:
+    enabled: false
+    file: sessionstore.js
 
 
 common:
