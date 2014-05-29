@@ -170,13 +170,13 @@ class BackupStuff(object):
 
 		with self.profile_file(conf.file) as src: session = json.load(src)
 
-		tabs = dict()
+		tabs = OrderedDict()
 		for win in session['windows']:
 			for tab in win.get('tabs', list()):
 				if tab.get('hidden'): continue
 				entries = tab.get('entries')
 				if not entries: continue
-				last_entry = entries[-1]
+				last_entry = entries[tab['index'] - 1] # index is 1-base there
 				title, url = (last_entry.get(k) for k in ['title', 'url'])
 				assert url, tab
 				tabs[title or url] = url
