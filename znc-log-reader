@@ -54,6 +54,7 @@ _short_ts_regexp = _short_ts_regexp()
 def parse_timestamp(val):
 	'''Match time either in human-readable format (as accepted by dateutil),
 		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
+	assert isinstance(val, bytes), repr(val)
 	val = val.replace('_', ' ')
 
 	# Try to parse time offset in short format, similar to how it's presented
@@ -74,7 +75,21 @@ def parse_timestamp(val):
 
 	# Fallback to other generic formats
 	ts = None
-	if dateutil_parser: # try dateutil module, if available
+	if not ts:
+		match = re.search( # BE format used in output
+			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', val )
+		if match:
+			tpl = 'y' if not match.group('Y') else 'Y'
+			tpl, ts_str = '%{}-%m-%d'.format(tpl), match.group('date')
+			if match.group('time'):
+				tpl_time = ['%H', '%M', '%S']
+				ts_str_time = match.group('time').split(':')
+				ts_str += ' ' + ':'.join(ts_str_time)
+				tpl += ' ' + ':'.join(tpl_time[:len(ts_str_time)])
+			try: ts = datetime.strptime(ts_str, tpl)
+			except ValueError: pass
+	if not ts and dateutil_parser: # try dateutil module, if available
 		# dateutil fails to parse textual dates like "yesterday"
 		try: ts = dateutil_parser.parse(val)
 		except: pass # dateutil isn't very good and throws various random crap
