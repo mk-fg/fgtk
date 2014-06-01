@@ -71,6 +71,10 @@ parser.add_option('-x', '--posix-subset', action='store_true',
 	help='Dont raise errors on failures of ops like chmod/chown'
 			' and try workarounds for some file creation/open flags like O_TRUNC.'
 		' Intended for usage with not-quite-posix filesystems, e.g. mounted via fuse drivers.')
+parser.add_option('--no-acl', action='store_true',
+	help='Pretend that POSIX ACLs do not exist.'
+		' Useful as every other LTS (even-numbered) release of linux kernel'
+			' seem to crash on these with e.g. some NULL dereference "Oops".')
 
 parser.add_option('--debug',
 	action='store_true', dest='debug',
@@ -149,12 +153,15 @@ errz_critical = False # should be either false or equal to errz
 
 ## Following imports substitute unsupported feats with mock functions,
 ##  producing empty-set data on get operations and warnings instead of changes
-feat_get, feat_set = lambda *a: None, lambda *a,**k: log.warn(
+feat_get, feat_set = lambda *a,**k: None, lambda *a,**k: log.warn(
 	'Setting {0} is not supported in this fgc module build'.format(k['feat']) )
 try: from fgc.strcaps import get_file as strcaps_get, set_file as strcaps_set
 except ImportError:
 	strcaps_get, strcaps_set = feat_get, ft.partial(feat_set, feat='posix caps')
 try:
+	if optz.no_acl:
+		sh.acl = None # XXX
+		raise ImportError
 	from fgc.acl import get as acl_get, unset as acl_unset,\
 		is_mode as acl_is_mode, get_mode as acl_get_mode
 except ImportError:
