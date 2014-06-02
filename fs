@@ -33,8 +33,9 @@ class FSOps(object):
 	def mv(self):
 		opts, ops = self.opts, self.opts_flow_parse()
 		if not opts.relocate: mv_func = sh.mv
-		else: # goal here is to create link in place of a file/dir asap
+		else:
 			def mv_func(src, dst, attrs):
+				# Goal here is to create link in place of a file/dir asap
 				tmp = None
 				try: os.rename(src, dst)
 				except OSError:
@@ -46,15 +47,22 @@ class FSOps(object):
 							attrs=attrs, atom=ft.partial(sh.cp_d, skip_ts=False) )
 						tmp = NamedTemporaryFile( dir=dirname(src),
 							prefix='{}.'.format(basename(src)), delete=False )
+						os.unlink(tmp.name) # src is a dir
 						os.rename(src, tmp.name)
 				sh.ln((abspath(dst) if not opts.relative else sh.relpath(dst, src)), src)
 				if tmp: sh.rr(tmp.name, onerror=False)
 
 		# attrs is implied if uid=0, otherwise disabled, unless specified explicitly in any way
-		attrs = opts.attrs if opts.attrs is not None else not bool(os.getuid())
+		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
 
-		for src,dst in ops:
-			mv_func(src, sh.join(dst, basename(src)) if sh.isdir(dst) else dst, attrs=attrs)
+		for src, dst in ops:
+			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
+			mv_func(src, dst, attrs=attrs)
+			if opts.new_owner:
+				dst_stat = os.stat(dirname(dst))
+				sh.chown( dst,
+					dst_stat.st_uid, dst_stat.st_gid,
+					recursive=True, dereference=False )
 
 
 def main(args=None):
@@ -104,10 +112,13 @@ def main(args=None):
 		cmd.add_argument('-N', '--no-priv-attrs', action='store_true',
 			help='Inhibit fs metadata copying (direct uid/gid/whatever setting will'
 				' still work as requested) ops which may require elevated privileges.')
+		cmd.add_argument('-o', '--new-owner', action='store_true',
+			help='Chown destination path according uid/gid of the dir it is being moved to.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 	opts.error = parser.error
 	opts.pos = getattr(opts, 'src/dst')
+	if opts.new_owner: opts.attrs = False
 	if opts.attrs is None and opts.no_priv_attrs: opts.attrs = False
 
 	global log
