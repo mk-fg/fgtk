@@ -62,11 +62,13 @@ start $ip_min
 end $ip_max
 option subnet $ip_mask
 option dns 8.8.8.8
+option router $ip_gw
 
 interface $dev
 
 pidfile $udhcpd_pid
 lease_file $udhcpd_leases
+max_leases 50
 EOF
 #################### udhcpd.conf
 
