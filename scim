@@ -526,7 +526,7 @@ def update_links():
 						('live-fs ', tgt, dst_meta, src_meta) if not optz.reverse_meta
 						else ('', src_rel, dst_meta, src_meta) )))
 					if optz.fix:
-						try: sh.cp_meta(*optional_reverse(src, dst, flag=optz.reverse_meta), attrz=True)
+						try: sh.cp_meta(*optional_reverse(src, dst, flag=optz.reverse_meta), attrs=True)
 						except OSError, err: log.error('Unable to fix metadata on {0}: {1}'.format(tgt, err))
 						else: log.info('Corrected metadata for path: {0}'.format(tgt))
 			if optz.limit and errz > optz.limit: continue

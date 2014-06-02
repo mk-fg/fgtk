@@ -147,7 +147,7 @@ if argz:
 							continue
 					sh.ln(tgt, src)
 				else:
-					sh.cp(src, tgt, attrz=True)
+					sh.cp(src, tgt, attrs=True)
 			elif os.path.exists(src) and not os.path.samefile(src, tgt):
 				log.error( 'Link ({0}) target mismatch ({1} instead of {2})'\
 					.format(src, os.path.realpath(src), tgt) )
