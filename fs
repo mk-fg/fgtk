@@ -101,8 +101,7 @@ def opts_parse_uid(spec):
 			gid = pwd.getpwuid(uid).pw_gid
 		else: gid = None
 	else: gid = opts_parse_gid(gid)
-	if spec is not None:
-		mode = opts_parse_mode(spec)
+	if spec: mode = opts_parse_mode(spec)
 	return uid, gid, mode
 
 def opts_parse_gid(spec):
@@ -231,7 +230,7 @@ def main(args=None):
 
 	for cmd in op.itemgetter('mv', 'ch')(cmds.choices):
 		cmd.add_argument('-u', '--uid',
-			metavar='{uname|uid}[:[{gname|gid}][:mode]]',
+			metavar='{uname|uid}[:[{gname|gid}][:][mode]]',
 			help='Set owner user and group/mode (if specified,'
 					' both can be specified as ids) for destination path(s).'
 				' If group/gid part is omitted, specified users (if any) gid will be used.'
