@@ -71,12 +71,10 @@ cgrc vm/misc sudo vde_plug2tap\
 pid2=$!
 
 # Add a little delay if vde stuff is just starting
-trap : USR1
-pid0=$$
-( sleep 0.5 && kill -USR1 $pid0 ) &
-pid3=$!
-wait $pid1 $pid2
-kill -INT $pid3 2>/dev/null # to make sure it won't kill qemu
+for n in {0..5}; do
+	kill -0 $pid1 $pid2 2>/dev/null || break
+	sleep 0.1
+done
 
 
 ### Get latest kernel/initrd from vm
