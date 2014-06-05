@@ -102,8 +102,10 @@ qemu_opts=(
 	-vga std
 	-soundhw es1370 # suggested on http://www.android-x86.org/documents/qemuhowto
 
-	-cdrom android/android-x86-4.4-RC2.iso
+	# -cdrom android/android-x86-4.4-RC2.iso
 	# -cdrom android/android-x86-4.0-r1-eeepc.iso
+	-cdrom android/android-x86-4.2-20130228.iso
+
 	-drive file=android/install.qcow2,if=ide,aio=native,cache=writeback
 )
 
