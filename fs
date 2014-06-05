@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from tempfile import NamedTemporaryFile
 from os.path import dirname, basename, abspath
 from fgc import sh
-import os, sys, stat
+import os, sys, stat, types
 
 
 class FSOps(object):
@@ -67,6 +67,7 @@ class FSOps(object):
 
 	def ch(self, paths=None, recursive=True):
 		opts = self.opts
+		if isinstance(paths, types.StringTypes): paths = [paths]
 		if paths is None: paths, recursive = opts.paths, opts.recursive
 		if recursive:
 			paths = it.chain.from_iterable(sh.walk(p, follow_links=False) for p in paths)
