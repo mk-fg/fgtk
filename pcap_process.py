@@ -1,0 +1,183 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
+from subprocess import Popen, PIPE
+from collections import OrderedDict
+import os, sys, time, re, shutil, tempfile
+
+from lxml import etree
+import lxml.objectify
+import pyaml
+
+
+print_len_max = 2 * 2**10
+
+def repr_trunc(v):
+	v = repr(v)
+	if len(v) > print_len_max:
+		v = v[:print_len_max] + '... (len: {})'.format(len(v))
+	return v
+
+def print_trunc(v, file=sys.stdout):
+	assert len(v) < print_len_max
+	print(v, file=file)
+	file.flush()
+
+
+class ParserError(Exception): pass
+
+def pkt_pos_get(buff, a='\n<packet>\n', b='\n</packet>\n\n'):
+	pos0 = buff.find(a)
+	pos1 = buff.find(b, pos0+1)
+	if pos0 < 0 or pos1 < 0: return None
+	pos1 += len(b) # preserve last \n
+	return pos0, pos1
+
+def pkt_xml_stream_parse(stream, bs=4 * 2**20, bs_k_max=20):
+	buff, bs_max = '', bs * bs_k_max
+	while True:
+		chunk = stream.read(bs)
+		buff += chunk
+
+		pkt_xml = None
+		while True:
+			pos = pkt_pos_get(buff)
+			if not pos: break
+
+			pos0, pos1 = pos
+			if pos0 != 0:
+				junk = buff[:pos0]
+				if not junk.lstrip().startswith('<?xml version="1.0"?>'):
+					log.warn('Garbage data between packets: %s', repr_trunc(junk))
+			pkt_xml, buff = buff[pos0:pos1], buff[pos1:]
+
+			yield pkt_xml
+
+		if len(buff) > bs_max:
+			log.debug('Buffer head: %s', repr_trunc(buff))
+			raise ParserError('Failed to get packet from a giant buffer, something is wrong')
+		if not chunk: # finished
+			if buff and buff.strip() != '</pdml>':
+				log.warn('Garbage data after all packets: %s', repr_trunc(buff))
+			break
+
+
+def get_etree(xml):
+	try: return etree.fromstring(xml)
+	except etree.XMLSyntaxError:
+		log.exception('Failed to parse xml: %s', repr_trunc(xml))
+		return None
+
+def get_frame_n(pkt_xml):
+	match = re.search(r'<field name="num"[^>]+\sshow="(\d+)"', pkt_xml)
+	return int(match.group(1))
+
+def pkt_xml_stream_process(stream, field=list(), xpath=list(), field_len_max=2 * 2**20):
+	field_data = None
+	field_data_extract = lambda tree, keys=['show', 'value']:\
+		OrderedDict(it.izip(keys, it.imap(tree.attrib.get, keys)))
+
+	for pkt_xml in pkt_xml_stream_parse(stream):
+		frame_n = None
+
+		if xpath:
+			raise NotImplementedError()
+			pkt_etree = get_etree(pkt_xml)
+			if pkt_etree is not None: continue
+			# for xpath in xpath: print_trunc(pkt_etree.xpath(xpath))
+
+		if field:
+			for n in field:
+				if '/' in n: n, nk = n.split('/', 1)
+				else: nk = None
+
+				# XXX: parsing xml subset (pdml) with regexps
+				pos, n_re = 0, re.escape(n.rstrip('.')) + r'(?:\.[^"]+)?'
+				n_re = re.compile(r'\n\s*(<field\s+name="({})".*?>)\n'.format(n_re))
+				while True:
+					match = n_re.search(pkt_xml, pos)
+					if not match: break
+					pos = match.end() - 1
+					line, n_enc = match.groups()
+
+					if len(line) > field_len_max:
+						log.warn('Skipping field %r from frame %s due to size limit'
+							' (%sB, len: %sB)', n_enc, get_frame_n(pkt_xml), field_len_max, len(line) )
+						continue
+					line = line.strip()
+					if not line.endswith('/>'): line += '</field>'
+					line = get_etree(line)
+					if line is None: continue
+					if nk is not None: print_trunc(line.attrib[nk])
+					else:
+						if not field_data: field_data = OrderedDict()
+						k = line.attrib['name']
+						if k in field_data:
+							if not isinstance(field_data[k], list):
+								field_data[k] = [field_data[k]]
+							field_data[k].append(field_data_extract(line))
+						else:
+							field_data[k] = field_data_extract(line)
+
+			if field_data:
+				print_trunc(pyaml.dump(OrderedDict([( 'Frame-{}'\
+					.format(get_frame_n(pkt_xml)), field_data )])))
+				field_data = None
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Pick packets with specified'
+			' payload out of pcap stream (as dissected by tshark).')
+	parser.add_argument('path', help='Path to pcap or xml file.')
+	parser.add_argument('tshark_args', nargs='*',
+		help='tshark cli arguments - e.g. filtering.'
+			'"-r file" and output format options will be passed automatically.')
+	parser.add_argument('-x', '--xpath', action='append', default=list(),
+		help='Run XPath selector on each packet and print result.')
+	parser.add_argument('-f', '--field', action='append', default=list(),
+		help='Dump fields with specified prefix (example: http.request).'
+			' Can contain slash ("/") and a key to show from'
+				' specified field (example: http.request.full_uri|show)')
+	parser.add_argument('--xml', action='store_true',
+		help='Use raw pdml (xml from tshark) as source path, not pcap file.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
+	log = logging.getLogger()
+
+	process = ft.partial(
+		pkt_xml_stream_process,
+		field=opts.field, xpath=opts.xpath )
+
+	if opts.xml:
+		with open(opts.path, 'rb') as src: process(src)
+		return
+
+	tshark_stderr = tempfile.TemporaryFile()
+	tshark = Popen(
+		['tshark', '-r', opts.path, '-T' 'pdml'] + list(opts.tshark_args),
+		stdout=PIPE, stderr=tshark_stderr )
+
+	tshark_killed = False
+	try: process(tshark.stdout)
+	finally:
+		if tshark.poll() is None:
+			tshark.terminate()
+			tshark_killed = True
+
+	err = tshark.wait()
+	if err and not tshark_killed:
+		print_trunc('ERROR: tshark failed (code: {}), stderr:'.format(err), file=sys.stderr)
+		tshark_stderr.seek(0)
+		shutil.copyfileobj(tshark_stderr, sys.stderr)
+		return 1
+
+
+if __name__ == '__main__': sys.exit(main())
