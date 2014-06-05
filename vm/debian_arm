@@ -74,7 +74,9 @@ pid2=$!
 trap : USR1
 pid0=$$
 ( sleep 0.5 && kill -USR1 $pid0 ) &
+pid3=$!
 wait $pid1 $pid2
+kill -INT $pid3 2>/dev/null # to make sure it won't kill qemu
 
 
 ### Get latest kernel/initrd from vm
