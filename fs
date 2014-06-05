@@ -273,6 +273,7 @@ def main(args=None):
 		except ValueError as err:
 			opts.error(err.message)
 		opts.uid, opts.gid, opts.mode = uid, gid, mode
+		if all(map(lambda n: n is None, [uid, gid, mode])): opts.ch = False
 
 
 	# Run
