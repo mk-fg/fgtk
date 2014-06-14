@@ -30,6 +30,7 @@ class FSOps(object):
 		else: ops = zip(opts.pos[:-1], it.repeat(opts.pos[-1]))
 		return ops if not opts.reverse else list((dst,src) for src,dst in ops)
 
+
 	def mv(self):
 		opts, ops = self.opts, self.opts_flow_parse()
 		if not opts.relocate: mv_func = sh.mv
@@ -63,12 +64,22 @@ class FSOps(object):
 				sh.chown( dst,
 					dst_stat.st_uid, dst_stat.st_gid,
 					recursive=True, dereference=False )
-			if opts.ch: self.ch(dst)
+			if opts.ch: self.ch_sub(dst)
 
-	def ch(self, paths=None, recursive=True):
+
+	def ch(self, paths=None):
+		opts = self.opts
+		if opts.new_owner:
+			for path in opts.paths:
+				path_stat = os.stat(dirname(path))
+				sh.chown( path,
+					path_stat.st_uid, path_stat.st_gid,
+					recursive=opts.recursive, dereference=False )
+		self.ch_sub(opts.paths, opts.recursive)
+
+	def ch_sub(self, paths, recursive=True):
 		opts = self.opts
 		if isinstance(paths, types.StringTypes): paths = [paths]
-		if paths is None: paths, recursive = opts.paths, opts.recursive
 		if recursive:
 			paths = it.chain.from_iterable(sh.walk(p, follow_links=False) for p in paths)
 		for path in paths:
@@ -225,9 +236,6 @@ def main(args=None):
 		cmd.add_argument('-N', '--no-priv-attrs', action='store_true',
 			help='Inhibit fs metadata copying (direct uid/gid/whatever setting will'
 				' still work as requested) ops which may require elevated privileges.')
-		cmd.add_argument('-o', '--new-owner', action='store_true',
-			help='Chown destination path according uid/gid of the dir it is being moved to.'
-				' Overrides --attrs, --no-priv-attrs. Precedes --uid, --gid, --mode.')
 
 	for cmd in op.itemgetter('mv', 'ch')(cmds.choices):
 		cmd.add_argument('-u', '--uid',
@@ -246,6 +254,9 @@ def main(args=None):
 			help='Octal or symbolic mode to set for destination path(s).'
 				' Run "--mode help" to get info on syntax for symbolic mode specs.'
 				' Overrides --attrs.')
+		cmd.add_argument('-o', '--new-owner', action='store_true',
+			help='Chown destination path according uid/gid of the dir it is being moved to.'
+				' Overrides --attrs, --no-priv-attrs. Precedes --uid, --gid, --mode.')
 		cmd.set_defaults(ch=True)
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
