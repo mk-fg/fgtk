@@ -94,13 +94,6 @@ Example - run "make" on any change to `~user/hatch/project` files:
 	(root) ~# fatrace_pipe ~user/hatch/project
 	(user) project% xargs -in1 </tmp/fatrace.fifo make
 
-##### lowpaths
-
-Simple (and wrong) bash script to lowercase all paths in given (as args) dirs
-and arguments themselves as well with "-a".
-Does not handle unicode filenames at all, will fail for filenames with newlines
-in them, plus all the othere caveats of quick-and-dirty *sh script apply.
-
 ##### clean_boot
 
 Script to remove older kernel versions (as installed by /sbin/installkernel)
