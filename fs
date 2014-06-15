@@ -4,93 +4,13 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
 from tempfile import NamedTemporaryFile
-from os.path import dirname, basename, abspath
+from collections import defaultdict
 from fgc import sh
 import os, sys, stat, types
 
-
-class FSOps(object):
-
-	supported = 'mv', 'ch'
-
-	def __init__(self, opts):
-		self.opts = opts
-
-	def __getitem__(self, k):
-		if k not in self.supported: raise KeyError(k)
-		return getattr(self, k)
-
-	def opts_flow_parse(self):
-		opts = self.opts
-		if opts.src_opt:
-			ops = zip(it.repeat(opts.src_opt), (opts.pos if not opts.dst_opt else [opts.dst_opt]))
-		elif opts.dst_opt: ops = zip(opts.pos, it.repeat(opts.dst_opt))
-		elif len(opts.pos) < 2:
-			opts.error('Need at least two positional arguments or --src / --dst specification.')
-		else: ops = zip(opts.pos[:-1], it.repeat(opts.pos[-1]))
-		return ops if not opts.reverse else list((dst,src) for src,dst in ops)
-
-
-	def mv(self):
-		opts, ops = self.opts, self.opts_flow_parse()
-		if not opts.relocate: mv_func = sh.mv
-		else:
-			def mv_func(src, dst, attrs):
-				# Goal here is to create link in place of a file/dir asap
-				tmp = None
-				try: os.rename(src, dst)
-				except OSError:
-					if not stat.S_ISDIR(os.lstat(src).st_mode):
-						sh.cp_d(src, dst, attrs=attrs, dereference=False)
-						os.unlink(src)
-					else:
-						sh.cp_r( src, dst, dereference=False,
-							attrs=attrs, atom=ft.partial(sh.cp_d, skip_ts=False) )
-						tmp = NamedTemporaryFile( dir=dirname(src),
-							prefix='{}.'.format(basename(src)), delete=False )
-						os.unlink(tmp.name) # src is a dir
-						os.rename(src, tmp.name)
-				sh.ln((abspath(dst) if not opts.relative else sh.relpath(dst, src)), src)
-				if tmp: sh.rr(tmp.name, onerror=False)
-
-		# attrs is implied if uid=0, otherwise disabled, unless specified explicitly in any way
-		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
-
-		for src, dst in ops:
-			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
-			mv_func(src, dst, attrs=attrs)
-			if opts.new_owner:
-				dst_stat = os.stat(dirname(dst))
-				sh.chown( dst,
-					dst_stat.st_uid, dst_stat.st_gid,
-					recursive=True, dereference=False )
-			if opts.ch: self.ch_sub(dst)
-
-
-	def ch(self, paths=None):
-		opts = self.opts
-		if opts.new_owner:
-			for path in opts.paths:
-				path_stat = os.stat(dirname(path))
-				sh.chown( path,
-					path_stat.st_uid, path_stat.st_gid,
-					recursive=opts.recursive, dereference=False )
-		self.ch_sub(opts.paths, opts.recursive)
-
-	def ch_sub(self, paths, recursive=True):
-		opts = self.opts
-		if isinstance(paths, types.StringTypes): paths = [paths]
-		if recursive:
-			paths = it.chain.from_iterable(sh.walk(p, follow_links=False) for p in paths)
-		for path in paths:
-			path_stat, nid = os.lstat(path), lambda n: -1 if n is None else n
-			if (opts.uid is not None and path_stat.st_uid != opts.uid)\
-					or (opts.gid is not None and path_stat.st_gid != opts.gid):
-				os.lchown(path, nid(opts.uid), nid(opts.gid))
-			if opts.mode:
-				mode = opts.mode(stat.S_IMODE(path_stat.st_mode))
-				assert mode < 0777, oct(mode)
-				sh.chmod(path, mode, dereference=False)
+from os.path import (
+	dirname, basename, abspath, normpath, exists )
+join = sh.join
 
 
 def opts_parse_uid(spec):
@@ -183,6 +103,139 @@ def opts_parse_mode(spec):
 		sum(f(mode) for f, (t, rwx, m) in zip(bits, masks))
 
 
+class FSOps(object):
+
+	supported = 'mv', 'ch', 'case'
+
+	def __init__(self, opts):
+		self.opts = opts
+
+	def __getitem__(self, k):
+		if k not in self.supported: raise KeyError(k)
+		return getattr(self, k)
+
+	def opts_flow_parse(self):
+		opts = self.opts
+		if opts.src_opt:
+			ops = zip(it.repeat(opts.src_opt), (opts.pos if not opts.dst_opt else [opts.dst_opt]))
+		elif opts.dst_opt: ops = zip(opts.pos, it.repeat(opts.dst_opt))
+		elif len(opts.pos) < 2:
+			opts.error('Need at least two positional arguments or --src / --dst specification.')
+		else: ops = zip(opts.pos[:-1], it.repeat(opts.pos[-1]))
+		return ops if not opts.reverse else list((dst,src) for src,dst in ops)
+
+	def opts_walk_paths(self, paths=None, recursive=None, **walk_kws):
+		if paths is None: paths = self.opts.paths
+		if recursive is None: recursive = self.opts.recursive
+		if isinstance(paths, types.StringTypes): paths = [paths]
+		return it.chain.from_iterable(
+			sh.walk(p, follow_links=False, **walk_kws) for p in paths )
+
+
+	def mv(self):
+		opts, ops = self.opts, self.opts_flow_parse()
+		if not opts.relocate: mv_func = sh.mv
+		else:
+			def mv_func(src, dst, attrs):
+				# Goal here is to create link in place of a file/dir asap
+				tmp = None
+				try: os.rename(src, dst)
+				except OSError:
+					if not stat.S_ISDIR(os.lstat(src).st_mode):
+						sh.cp_d(src, dst, attrs=attrs, dereference=False)
+						os.unlink(src)
+					else:
+						sh.cp_r( src, dst, dereference=False,
+							attrs=attrs, atom=ft.partial(sh.cp_d, skip_ts=False) )
+						tmp = NamedTemporaryFile( dir=dirname(src),
+							prefix='{}.'.format(basename(src)), delete=False )
+						os.unlink(tmp.name) # src is a dir
+						os.rename(src, tmp.name)
+				sh.ln((abspath(dst) if not opts.relative else sh.relpath(dst, src)), src)
+				if tmp: sh.rr(tmp.name, onerror=False)
+
+		# attrs is implied if uid=0, otherwise disabled, unless specified explicitly in any way
+		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
+
+		for src, dst in ops:
+			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
+			mv_func(src, dst, attrs=attrs)
+			if opts.new_owner:
+				dst_stat = os.stat(dirname(dst))
+				sh.chown( dst,
+					dst_stat.st_uid, dst_stat.st_gid,
+					recursive=True, dereference=False )
+			if opts.ch: self.ch_sub(dst)
+
+
+	def ch(self):
+		opts = self.opts
+		if opts.new_owner:
+			for path in opts.paths:
+				path_stat = os.stat(dirname(path))
+				sh.chown( path,
+					path_stat.st_uid, path_stat.st_gid,
+					recursive=opts.recursive, dereference=False )
+		self.ch_sub(opts.paths, opts.recursive)
+
+	def ch_sub(self, paths, recursive=True):
+		opts = self.opts
+		for path in self.opts_walk_paths(paths, recursive=recursive):
+			path_stat, nid = os.lstat(path), lambda n: -1 if n is None else n
+			if (opts.uid is not None and path_stat.st_uid != opts.uid)\
+					or (opts.gid is not None and path_stat.st_gid != opts.gid):
+				os.lchown(path, nid(opts.uid), nid(opts.gid))
+			if opts.mode:
+				mode = opts.mode(stat.S_IMODE(path_stat.st_mode))
+				assert mode < 0777, oct(mode)
+				sh.chmod(path, mode, dereference=False)
+
+
+	def case(self):
+		opts = self.opts
+		act = sum(map(bool, [opts.check, opts.lower, opts.upper]))
+		if act > 1:
+			opts.error('Only one case-changing action (or check) should be specified.')
+		elif act == 0:
+			opts.error('At least one case-changing action or check should be specified.')
+
+		try: enc, err = opts.encoding.split('/', 1)
+		except IndexError: enc, err = opts.encoding, 'strict'
+		dec = lambda b,enc=enc,err=err: b.decode(enc, err)
+		enc = lambda b,enc=enc: b.encode(enc)
+
+		if opts.check or opts.lower: cc = op.methodcaller('lower')
+		elif opts.upper: cc = op.methodcaller('upper')
+		cc = lambda n,cc=cc: enc(cc(dec(n)))
+
+		conflicts = False
+
+		if opts.check:
+			paths = defaultdict(dict)
+			for path in self.opts_walk_paths():
+				name, names = cc(basename(path)), paths[dirname(path)]
+				if name in names:
+					print('{} {}'.format(names[name], path))
+					conflicts = True
+				else: names[name] = path
+
+		else:
+			for path in self.opts_walk_paths(depth=True):
+				name, path_dir = basename(path), dirname(path)
+				name_new = cc(name)
+				path_new = join(path_dir, name_new)
+				path, path_new = map(normpath, [path, path_new])
+				if path == path_new: continue
+				if exists(path_new):
+					log.warn('Same-case path conflict in directory %r: %r vs %r', path_dir, name, name_new)
+					conflicts = True
+					if opts.force: sh.rr(path_new)
+					else: continue
+				os.rename(path, path_new)
+
+		return int(conflicts)
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -215,6 +268,32 @@ def main(args=None):
 	with subcommand('ch', help='Change attributes of a specified path(s).') as cmd:
 		cmd.add_argument('paths', nargs='+', help='Paths to operate on.')
 		cmd.add_argument('-r', '--recursive', action='store_true', help='Recursive operation.')
+
+	with subcommand('case', help='Operations with path(s) case.') as cmd:
+		cmd.add_argument('paths', nargs='+', help='Paths to operate on.')
+		cmd.add_argument('-r', '--recursive', action='store_true', help='Recursive operation.')
+		cmd.add_argument('-f', '--force', action='store_true',
+			help='Proceed with renaming even if there'
+				' are conflicts (some files will be lost in this case!).')
+		cmd.add_argument('-e', '--encoding',
+			default='utf-8/strict', metavar='encoding[/errors]',
+			help='Decode paths using specified encoding'
+					' before upper/lowercasing them (default: %(default)s).'
+				' Required if operation is to be applied to non-utf-8 paths properly.'
+				' Decoding error handling behavior (one of "strict",'
+					' "replace" or "ignore") can be specified after a slash.')
+		cmd.add_argument('-c', '--check', action='store_true',
+			help='Check if same-cased paths will collide, report collisions.'
+				' Exits with non-zero status if there are any conflicts.'
+				' Mutually exclusive with other case-altering actions.')
+		cmd.add_argument('-l', '--lower', action='store_true',
+			help='Make all paths lowercase, reporting'
+					' conflicts (and leaving both paths intact), if any.'
+				' Mutually exclusive with other case-altering actions.')
+		cmd.add_argument('-u', '--upper', action='store_true',
+			help='Make all paths uppercase, reporting'
+					' conflicts (and leaving both paths intact), if any.'
+				' Mutually exclusive with other case-altering actions.')
 
 	## More generic opts
 
@@ -290,7 +369,7 @@ def main(args=None):
 
 	# Run
 	ops = FSOps(opts)
-	ops[opts.call]()
+	return ops[opts.call]()
 
 
 if __name__ == '__main__': sys.exit(main())
