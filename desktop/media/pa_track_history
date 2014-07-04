@@ -97,7 +97,7 @@ def track_dump_loop(opts):
 	pid, ts = None, time.time()
 	while True:
 		if not opts.prog:
-			if not pid: pid = proc_match(opts.pgrep)
+			if not pid: pid = proc_match(opts.pgrep) if not opts.pgrep.isdigit() else int(opts.pgrep)
 		else:
 			player_poll = player.poll() if pid else None
 			if not pid or player_poll == 0:
@@ -146,9 +146,10 @@ def main(args=None):
 		type=float, metavar='seconds', default=80,
 		help='Interval between sampling track name (default: %(default)s).')
 	parser.add_argument('-p', '--pgrep',
-		metavar='cmdline_regexp', default=r'^mpv\s+',
+		metavar='{pid | cmdline_regexp}', default=r'^mpv\s+',
 		help='Grep for this regexp in processes'
 				' to find pid that is used as a player (default: %(default)s).'
+			' If integer is specified, it will be used as a pid without any extra matching.'
 			' Disregarded, if playback app is specified in args.'
 			' Args in matched cmdlines are separated by spaces. Pid only gets matched on script start.')
 	parser.add_argument('-s', '--strip',
