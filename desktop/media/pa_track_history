@@ -117,9 +117,11 @@ def track_dump_loop(opts):
 			track = track_for_pid(pid, dbus_reuse=opts.once)
 			if track:
 				if opts.strip: track = re.sub(opts.strip, '', track)
-				if track and track != track_last:
+				if track and not (track_last and track_last.endswith(track)):
 					track_last = track
-					dst.write('{}\n'.format(track))
+					if opts.timestamp: prefix = time.strftime(opts.timestamp_format)
+					else: prefix = ''
+					dst.write('{}{}\n'.format(prefix, track))
 					dst.flush()
 
 		else:
@@ -138,8 +140,15 @@ def main(args=None):
 			' Takes "media.name" parameter from PulseAudio Stream and records any changes to it.')
 	parser.add_argument('prog', nargs='*', help='Playback app to run.'
 		' Use "--" to make sure its options wont get processed by this wrapper script.')
+
 	parser.add_argument('-d', '--dst-file',
 		help='Path to a file to record all the stuff to. If omitted, stdout will be used.')
+	parser.add_argument('-t', '--timestamp', action='store_true',
+		help='Prepend timestamps to each track entry in the output.')
+	parser.add_argument('--timestamp-format',
+		metavar='py_ts_format', default='[%Y-%m-%d %H:%M] ',
+		help='Format for timestamp-prefix to be prepended to each line (default: %(default)s).'
+			' Should be compatible with pythons strftime() functions.')
 
 	parser.add_argument('-1', '--once', action='store_true', help='Sample once and exit.')
 	parser.add_argument('-i', '--poll-interval',
