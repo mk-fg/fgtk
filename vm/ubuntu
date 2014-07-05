@@ -27,7 +27,7 @@ EOF
 		echo
 		while :; do
 			echo 'info migrate' | ncat -t 127.0.0.1 "$telnet_port" |
-				grep -qP '^Migration status:\s*completed\s*$'
+				grep -aq '^Migration status:[[:space:]]*completed[[:space:]]*$'
 			pipe=( "${PIPESTATUS[@]}" )
 			[[ ${pipe[0]} -ne 0 || ${pipe[1]} -ne 0 ]] && exit 1
 			[[ ${pipe[2]} -eq 0 ]] && {
