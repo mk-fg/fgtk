@@ -50,11 +50,14 @@ def track_for_pid(pid, srv_addr=None, dbus_reuse=False):
 	global child_ctl
 	if child_ctl: os.close(child_ctl)
 	(r1,w1), (r2,child_ctl) = os.pipe(), os.pipe()
-	if os.fork(): # parent
+	child_pid = os.fork()
+	if child_pid: # parent
 		os.close(w1), os.close(r2)
 		track = os.read(r1, track_max_len + 1)
 		os.close(r1)
 		os.write(child_ctl, 'x')
+		try: os.waitpid(child_pid, 0)
+		except OSError: pass
 	else: # child
 		os.close(child_ctl)
 		track = _track_for_pid(pid, srv_addr=srv_addr)
