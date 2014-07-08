@@ -50,21 +50,26 @@ def track_for_pid(pid, srv_addr=None, dbus_reuse=False):
 	global child_ctl
 	if child_ctl: os.close(child_ctl)
 	(r1,w1), (r2,child_ctl) = os.pipe(), os.pipe()
-	child_pid = os.fork()
+	child_pid, track = os.fork(), None
 	if child_pid: # parent
 		os.close(w1), os.close(r2)
-		track = os.read(r1, track_max_len + 1)
-		os.close(r1)
-		os.write(child_ctl, 'x')
+		try:
+			track = os.read(r1, track_max_len + 1)
+			os.close(r1)
+			os.write(child_ctl, 'x')
+		except (OSError, IOError): pass
 		try: os.waitpid(child_pid, 0)
 		except OSError: pass
 	else: # child
-		os.close(child_ctl)
-		track = _track_for_pid(pid, srv_addr=srv_addr)
-		os.write(w1, track or '\0')
-		assert os.read(r2, 1) == 'x'
+		os.close(r1), os.close(child_ctl)
+		try:
+			track = _track_for_pid(pid, srv_addr=srv_addr)
+			os.write(w1, track or '\0')
+			assert os.read(r2, 1) == 'x'
+		except Exception as err:
+			log.warn('Failed to query pa via dbus: %s', err)
 		os._exit(0)
-	return track if track != '\0' else None
+	return track if track and track != '\0' else None
 
 
 def proc_list():
