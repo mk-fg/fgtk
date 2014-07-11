@@ -9,7 +9,7 @@ parser.add_option('-a', '--register', action='store_true',
 	help='Do not create ref, just add it to registry.')
 parser.add_option('-f', '--force', action='store_true',
 	help='Dont interrupt operation on some non-critical errors.')
-parser.add_option('-t', '--no-tilda', action='store_true', dest='no_tilda',
+parser.add_option('-t', '--no-tilda', action='store_true',
 	help='Do not replace current user home path with tilda.')
 
 parser.add_option('-l', '--symlink',
@@ -18,6 +18,8 @@ parser.add_option('-l', '--symlink',
 parser.add_option('-r', '--relative',
 	action='store_true', dest='rel',
 	help='Create relative symlink.')
+parser.add_option('-s', '--src-relative',
+	action='store_true', help='Record relative source path in links-file.')
 parser.add_option('-m', '--meta', action='store_true',
 	help='Copy all metadata information.'
 		' Implied if user is root, need to be specified explicitly otherwise.')
@@ -54,7 +56,7 @@ else:
 	if os.sep not in scim_path:
 		if optz.new:
 			scim_path = os.path.realpath(os.getcwd())
-			log.info('Using {0} (current path) as scim-path'.format(scim_path))
+			log.info('Using %s (current path) as scim-path', scim_path)
 		else: parser.error('Unable to determine scim-path location')
 scim_real_path = scim_path # in case of symlink-rebase
 
@@ -64,9 +66,9 @@ linkz_path = sh.join(scim_path, optz.list)
 if not os.path.exists(linkz_path):
 	if optz.new:
 		open(linkz_path, 'w')
-		log.warn('Created new linkz-file: {0}'.format(linkz_path))
+		log.warn('Created new linkz-file: %s', linkz_path)
 	else:
-		log.fatal('Linkz-file doesnt exists: {0}'.format(linkz_path))
+		log.fatal('Linkz-file doesnt exists: %s', linkz_path)
 		sys.exit(1)
 
 linkz = list(filter(None, map(str.strip, open(linkz_path))))
@@ -109,37 +111,50 @@ if argz:
 
 	for src in srcz:
 		if src in linkz_hash:
-			log.error(( 'File, linked to {0} already exists'
-				' in repository ({1})' ).format(src, linkz_hash[src]))
+			log.error( 'File, linked to %s already'
+				' exists in repository (%s)', src, linkz_hash[src] )
 			if not optz.force: continue
 		if sh.islink(src):
 			if not optz.register:
-				log.error('{0} is a symlink already'.format(src))
+				log.error('%s is a symlink already', src)
 				continue
 		elif optz.register:
-			log.error('{0} is not a symlink'.format(src))
+			log.error('%s is not a symlink', src)
 			if not optz.force: continue
 
 		# Generate target-path, depending on whether last argument was a file or dir
 		src = os.path.abspath(src) # in case of "../file" spec
 		tgt = dst(src)
 		# Strip absolute path, so the link left part (source) will be relative to scim_path
-		if tgt.startswith(scim_path): tgt_rel = tgt.replace(scim_path + os.sep, '', 1)
-		elif tgt.startswith(scim_real_path): tgt_rel = tgt.replace(scim_real_path + os.sep, '', 1)
+		for p in scim_path, scim_real_path:
+			if tgt.startswith(p):
+				tgt_rel = tgt.replace(p, '', 1).lstrip(os.sep)
+				break
 		else:
-			log.fatal('Target path ({0}) is not inside scim-path ({1})'.format(tgt, scim_real_path))
+			log.fatal('Target path (%s) is not inside scim-path (%s)', tgt, scim_real_path)
 			sys.exit(1)
-		link = ' '.join(( tgt_rel, aop, src if not home_dir
-			or not src.startswith(home_dir) else src.replace(home_dir, '~', 1) ))
+		if optz.src_relative:
+			for p in scim_path, scim_real_path:
+				if src.startswith(p):
+					link_src = src.replace(p, '', 1).lstrip(os.sep)
+					break
+			else:
+				log.fatal( 'Src path (%s) is not inside scim-path (%s),'
+					' which is required for --src-relative', src, scim_real_path )
+				sys.exit(1)
+		else:
+			link_src = src if not home_dir or not src.startswith(home_dir)\
+				else src.replace(home_dir, '~', 1)
+		link = ' '.join((tgt_rel, aop, link_src))
 
 		print(link)
 		if link not in linkz:
 			if os.path.exists(tgt):
 				if not optz.register:
-					log.error('Dst path exists: {0}'.format(tgt))
+					log.error('Dst path exists: %s', tgt)
 					continue
 			elif optz.register:
-				log.error('Dst path does not exists: {0}'.format(tgt))
+				log.error('Dst path does not exists: %s', tgt)
 				continue
 
 			if not optz.register:
@@ -148,19 +163,19 @@ if argz:
 					if optz.rel:
 						tgt = sh.relpath(sh.join(scim_path, tgt), src)
 						if not os.path.exists(sh.join(os.path.dirname(src), tgt)): # sanity check
-							log.error('Failed to calculate correct relative path for {0}: {1}'.format(src, tgt))
+							log.error('Failed to calculate correct relative path for %s: %s', src, tgt)
 							continue
 					sh.ln(tgt, src)
 				else:
 					sh.cp(src, tgt, attrs=optz.meta)
 			elif os.path.exists(src) and not os.path.samefile(src, tgt):
-				log.error( 'Link ({0}) target mismatch ({1} instead of {2})'\
-					.format(src, os.path.realpath(src), tgt) )
+				log.error( 'Link (%s) target mismatch (%s'
+					' instead of %s)', src, os.path.realpath(src), tgt )
 				if not optz.force: continue
 
 			linkz.append(link)
 
-		else: log.warn('Link is already in place: {0}'.format(link))
+		else: log.warn('Link is already in place: %s', link)
 
 
 ### Sort linkz-file contents
