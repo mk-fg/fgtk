@@ -18,6 +18,9 @@ parser.add_option('-l', '--symlink',
 parser.add_option('-r', '--relative',
 	action='store_true', dest='rel',
 	help='Create relative symlink.')
+parser.add_option('-m', '--meta', action='store_true',
+	help='Copy all metadata information.'
+		' Implied if user is root, need to be specified explicitly otherwise.')
 
 parser.add_option('-n', '--new-file',
 	action='store_true', dest='new',
@@ -34,6 +37,8 @@ optz,argz = parser.parse_args()
 import itertools as it, operator as op, functools as ft
 from fgc import sh
 import os, sys, logging
+
+if optz.meta is None: optz.meta = os.geteuid() == 0
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(sys.argv[0])
@@ -147,7 +152,7 @@ if argz:
 							continue
 					sh.ln(tgt, src)
 				else:
-					sh.cp(src, tgt, attrs=True)
+					sh.cp(src, tgt, attrs=optz.meta)
 			elif os.path.exists(src) and not os.path.samefile(src, tgt):
 				log.error( 'Link ({0}) target mismatch ({1} instead of {2})'\
 					.format(src, os.path.realpath(src), tgt) )
