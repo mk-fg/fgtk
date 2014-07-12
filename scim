@@ -133,7 +133,7 @@ for i in filter( lambda x: x.startswith('ln_')\
 
 if not optz.meta and not optz.links:
 	if os.path.exists(meta_list_path): optz.meta = True
-	elif not os.geteuid(): optz.meta = True
+	elif os.geteuid() == 0: optz.meta = True
 	else:
 		try:
 			from fgc.caps import get_process
@@ -469,7 +469,7 @@ def update_links():
 						sh.ln(src, dst)
 					elif ltype & T_CR:
 						# Note that cp_p is non-recursive: cat references to dirs aren't allowed
-						sh.cp_p(src, dst) # and there's no "reverse" if there's no dst
+						sh.cp(src, dst, attrs=optz.meta) # and there's no "reverse" if there's no dst
 				except (sh.Error, IOError, OSError) as err:
 					log.warn('Unable to create link destination ({0}): {1}'.format(dst, err))
 				else: log.info('Corrected: {0} {1} {2}'.format(src, aop, dst))
@@ -487,14 +487,14 @@ def update_links():
 			if not optz.fix:
 				if not ltype & T_CR: show_diff(src, dst)
 			else:
-				sh.cp_p(src, bak_path)
+				sh.cp(src, bak_path, attrs=optz.meta)
 				try:
 					if not os.path.samefile(dst, src): cp_data(*optional_reverse(dst, src))
 				except OSError: pass # broken symlink
 				sh.rm(dst)
 				if ltype == T_RSYM: src = rel_src(src, dst)
 				if ltype & T_SYM: sh.ln(src, dst)
-				elif ltype & T_CR: sh.cp_p(src, dst)
+				elif ltype & T_CR: sh.cp(src, dst, attrs=optz.meta)
 				log.info('Corrected: {0} {1} {2} {3}'.format(src, '<>'[int(optz.reverse)], aop, dst))
 			continue # rest of the checks will be bogus anyway
 
