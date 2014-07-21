@@ -250,6 +250,7 @@ def main(args=None):
 
 	@contextmanager
 	def subcommand(name, **kwz):
+		kwz.setdefault('usage', 'fs {} [opts] [[--] args]'.format(name))
 		cmd = cmds.add_parser(name, **kwz)
 		cmd.set_defaults(call=name)
 		yield cmd
