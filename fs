@@ -145,11 +145,14 @@ class FSOps(object):
 						sh.cp_d(src, dst, attrs=attrs, dereference=False)
 						os.unlink(src)
 					else:
+						# src is a dir, so copy it (to dst) first, then quickly
+						#  rename to a tmp name, creating link in the old place,
+						#  and then proceed with (possibly quite slow) removal
 						sh.cp_r( src, dst, dereference=False,
 							attrs=attrs, atom=ft.partial(sh.cp_d, skip_ts=False) )
 						tmp = NamedTemporaryFile( dir=dirname(src),
 							prefix='{}.'.format(basename(src)), delete=False )
-						os.unlink(tmp.name) # src is a dir
+						os.unlink(tmp.name) # only purpose of tmpfile here is to claim unique name
 						os.rename(src, tmp.name)
 				sh.ln((abspath(dst) if not opts.relative else sh.relpath(dst, src)), src)
 				if tmp: sh.rr(tmp.name, onerror=False)
