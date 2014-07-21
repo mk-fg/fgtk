@@ -616,6 +616,20 @@ name):
 	# iptables -A FORWARD -s 10.67.35.0/24 -i wlp0s18f2u2 -j ACCEPT
 	# iptables -A FORWARD -d 10.67.35.0/24 -o wlp0s18f2u2 -j ACCEPT
 
+##### mikrotik_backup
+
+Script to ssh into [mikrotik router](http://mikrotik.com) with specified
+("--auth-file" option) user/password and get the backup, optionally compressing
+it.
+Can determine address of the router on its own (using "ip route get").
+Can be used more generally to get/store output of any command(s) to the router.
+
+RouterOS allows using DSA (old, disabled on any modern sshds) keys, which should
+be used if accessible at the standard places (e.g. "~/.ssh/id_dsa").
+That might be preferrable to using password auth.
+
+Python script, uses "twisted.conch" for ssh.
+
 
 
 ### Desktop
