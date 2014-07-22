@@ -41,7 +41,7 @@ def decode_dict(x, f):
 		r[k], f = decode_func[x[f]](x, f)
 	return (r, f + 1)
 decode_func = dict(l=decode_list, d=decode_dict, i=decode_int)
-for n in xrange(9): decode_func[bytes(n)] = decode_string
+for n in xrange(10): decode_func[bytes(n)] = decode_string
 def bdecode(x):
 	try: r, l = decode_func[x[0]](x, 0)
 	except (IndexError, KeyError, ValueError) as err:
