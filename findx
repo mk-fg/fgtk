@@ -1,0 +1,22 @@
+#!/usr/bin/env python
+from __future__ import print_function
+
+from collections import deque
+import os, sys
+
+def reorder_paths(argv):
+	cmd, args = argv[0], argv[1:]
+	if not args or not args[0].startswith('-'): return argv
+	from os.path import exists, isdir
+	args = deque(args)
+	for p in reversed(args):
+		if not p.startswith('-') and isdir(p):
+			print('Reordering path at the end:', p, file=sys.stderr)
+			args.appendleft(args.pop())
+			continue
+		break
+	args.appendleft(cmd)
+	return list(args)
+
+args = reorder_paths(sys.argv)
+os.execvp('/usr/bin/find', args)

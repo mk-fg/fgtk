@@ -143,6 +143,19 @@ on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
 "latest patchset for major" versions, except those that are preserved
 unconditionally (listed at the top).
 
+##### findx
+
+Wrapper around GNU find to accept paths at the end of argv if none are passed
+before query.
+
+Makes it somewhat more consistent with most other commands that accept options
+and a lists of paths (almost always after opts), but still warns when/if
+reordering takes place.
+
+No matter how many years I'm using that tool, still can't get used to typing
+paths before query there, so decided to patch around that frustrating issue one
+day.
+
 
 
 ### Content
