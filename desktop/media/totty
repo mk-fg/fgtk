@@ -5,6 +5,12 @@ read tty_rows tty_cols < <(stty size)
 err=0
 
 for p in "$@"; do
+	[[ "$p" =~ https?:// ]] && {
+		curl -s "$p" >"$dst"\
+			|| { echo >&2 "Failed to fetch url: $p"; err=1; continue; }
+		p=$dst
+	}
+
 	ct=$(file --brief --mime-type "$p")
 	[[ "$ct" =~ ^image/ ]]\
 		|| { echo >&2 "Unknown content type ($ct): $p"; err=1; continue; }
@@ -12,4 +18,5 @@ for p in "$@"; do
 	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm "$dst" || err=1
 done
 
+rm -f "$dst"
 exit $err
