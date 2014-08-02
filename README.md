@@ -665,21 +665,39 @@ about in some distant past).
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
 various media files and streams.
 
-"flv_merge" there can be used to merge multiple segments of video downloaded
-from some streaming service (e.g. twitch.tv) into one full flv via tricky ffmpeg h264/aac
+###### video_to_ogg
+
+Straightforward "ffmpeg -f wav | oggenc" script to convert any media that has
+sound to an ogg file.
+
+###### flv_merge
+
+Merges multiple segments of video downloaded from some streaming service
+(e.g. twitch.tv) into one full flv via tricky ffmpeg h264/aac
 [stream concatenation functionality](http://ffmpeg.org/trac/ffmpeg/wiki/How%20to%20concatenate%20%28join%2C%20merge%29%20media%20files).
 
-"parec_from_flash" creates null-sink in pulseaudio and redirects browser flash
-plugin audio output stream to it, also starting "parec" and oggenc to
-record/encode whatever happens there.
+###### parec_from_flash
+
+Creates null-sink in pulseaudio and redirects browser flash plugin audio output
+stream to it, also starting "parec" and oggenc to record/encode whatever happens
+there.
+
 Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
-"pa_track_hostory" queries pa sinks for specific pid (which it can start) and
-writes "media.name" (usually track name) history, which can be used to record
-played track names from e.g. online radio stream in player-independent fashion.
+###### pa_track_hostory
 
-And other stuff doing similar things.
+Queries pa sinks for specific pid (which it can start) and writes "media.name"
+(usually track name) history, which can be used to record played track names
+from e.g. online radio stream in player-independent fashion.
+
+###### totty
+
+Wrapper around awesome [img2xterm](https://github.com/rossy2401/img2xterm) tool
+to display images in a color-capable terminal (e.g. xterm).
+
+Useful to query "which image is it" right from tty.
+Quality of the resulting images is kinda amazing, given tty limitations.
 
 
 #### notifications

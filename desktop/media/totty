@@ -1,0 +1,15 @@
+#!/bin/bash
+
+dst=/tmp/media.img2tty.png
+tty_cols=$(stty -a | awk 'match($0,/columns ([0-9]+);/,a) {print a[1]}')
+err=0
+
+for p in "$@"; do
+	ct=$(file --brief --mime-type "$p")
+	[[ "$ct" =~ ^image/ ]]\
+		|| { echo >&2 "Unknown content type ($ct): $p"; err=1; continue; }
+	[[ "$#" -gt 1 ]] && echo "--- $p"
+	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm "$dst" || err=1
+done
+
+exit $err
