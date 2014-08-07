@@ -27,10 +27,10 @@ ssid_list=(
 
 run() {
 	[[ -z "$pass" ]] && pass=$(
-		passgen -w $(random 2 4) 2>/dev/null\
+		passgen -w $(random 2 3) 2>/dev/null\
 			|| tr -cd '[:alnum:]' </dev/urandom | head -c10 )
 	[[ -z "$dev" ]] && dev=$(iw dev | awk '$1=="Interface" {print $2; exit}')
-	[[ -z "$ssid" ]] && ssid=${ssid_list[$(random ${#ssid_list[@]})]}
+	[[ -z "$ssid" ]] && ssid=${ssid_list[$(random 0 ${#ssid_list[@]})]}
 	[[ -z "$ip_base" ]] && ip_base=10.67.35
 
 	ip_gw="$ip_base".1
@@ -47,10 +47,11 @@ run() {
 	echo "iptables -t nat -I POSTROUTING -s ${ip_net} -j MASQUERADE"
 	echo "iptables -I FORWARD -s ${ip_net} -i ${dev} -j ACCEPT"
 	echo "iptables -I FORWARD -d ${ip_net} -o ${dev} -j ACCEPT"
+	echo "iptables -I INPUT -s ${ip_net} -i ${dev} -m udp --dport bootps -j ACCEPT"
 	echo '--------------------'
 
 	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
-	trap "rm -rf '$conf'; pkill -g 0" EXIT
+	trap "pkill -g 0; sleep 0.3; rm -rf '$conf'" EXIT
 	set -e
 
 #################### udhcpd.conf
