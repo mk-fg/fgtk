@@ -119,7 +119,7 @@ def track_dump_loop(opts):
 				pid, err_hook = player.pid, lambda p=player: p.poll() is None and p.terminate()
 			elif pid and player_poll is not None:
 				log.error('Player app failed (exit code: %s), exiting', player_poll)
-				sys.exit(player_poll)
+				return player_poll
 
 		if pid is not None:
 			track = track_for_pid(pid, dbus_reuse=opts.once)
@@ -185,7 +185,7 @@ def main(args=None):
 	log = logging.getLogger()
 	err_hook = devnull = None
 
-	try: track_dump_loop(opts)
+	try: return track_dump_loop(opts)
 	finally:
 		if err_hook is not None: err_hook()
 

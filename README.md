@@ -685,11 +685,19 @@ there.
 Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
-###### pa_track_hostory
+###### pa_track_history
 
 Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
+
+###### mpv_icy_track_history
+
+Same as pa_track_history above, but gets tracks when [mpv](http://mpv.io/) dumps
+icy-* tags (passed in shoutcast streams) to stdout, which should be at the start
+of every next track.
+
+More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
 ###### totty
 

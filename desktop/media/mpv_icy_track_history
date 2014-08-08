@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+from subprocess import Popen, PIPE
+import os, sys, time
+
+
+track_max_len = 16384
+
+def track_dump_loop(opts):
+	track_last = None
+	if opts.dst_file:
+		dst = open(opts.dst_file, 'a+b')
+		dst.seek(max(0, os.fstat(dst.fileno()).st_size - (track_max_len + 2)))
+		last_line = dst.read()
+		if '\n' in last_line:
+			track_last = last_line.rstrip('\r\n').rsplit('\n', 1)[-1].strip()
+	else: dst = sys.stdout
+
+	player_cmd = ['mpv', '--term-status-msg='] + list(opts.mpv_args)
+	player, ts = None, time.time()
+
+	while True:
+		if player:
+			player_poll = player.poll()
+			if player_poll is not None:
+				player_poll = player.wait()
+				if player_poll == 0: player = None
+				else:
+					log.error('Player app failed (exit code: %s), exiting', player_poll)
+					return player_poll
+
+		if not player:
+			player = Popen(player_cmd, stdout=PIPE)
+			err_hook = lambda p=player: p.poll() is None and p.terminate()
+			for line in iter(player.stdout.readline, ''):
+				if opts.passthrough: log.debug(line.rstrip())
+				line = line.strip()
+				if line.startswith('icy-title:'): line = line[10:]
+				else: continue
+				track = line.strip()
+				if track and not (track_last and track_last.endswith(track)):
+					track_last = track
+					if opts.timestamp: prefix = time.strftime(opts.timestamp_format)
+					else: prefix = ''
+					dst.write('{}{}\n'.format(prefix, track))
+					dst.flush()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Record whatever is playing in mpv (as supplied by icy-* tags) to some file.')
+	parser.add_argument('mpv_args', nargs='+',
+		help='Options/arguments (including playback source) to pass to mpv.'
+			' --term-status-msg= will be prepended to this list to lessen the amount of output.'
+			' Use "--" to make sure its options wont get processed by this wrapper script.')
+
+	parser.add_argument('-d', '--dst-file',
+		help='Path to a file to record all the stuff to. If omitted, stdout will be used.')
+	parser.add_argument('-t', '--timestamp', action='store_true',
+		help='Prepend timestamps to each track entry in the output.')
+	parser.add_argument('--timestamp-format',
+		metavar='py_ts_format', default='[%Y-%m-%d %H:%M] ',
+		help='Format for timestamp-prefix to be prepended to each line (default: %(default)s).'
+			' Should be compatible with pythons strftime() functions.')
+
+	parser.add_argument('--passthrough',
+		action='store_true', help='Pass all mpv stdout lines to debug logging.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log, err_hook
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log, err_hook = logging.getLogger(), None
+
+	try: return track_dump_loop(opts)
+	finally:
+		if err_hook is not None: err_hook()
+
+if __name__ == '__main__': sys.exit(main())
