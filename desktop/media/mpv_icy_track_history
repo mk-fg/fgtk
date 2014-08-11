@@ -43,11 +43,12 @@ class MpvCtl(object):
 		if not self.player: return
 		if self.muted_change: return
 		self.muted_change = True # racy lock
-		auto = sig == signal.SIGALRM
-		if auto:
-			if not self.muted and not self.muted_auto: return
-		elif self.muted_auto: self.muted_auto = False # manual action
 		self.muted = not self.muted
+		auto = sig is True or sig == signal.SIGALRM
+		if auto:
+			if not self.muted_auto: return
+		elif self.muted_auto: self.muted_auto = False # manual action
+		if not self.muted: self.muted_auto = False
 		self.log.debug( 'Toggling "mute" on a running player'
 			' instance (sig: %s, auto: %s) to: %s', sig, auto, self.muted )
 		self.player.stdin.write('m')
@@ -55,15 +56,18 @@ class MpvCtl(object):
 		self.muted_change = False
 		return self.muted
 
+	def _send_mute_auto(self):
+		if not self.mute_delay or self.mute_delay < 0: self.send_mute(True)
+		else: signal.alarm(self.mute_delay)
+
 	def send_mute_auto(self, enable):
 		if enable:
 			if self.muted: return
 			self.muted_auto = True
-			if not self.mute_delay or self.mute_delay < 0: self.send_mute()
-			else: signal.alarm(self.mute_delay)
-		elif self.muted_auto:
-			self.muted_auto = False
-			if self.muted: self.send_mute()
+			self._send_mute_auto()
+		else:
+			if not self.muted_auto: return
+			self._send_mute_auto()
 
 	def track_match(self, line):
 		line = line.strip()
@@ -123,7 +127,8 @@ def main(args=None):
 		help='Toggle mute than track name matches'
 			' that regexp, unmuting than name changes again.')
 	parser.add_argument('--mute-delay', type=float, metavar='seconds', default=1,
-		help='When auto-enabling mute, delay by this many seconds (default: %(default)s).')
+		help='When auto-toggling mute, delay by this many seconds'
+			' (useful for long track crossfades, default: %(default)s).')
 
 	parser.add_argument('-d', '--dst-file',
 		help='Path to a file to record all the stuff to. If omitted, stdout will be used.')
