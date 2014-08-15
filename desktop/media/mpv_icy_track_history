@@ -14,10 +14,12 @@ class MpvCtl(object):
 	player = track_last = None
 	muted = muted_auto = muted_change = False
 
-	def __init__(self, dst_file=None, mute_re=None, mute_delay=None, ts_format=None):
+	def __init__( self, dst_file=None,
+			mute_re=None, mute_delay=None,
+			recode=None, ts_format=None ):
 		self.log = logging.getLogger('mpvctl')
 
-		self.ts_format = ts_format
+		self.ts_format, self.recode = ts_format, recode
 		self.mute_re, self.mute_delay = mute_re, mute_delay
 		if dst_file:
 			self.dst = dst = open(dst_file, 'a+b')
@@ -84,6 +86,10 @@ class MpvCtl(object):
 		self.track_dump(track)
 
 	def track_dump(self, track):
+		if self.recode:
+			track = track\
+				.decode(self.recode, 'replace')\
+				.encode('utf-8', 'backslashreplace')
 		prefix = time.strftime(self.ts_format) if self.ts_format else ''
 		self.dst.write('{}{}\n'.format(prefix, track))
 		self.dst.flush()
@@ -139,6 +145,9 @@ def main(args=None):
 		help='Format for timestamp-prefix to be prepended to each line (default: %(default)s).'
 			' Should be compatible with pythons strftime() functions.')
 
+	parser.add_argument('-e', '--recode-from', metavar='encoding',
+		help='Decode titles from specified encoding and encode to utf-8.')
+
 	parser.add_argument('--passthrough',
 		action='store_true', help='Pass all mpv stdout lines to debug logging.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -148,7 +157,7 @@ def main(args=None):
 
 	mpvctl = MpvCtl( dst_file=opts.dst_file,
 		mute_re=re.compile(opts.mute_regexp), mute_delay=opts.mute_delay,
-		ts_format=opts.timestamp and opts.timestamp_format )
+		ts_format=opts.timestamp and opts.timestamp_format, recode=opts.recode_from )
 	try: return mpvctl.track_dump_loop(opts)
 	finally: mpvctl.terminate()
 
