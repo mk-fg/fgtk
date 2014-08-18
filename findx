@@ -8,8 +8,8 @@ def reorder_paths(argv):
 	cmd, args = argv[0], argv[1:]
 	if not args or not args[0].startswith('-'): return argv
 	from os.path import exists, isdir
-	args = deque(args)
-	for p in reversed(args):
+	args, xargs = deque(args), args
+	for p in reversed(xargs):
 		if not p.startswith('-') and isdir(p):
 			print('Reordering path at the end:', p, file=sys.stderr)
 			args.appendleft(args.pop())
