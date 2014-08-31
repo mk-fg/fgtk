@@ -54,6 +54,8 @@ def get_profile_dir(profile):
 	return profile_path
 
 
+class BackupError(Exception): pass
+
 class BackupStuff(object):
 
 	def __init__(self, cfg):
@@ -168,7 +170,16 @@ class BackupStuff(object):
 	def tabs_get(self):
 		conf, log = self.cfg_data.tabs, logging.getLogger('tabs')
 
-		with self.profile_file(conf.file) as src: session = json.load(src)
+		paths = conf.file
+		if isinstance(paths, types.StringTypes): paths = [paths]
+		for p in paths:
+			try:
+				with self.profile_file(p) as src: session = json.load(src)
+			except (OSError, IOError): pass
+			else: break
+		else:
+			raise BackupError( 'Failed to find sessions storage'
+				' file path, checked: {}'.format(', '.join(paths)), paths )
 
 		tabs = OrderedDict()
 		for win in session['windows']:

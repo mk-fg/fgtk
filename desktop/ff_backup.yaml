@@ -29,7 +29,9 @@ data_types:
 
   tabs:
     enabled: false
-    file: sessionstore.js
+    file:
+      - sessions.js
+      - sessionstore-backups/recovery.js
 
 
 common:
