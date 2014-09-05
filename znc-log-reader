@@ -51,14 +51,14 @@ def _short_ts_regexp():
 	return re.compile(''.join(ago_re), re.I | re.U)
 _short_ts_regexp = _short_ts_regexp()
 
-def parse_timestamp(val):
+def parse_timestamp(ts_str):
 	'''Match time either in human-readable format (as accepted by dateutil),
 		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
-	assert isinstance(val, bytes), repr(val)
-	val = val.replace('_', ' ')
+	assert isinstance(ts_str, bytes), repr(ts_str)
+	ts_str = ts_str.replace('_', ' ')
 
 	# Try to parse time offset in short format, similar to how it's presented
-	match = _short_ts_regexp.search(val)
+	match = _short_ts_regexp.search(ts_str)
 	if match:
 		delta = list()
 		parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
@@ -78,7 +78,7 @@ def parse_timestamp(val):
 	if not ts:
 		match = re.search( # BE format used in output
 			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
-			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', val )
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )
 		if match:
 			tpl = 'y' if not match.group('Y') else 'Y'
 			tpl, ts_str = '%{}-%m-%d'.format(tpl), match.group('date')
@@ -91,17 +91,17 @@ def parse_timestamp(val):
 			except ValueError: pass
 	if not ts and dateutil_parser: # try dateutil module, if available
 		# dateutil fails to parse textual dates like "yesterday"
-		try: ts = dateutil_parser.parse(val)
+		try: ts = dateutil_parser.parse(ts_str)
 		except: pass # dateutil isn't very good and throws various random crap
 	if not ts:
 		# coreutils' "date" parses virtually everything, but is more expensive to use
 		with open(os.devnull, 'w') as devnull:
-			proc = Popen(['date', '+%s', '-d', val], stdout=PIPE, stderr=devnull)
+			proc = Popen(['date', '+%s', '-d', ts_str], stdout=PIPE, stderr=devnull)
 			val = proc.stdout.read()
 			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
 
 	if ts: return ts
-	raise ValueError('Unable to parse date/time string: {0}'.format(val))
+	raise ValueError('Unable to parse date/time string: {0}'.format(ts_str))
 
 
 def chan_name(name):
