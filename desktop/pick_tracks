@@ -3,8 +3,12 @@
 import itertools as it, operator as op, functools as ft
 from plumbum import local
 from time import time
-from os.path import basename, dirname, join, exists, normpath, isfile
-import os, sys, re, random, tempfile, traceback, shutil, math
+from collections import defaultdict
+from os.path import basename, dirname, join, exists, normpath, isfile, splitext
+import os, sys, re, random, tempfile, traceback, shutil, math, types
+
+try: import mutagen, mutagenwrapper as mw
+except ImportError: mutagen = mw = None
 
 
 cleanup_ops = list() # list of callbacks to reliably run on exit
@@ -21,6 +25,34 @@ def main(argv=None):
 
 	parser.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
+
+	parser.add_argument('--raw-names', action='store_true',
+		help='Do not rename tracks according to --name-format.')
+	parser.add_argument('-f', '--name-format',
+		metavar='py_format_tpl', default='{0[title]}_[{0[tracknumber]}]_--_{0[artist]}',
+		help='Format to rename tracks to when copying to destination.'
+			' Same syntax as for python str.format, with keys'
+				' from mutagenwrapper (see docs for full list of these).'
+			' Will not be used if mutagenwrapper is not available.')
+	parser.add_argument('--name-format-check',
+		metavar='key1[,key2,...]', default='title',
+		help='Comma-separated list of keys to check before'
+				' renaming file according to --name-format.'
+			' If any of them is empty or missing, rename will not be performed.'
+			' Can be empty. Default: %(default)s')
+	parser.add_argument('--name-format-mappings',
+		metavar='k1=v1[,v2,...][|k2=v3[v4,...]|...]',
+		default=(
+			'artist=albumartist,artist,TPE2'
+				',TPE1,TPE2,TSOP,TXXX:Album Artist Credit,TXXX:Artist Credit,xxx|'
+			'title=title,TIT2|' 'album=album,TALB,xxx|' 'tracknumber=tracknumber,TRCK,x|' ),
+		help='Fallback keys to use if direct match is empty. Default: %(default)s')
+	parser.add_argument('--name-format-raw', action='store_true',
+		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
+	parser.add_argument('--name-len-max',
+		type=int, metavar='number', default=160,
+		help='Trim name to specified length.'
+			' No collision-detection afterwards. Default: %(default)s')
 
 	parser.add_argument('-s', '--min-df',
 		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
@@ -77,9 +109,26 @@ def main(argv=None):
 		if optz.clean_df: optz.clean_df = optz.clean_df * MiB
 	if not optz.clean_path: optz.clean_path = optz.dst
 
+	if not optz.name_format or not mw: optz.raw_names = True
+	optz.name_format_check = filter( None,
+		map(bytes.strip, optz.name_format_check.split(',')) )
+	optz.name_format_mappings, specs = dict(), optz.name_format_mappings.split('|')
+	for spec in specs:
+		if not spec.strip(): continue
+		k, vs = spec.split('=', 1)
+		vs = filter(None, map(bytes.strip, vs.split(',')))
+		optz.name_format_mappings[k] = vs
+
+
+	### Misc helpers
+
 	def force_bytes(path):
 		if isinstance(path, unicode): return path.encode('utf-8')
 		return path
+
+	def to_bytes(obj, **conv_kws):
+		if not isinstance(obj, types.StringTypes): obj = bytes(obj)
+		return force_bytes(obj)
 
 	def free(path=optz.dst):
 		df = os.statvfs(path)
@@ -103,7 +152,48 @@ def main(argv=None):
 			except OSError as err:
 				log.warn('Failed to remove file ({}): {}'.format(path, err))
 
-	# Build a list of files we're allowed to remove, if any cleanup is requested
+	_track_name_subs = {
+		r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
+		r'<': '(', r'>': ')', r'"': '', r'\*': '+', r'[|!]': '-', r'[\?\*]': '_',
+		r'\.+$': '_', r'\s+$': '', r'\s': '_' }
+	_track_name_subs = list(
+		(re.compile(k), v) for k,v in _track_name_subs.viewitems() )
+	def track_name(path):
+		name = basename(path)
+		if optz.raw_names: return name
+		try: tags_raw = mw.read_tags(path)
+		except:
+			try: tags_raw = mutagen.File(path).tags
+			except: return name
+		tags = dict(x='x', xxx='xxx')
+		for k, v in tags_raw.iteritems():
+			if not isinstance(v, list): v = getattr(v, 'text', None)
+			if not v: continue
+			if not isinstance(v, list): v = [to_bytes(v)]
+			tags[to_bytes(k)] = to_bytes(v[0])
+
+		if not tags: return name
+		tags = defaultdict( bytes,
+			((k, to_bytes(v).replace('/', '-')) for k, v in tags.iteritems()) )
+		for k, vs in optz.name_format_mappings.viewitems():
+			for v in vs:
+				if tags[v]: break
+			else: continue
+			tags[k] = tags[v]
+
+		if optz.name_format_check\
+				and not all(op.itemgetter(*optz.name_format_check)(tags)):
+			return name
+		name, ext = optz.name_format.format(tags), splitext(name)[-1]
+		if optz.name_len_max > 0: name = name[:optz.name_len_max]
+
+		if not optz.name_format_raw:
+			for sub_re, sub in _track_name_subs: name = sub_re.sub(sub, name)
+
+		return name + ext
+
+
+	### Build a list of files we're allowed to remove, if any cleanup is requested
 	if optz.clean or optz.shuffle:
 		cleanup = list()
 		if not exists(optz.clean_path):
@@ -117,7 +207,7 @@ def main(argv=None):
 			cleanup = cleanup.splitlines()
 			if optz.clean_df: do_cleanup() # do pre-cleanup, if enabled
 
-	# Build file list
+	### Build file list
 	log.debug('Building list of files in source paths')
 	if optz.src:
 		if optz.src_list:
@@ -140,7 +230,7 @@ def main(argv=None):
 	else: src_files = list()
 	log.debug(' - found {} files'.format(len(src_files)))
 
-	# Shuffle operation
+	### Shuffle operation
 	if optz.shuffle:
 		# Drop some percentage of files that will be left alone
 		optz.shuffle = default_shuffle_percentage\
@@ -173,12 +263,12 @@ def main(argv=None):
 		if not optz.dry_run:
 			for path in cleanup: os.unlink(path)
 
-	# Stats
+	### Stats
 	df0, ts0 = free(), time()
 	df_last, ts_last, rate = df0, ts0, None
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
-	# Copy files
+	### Copy files
 	while src_files:
 		# ewma is used here reflect changing speeds
 		#  (due to cached writes and/or other activity) faster.
@@ -200,7 +290,7 @@ def main(argv=None):
 		path = force_bytes(pop_path(src_files))
 		log.debug('Copying: {!r}'.format(path))
 
-		path_dst = join(optz.dst, basename(path))
+		path_dst = join(optz.dst, track_name(path))
 		try:
 			if optz.clean_as_necessary: # free space for a file, if requested
 				df_path = (os.stat(path).st_size + 1*2**20) * 1.2 # for any possible fs overhead
@@ -212,7 +302,7 @@ def main(argv=None):
 			log.info('Aborted. {}'.format(stats()))
 			sys.exit()
 
-	# Success
+	### Success
 	rate = (df0 - free()) / (time() - ts0) # median rate
 	log.info(stats())
 
