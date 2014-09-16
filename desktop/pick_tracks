@@ -13,12 +13,14 @@ except ImportError: mutagen = mw = None
 
 cleanup_ops = list() # list of callbacks to reliably run on exit
 rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
+tags_default = dict(x='x', xxx='xxx')
 
 def main(argv=None):
 	default_shuffle_percentage = 30.0
 
 	import argparse
 	parser = argparse.ArgumentParser(
+		usage='%(prog)s [opts] src dst',
 		description='Randomly pick and copy tracks from source to destination.')
 	parser.add_argument('src', nargs='*', help='Source path(s).')
 	parser.add_argument('dst', help='Destination path.')
@@ -165,7 +167,9 @@ def main(argv=None):
 		except:
 			try: tags_raw = mutagen.File(path).tags
 			except: return name
-		tags = dict(x='x', xxx='xxx')
+		if not tags_raw: return name
+
+		tags = tags_default.copy()
 		for k, v in tags_raw.iteritems():
 			if not isinstance(v, list): v = getattr(v, 'text', None)
 			if not v: continue
@@ -182,7 +186,7 @@ def main(argv=None):
 			tags[k] = tags[v]
 
 		if optz.name_format_check\
-				and not all(op.itemgetter(*optz.name_format_check)(tags)):
+				and not all(list(tags.get(k) for k in optz.name_format_check)):
 			return name
 		name, ext = optz.name_format.format(tags), splitext(name)[-1]
 		if optz.name_len_max > 0: name = name[:optz.name_len_max]
