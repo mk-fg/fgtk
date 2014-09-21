@@ -277,6 +277,45 @@ Kinda same as `tshark -T fields`, but with python on top.
 For example, `pcap_process -f http.request.uri/show dump.pcap` will print full
 parsed values (as presented by tshark dissector) of "http.request.uri" fields.
 
+##### hype
+
+Tools to work with [cjdns](https://github.com/cjdelisle/cjdns/) and
+[Hyperboria](http://hyperboria.net/) stuff.
+
+Has lots of subcommands for cjdns admin interface interaction, various related
+data processing, manipulation (ipv6, public key, switchLabel, config file,
+etc) and obfuscation.
+Full list with descriptions and all possible options is in --help output.
+
+Some of the functionality bits are described below.
+
+-- Subcommand: decode-path
+
+Decode cjdns "Path" to a sequence of integer "peer indexes", one for each hop.
+
+Relies on encoding schema described in NumberCompress.h of cjdns.
+Nodes are not required to use it in theory, and there are other encoding schemas
+implemented which should break this tool's operation, but in practice no one
+bothers to change that default.
+
+Example: hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30
+
+-- Subcommand: conf-paste
+
+Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
+deterministic way.
+
+Should be useful to pastebin your config file without revealing most sensitive
+data (passwords and keys) in it.
+Might still reveal some peer info like IP endpoints, contacts, comments, general
+list of nodes you're peered with. Use with caution.
+
+Sensitive bits are regexp-matched (by their key) and then value is processed
+through pbkdf2-sha256 and output is truncated to appear less massive.
+pbkdf2 parameters are configurable (see --help output), and at least
+--pbkdf2-salt should be passed for output to be deterministic, otherwise random
+salt value will be used.
+
 
 
 ### Dev
@@ -953,45 +992,6 @@ replicas, maintained by csync2, unified via some sort of unionfs.
 
 So far, seem to be the simpliest and by far the most robust, predictable and
 reliable distributed filesystem configuration for my simple use-case.
-
-
-
-### Hyperboria
-
-Tools to work with [hyperboria](http://hyperboria.net/) darknet.
-
-##### nodeinfo
-
-Tool to register a node in [NodeInfo](https://wiki.projectmeshnet.org/NodeInfo)
-database and process some misc metadata.
-
-##### path-decode
-
-Simple script to decode cjdns "Path" to a sequence of integer "peer indexes",
-one for each hop.
-
-Relies on encoding schema described in NumberCompress.h of cjdns.
-Nodes are not required to use it in theory, and there are other encoding schemas
-implemented which should break this tool's operation, but in practice no one
-bothers to change that default.
-
-Example: path-decode 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30
-
-##### conf-paste
-
-Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
-deterministic way.
-
-Should be useful to pastebin your config file without revealing most sensitive
-data (passwords and keys) in it.
-Might still reveal some peer info like IP endpoints, contacts, comments, general
-list of nodes you're peered with. Use with caution.
-
-Sensitive bits are regexp-matched (by their key) and then value is processed
-through pbkdf2-sha256 and output is truncated to appear less massive.
-pbkdf2 parameters are configurable (see --help output), and at least
---pbkdf2-salt should be passed for output to be deterministic, otherwise random
-salt value will be used.
 
 
 
