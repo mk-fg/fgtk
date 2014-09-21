@@ -4,11 +4,16 @@ from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
+from hashlib import sha256, sha512
 import json, socket, string
 import os, sys, io, re, types
 
-from hashlib import sha256, sha512
-import pyaml
+try:
+	import pyaml
+	pprint = lambda data: pyaml.dump(data, sys.stdout)
+except ImportError:
+	from pprint import pprint
+
 
 
 ### For bencode bits below
@@ -398,7 +403,7 @@ def main(args=None):
 		res = admin.get_peer_stats()
 		for p in res:
 			p['ipv6'] = public_to_ipv6(p['publicKey'], colons=True)
-		pyaml.dump(res, sys.stdout)
+		pprint(res)
 
 	else: parser.error('Unrecognized command: {}'.format(opts.call))
 
