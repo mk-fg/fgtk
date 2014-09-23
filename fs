@@ -105,7 +105,7 @@ def opts_parse_mode(spec):
 
 class FSOps(object):
 
-	supported = 'mv', 'ch', 'case'
+	supported = 'mv', 'cp', 'ch', 'case'
 
 	def __init__(self, opts):
 		self.opts = opts
@@ -163,6 +163,28 @@ class FSOps(object):
 		for src, dst in ops:
 			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
 			mv_func(src, dst, attrs=attrs)
+			if opts.new_owner:
+				dst_stat = os.stat(dirname(dst))
+				sh.chown( dst,
+					dst_stat.st_uid, dst_stat.st_gid,
+					recursive=True, dereference=False )
+			if opts.ch: self.ch_sub(dst)
+
+
+	def cp(self):
+		opts, ops = self.opts, self.opts_flow_parse()
+
+		cp_func = ft.partial(sh.cp, sync=opts.sync, skip_ts=opts.update_times)\
+			if not opts.recursive else\
+			ft.partial( sh.cp_r, onerror=None,
+				atom=ft.partial(sh.cp_d, sync=opts.sync, skip_ts=opts.update_times) )
+
+		# attrs is implied if uid=0, otherwise disabled, unless specified explicitly in any way
+		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
+
+		for src, dst in ops:
+			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
+			cp_func(src, dst, attrs=attrs, dereference=opts.dereference)
 			if opts.new_owner:
 				dst_stat = os.stat(dirname(dst))
 				sh.chown( dst,
@@ -269,13 +291,25 @@ def main(args=None):
 		cmd.add_argument('-r', '--relative', action='store_true',
 			help='Create symlinks to relative paths, only makes sense with --relocate.')
 
+	with subcommand('cp', help='Recursively copy path(s).') as cmd:
+		cmd.add_argument('src/dst', nargs='*',
+			help='Files/dirs to copy. If neither of --src / --dst option is'
+				' specified, last argument will be treated as destination.')
+		cmd.add_argument('-l', '--no-dereference',
+			dest='dereference', action='store_false', default=True,
+			help='Copy symlinks as files/dirs they point to.')
+		cmd.add_argument('--sync', action='store_true',
+			help='Do fsync() before closing destination files.')
+		cmd.add_argument('--update-times', action='store_true',
+			help='Do not preserve timestamps, which are preserved by default.')
+
 	with subcommand('ch', help='Change attributes of a specified path(s).') as cmd:
 		cmd.add_argument('paths', nargs='+', help='Paths to operate on.')
 		cmd.add_argument('-r', '--recursive', action='store_true', help='Recursive operation.')
 
-	with subcommand('case', help='Operations with path(s) case.') as cmd:
+	with subcommand('case',
+			help='Operations with path(s) case. Recursive by default.') as cmd:
 		cmd.add_argument('paths', nargs='+', help='Paths to operate on.')
-		cmd.add_argument('-r', '--recursive', action='store_true', help='Recursive operation.')
 		cmd.add_argument('-f', '--force', action='store_true',
 			help='Proceed with renaming even if there'
 				' are conflicts (some files will be lost in this case!).')
@@ -301,8 +335,12 @@ def main(args=None):
 
 	## More generic opts
 
-	for cmd in [op.itemgetter('mv')(cmds.choices)]:
+	for cmd in op.itemgetter('cp', 'case')(cmds.choices):
+		cmd.add_argument('-1', '--non-recursive',
+			dest='recursive', action='store_false', default=True,
+			help='Non-recursive operation.')
 
+	for cmd in op.itemgetter('mv', 'cp')(cmds.choices):
 		cmd.add_argument('-s', '--src', dest='src_opt', metavar='SRC',
 			help='Source, positional argz will be treated as destination(s).')
 		cmd.add_argument('-d', '--dst', dest='dst_opt', metavar='DST',
@@ -320,7 +358,7 @@ def main(args=None):
 			help='Inhibit fs metadata copying (direct uid/gid/whatever setting will'
 				' still work as requested) ops which may require elevated privileges.')
 
-	for cmd in op.itemgetter('mv', 'ch')(cmds.choices):
+	for cmd in op.itemgetter('mv', 'cp', 'ch')(cmds.choices):
 		cmd.add_argument('-u', '--uid',
 			metavar='{uname|uid}[:[{gname|gid}][:][mode]]',
 			help='Set owner user and group/mode (if specified,'
