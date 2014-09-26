@@ -349,7 +349,7 @@ def main(args=None):
 						salt + val[:c] + val[d:], opts.pbkdf2_iteratiions ))
 					val = val[:c] + subst + val[d:]
 				else:
-					val = nice_b64(pbkdf2('sha256', val, salt, opts.pbkdf2_iteratiions))
+					val = nice_b64(pbkdf2_hmac('sha256', val, salt, opts.pbkdf2_iteratiions))
 
 				src = src[:a] + val + src[b:]
 				paste_checklist.discard(k)
