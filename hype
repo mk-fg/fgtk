@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
-from hashlib import sha256, sha512
+from hashlib import sha256, sha512, pbkdf2_hmac
 import json, socket, string
 import os, sys, io, re, types
 
@@ -179,43 +179,6 @@ def path_breakdown(path):
 		pint = pint[:-chop]
 
 
-def pbkdf2(password, salt, iterations, dklen=0):
-	'PBKDF2 (RFC 2898, section 5.2), as implemented in Django.'
-	assert iterations > 0
-	from hashlib import sha256
-	import binascii, struct
-	digest, hlen, hb = sha256, long(32), long(64)
-	_long_to_bin = lambda x, hex_format_string:\
-		binascii.unhexlify(hex_format_string % x)
-	_bin_to_long = lambda x: long(x.encode('hex'), 16)
-	def _fast_hmac(key, msg):
-		dig1, dig2 = digest(), digest()
-		if len(key) > hb:
-			key = digest(key).digest()
-		key += chr(0) * (hb - len(key))
-		dig1.update(key.translate(_trans_36))
-		dig1.update(msg)
-		dig2.update(key.translate(_trans_5c))
-		dig2.update(dig1.digest())
-		return dig2
-	_trans_5c = "".join([chr(x ^ 0x5C) for x in xrange(256)])
-	_trans_36 = "".join([chr(x ^ 0x36) for x in xrange(256)])
-	if not dklen: dklen = hlen
-	if dklen > (2 ** 32 - 1) * hlen: raise OverflowError('dklen too big')
-	l = -(-dklen // hlen)
-	r = dklen - (l - 1) * hlen
-	hex_format_string = "%%0%ix" % (hlen * 2)
-	def F(i):
-		def U():
-			u = salt + struct.pack('>I', i)
-			for j in xrange(int(iterations)):
-				u = _fast_hmac(password, u).digest()
-				yield _bin_to_long(u)
-		return _long_to_bin(reduce(op.xor, U()), hex_format_string)
-	T = [F(x) for x in range(1, l + 1)]
-	return ''.join(T[:-1]) + T[-1][:r]
-
-
 class CjdnsAdminError(Exception): pass
 
 class CjdnsAdmin(object):
@@ -380,12 +343,13 @@ def main(args=None):
 					# Rest of the value will be added to salt,
 					#  so that same password for diff names should produce diff values
 					c, d = val_match.span('password')
-					subst = nice_b64(pbkdf2(
+					subst = nice_b64(pbkdf2_hmac(
+						'sha256',
 						val_match.group('password'),
 						salt + val[:c] + val[d:], opts.pbkdf2_iteratiions ))
 					val = val[:c] + subst + val[d:]
 				else:
-					val = nice_b64(pbkdf2(val, salt, opts.pbkdf2_iteratiions))
+					val = nice_b64(pbkdf2('sha256', val, salt, opts.pbkdf2_iteratiions))
 
 				src = src[:a] + val + src[b:]
 				paste_checklist.discard(k)
