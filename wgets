@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, types, urlparse, urllib, subprocess, hashlib
+
+
+def print_usage(extras=None, exit_with=1):
+	p = ft.partial(print, file=sys.stderr)
+	cmd = os.path.basename(sys.argv[0])
+	example_args = 'http://os.archlinuxarm.org/os/'\
+		'ArchLinuxARM-sun4i-latest.tar.gz', 'cea5d785df19151806aa5ac3a917e41c'
+	p('Usage: {} [ wget_opts ] url checksum'.format(cmd))
+	p('Example: {} -c {} {}'.format(cmd, *example_args))
+	if extras is not None:
+		if isinstance(extras, types.StringTypes): extras = [extras]
+		for line in extras: p(line)
+	if exit_with is not None: sys.exit(exit_with)
+
+
+class InputError(Exception):
+
+	def print_usage(self):
+		if not self.args: print_usage()
+		msg = self.args[0].format(*self.args[1:])
+		print_usage('ERROR: {}'.format(msg))
+
+
+def process_cli(args=None):
+	if args is None: args = sys.argv[1:]
+	args = args or ['-h']
+
+	for arg in args:
+		if arg.startswith('-h') or arg == '--help': raise InputError
+
+	args, checksum = args[:-1], args[-1]
+	if not args: raise InputError('both url and checksum must be specified')
+	args, url = args[:-1], args[-1]
+
+	file_path = urlparse.urlparse(url).path
+	file_path = urllib.unquote_plus(file_path.rsplit('/', 1)[-1])
+	if not file_path: raise InputError('failed to detect output filename from url')
+	args = ['wget'] + args + ['-O', file_path, url]
+
+	return file_path, checksum, args
+
+
+def validate_digest( checksum,
+		_hash_funcs = [ ('md5', 16), ('sha1', 20),
+			('sha256', 32), ('sha512', 64), ('sha224', 28), ('sha384', 48) ] ):
+	digest = checksum.lower().decode('hex')
+
+	for hash_name, hash_len in _hash_funcs:
+		if len(digest) == hash_len: break
+	else:
+		raise InputError( 'Error: failed to pick hash'
+			' for value (len: {}): {}'.format(len(checksum), checksum) )
+	hash_func = getattr(hashlib, hash_name)
+
+	return digest, hash_name, hash_func
+
+
+class DigestError(Exception): pass
+
+def check_hash(file_path, hash_func, digest, bs=4 * 2**20):
+	chk = hash_func()
+	with open(file_path) as src:
+		for chunk in iter(ft.partial(src.read, bs), ''): chk.update(chunk)
+	chk = chk.digest()
+	if digest != chk:
+		raise DigestError('{} (expected) != {} (real)'.format(digest.encode('hex'), chk.encode('hex')))
+
+
+def main(args=None):
+	try:
+		file_path, checksum, wget_args = process_cli(args)
+		digest, hash_name, hash_func = validate_digest(checksum)
+	except InputError as err: err.print_usage()
+
+	print('Using hash: {}'.format(hash_name))
+	print('Using output filename: {}'.format(file_path))
+
+	subprocess.check_call(wget_args)
+	check_hash(file_path, hash_func, digest)
+
+	print('Checksum matched')
+
+
+if __name__ == '__main__': sys.exit(main())

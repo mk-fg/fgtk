@@ -156,6 +156,38 @@ No matter how many years I'm using that tool, still can't get used to typing
 paths before query there, so decided to patch around that frustrating issue one
 day.
 
+##### wgets
+
+Simple script to grab a file using wget and then validate checksum of the
+result, e.g.:
+
+```console
+$ wgets -c http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz cea5d785df19151806aa5ac3a917e41c
+Using hash: md5
+Using output filename: ArchLinuxARM-sun4i-latest.tar.gz
+--2014-09-27 00:04:45--  http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz
+Resolving os.archlinuxarm.org (os.archlinuxarm.org)... 142.4.223.96, 67.23.118.182, 54.203.244.41, ...
+Connecting to os.archlinuxarm.org (os.archlinuxarm.org)|142.4.223.96|:80... connected.
+HTTP request sent, awaiting response... 416 Requested Range Not Satisfiable
+
+    The file is already fully retrieved; nothing to do.
+
+Checksum matched
+```
+
+Basic invocation syntax is `wgets [ wget_opts ] url checksum`, checksum is
+hex-decoded and hash func is auto-detected from its length (md5, sha-1, all
+sha-2's are supported).
+
+Idea is that - upon encountering an http link with either checksum on the page
+or in the file nearby - you can easily run the thing providing both link and
+checksum to fetch the file.
+
+If checksum is available in e.g. *.sha1 file alongside the original one, it
+might be a good idea to fetch that checksum from any remote host (e.g. via
+"curl" from any open ssh session), making spoofing of both checksum and the
+original file a bit harder.
+
 
 
 ### Content
