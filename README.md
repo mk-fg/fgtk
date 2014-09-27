@@ -700,6 +700,16 @@ name):
 	# iptables -A FORWARD -s 10.67.35.0/24 -i wlp0s18f2u2 -j ACCEPT
 	# iptables -A FORWARD -d 10.67.35.0/24 -o wlp0s18f2u2 -j ACCEPT
 
+These rules are also echoed in the script, with IP and interface name that was
+used.
+
+For consistent naming of network interfaces from usb devices (to e.g. have
+constant set of firewall rules for these), following udev rule can be used (all
+usb-wlan interfaces will be named according to NAME there):
+
+	SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
+		DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
+
 ##### mikrotik_backup
 
 Script to ssh into [mikrotik router](http://mikrotik.com) with specified
