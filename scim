@@ -39,6 +39,9 @@ parser.add_option('-m', '--meta', action='store_true',
 		' Implied if none of --links or --meta specified explicitly, except when user'
 		' has no ability to manipulate file ownership and meta_list does not exists.')
 
+parser.add_option('-p', '--path-match', metavar='path',
+	help='Only process entries that match specified local path.')
+
 parser.add_option('--links-list',
 	action='store', dest='ln_list',
 	type='str', metavar='NAME', default='.scim_links',
@@ -98,6 +101,7 @@ log = logging.getLogger(sys.argv[0])
 
 
 ### Find scim-root check argz, listz presence
+
 def merge_filter(stream):
 	skip_flag = False
 	for ln, line in enumerate(it.ifilter(None, it.imap(str.strip, stream))):
@@ -108,6 +112,10 @@ def merge_filter(stream):
 			skip_flag = True
 			log.error('Merge-block detected on line {0}'.format(ln))
 		if not skip_flag: yield line
+
+def path_filter_check(pattern, path):
+	if pattern is None: return True
+	return sh.fn_xmatch(pattern, path)
 
 if optz.ln_list.startswith('/'):
 	scim_path, optz.ln_list = scim_path.rsplit(os.sep, 1)
@@ -295,6 +303,9 @@ def update_meta(srcz):
 	for node, meta in srcz.items():
 		if optz.limit and errz > optz.limit: continue # just fill srcz set (to rebuild meta-list)
 
+		## Make sure path passes the filtering
+		if not path_filter_check(optz.path_match, node): continue
+
 		path = sh.join(scim_path, node)
 		try: fstat = meta_get(path)
 		except OSError as err:
@@ -410,7 +421,7 @@ def update_links():
 	## Init
 	global errz, errz_critical
 	global scim_path # can change in case it's in links itself
-	srcz = set() # filled during straight check to be used in reverse check
+	srcz = dict() # filled during straight check to be used in reverse check
 
 	## Backups dir
 	if optz.fix:
@@ -445,9 +456,12 @@ def update_links():
 		else:
 			if os.path.isdir(src):
 				log.debug('Linked whole path (bad practice): {0}'.format(src))
-			srcz.add(src)
+			srcz[src] = src_rel
 
 		if optz.limit and errz > optz.limit: continue # just fill srcz set
+
+		## Make sure path passes the filtering
+		if not path_filter_check(optz.path_match, src_rel): continue
 
 		## Check symlink / cat reference
 
