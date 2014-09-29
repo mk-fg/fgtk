@@ -1,6 +1,7 @@
 #!/bin/bash
 
-letter=( "From: $(id -un) ($(id -un))" "Date: $(date --rfc-822)" )
+user=$(id -un)
+letter=( "From: ${user} (${user})" "Date: $(date --rfc-822)" )
 rcpt=()
 from=()
 opt_chk=true
@@ -20,5 +21,5 @@ ifs_=$IFS; IFS=", "
 letter+=( "To: ${rcpt[*]}" )
 IFS=$ifs_; unset ifs_
 
-( for line in "${letter[@]}"; do echo "${line}"; done; echo; cat ) |
-	/usr/sbin/sendmail "${from[@]}" "${rcpt[@]}"
+{ for line in "${letter[@]}"; do echo "${line}"; done; echo; cat; } |
+	exec /usr/sbin/sendmail "${from[@]}" "${rcpt[@]}"
