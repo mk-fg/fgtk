@@ -39,7 +39,7 @@ for arg in args:
 		# Try to work around skype failure to pass arguments properly
 		# For example, 'can you "take care" of the problem?'
 		#  might get passed as 'can you ' 'take care' 'of the problem?'
-		parser.add_argument(arg, nargs='+')
+		parser.add_argument(arg, nargs='*', default='')
 optz = parser.parse_args()
 optz.smessage = ' '.join(optz.smessage)
 
@@ -50,7 +50,7 @@ import os, sys
 
 # Ripped from https://gist.github.com/1361027
 notifications = dict(
-	SkypeLogin=dict(summary='Skype', body='You have logged into Skype with {sname}'),
+	SkypeLogin=dict(summary='Init', body='You have logged into Skype with {sname}'),
 	SkypeLogout=dict(summary='You have logged out of Skype', icon_name='user-offline'),
 	SkypeLoginFailed=dict(summary='Skype login failed', icon_name='user-offline'),
 	CallConnecting=dict(summary='Dailing... {sname}', icon_name='call-start'),
@@ -84,9 +84,8 @@ if not Gtk.IconTheme.get_default().has_icon(note['icon_name']):
 	note['icon_name'] = 'skype'
 
 note_data = vars(optz)
-for k in 'summary', 'body':
-	if k not in note: continue
-	note[k] = note[k].format(**note_data)
+if 'summary' in note: note['summary'] = 'skype: ' + note['summary'].format(**note_data)
+if 'body' in note: note['body'] = note['body'].format(**note_data)
 note_data = note
 
 note = Notify.Notification()
