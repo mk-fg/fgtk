@@ -23,8 +23,12 @@ def try_notification(title, body, critical=False, timeout=None):
 	except: pass
 
 
-def proc_pipe(cmd):
-	proc = Popen(cmd, stdout=PIPE, stderr=PIPE)
+class NotificationTimeout(Exception): pass
+
+def proc_pipe(cmd, timeout=10):
+	env = os.environ.copy()
+	env['NOTIFICATION_EXEC_CHECK'] = 't' # to block recursion
+	proc = Popen(cmd, stdout=PIPE, stderr=PIPE, env=env)
 	poller = epoll()
 
 	pipes = dict()
@@ -46,7 +50,9 @@ def proc_pipe(cmd):
 
 	output = dict((fd, list()) for fd in pipes)
 	while True:
-		(fd, ev), = poller.poll(-1, 1)
+		ev = poller.poll(timeout, 1)
+		if not ev: raise NotificationTimeout(timeout)
+		(fd, ev), = ev
 		buff = pipe_read(fd)
 
 		# Check if process has finished, if there's no output
@@ -64,14 +70,19 @@ def proc_pipe(cmd):
 
 
 def main():
+	if os.environ.get('NOTIFICATION_EXEC_CHECK'):
+		print('Detected recursive call in notification.exec, aborting', file=sys.stderr)
+		sys.exit(1)
+
 	optz, cmd = list(), sys.argv[1:]
 	if '--' in sys.argv:
 		pos = sys.argv.index('--')
 		optz, cmd = sys.argv[1:pos], sys.argv[pos+1:]
 
+	# In case this binary is symlinked to something like "notify_X.wrapper" - just run notify_X
+	# Only use that if names are in "notify.*" form to avoid accidental recursion
 	cmd_base = os.path.basename(sys.argv[0])
-	if not optz and cmd_base !=\
-			os.path.basename(os.path.realpath(sys.argv[0])):
+	if cmd_base.startswith('notify.') and cmd_base.rsplit('.')[-1] != 'exec':
 		if cmd_base.endswith('.wrapper'): cmd_base = cmd_base[:-8]
 		cmd = [cmd_base] + cmd
 
