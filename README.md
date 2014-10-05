@@ -1025,18 +1025,6 @@ authorize paired (and/or whitelisted) devices.
 
 
 
-### UFS
-
-A few tools to work with a unionfs-based distributed filesystem.
-
-Basically it's a few dumb nfs shares on different hosts, some of them being a
-replicas, maintained by csync2, unified via some sort of unionfs.
-
-So far, seem to be the simpliest and by far the most robust, predictable and
-reliable distributed filesystem configuration for my simple use-case.
-
-
-
 ### VM
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
@@ -1057,3 +1045,24 @@ for [sysdig tool](https://github.com/draios/sysdig/).
 
 Basically simple scripts to filter and format data that sysdig reads or collects
 in real-time for various common tasks.
+
+
+
+### aufs
+
+A few tools to work with a layered aufs filesystem on arm boards.
+
+##### aubrsync
+
+Modified script from aufs2-util.git, but standalone (with stuff from aufs.shlib
+baked-in) and not failing on ro-remounts, which seem to be a common thing for
+some places like /var or /home.
+
+##### aufs_sync
+
+Convenience wrapper around aubrsync for mounts like `none /var -o
+br:/aufs/rw/var=rw:/aufs/ro/var=ro`.
+Can also just list what's there to be synced with "check" command.
+
+	Usage: aufs_sync { copy | move | check } module
+	Example (flushes /var): aufs_sync move var
