@@ -155,8 +155,8 @@ def main(args=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
-	mpvctl = MpvCtl( dst_file=opts.dst_file,
-		mute_re=re.compile(opts.mute_regexp), mute_delay=opts.mute_delay,
+	mpvctl = MpvCtl( dst_file=opts.dst_file, mute_delay=opts.mute_delay,
+		mute_re=opts.mute_regexp and re.compile(opts.mute_regexp),
 		ts_format=opts.timestamp and opts.timestamp_format, recode=opts.recode_from )
 	try: return mpvctl.track_dump_loop(opts)
 	finally: mpvctl.terminate()
