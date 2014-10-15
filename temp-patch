@@ -59,7 +59,7 @@ patch -s --dry-run "${patch_opts[@]}" "$tempfile" "$patch"\
 chown --reference "$dst" "$tempfile"
 chmod --reference "$dst" "$tempfile"
 [[ -n "$rw" ]] || chmod a-w "$tempfile"
-touch --reference "$dst" "$tempfile"
+# touch --reference "$dst" "$tempfile"
 
 # set -x
 mount "${mount_opts[@]}" "$tempfile" "$dst"
