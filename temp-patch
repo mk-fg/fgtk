@@ -1,0 +1,69 @@
+#!/bin/bash
+set -eu
+
+bin=$(basename "$0")
+usage() {
+	echo >&2 "Usage: $bin [-w] file patch [duration]"
+	echo >&2 "Example: $bin /etc/hosts ~/add_local_net_hosts.patch 2h"
+	echo >&2
+	echo >&2 'Temp-mount a patched file over the original'
+	echo >&2 'one for the specified duration (or until reboot).'
+	echo >&2
+	echo >&2 'Time should be specified as "\d+[dhms]?" (pcre),'
+	echo >&2 'were last letter is a unit spec (days, hours, mins. secs),'
+	echo >&2 'with seconds assumed if it is omitted.'
+	echo >&2
+	echo >&2 '"-w" option temp-mounts the file read/write instead'
+	echo >&2 'of default "ro" mode (because any there changes will be lost!).'
+	echo >&2 'Since "-o ro" doesnt seem to work on linux, "chmod a-w" is done instead.'
+	exit "${1:-1}"
+}
+
+if [[ "$1" = -h || "$1" = --help ]]; then usage 0; fi
+[[ "$1" = -w ]] && { rw=t; shift; } || rw=
+[[ "$#" -ge 2 || "$#" -le 3 ]] || exit 1
+[[ "$#" -eq 3 ]] && time=$3 || time=
+dst=$1 patch=$2
+
+[[ "$UID" -eq 0 ]] || {
+	echo >&2 "ERROR: Can't work as non-root (need to mount stuff)"
+	exit 1
+}
+
+[[ -z "$time" ]] || {
+	declare -A units=( ['d']=$((2600*24)) ['h']=3600 ['m']=60 ['s']=1 )
+	if [[ "$time" =~ ^([0-9.]+)([dhms]?)$ ]]
+	then
+		[[ -z "${BASH_REMATCH[2]}" ]] && u=1 || u=${units[${BASH_REMATCH[2]}]}
+		time=$(bc -l <<< "scale=2; ${BASH_REMATCH[1]} * $u")
+	else
+		echo >&2 "ERROR: Invalid duration format - '$time' (see --help)"
+		exit 1
+	fi
+}
+
+
+patch_opts=( --batch )
+mount_opts=( --bind )
+[[ -n "$rw" ]] || mount_opts+=( -o ro )
+
+tempfile=$(mktemp /tmp/temp_patch.src.XXXXXX)
+trap '[[ -n "$tempfile" ]] && rm -f "$tempfile"' EXIT
+
+cat "$dst" >"$tempfile"
+
+patch -s --dry-run "${patch_opts[@]}" "$tempfile" "$patch"\
+	&& patch -s "${patch_opts[@]}" "$tempfile" "$patch"\
+	|| { echo >&2 "Patch failed"; exit 1; }
+
+chown --reference "$dst" "$tempfile"
+chmod --reference "$dst" "$tempfile"
+[[ -n "$rw" ]] || chmod a-w "$tempfile"
+touch --reference "$dst" "$tempfile"
+
+# set -x
+mount "${mount_opts[@]}" "$tempfile" "$dst"
+[[ -z "$time" ]] || {
+	( sleep "$time"; umount -l "$dst"; ) &
+	disown
+}

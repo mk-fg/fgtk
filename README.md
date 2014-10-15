@@ -347,6 +347,23 @@ pbkdf2 parameters are configurable (see --help output), and at least
 --pbkdf2-salt should be passed for output to be deterministic, otherwise random
 salt value will be used.
 
+##### temp-patch
+
+Tool to temporarily modify (patch) a file - until reboot or for a specified
+amount of time.
+Uses bind-mounts from tmpfs to make sure file will be reverted to the original
+state eventually.
+
+Useful to e.g. patch /etc/hosts with (pre-defined) stuff from LAN on a laptop
+(so this changes will be reverted on reboot), or a notification filter file for
+a short "busy!" time period (with a time limit, so it'll auto-revert after), or
+stuff like that.
+
+Even though dst file is mounted with "-o ro" by default (there's "-w" option to
+disable that), linux doesn't seem to care about that option and mounts the thing
+as "rw" anyway, so "chmod a-w" gets run on temp file instead to prevent
+accidental modification (that can be lost).
+
 
 
 ### Dev
