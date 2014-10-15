@@ -40,14 +40,13 @@ operation boils down to two (optional) steps:
 Tool to restore POSIX ACLs on paths, broken by chmod or similar stuff without
 actually changing them.
 
-##### rsync_diff
+##### rsync-diff
 
 Tool to sync paths, based on berkley db and rsync.
 
 Keeps b-tree of paths (files and dirs) and corresponding mtimes in berkdb,
 comparing state when ran and building a simple merge-filter for rsync ("+ /path"
-line for each changed file/dir, including their path components, ending with "-
-*").
+line for each changed file/dir, including their path components, ending with "- *").
 Then it runs a single rsync with this filter to efficiently sync the paths.
 
 Note that the only difference from "rsync -a src dst" here is that "dst" tree
@@ -75,7 +74,7 @@ Copy ownership/mode from one file to another:
 
 	fs cps /file1 /file2
 
-##### fatrace_pipe
+##### fatrace-pipe
 
 [fatrace](https://launchpad.net/fatrace)-based script to read filesystem write
 events via linux [fanotify](http://lwn.net/Articles/339253/) system and match
@@ -91,10 +90,10 @@ User's pid can read lines from the fifo and react to these safely instead.
 
 Example - run "make" on any change to `~user/hatch/project` files:
 
-	(root) ~# fatrace_pipe ~user/hatch/project
+	(root) ~# fatrace-pipe ~user/hatch/project
 	(user) project% xargs -in1 </tmp/fatrace.fifo make
 
-##### clean_boot
+##### clean-boot
 
 Script to remove older kernel versions (as installed by /sbin/installkernel)
 from /boot or similar dir.
@@ -108,7 +107,7 @@ of ".old" verssion variants, keep `config-*` files... and other stuff (see --hel
 
 Example:
 
-	# clean_boot --debug --dry-run -f 100
+	# clean-boot --debug --dry-run -f 100
 	DEBUG:root:Preserved versions (linked version, its ".old" variant, --keep-min): 4
 	DEBUG:root: - 3.9.9.1 - System.map-3.9.9-fg.mf_master
 	DEBUG:root: - 3.9.9.1 - config-3.9.9-fg.mf_master
@@ -298,7 +297,7 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-##### pcap_process
+##### pcap-process
 
 Wrapper around tshark to run it (with specified parameters) on a pcap file and
 pick stuff (via specified on command line selectors) from its "pdml" (xml)
@@ -306,7 +305,7 @@ output.
 
 Kinda same as `tshark -T fields`, but with python on top.
 
-For example, `pcap_process -f http.request.uri/show dump.pcap` will print full
+For example, `pcap-process -f http.request.uri/show dump.pcap` will print full
 parsed values (as presented by tshark dissector) of "http.request.uri" fields.
 
 ##### hype
@@ -574,9 +573,10 @@ stuff, just like mailx would do, but also allowing to pass custom headers
 Uses adict english dictionaly to generate easy-to-remember passphrase.
 Should be weak if bruteforce attack picks words instead of individual lettters.
 
-##### ssh_tunnel
+##### ssh-tunnel
 
 Script to keep persistent, unique and reasonably responsive ssh tunnel.
+Mostly just a wrapper with collection of options for such use-case.
 
 ##### task
 
@@ -710,7 +710,7 @@ usb-wlan interfaces will be named according to NAME there):
 	SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
 		DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
 
-##### mikrotik_backup
+##### mikrotik-backup
 
 Script to ssh into [mikrotik router](http://mikrotik.com) with specified
 ("--auth-file" option) user/password and get the backup, optionally compressing
