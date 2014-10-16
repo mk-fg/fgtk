@@ -3,7 +3,7 @@ set -eu
 
 bin=$(basename "$0")
 usage() {
-	echo >&2 "Usage: $bin [-w] file patch [duration]"
+	echo >&2 "Usage: $bin [-wtm] file patch [duration]"
 	echo >&2 "Example: $bin /etc/hosts ~/add_local_net_hosts.patch 2h"
 	echo >&2
 	echo >&2 'Temp-mount a patched file over the original'
@@ -16,12 +16,27 @@ usage() {
 	echo >&2 '"-w" option temp-mounts the file read/write instead'
 	echo >&2 'of default "ro" mode (because any there changes will be lost!).'
 	echo >&2 'Since "-o ro" doesnt seem to work on linux, "chmod a-w" is done instead.'
+	echo >&2
+	echo >&2 '"-t" option preserves all timestamps during the process'
+	echo >&2 'and "-m" inverts this behavior wrt timestamp on file after unmount.'
+	echo >&2 'By default, timestamps of mounted-over file are not copied'
+	echo >&2 'from original one and file gets mtime-bumped afterwards.'
 	exit "${1:-1}"
 }
 
-if [[ "$1" = -h || "$1" = --help ]]; then usage 0; fi
-[[ "$1" = -w ]] && { rw=t; shift; } || rw=
-[[ "$#" -ge 2 || "$#" -le 3 ]] || exit 1
+rw= touch_before= touch_after=t
+while getopts ":hwtm" opt; do
+case "$opt" in
+		h) usage 0;;
+		w) rw=t;;
+		t) touch_before=t touch_after=;;
+		m) [[ -z "$touch_after" ]] && touch_after=t || touch_after=;;
+		*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n";;
+	esac
+done
+shift $((OPTIND-1))
+
+[[ "$#" -ge 2 && "$#" -le 3 ]] || { echo >&2 "ERROR: Invalid number of args ($#)"; exit 1; }
 [[ "$#" -eq 3 ]] && time=$3 || time=
 dst=$1 patch=$2
 
@@ -59,7 +74,8 @@ patch -s --dry-run "${patch_opts[@]}" "$tempfile" "$patch"\
 chown --reference "$dst" "$tempfile"
 chmod --reference "$dst" "$tempfile"
 [[ -n "$rw" ]] || chmod a-w "$tempfile"
-# touch --reference "$dst" "$tempfile"
+[[ -z "$touch_before" ]] || touch --reference "$dst" "$tempfile"
+[[ -z "$touch_after" ]] || touch "$dst"
 
 # set -x
 mount "${mount_opts[@]}" "$tempfile" "$dst"

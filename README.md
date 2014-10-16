@@ -364,6 +364,8 @@ disable that), linux doesn't seem to care about that option and mounts the thing
 as "rw" anyway, so "chmod a-w" gets run on temp file instead to prevent
 accidental modification (that can be lost).
 
+There're also "-t" and "-m" flags to control timestamps during the whole process.
+
 
 
 ### Dev
