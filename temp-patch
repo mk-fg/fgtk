@@ -80,6 +80,12 @@ chmod --reference "$dst" "$tempfile"
 # set -x
 mount "${mount_opts[@]}" "$tempfile" "$dst"
 [[ -z "$time" ]] || {
-	( sleep "$time"; umount -l "$dst"; ) &
+	(
+		sleep "$time"
+		if [[ -n "$touch_after" ]]
+		then umount "$dst" && touch "$dst" || umount -l "$dst" ||:
+		else umount -l "$dst"
+		fi
+	) &
 	disown
 }
