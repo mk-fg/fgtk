@@ -9,6 +9,7 @@ import os, sys, io, requests, yaml, subprocess, signal, logging
 
 player_wrap = 'media.mpv_icy_track_history' # should be in the sampe repo
 tracks_global = os.path.expanduser('~/tracks.txt')
+mpv_args_base = ['--cache=1024', '--cache-initial=0']
 radios_conf = os.path.expanduser('~/.radio.yaml')
 
 # radios_conf example:
@@ -78,6 +79,10 @@ def main(args=None):
 
 	else: ### parent (player)
 		args_wrapper, args = chan.get('args_wrapper', list()), chan.get('args', list())
+		args = mpv_args_base + args
+
+		if opts.debug: args_wrapper.extend(['--debug', '--passthrough'])
+		if tracks: args_wrapper.extend(['-d', tracks, '-t'])
 
 		url = chan.get('url_pls')
 		if url:
@@ -88,12 +93,9 @@ def main(args=None):
 			pls.flush()
 			url = '--playlist={}'.format(pls.name)
 		else: url = chan['url']
+		args.append(url)
 
-		if opts.debug: args_wrapper.extend(['--debug', '--passthrough'])
-		if tracks: args_wrapper.extend(['-d', tracks, '-t'])
-
-		args = [player_wrap] + args_wrapper\
-			+ ['--', '--cache=1024', '--cache-initial=0', url] + args
+		args = [player_wrap] + args_wrapper + ['--'] + args
 		log.debug('Running: %s', ' '.join(args))
 		os.execvp(player_wrap, args)
 
