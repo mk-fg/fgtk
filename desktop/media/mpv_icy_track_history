@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, STDOUT
 import os, sys, logging, re, time, signal
 
 
@@ -101,18 +101,20 @@ class MpvCtl(object):
 			if self.player:
 				player_poll = self.player.poll()
 				if player_poll is not None:
-					self.player = None
-					player_poll = self.player.wait()
+					player_poll, self.player = self.player.wait(), None
 					if player_poll != 0:
 						self.log.error('mpv failed (exit code: %s), exiting', player_poll)
 						return player_poll
 
 			if not self.player:
 				self.player = Popen( player_cmd,
-					stdin=PIPE, stdout=PIPE, preexec_fn=os.setsid )
+					stdin=PIPE, stdout=PIPE, stderr=STDOUT, preexec_fn=os.setsid )
 
+				line_last = None
 				for line in iter(self.player.stdout.readline, ''):
-					if opts.passthrough: self.log.debug(line.rstrip())
+					ls = line.rstrip()
+					if opts.passthrough and ls != line_last: self.log.debug(ls)
+					line_last = ls
 					track = self.track_match(line)
 					if not track: continue
 					self.track_changed(track)
