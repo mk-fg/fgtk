@@ -799,6 +799,12 @@ of every next track.
 
 More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
+###### radio
+
+Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
+with appropriate settings, generally simplified ui, logging and echoing what's
+being played, with a mute button (on SIGQUIT button from terminal).
+
 ###### totty
 
 Wrapper around awesome [img2xterm](https://github.com/rossy2401/img2xterm) tool

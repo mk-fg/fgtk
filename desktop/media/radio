@@ -1,0 +1,100 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from tempfile import NamedTemporaryFile
+import os, sys, io, requests, yaml, subprocess, signal, logging
+
+
+player_wrap = 'media.mpv_icy_track_history' # should be in the sampe repo
+tracks_global = os.path.expanduser('~/tracks.txt')
+radios_conf = os.path.expanduser('~/.radio.yaml')
+
+# radios_conf example:
+#   rmnrelax:
+#     url_pls: 'http://www.rmnrelax.de/aacplus/rmnrelax.m3u'
+#     args_wrapper: ['--mute-regexp=^\[RMN\]', '--recode-from=latin-1']
+#   etnfm:
+#     url_pls: 'http://ch1relay1.etn.fm:8100/listen.pls?sid=1'
+#   difm.vocaltrance:
+#     url: 'http://pub5.di.fm:80/di_vocaltrance?3e4c569'
+with io.open(radios_conf) as src: radios = yaml.load(src)
+
+
+def no_such_chan(err, chans=None):
+	if not chans: chans = radios.keys()
+	p = ft.partial(print, file=sys.stderr)
+	p(err)
+	p('\nPossible matches:')
+	for chan in chans: p('  ' + chan)
+	sys.exit(1)
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(description='Start radio playback.')
+	parser.add_argument('chan',
+		help='Radio channel (exact name or unique part of it) to tune into.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger('radio')
+
+	chan = opts.chan
+	if chan not in radios:
+		match = list(k for k in radios if k.startswith(chan))
+		if not match: match = list(k for k in radios if chan in k)
+		if not match: no_such_chan('Unable to match {!r}'.format(chan))
+		if len(match) > 1: no_such_chan('Unable to uniquely match {!r}'.format(chan), match)
+		chan, = match
+
+	log.debug('Using chan: %s', chan)
+	chan = radios[chan]
+
+	tracks = tracks_global
+	if 'tracks' in chan: tracks = chan['tracks']
+
+	pid_player = os.getpid()
+	pid = os.fork()
+	if not pid: ### child
+		os.setsid()
+
+		tail = subprocess.Popen(['tail', '-n1', '-f', tracks], stdout=subprocess.PIPE)
+
+		def player_check(sig=None, frm=None):
+			try: os.kill(pid_player, 0)
+			except OSError:
+				tail.terminate()
+				sys.exit(0)
+		signal.signal(signal.SIGALRM, player_check)
+		signal.alarm(5 *60)
+
+		for line in iter(tail.stdout.readline, ''):
+			player_check()
+			print(line, end='')
+
+		sys.exit(0)
+
+	else: ### parent (player)
+		args_wrapper, args = chan.get('args_wrapper', list()), chan.get('args', list())
+
+		url = chan.get('url_pls')
+		if url:
+			r = requests.get(url)
+			r.raise_for_status()
+			pls = NamedTemporaryFile(prefix='radio.pls.')
+			pls.write(r.text)
+			pls.flush()
+			url = '--playlist={}'.format(pls.name)
+		else: url = chan['url']
+
+		if opts.debug: args_wrapper.extend(['--debug', '--passthrough'])
+		if tracks: args_wrapper.extend(['-d', tracks, '-t'])
+
+		args = [player_wrap] + args_wrapper\
+			+ ['--', '--cache=1024', '--cache-initial=0', url] + args
+		log.debug('Running: %s', ' '.join(args))
+		os.execvp(player_wrap, args)
+
+if __name__ == '__main__': sys.exit(main())
