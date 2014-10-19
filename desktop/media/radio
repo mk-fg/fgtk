@@ -12,7 +12,7 @@ tracks_global = os.path.expanduser('~/tracks.txt')
 mpv_args_base = ['--cache=1024', '--cache-initial=0']
 radios_conf = os.path.expanduser('~/.radio.yaml')
 
-# radios_conf example:
+# radios_conf example (yaml):
 #   rmnrelax:
 #     url_pls: 'http://www.rmnrelax.de/aacplus/rmnrelax.m3u'
 #     args_wrapper: ['--mute-regexp=^\[RMN\]', '--recode-from=latin-1']
@@ -20,6 +20,10 @@ radios_conf = os.path.expanduser('~/.radio.yaml')
 #     url_pls: 'http://ch1relay1.etn.fm:8100/listen.pls?sid=1'
 #   difm.vocaltrance:
 #     url: 'http://pub5.di.fm:80/di_vocaltrance?3e4c569'
+#     args_wrapper:
+#       - >
+#         --mute-regexp=^(More of the show after these messages|Choose premium
+#         for the best audio experience|Digitally Imported TSTAG_60 ADWTAG)$
 with io.open(radios_conf) as src: radios = yaml.load(src)
 
 
