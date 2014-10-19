@@ -157,9 +157,16 @@ def main(args=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
-	mpvctl = MpvCtl( dst_file=opts.dst_file, mute_delay=opts.mute_delay,
-		mute_re=opts.mute_regexp and re.compile(opts.mute_regexp),
-		ts_format=opts.timestamp and opts.timestamp_format, recode=opts.recode_from )
+	mute_re = None
+	if opts.mute_regexp:
+		mute_re = opts.mute_regexp
+		if mute_re.endswith('$\n'): mute_re = mute_re.rstrip() # common yaml quirk
+		mute_re = re.compile(mute_re)
+
+	mpvctl = MpvCtl(
+		dst_file=opts.dst_file, mute_delay=opts.mute_delay,
+		mute_re=mute_re, recode=opts.recode_from,
+		ts_format=opts.timestamp and opts.timestamp_format )
 	try: return mpvctl.track_dump_loop(opts)
 	finally: mpvctl.terminate()
 
