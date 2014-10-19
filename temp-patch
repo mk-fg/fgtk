@@ -82,8 +82,9 @@ mount "${mount_opts[@]}" "$tempfile" "$dst"
 [[ -z "$time" ]] || {
 	(
 		sleep "$time"
-		if [[ -n "$touch_after" ]]
-		then umount "$dst" && touch "$dst" || umount -l "$dst" ||:
+		if [[ -n "$touch_after" ]]; then
+			umount "$dst" 2>/dev/null || { umount -l "$dst"; sleep 3; }
+			touch "$dst"
 		else umount -l "$dst"
 		fi
 	) &
