@@ -9,8 +9,9 @@ import os, sys, io, requests, yaml, subprocess, signal, logging
 
 player_wrap = 'media.mpv_icy_track_history' # should be in the sampe repo
 tracks_global = os.path.expanduser('~/tracks.txt')
-mpv_args_base = ['--cache=1024', '--cache-initial=0']
-radios_conf = os.path.expanduser('~/.radio.yaml')
+
+# --no-cache to prevent any audio/meta de-sync, so mute would work nicely
+mpv_args_base = ['--no-cache'] # ['--cache=1024', '--cache-initial=0']
 
 # radios_conf example (yaml):
 #   rmnrelax:
@@ -22,13 +23,13 @@ radios_conf = os.path.expanduser('~/.radio.yaml')
 #     url: 'http://pub5.di.fm:80/di_vocaltrance?3e4c569'
 #     args_wrapper:
 #       - >
-#         --mute-regexp=^(More of the show after these messages|Choose premium
-#         for the best audio experience|Digitally Imported TSTAG_60 ADWTAG)$
-with io.open(radios_conf) as src: radios = yaml.load(src)
+#         --mute-regexp=^(There|More of the show after these messages|Choose
+#         premium for the best audio experience|Digitally Imported TSTAG_60 ADWTAG|Job
+#         Opportunity at DI!.*)$
+radios_conf_default = '~/.radio.yaml'
 
 
-def no_such_chan(err, chans=None):
-	if not chans: chans = radios.keys()
+def no_such_chan(err, chans):
 	p = ft.partial(print, file=sys.stderr)
 	p(err)
 	p('\nPossible matches:')
@@ -40,17 +41,24 @@ def main(args=None):
 	parser = argparse.ArgumentParser(description='Start radio playback.')
 	parser.add_argument('chan',
 		help='Radio channel (exact name or unique part of it) to tune into.')
+	parser.add_argument('-c', '--conf',
+		metavar='path', default=radios_conf_default,
+		help='Path to the configuration file with a list of radios.'
+			' See head of this script for an example. Default: %(default)s')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger('radio')
 
+	radios = os.path.expanduser(opts.conf)
+	with io.open(radios) as src: radios = yaml.load(src)
+
 	chan = opts.chan
 	if chan not in radios:
 		match = list(k for k in radios if k.startswith(chan))
 		if not match: match = list(k for k in radios if chan in k)
-		if not match: no_such_chan('Unable to match {!r}'.format(chan))
+		if not match: no_such_chan('Unable to match {!r}'.format(chan), radios.keys())
 		if len(match) > 1: no_such_chan('Unable to uniquely match {!r}'.format(chan), match)
 		chan, = match
 
