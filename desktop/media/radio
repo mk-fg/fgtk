@@ -30,6 +30,22 @@ mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache']
 radios_conf_default = '~/.radio.yaml'
 
 
+_notify_init = False
+def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
+	global _notify_init
+	if fork and os.fork(): return
+	try:
+		from gi.repository import Notify
+		if not _notify_init:
+			Notify.init('radio')
+			_notify_init = True
+		note = Notify.Notification.new(summary=title, body=body, icon=icon)
+		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
+		if timeout is not None: note.set_timeout(timeout)
+		note.show()
+	except: pass
+	if fork: os._exit(0)
+
 def no_such_chan(err, chans):
 	p = ft.partial(print, file=sys.stderr)
 	p(err)
@@ -46,7 +62,12 @@ def main(args=None):
 		metavar='path', default=radios_conf_default,
 		help='Path to the configuration file with a list of radios.'
 			' See head of this script for an example. Default: %(default)s')
-	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('--desktop-notification-props',
+		default='{fork: false, icon: amarok, critical: true}', metavar='yaml_data',
+		help='Desktop notification properties (keywords) to pass to notify() function (see code).'
+			' "false" (bool value) can be passed here to disable desktop notifications entirely.'
+			' Default: %(default)s')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -64,10 +85,13 @@ def main(args=None):
 		chan, = match
 
 	log.debug('Using chan: %s', chan)
-	chan = radios[chan]
+	chan_name, chan = chan, radios[chan]
 
 	tracks = tracks_global
 	if 'tracks' in chan: tracks = chan['tracks']
+
+	notify_kws = yaml.load(opts.desktop_notification_props)
+	if notify_kws is not False: notify_kws = notify_kws or dict()
 
 	pid_player = os.getpid()
 	pid = os.fork()
@@ -86,7 +110,10 @@ def main(args=None):
 
 		for line in iter(tail.stdout.readline, ''):
 			player_check()
-			print(line, end='')
+			line = line.strip()
+			if notify_kws is not False:
+				notify('mpv: radio {}'.format(chan_name), line, **notify_kws)
+			print(line)
 
 		sys.exit(0)
 
