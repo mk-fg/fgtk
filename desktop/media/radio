@@ -11,7 +11,8 @@ player_wrap = 'media.mpv_icy_track_history' # should be in the sampe repo
 tracks_global = os.path.expanduser('~/tracks.txt')
 
 # --no-cache to prevent any audio/meta de-sync, so mute would work nicely
-mpv_args_base = ['--no-cache'] # ['--cache=1024', '--cache-initial=0']
+# Alternative: '--cache=1024', '--cache-initial=0'
+mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache']
 
 # radios_conf example (yaml):
 #   rmnrelax:
