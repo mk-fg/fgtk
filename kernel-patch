@@ -1,0 +1,59 @@
+#!/bin/bash
+
+dir_linux=/usr/src/linux
+dir_distfiles=/usr/src/distfiles
+
+usage() {
+	echo >&2 "Usage: $0 [-t] ver_to"
+	echo >&2
+	echo >&2 '"-t" option uses "fs" and "rsync" tools to make sure only actually'
+	echo >&2 'changed files get mtime-bumped (to avoid huge rebuilds on higher-numbered patches).'
+	exit 1
+}
+
+times=
+[[ "$1" = -t ]] && { times=t; shift; }
+[[ -z "$1" || -n "$2" || "$1" = -h || "$1" = --help ]] && usage
+
+cd "$dir_linux" && [[ -e Makefile ]]\
+	|| { echo >&2 "Failed to find Makefile in /usr/src/linux"; exit 1; }
+
+v0=$( awk '$1=="VERSION" {v1=$3}
+	$1=="PATCHLEVEL" {v2=$3}
+	$1=="SUBLEVEL" {v3=$3; v3_set=1}
+	v1 && v2 && v3_set {print v1 "." v2 "." v3; exit}' Makefile )
+
+[[ -z "$v0" ]] && { echo >&2 "Failed to get current sources version"; exit 1; }
+[[ "$v0" = "$1" ]] && exit 0
+
+[[ -n "$times" ]] && {
+	src=$(realpath .)
+	[[ $? -ne 0 || -z "$src" ]] && exit 1
+	pushd /var/empty >/dev/null
+	mv "$src"{,.patch_tmp}\
+		&& fs ln -f --relative "$src"{.patch_tmp,} || exit 1
+	popd >/dev/null
+}
+
+[[ "${v0##*.}" != 0 ]] && {
+	xzcat "${dir_distfiles}"/patch-${v0}.xz | patch --batch --follow-symlinks -p1 -R --dry-run
+	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+	xzcat "${dir_distfiles}"/patch-${v0}.xz | patch --batch --follow-symlinks -p1 -R
+	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+}
+
+xzcat "${dir_distfiles}"/patch-${1}.xz | patch --batch --follow-symlinks -p1 --dry-run
+[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+xzcat "${dir_distfiles}"/patch-${1}.xz | patch --batch --follow-symlinks -p1
+[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+
+[[ -e .config ]] && make oldconfig
+
+[[ -n "$times" ]] && {
+	pushd /var/empty >/dev/null
+	rsync -qrtc --omit-dir-times "$src"{,.patch_tmp}/.\
+		&& rm -rf "$src" && mv "$src"{.patch_tmp,} || exit 1
+	popd >/dev/null
+}
+
+exit 0
