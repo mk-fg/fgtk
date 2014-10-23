@@ -9,7 +9,8 @@ from fgc import sh
 import os, sys, stat, types
 
 from os.path import (
-	dirname, basename, abspath, normpath, exists, isdir )
+	dirname, basename, abspath, normpath, exists,
+	isdir, isfile, islink )
 join = sh.join
 
 
@@ -288,9 +289,16 @@ class FSOps(object):
 				p_rel = join('.', p[len(src)+1:]).rstrip(os.sep)
 
 				p_src, p_dst = p, join(dst, p_rel)
-				if isdir(p): os.makedirs(p_dst)
+				if isdir(p) and not (not rec_links and islink(p)): os.makedirs(p_dst)
 				else:
-					if opts.relative: p_src = sh.relpath(p, p_dst)
+					p_rel_in_tree = False
+					if islink(p): # copy in-tree-relative symlinks
+						p_rel_in_tree = os.readlink(p)
+						p_ln_abs = abspath(join(dirname(p), p_rel_in_tree))
+						if p_ln_abs.startswith(src) and p_ln_abs[len(src)] == os.sep:
+							p_src, p_rel_in_tree = p_rel_in_tree, True
+						else: p_rel_in_tree = False
+					if not p_rel_in_tree and opts.relative: p_src = sh.relpath(p, p_dst)
 					os.symlink(p_src, p_dst)
 					# assert os.path.samefile(p, p_dst), [p, p_src, p_dst] # sanity check
 
@@ -373,7 +381,8 @@ def main(args=None):
 				' specified, last argument will be treated as destination.')
 
 		cmd.add_argument('-f', '--recursive-files', action='store_true',
-			help='Re-create directories in dst, symlinking all files into those.')
+			help='Re-create directories in dst, symlinking all files'
+				' (and any other non-recursable nodes) into those.')
 		cmd.add_argument('-l', '--recursive-files-follow-links', action='store_true',
 			help='Follow symlinks to other directories within src hierarchy.'
 				' Can potentially lead to infinite loops and fill fs, use with care.')
