@@ -9,7 +9,7 @@ from fgc import sh
 import os, sys, stat, types
 
 from os.path import (
-	dirname, basename, abspath, normpath, exists )
+	dirname, basename, abspath, normpath, exists, isdir )
 join = sh.join
 
 
@@ -105,7 +105,7 @@ def opts_parse_mode(spec):
 
 class FSOps(object):
 
-	supported = 'mv', 'cp', 'ch', 'case'
+	supported = 'mv', 'cp', 'ch', 'case', 'ln'
 
 	def __init__(self, opts):
 		self.opts = opts
@@ -124,12 +124,14 @@ class FSOps(object):
 		else: ops = zip(opts.pos[:-1], it.repeat(opts.pos[-1]))
 		return ops if not opts.reverse else list((dst,src) for src,dst in ops)
 
-	def opts_walk_paths(self, paths=None, recursive=None, **walk_kws):
+	def opts_walk_paths(self, paths=None, recursive=None, follow_links=False, **walk_kws):
 		if paths is None: paths = self.opts.paths
 		if recursive is None: recursive = self.opts.recursive
 		if isinstance(paths, types.StringTypes): paths = [paths]
-		return it.chain.from_iterable(
-			sh.walk(p, follow_links=False, **walk_kws) for p in paths )
+		if recursive:
+			return it.chain.from_iterable(
+				sh.walk(p, follow_links=follow_links, **walk_kws) for p in paths )
+		else: return paths
 
 
 	def mv(self):
@@ -205,7 +207,7 @@ class FSOps(object):
 
 	def ch_sub(self, paths, recursive=True):
 		opts = self.opts
-		for path in self.opts_walk_paths(paths, recursive=recursive):
+		for path in self.opts_walk_paths(paths, recursive=bool(recursive)):
 			path_stat, nid = os.lstat(path), lambda n: -1 if n is None else n
 			if (opts.uid is not None and path_stat.st_uid != opts.uid)\
 					or (opts.gid is not None and path_stat.st_gid != opts.gid):
@@ -259,6 +261,38 @@ class FSOps(object):
 				os.rename(path, path_new)
 
 		return int(conflicts)
+
+
+	def ln(self):
+		opts, ops = self.opts, self.opts_flow_parse()
+
+		rec = bool(opts.recursive_files)
+		rec_links = rec and opts.recursive_files_follow_links
+
+		for src, dst in ops:
+			src = abspath(src).rstrip(os.sep)
+			if not isdir(dst):
+				if len(ops) > 1: opts.error('Multiple src paths provided with non-dir dst: {}'.format(dst))
+				if exists(dst): opts.error('Refusing to overwrite non-dir dst path: {}'.format(dst))
+			else: dst = join(dst, basename(src))
+			dst = dst.rstrip(os.sep)
+
+			for p in self.opts_walk_paths(src, recursive=rec, follow_links=rec_links, depth=False):
+				if not rec:
+					if opts.relative: p = sh.relpath(p, dst)
+					os.symlink(p, dst)
+					continue
+
+				p = abspath(p)
+				assert p.startswith(src), [src, p]
+				p_rel = join('.', p[len(src)+1:]).rstrip(os.sep)
+
+				p_src, p_dst = p, join(dst, p_rel)
+				if isdir(p): os.makedirs(p_dst)
+				else:
+					if opts.relative: p_src = sh.relpath(p, p_dst)
+					os.symlink(p_src, p_dst)
+					# assert os.path.samefile(p, p_dst), [p, p_src, p_dst] # sanity check
 
 
 def main(args=None):
@@ -333,6 +367,21 @@ def main(args=None):
 					' conflicts (and leaving both paths intact), if any.'
 				' Mutually exclusive with other case-altering actions.')
 
+	with subcommand('ln', help='Symlink path(s).') as cmd:
+		cmd.add_argument('src/dst', nargs='*',
+			help='Files/dirs to symlink. If neither of --src / --dst option is'
+				' specified, last argument will be treated as destination.')
+
+		cmd.add_argument('-f', '--recursive-files', action='store_true',
+			help='Re-create directories in dst, symlinking all files into those.')
+		cmd.add_argument('-l', '--recursive-files-follow-links', action='store_true',
+			help='Follow symlinks to other directories within src hierarchy.'
+				' Can potentially lead to infinite loops and fill fs, use with care.')
+
+		cmd.add_argument('--relative', action='store_true',
+			help='Create symlinks to relative paths.'
+				' Absolute ones (but not realpaths!) are used by default.')
+
 	## More generic opts
 
 	for cmd in op.itemgetter('cp', 'case')(cmds.choices):
@@ -340,15 +389,15 @@ def main(args=None):
 			dest='recursive', action='store_false', default=True,
 			help='Non-recursive operation.')
 
-	for cmd in op.itemgetter('mv', 'cp')(cmds.choices):
+	for cmd in op.itemgetter('mv', 'cp', 'ln')(cmds.choices):
 		cmd.add_argument('-s', '--src', dest='src_opt', metavar='SRC',
 			help='Source, positional argz will be treated as destination(s).')
 		cmd.add_argument('-d', '--dst', dest='dst_opt', metavar='DST',
 			help='Destination, positional argz will be treated as source(s).')
-
 		cmd.add_argument('--reverse',
 			action='store_true', help='Reverse source / destination targets.')
 
+	for cmd in op.itemgetter('mv', 'cp')(cmds.choices):
 		cmd.add_argument('-P', '--attrs', action='store_true',
 			help='Force preserving fs metadata:'
 				' uid/gid and timestamps, implied for some ops (which doesnt'
