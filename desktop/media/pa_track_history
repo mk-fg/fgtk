@@ -36,9 +36,8 @@ def _track_for_pid(pid, srv_addr=None):
 	if not streams: return None
 	for stream in streams:
 		stream_pid = int(dbus_bytes(stream['application.process.id']))
-		if stream_pid == pid: break
+		if stream_pid == pid: return dbus_bytes(stream['media.name'])
 	else: log.warn('Failed to find pa stream for pid: {}'.format(pid))
-	return dbus_bytes(stream['media.name'])
 
 child_ctl = None
 def track_for_pid(pid, srv_addr=None, dbus_reuse=False):
