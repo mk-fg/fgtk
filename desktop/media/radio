@@ -27,6 +27,7 @@ mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache']
 #         --mute-regexp=^(There|More of the show after these messages|Choose
 #         premium for the best audio experience|Digitally Imported TSTAG_60 ADWTAG|Job
 #         Opportunity at DI!.*)$
+#       - --mute-title-prefix
 radios_conf_default = '~/.radio.yaml'
 
 

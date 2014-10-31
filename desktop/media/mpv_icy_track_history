@@ -53,6 +53,7 @@ def pa_mute(pid, val, srv_addr=None):
 
 
 track_max_len = 16384
+mute_prefix_default = 'muted: '
 
 class MpvCtl(object):
 
@@ -61,12 +62,13 @@ class MpvCtl(object):
 	muted = muted_auto = muted_change = False
 
 	def __init__( self, dst_file=None,
-			mute_re=None, mute_delay=None, mute_old=False,
+			mute_re=None, mute_delay=None, mute_old=False, mute_prefix=None,
 			recode=None, ts_format=None ):
 		self.log = logging.getLogger('mpvctl')
 
 		self.ts_format, self.recode = ts_format, recode
-		self.mute_re, self.mute_delay, self.mute_old = mute_re, mute_delay, mute_old
+		self.mute_re, self.mute_delay = mute_re, mute_delay
+		self.mute_old, self.mute_prefix = mute_old, mute_prefix
 		if dst_file:
 			self.dst = dst = open(dst_file, 'a+b')
 			dst.seek(max(0, os.fstat(dst.fileno()).st_size - (track_max_len + 2)))
@@ -127,7 +129,9 @@ class MpvCtl(object):
 
 	def track_changed(self, track):
 		if self.mute_re:
-			if self.mute_re.search(track): self.send_mute_auto(True)
+			if self.mute_re.search(track):
+				self.send_mute_auto(True)
+				if self.mute_prefix: track = '{}{}'.format(self.mute_prefix, track)
 			elif self.muted_auto: self.send_mute_auto(False)
 		self.track_dump(track)
 
@@ -188,6 +192,10 @@ def main(args=None):
 			' Doesnt seem to work for newer mpv versions'
 				' (probably due to it being too clever),'
 				' so corresponding pulseaudio stream is muted via dbus instead.')
+	parser.add_argument('--mute-title-prefix',
+		nargs='?', default=False, metavar='prefix',
+		help='Add prefix (can be specified as optional arg, default:'
+			' {}) to track titles that match --mute-regexp.'.format(mute_prefix_default))
 
 	parser.add_argument('-d', '--dst-file',
 		help='Path to a file to record all the stuff to. If omitted, stdout will be used.')
@@ -213,10 +221,14 @@ def main(args=None):
 		mute_re = opts.mute_regexp
 		if mute_re.endswith('$\n'): mute_re = mute_re.rstrip() # common yaml quirk
 		mute_re = re.compile(mute_re)
+	mute_title_prefix = opts.mute_title_prefix or None
+	if opts.mute_title_prefix is None:
+		opts.mute_title_prefix = mute_prefix_default
 
 	mpvctl = MpvCtl(
 		dst_file=opts.dst_file, recode=opts.recode_from,
-		mute_delay=opts.mute_delay, mute_re=mute_re, mute_old=opts.mute_old,
+		mute_delay=opts.mute_delay, mute_re=mute_re,
+		mute_old=opts.mute_old, mute_prefix=opts.mute_title_prefix,
 		ts_format=opts.timestamp and opts.timestamp_format )
 	try: return mpvctl.track_dump_loop(opts)
 	finally: mpvctl.terminate()
