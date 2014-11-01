@@ -1,93 +1,97 @@
 #!/usr/bin/env python
 
 
-## For bencode bits below
-# The contents of this file are subject to the BitTorrent Open Source License
-# Version 1.1 (the License).  You may not copy or use this file, in either
-# source code or executable form, except in compliance with the License.  You
-# may obtain a copy of the License at http://www.bittorrent.com/license/.
-#
-# Software distributed under the License is distributed on an AS IS basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied.  See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
+### For bencode bits below
+# Different from vanilla bencode in handling "leading zeroes" in keys
+# Derived from a thing under BitTorrent Open Source License
 # Written by Petru Paler
-class BTFailure(Exception): pass
-def decode_int(x, f):
-	f += 1
-	newf = x.index('e', f)
-	n = int(x[f:newf])
-	if x[f] == '-':
-		if x[f + 1] == '0': raise ValueError
-	elif x[f] == '0' and newf != f+1: raise ValueError
-	return (n, newf+1)
-def decode_string(x, f):
-	colon = x.index(':', f)
-	n = int(x[f:colon])
-	if x[f] == '0' and colon != f+1: raise ValueError
-	colon += 1
-	return (x[colon:colon+n], colon+n)
-def decode_list(x, f):
-	r, f = [], f+1
-	while x[f] != 'e':
-		v, f = decode_func[x[f]](x, f)
-		r.append(v)
-	return (r, f + 1)
-def decode_dict(x, f):
-	r, f = {}, f+1
-	while x[f] != 'e':
-		k, f = decode_string(x, f)
-		r[k], f = decode_func[x[f]](x, f)
-	return (r, f + 1)
-decode_func = dict(l=decode_list, d=decode_dict, i=decode_int)
-for n in xrange(10): decode_func[bytes(n)] = decode_string
-def bdecode(x):
-	try: r, l = decode_func[x[0]](x, 0)
-	except (IndexError, KeyError, ValueError) as err:
-		raise BTFailure('not a valid bencoded string: {}'.format(err))
-	if l != len(x):
-		raise BTFailure('invalid bencoded value (data after valid prefix)')
-	return r
-from types import StringTypes, StringType,\
-	IntType, LongType, DictType, ListType, TupleType
+
+import types
+
+def _ns_class(cls_name, cls_parents, cls_attrs):
+	for k, v in cls_attrs.viewitems():
+		if isinstance(v, types.FunctionType):
+			cls_attrs[k] = classmethod(v)
+	return type(cls_name, cls_parents, cls_attrs)
+
+class BTEError(Exception): pass
+
 class Bencached(object):
-	__slots__ = ['bencoded']
+	__slots__ = 'bencoded',
 	def __init__(self, s): self.bencoded = s
-def encode_bencached(x,r): r.append(x.bencoded)
-def encode_int(x, r): r.extend(('i', str(x), 'e'))
-def encode_bool(x, r):
-	if x: encode_int(1, r)
-	else: encode_int(0, r)
-def encode_string(x, r): r.extend((str(len(x)), ':', x))
-def encode_list(x, r):
-	r.append('l')
-	for i in x: encode_func[type(i)](i, r)
-	r.append('e')
-def encode_dict(x,r):
-	r.append('d')
-	ilist = x.items()
-	ilist.sort()
-	for k, v in ilist:
-		r.extend((str(len(k)), ':', k))
-		encode_func[type(v)](v, r)
-	r.append('e')
-encode_func = {
-	Bencached: encode_bencached,
-	IntType: encode_int,
-	LongType: encode_int,
-	StringType: encode_string,
-	ListType: encode_list,
-	TupleType: encode_list,
-	DictType: encode_dict }
-try:
-	from types import BooleanType
-	encode_func[BooleanType] = encode_bool
-except ImportError: pass
-def bencode(x):
-	r = []
-	encode_func[type(x)](x, r)
-	return ''.join(r)
+
+class BTE(object):
+	__metaclass__ = _ns_class
+
+	def decode_int(cls, x, f):
+		f += 1
+		newf = x.index('e', f)
+		n = int(x[f:newf])
+		if x[f] == '-':
+			if x[f + 1] == '0': raise ValueError
+		elif x[f] == '0' and newf != f+1: raise ValueError
+		return (n, newf+1)
+	def decode_string(cls, x, f):
+		colon = x.index(':', f)
+		n = int(x[f:colon])
+		if x[f] == '0' and colon != f+1: raise ValueError
+		colon += 1
+		return (x[colon:colon+n], colon+n)
+	def decode_list(cls, x, f):
+		r, f = [], f+1
+		while x[f] != 'e':
+			v, f = cls.decode_func[x[f]](cls, x, f)
+			r.append(v)
+		return (r, f + 1)
+	def decode_dict(cls, x, f):
+		r, f = {}, f+1
+		while x[f] != 'e':
+			k, f = cls.decode_string(x, f)
+			r[k], f = cls.decode_func[x[f]](cls, x, f)
+		return (r, f + 1)
+	decode_func = dict(l=decode_list, d=decode_dict, i=decode_int)
+	for n in xrange(10): decode_func[bytes(n)] = decode_string
+
+	def encode_bencached(cls, x, r): r.append(x.bencoded)
+	def encode_int(cls, x, r): r.extend(('i', str(x), 'e'))
+	def encode_bool(cls, x, r):
+		if x: BTE.encode_int(cls, 1, r)
+		else: BTE.encode_int(cls, 0, r)
+	def encode_string(cls, x, r): r.extend((str(len(x)), ':', x))
+	def encode_list(cls, x, r):
+		r.append('l')
+		for i in x: cls.encode_func[type(i)](cls, i, r)
+		r.append('e')
+	def encode_dict(cls, x, r):
+		r.append('d')
+		ilist = x.items()
+		ilist.sort()
+		for k, v in ilist:
+			r.extend((str(len(k)), ':', k))
+			cls.encode_func[type(v)](cls, v, r)
+		r.append('e')
+	encode_func = {
+		Bencached: encode_bencached,
+		types.IntType: encode_int,
+		types.LongType: encode_int,
+		types.StringType: encode_string,
+		types.ListType: encode_list,
+		types.TupleType: encode_list,
+		types.DictType: encode_dict,
+		types.BooleanType: encode_bool }
+
+	def bdecode(cls, x):
+		try: r, l = cls.decode_func[x[0]](cls, x, 0)
+		except (IndexError, KeyError, ValueError) as err:
+			raise BTEError('Not a valid bencoded string: {}'.format(err))
+		if l != len(x):
+			raise BTEError('Invalid bencoded value (data after valid prefix)')
+		return r
+
+	def bencode(cls, x):
+		r = []
+		cls.encode_func[type(x)](cls, x, r)
+		return ''.join(r)
 
 
 _notify_init = False
@@ -96,7 +100,7 @@ def try_notification(title, body, critical=False, timeout=None):
 	try:
 		from gi.repository import Notify
 		if not _notify_init:
-			Notify.init('Basics')
+			Notify.init('leech_torrent')
 			_notify_init = True
 		note = Notify.Notification()
 		note.set_properties(summary=title, body=body)
@@ -160,7 +164,7 @@ def main():
 				it.imap(chain_lists, src) ): yield atom
 
 	# Actual processing
-	try: torrent_dec = bdecode(torrent)
+	try: torrent_dec = BTE.bdecode(torrent)
 	except Exception as err:
 		from hashlib import md5
 		from base64 import urlsafe_b64encode
@@ -179,7 +183,7 @@ def main():
 				try_notification( 'No working trackers for torrent',
 					'Filtered out ({0}): {1}'.format(len(trak_bad), '\n  ' + '\n  '.join(trak_bad)) )
 				sys.exit()
-	torrent = bencode(torrent_dec)
+	torrent = BTE.bencode(torrent_dec)
 
 	# Output
 	if not optz.destination or not optz.path_or_url: dest = sys.stdout
