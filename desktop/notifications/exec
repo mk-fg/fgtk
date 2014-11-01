@@ -1,26 +1,28 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
+import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE
 from select import epoll, EPOLLOUT
 import os, sys, fcntl, errno, traceback
 
 
 _notify_init = False
-def try_notification(title, body, critical=False, timeout=None):
+def try_notification(title, body, critical=False, timeout=None, icon=None, fork=False):
 	# TODO: fallback to other means of notification (mail, stderr, configurable, ...)
 	global _notify_init
+	if fork and os.fork(): return
 	try:
 		from gi.repository import Notify
 		if not _notify_init:
-			Notify.init('Basics')
+			Notify.init('notify_exec')
 			_notify_init = True
-		note = Notify.Notification()
-		note.set_properties(summary=title, body=body)
+		note = Notify.Notification.new(summary=title, body=body, icon=icon)
 		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
 		if timeout is not None: note.set_timeout(timeout)
 		note.show()
 	except: pass
+	if fork: os._exit(0)
 
 
 class NotificationTimeout(Exception): pass
@@ -96,17 +98,21 @@ def main():
 		help='Issue notification upon successful execution as well.')
 	parser.add_argument('-d', '--dump', action='store_true',
 		help='Include stdou/stderr for all notifications.')
+	parser.add_argument('-i', '--notify-icon', metavar='icon_name',
+		help='Icon name to pass to notification daemon.')
 	optz = parser.parse_args(optz)
+
+	notify = ft.partial(try_notification, icon=optz.notify_icon)
 
 	proc_name = cmd[0] if cmd else '(generic error)'
 	try: err, output = proc_pipe(cmd)
 	except Exception as err:
-		try_notification( '{}: failed to run command'.format(proc_name),
+		notify( '{}: failed to run command'.format(proc_name),
 			'Error: {}\n\n{}'.format(err, traceback.format_exc().strip()), critical=True )
 		raise
 
 	if err != 0 or (not optz.exit_code_only and output['stderr']):
-		try_notification(
+		notify(
 			'{}: command finished with errors'.format(proc_name, err),
 			'Cmdline: {}\nExit code: {}\nStdout:\n  {}\nStderr:\n  {}'.format( cmd, err,
 				*('\n  '.join(output[stream].splitlines()) for stream in ['stdout', 'stderr']) ),
@@ -114,7 +120,7 @@ def main():
 		sys.exit(err)
 
 	elif optz.notify_on_success:
-		try_notification(
+		notify(
 			'{}: command was executed successfully'.format(proc_name),
 			'Cmdline: {}{}'.format( ' '.join(cmd),
 				'\nStdout:\n  {}\nStderr:\n  {}'.format(*(
