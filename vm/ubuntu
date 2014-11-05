@@ -72,6 +72,12 @@ cgrc vm/misc vde_switch\
 	-M "$vde_path"/mgmt.sock &
 pid1=$!
 
+for n in {0..50}; do
+	[[ -e "$vde_path"/link.sock ]] && break
+	sleep 0.1
+done
+[[ $n -eq 50 ]] && { echo >&2 "vde switch startup failed"; exit 1; }
+
 cgrc vm/misc sudo vde_plug2tap\
 	-s "$vde_path"/link.sock\
 	vde &
