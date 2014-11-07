@@ -61,8 +61,8 @@ def get_url(chan, pls=False):
 	url = chan.get('url' if not pls else 'url_pls')
 	if url and chan.get('template'):
 		assert re.search(r'\{(\d+(:.*)?)?\}', url), url
-		query = chan['query'].split('.', 1)[-1]
-		url = url.format(query)
+		name = chan['name'].split('.', 1)[-1]
+		url = url.format(name)
 	return url
 
 def main(args=None):
@@ -89,7 +89,7 @@ def main(args=None):
 	radios = os.path.expanduser(opts.conf)
 	with io.open(radios) as src: radios = yaml.load(src)
 
-	chan = chan_query = opts.chan
+	chan = chan_name = opts.chan
 	if chan not in radios:
 		match = list(k for k in radios if k.startswith(chan))
 		if not match:
@@ -99,11 +99,11 @@ def main(args=None):
 		if not match: match = list(k for k in radios if chan in k)
 		if not match: no_such_chan('Unable to match {!r}'.format(chan), radios.keys())
 		if len(match) > 1: no_such_chan('Unable to uniquely match {!r}'.format(chan), match)
-		chan_name, = match
+		chan, = match
 
 	log.debug('Using chan: %s', chan)
-	chan = radios[chan_name]
-	chan.update(name=chan_name, query=chan_query)
+	chan = radios[chan]
+	chan.update(name=chan_name)
 
 	url = get_url(chan, pls=True)
 	if url:
