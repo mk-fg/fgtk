@@ -155,7 +155,8 @@ def main(args=None):
 		args = mpv_args_base + args
 
 		if opts.debug: args_wrapper.extend(['--debug', '--passthrough'])
-		if tracks: args_wrapper.extend(['-d', tracks, '-t'])
+		if tracks: args_wrapper.extend([ '-d', tracks, '-t',
+			'--line-format', '{{ts}}{{mute}}{{}} [{}]\n'.format(chan['name']) ])
 		args.append(url)
 
 		args = [player_wrap] + args_wrapper + ['--'] + args
