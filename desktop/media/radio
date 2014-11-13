@@ -120,6 +120,8 @@ def main(args=None):
 
 	tracks = tracks_global
 	if 'tracks' in chan: tracks = chan['tracks']
+	if not os.path.exists(tracks):
+		with open(tracks, 'ab'): pass
 
 	notify_kws = yaml.load(opts.desktop_notification_props)
 	if notify_kws is not False: notify_kws = notify_kws or dict()
@@ -153,7 +155,8 @@ def main(args=None):
 		args = mpv_args_base + args
 
 		if opts.debug: args_wrapper.extend(['--debug', '--passthrough'])
-		if tracks: args_wrapper.extend(['-d', tracks, '-t'])
+		if tracks: args_wrapper.extend([ '-d', tracks, '-t',
+			'--line-format', '{{ts}}{{mute}}{{}} [{}]\n'.format(chan['name']) ])
 		args.append(url)
 
 		args = [player_wrap] + args_wrapper + ['--'] + args

@@ -63,9 +63,10 @@ class MpvCtl(object):
 
 	def __init__( self, dst_file=None,
 			mute_re=None, mute_delay=None, mute_old=False, mute_prefix=None,
-			recode=None, ts_format=None ):
+			recode=None, line_format=None, ts_format=None ):
 		self.log = logging.getLogger('mpvctl')
 
+		self.line_format = line_format or '{ts}{mute}{}\n'
 		self.ts_format, self.recode = ts_format, recode
 		self.mute_re, self.mute_delay = mute_re, mute_delay
 		self.mute_old, self.mute_prefix = mute_old, mute_prefix
@@ -128,20 +129,18 @@ class MpvCtl(object):
 		return track
 
 	def track_changed(self, track):
+		mute_prefix = ''
 		if self.mute_re:
 			if self.mute_re.search(track):
 				self.send_mute_auto(True)
-				if self.mute_prefix: track = '{}{}'.format(self.mute_prefix, track)
+				if self.mute_prefix: mute_prefix = self.mute_prefix
 			elif self.muted_auto: self.send_mute_auto(False)
-		self.track_dump(track)
-
-	def track_dump(self, track):
 		if self.recode:
 			track = track\
 				.decode(self.recode, 'replace')\
 				.encode('utf-8', 'backslashreplace')
-		prefix = time.strftime(self.ts_format) if self.ts_format else ''
-		self.dst.write('{}{}\n'.format(prefix, track))
+		ts = time.strftime(self.ts_format) if self.ts_format else ''
+		self.dst.write(self.line_format.format(track, ts=ts, mute=mute_prefix))
 		self.dst.flush()
 
 	def track_dump_loop(self, opts):
@@ -194,13 +193,19 @@ def main(args=None):
 				' so corresponding pulseaudio stream is muted via dbus instead.')
 	parser.add_argument('--mute-title-prefix',
 		nargs='?', default=False, metavar='prefix',
-		help='Add prefix (can be specified as optional arg, default:'
-			' {}) to track titles that match --mute-regexp.'.format(mute_prefix_default))
+		help=(
+				'Add prefix (can be specified as optional arg,'
+					' default: {}) to track titles that match --mute-regexp.'
+				' If --line-format is used, passed to it as "mute" keyword.')\
+			.format(mute_prefix_default))
 
 	parser.add_argument('-d', '--dst-file',
 		help='Path to a file to record all the stuff to. If omitted, stdout will be used.')
+	parser.add_argument('-f', '--line-format',
+		help='Format for each output line. Line itself is passed as the first arg.')
 	parser.add_argument('-t', '--timestamp', action='store_true',
-		help='Prepend timestamps to each track entry in the output.')
+		help='Prepend timestamps to each track entry in the output.'
+			' If --line-format is used, passed to it as "ts" keyword.')
 	parser.add_argument('--timestamp-format',
 		metavar='py_ts_format', default='[%Y-%m-%d %H:%M] ',
 		help='Format for timestamp-prefix to be prepended to each line (default: %(default)s).'
@@ -227,6 +232,7 @@ def main(args=None):
 
 	mpvctl = MpvCtl(
 		dst_file=opts.dst_file, recode=opts.recode_from,
+		line_format=opts.line_format,
 		mute_delay=opts.mute_delay, mute_re=mute_re,
 		mute_old=opts.mute_old, mute_prefix=opts.mute_title_prefix,
 		ts_format=opts.timestamp and opts.timestamp_format )
