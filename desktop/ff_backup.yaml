@@ -4,7 +4,13 @@ data_types:
   ytcenter:
     enabled: true
 
-    db:
+    type: addon # addon or greasemonkey
+
+    addon: # addon data in json format
+      path: YouTubeCenterStorage/YouTubeCenterSettings.data
+      key: YouTubeCenterSettings # for same forrmat as for gm-db-data
+
+    greasemonkey: # greasemonkey script db
       path: gm_scripts/YouTube_Center.db
 
       process: # which json-dumps to backup (in that order)
