@@ -18,17 +18,23 @@ class Actions(object):
 
 	@classmethod
 	def itercode(cls, src):
+		'''Iterates over code lines of src (readline func).
+			Returns line (verbatim), stripped line, indent (bytes).'''
 		for line in iter(src, ''):
 			yield line, line.strip(), len(line) - len(line.lstrip('\t'))
 
 	@classmethod
 	def check_noncode(cls, ls, src, blocks=True):
+		'''Returns if line (stripped) is non-code - comment/space/block/etc.
+			Detects string/comment/verbatim blocks only
+				with blocks=True, advancing src (readline func).'''
 		return not ls\
 			or (blocks and cls.skip_block(ls, src))\
 			or ls.startswith('//')
 
 	@classmethod
 	def skip_block(cls, line, src):
+		'Goes over non-code blocks, advancing src (readline func).'
 		res = False
 		if line.count('`')%2: # string blocks
 			for line in iter(src, ''):
@@ -192,7 +198,7 @@ class Actions(object):
 	def curl_postproc(cls, data):
 		'Irreversible post-processing'
 		return '\n'.join(it.imap(
-			ft.partial(re.sub, r'//(\+|-)as-is\s*$', ''),
+			ft.partial(re.sub, r'\s*//(\+|-)as-is\s*$', ''),
 			''.join(data).splitlines() )) + '\n'
 
 
@@ -200,12 +206,12 @@ class Actions(object):
 	def uncurl(cls, src):
 		## Find position of every to-be-removed brace
 		blanks, pos_prev = defaultdict(bytes), src.tell()
-		for line, pos_line, pos_tabs in cls.itercode(src.readline):
-			if cls.check_noncode(pos_line, src.readline):
+		for line, pos_ls, pos_tabs in cls.itercode(src.readline):
+			if cls.check_noncode(pos_ls, src.readline):
 				pos_prev = src.tell()
 				continue
 			for bo,bc in it.izip('{(', '})'):
-				if not pos_line.endswith(bo): continue # opening block-brace at eol
+				if not pos_ls.endswith(bo): continue # opening block-brace at eol
 				pos, pos_open_line = src.tell(), pos_prev
 				# Find tab or a closing brace
 				pos_prev = src.tell()
@@ -218,7 +224,7 @@ class Actions(object):
 							blanks[pos_prev] += bo + bc
 							break
 						elif line_tabs <= pos_tabs: # case in either switch or select, otherwise error
-							assert re.search(r'^(switch|select)\b', pos_line), pos_line
+							assert re.search(r'^(switch|select)\b', pos_ls), pos_ls
 							assert re.search(r'^(case|default)\b', ls), ls
 					pos_prev = src.tell()
 				else: raise ValueError('No closing brace found for line: {!r}'.format(line))
