@@ -88,7 +88,15 @@ class Actions(object):
 					else: # block end proper
 						brace_stack.pop()
 						if re.search(r'^else\b', ls): # special case - "} else {"
-							cancer[src.tell() - len(line)]['soft_close'] += bc
+							pos = src.tell() - len(line)
+							if cancer[pos]['soft_close']:
+								assert pos_prev_tabs > pos_tabs\
+									and '\t' not in cancer[pos]['soft_close'], cancer[pos]['soft_close']
+								cap = cancer[pos]['soft_close']
+								cancer[pos]['soft_close'] = '\t' * (pos_prev_tabs - pos_tabs - 1)
+								for n in xrange(pos_prev_tabs-1, pos_tabs, -1):
+									cancer[pos]['soft_close'] += cap + '\n' + '\t' * (n-1)
+							cancer[pos]['soft_close'] += bc
 						else: cancer[pos_prev]['close'] += bc
 
 			else:
