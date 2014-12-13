@@ -6,8 +6,7 @@ import itertools as it, operator as op, functools as ft
 from os.path import ( join, exists, isfile, isdir, splitext,
 	expanduser, dirname, basename, realpath, abspath )
 from contextlib import contextmanager, closing
-from collections import defaultdict, OrderedDict, namedtuple
-from tempfile import NamedTemporaryFile
+from collections import OrderedDict
 from hashlib import sha384
 import os, sys, logging, io, types, re, random, json
 import sqlite3, ConfigParser
