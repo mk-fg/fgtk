@@ -764,6 +764,16 @@ stuff back.
 In short, allows to run e.g. `kernel-patch 3.14.22` to get 3.14.22 in
 /usr/src/linux from any other clean 3.14.* version there.
 
+##### blinky
+
+Script to blink gpio-connected leds via `/sys/class/gpio` interface.
+
+Includes oneshot mode, countdown mode (with some interval scaling option),
+direct on-off phase delay control (see --pre, --post and --interval* options),
+cooperation between several instances using same gpio pin, "until" timestamp
+spec, and generally everything I can think of being useful (mostly for use from
+other scripts though).
+
 
 
 ### Desktop

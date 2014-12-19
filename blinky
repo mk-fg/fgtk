@@ -1,0 +1,302 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
+from os.path import join, exists
+import os, sys, logging, glob, fcntl, errno, time, signal
+
+
+path_gpio = '/sys/class/gpio'
+
+def gpio_access_wrap(func, checks=12, timeout=1.0):
+	for n in xrange(checks, -1, -1):
+		try: return func()
+		except (IOError, OSError): pass
+		if checks <= 0: break
+		if n: time.sleep(timeout / checks)
+	else:
+		log.warn('gpio access failed (func: %s, timeout: %s)', func, timeout)
+
+def get_pin_path(n, sub=None, _cache=dict()):
+	n = int(n)
+	if n not in _cache:
+		for try_export in [True, False]:
+			try:
+				path = join(path_gpio, 'gpio{}'.format(n))
+				if not exists(path): path, = glob.glob(path + '_*')
+			except:
+				if not try_export:
+					raise OSError('Failed to find sysfs control path for pin: {}'.format(n))
+			else: break
+			log.debug('Exporting pin: %s', n)
+			with open(join(path_gpio, 'export'), 'wb', 0) as dst:
+				gpio_access_wrap(ft.partial(dst.write, bytes(n)))
+		_cache[n] = path
+	else: path = _cache[n]
+	return path if not sub else os.path.join(path, sub)
+
+def get_pin_value(n, k='value'):
+	with gpio_access_wrap(
+			ft.partial(open, get_pin_path(n, k), 'rb', 0) ) as src:
+		val = src.read().strip()
+	if k == 'value':
+		try: val = int(val)
+		except ValueError as err:
+			log.warn('Failed to read/decode pin (n: %s) value %r: %s', n, val, err)
+			val = None
+	return val
+
+def set_pin_value(n, v, k='value', force=False, _pin_state=dict()):
+	if k == 'value' and isinstance(v, bool): v = int(v)
+	if not force and _pin_state.get(n) == v: return
+	if _pin_state.get(n) == v: return
+	# log.debug('Setting parameter of pin-%s: %s = %r ', n, k, v)
+	with open(get_pin_path(n, k), 'wb', 0) as dst:
+		gpio_access_wrap(ft.partial(dst.write, bytes(v)))
+	_pin_state[n] = v
+
+@contextmanager
+def pin_lock( pins, shared=False, block=True,
+		lock_path='/tmp/.gpio_out_pins.lock', _locks=list() ):
+	if isinstance(pins, int): pins = [pins]
+	for n in pins: assert isinstance(n, int), [n, pins]
+	if not _locks:
+		umask = os.umask(077)
+		try: _locks.append(open(lock_path, 'ab+'))
+		finally: os.umask(umask)
+		_locks[0].seek(0, os.SEEK_END)
+		_locks.append(False)
+	locks, reentry = _locks
+	if reentry: raise RuntimeError('Nested lock contexts are not supported')
+	locks_max = max(pins) - 1
+	if locks.tell() < locks_max:
+		locks.write('\0'*(locks_max - locks.tell()))
+		locks.flush()
+	op = (fcntl.LOCK_EX, fcntl.LOCK_SH)[shared]
+	if not block: op |= fcntl.LOCK_NB
+	elif block is True: block = 1.0
+	_locks[1] = True
+	try:
+		if block:
+			alarm_timer = signal.setitimer(signal.ITIMER_REAL, block)
+			assert alarm_timer[0] < block, [block, alarm_timer]
+			alarm_handler = signal.signal(signal.SIGALRM, lambda sig,frm: None)
+		err = None
+		try:
+			for n in sorted(pins): # order is to prevent deadlocks
+				try: fcntl.lockf(locks, op, 1, n, os.SEEK_SET)
+				except IOError as err:
+					if not (block and err.errno == errno.EINTR): raise
+					break
+		finally:
+			if block:
+				signal.setitimer(signal.ITIMER_REAL, *alarm_timer)
+				signal.signal(signal.SIGALRM, alarm_handler)
+		if err:
+			raise IOError( 'Blocking gpio lock timed-out'
+				' (pin {} out of {}, timeout: {:.2f}s)'.format(n, pins, block) )
+		yield
+	finally:
+		_locks[1] = False
+		fcntl.lockf(locks, fcntl.LOCK_UN)
+
+
+signal_exit = False # breaks loop, if set
+
+def signal_exit_set(sig, frm):
+	global signal_exit
+	signal_exit = sig
+
+def run( pins, t_on, t_off, phase=False, phase_shared=None,
+		pre=None, post=None, end=None,
+		count=None, countdown=None, countdown_func='line', t_min=0.02 ):
+	global signal_exit
+
+	if t_on is not None:
+		t_on, t_off = max(t_on, t_min), max(t_off, t_min)
+		if countdown:
+			t_on0, t_on_off_ratio = t_on, float(t_on) / float(t_off)
+			if countdown_func == 'hype': raise NotImplementedError
+			elif countdown_func == 'line':
+				a = -t_on0 / float(countdown) # f = ax + b, b = t_on
+			elif countdown_func == 'flat': a = 0 # f = b, b = t_on
+			else: raise ValueError(countdown_func)
+			def t_update(t):
+				t_on = a * t + t_on0
+				t_off = t_on / t_on_off_ratio
+				return max(t_on, t_min), max(t_off, t_min)
+			ts_sync, ts_sync_max, ts0 = 0, 100, time.time()
+
+	def skip_shared(n, phase, state):
+		if phase_shared is None: return None
+		if phase == phase_shared\
+				and get_pin_value(n) == phase:
+			state[n] = True
+			return True
+		return state.pop(n, False)
+
+	def blink_cycle(delays):
+		phase, shared_chk = True, dict()
+		for delay in delays:
+			if delay > 0:
+				with pin_lock(pins):
+					for n in pins:
+						if skip_shared(n, phase, shared_chk): continue
+						set_pin_value(n, phase)
+				time.sleep(delay)
+			phase = not phase
+
+	# Set "start" phase and init pins before main loop
+	shared_chk = dict()
+	with pin_lock(pins):
+		for n in pins:
+			if get_pin_value(n, k='direction') == 'out'\
+				and skip_shared(n, phase, shared_chk): continue
+			set_pin_value(n, k='direction', v=['low', 'high'][phase])
+	if t_on is None: count = 0
+
+	if pre: blink_cycle(pre)
+
+	ts = 0
+	while True:
+		if count is not None and count <= 0: break
+
+		if signal_exit:
+			log.debug('Breaking loop on signal: %s', signal_exit)
+			break
+
+		if countdown:
+			ts_sync += 1
+			if ts_sync >= ts_sync_max: ts_sync, ts = 0, time.time() - ts0
+			if t_on > t_min: t_on, t_off = t_update(ts)
+			if ts >= countdown:
+				log.debug('Finished countdown on: %.2fs / %.2f', ts, countdown)
+				break
+
+		delay = t_on if phase else t_off
+		time.sleep(delay)
+
+		if count is not None and phase:
+			count -= 1
+			if count <= 0: break
+
+		ts, phase = ts + delay, not phase
+		with pin_lock(pins):
+			for n in pins:
+				if skip_shared(n, phase, shared_chk): continue
+				set_pin_value(n, phase)
+
+	if post: blink_cycle(post)
+
+	if end is not None:
+		with pin_lock(pins):
+			for n in pins:
+				if not post and skip_shared(n, end, shared_chk): continue
+				set_pin_value(n, end)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(description='Blink led(s) on the specified gpio pin(s).')
+	parser.add_argument('pins', type=int, nargs='+',
+		help='GPIO output pin numbers, same as used/assigned in /sys/class/gpio by the kernel.')
+
+	parser.add_argument('-x', '--set', action='store_true',
+		help='Set led(s) state to --start-phase and exit immediately.')
+	parser.add_argument('-u', '--shared',
+		nargs='?', metavar='0/1', choices=[0, 1], const=1,
+		help='Check led state before altering it,'
+				' and do not change it if it was already 1 before 0-1-0 cycle.'
+			' When passed "0" as an optional arg, this logic'
+				' gets inverted and 1 is considered to be the "default" state.'
+			' Without optional arg, shared state "1" is implied.'
+			' Does not affect --pre and --post stuff.')
+
+	parser.add_argument('-i', '--interval',
+		type=float, metavar='seconds', default=1.0,
+		help='Interval between enabling/disabling the led(s)'
+			' and vice-versa, in seconds (default: %(default)s).')
+	parser.add_argument('--interval-on',
+		type=float, metavar='seconds',
+		help='Separate interval for keeping led(s) enabled. Equals to --interval by default.')
+	parser.add_argument('-s', '--start-phase',
+		type=int, metavar='0/1', choices=[0, 1], default=0,
+		help='Start blinking from specified phase (1 or 0, default: %(default)s).')
+	parser.add_argument('-e', '--end-phase',
+		type=int, metavar='0/1', choices=[0, 1],
+		help='Phase (1 or 0) to leave led(s) in on exit.'
+			' Affects only normal exit, KeyboardInterrupt or SIGTERM, not any other kill-signals.'
+			' Default is to not change state on exit.')
+
+	parser.add_argument('--pre',
+		metavar='t_on[,t_off,t_on,...]',
+		help='Sequence of on/off timeouts to execute before'
+			' main sequence (as defined by --interval, --countdown and such).')
+	parser.add_argument('--post',
+		metavar='t_on[,t_off,t_on,...]',
+		help='Sequence of on/off timeouts to execute after'
+			' main sequence (as defined by --interval, --countdown and such).')
+
+	parser.add_argument('-c', '--countdown',
+		type=float, metavar='seconds',
+		help='Blink faster down from the initial interval to zero'
+			' for specified number of seconds in a linear (by default) progression.')
+	parser.add_argument('-t', '--countdown-ts',
+		metavar='{ unix_time | abs_path }',
+		help='Same as countdown, but destination timestamp is specified.'
+			' If provided value start with slash, it is assumed that'
+				' the path is passed, and actual value will be read from there.'
+			' Overrides --countdown, if both options are specified.')
+	parser.add_argument('-f', '--countdown-func',
+		default='line', choices=['line', 'flat', 'hype'],
+		help='Countdown function chart (interval from time) shape.'
+			' Only relevant if --countdown or --countdown-ts is specified.'
+			' Choices: line (linear --interval to zero), flat (always --interval), hype (hyperbola).'
+			' Default: %(default)s.')
+	parser.add_argument('-n', '--count',
+		type=int, metavar='integer',
+		help='Stop after exactly specified number of'
+			' "on" phases, including --start-phase (if it is "1").')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	if opts.set: t_on = t_off = None
+	else:
+		t_on = t_off = opts.interval
+		if opts.interval_on: t_on = opts.interval_on
+	phase = bool(opts.start_phase)
+	signal.signal(signal.SIGTERM, signal_exit_set)
+	signal.signal(signal.SIGINT, signal_exit_set)
+	pre, post = ((opt and list( float(v.strip())
+		for v in opt.split(',') )) for opt in [opts.pre, opts.post])
+
+	countdown = opts.countdown
+	if opts.countdown_ts:
+		countdown_ts = opts.countdown_ts
+		if countdown_ts.startswith('/'):
+			with open(countdown_ts, 'rb') as src: countdown_ts = src.read().strip()
+		countdown_ts = float(countdown_ts)
+		countdown = max(0, countdown_ts - time.time())
+	if countdown == 0: countdown = 0.1
+
+	log.debug('Entering main loop...')
+	try:
+		run(
+			opts.pins, t_on, t_off, phase=phase, phase_shared=opts.shared,
+			pre=pre, post=post, end=opts.end_phase,
+			count=opts.count, countdown=countdown, countdown_func=opts.countdown_func )
+	except: # do end-phase stuff if something goes wrong
+		if opts.end_phase is not None:
+			for n in opts.pins: set_pin_value(n, opts.end_phase)
+		raise
+	log.debug('Finished')
+
+
+if __name__ == '__main__': sys.exit(main())
