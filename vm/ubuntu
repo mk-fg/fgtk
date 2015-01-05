@@ -10,6 +10,7 @@ vde_mac=52:54:00:12:34:58
 vde_path=~/tmp/vde
 dump_inc=
 restore=
+net_only=
 
 case "$1" in
 	d|dump)
@@ -46,10 +47,11 @@ EOF
 		restore=t ;;
 
 	m|monitor) exec rlwrap ncat -t 127.0.0.1 "$telnet_port" ;;
+	n|net|net-only) net_only=t ;;
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } ]"
+		echo >&2 "Usage: $0 [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		exit 1 ;;
 esac
 
@@ -88,6 +90,8 @@ for n in {0..5}; do
 	kill -0 $pid1 $pid2 2>/dev/null || break
 	sleep 0.1
 done
+
+[[ -n "$net_only" ]] && exit 0
 
 
 ### Run qemu
