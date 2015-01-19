@@ -774,6 +774,37 @@ cooperation between several instances using same gpio pin, "until" timestamp
 spec, and generally everything I can think of being useful (mostly for use from
 other scripts though).
 
+##### systemd-watchdog
+
+Trivial script to ping systemd watchdog and do some trivial actions in-between
+to make sure os still works.
+
+Wrote it after yet another silent non-crash, where linux kernel refuses to
+create new pids (with some backtraces) and seem to hang on some fs ops.
+In these cases network works, most running daemons kinda-work, while
+syslog/journal get totally jammed and backtraces (or any errors) never make it
+to remote logging sinks.
+
+So this trivial script, tied into systemd-controlled watchdog timers, tries to
+create pids every once in a while, with either hang or crash bubbling-up to
+systemd (pid-1), which should reliably reboot/crash the system via hardware wdt.
+
+Example watchdog.service:
+
+	[Service]
+	WatchdogSec=60s
+	Restart=on-failure
+	StartLimitInterval=10min
+	StartLimitBurst=10
+	StartLimitAction=reboot-force
+	Type=notify
+	ExecStart=/usr/local/sbin/systemd-watchdog
+
+	[Install]
+	WantedBy=multi-user.target
+
+Useless without systemd and requires systemd python module.
+
 
 
 ### Desktop
