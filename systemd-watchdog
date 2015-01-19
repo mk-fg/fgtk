@@ -16,10 +16,9 @@ def actions():
 	## These actions must take less time than systemd watchdog interval
 
 	# Processes can be forked and exec'ed and fs doesn't hang
-	subprocess.Popen(['/bin/true']).wait()
-	subprocess.Popen(
-		['/bin/ls', '-lah', '/', '/usr', '/var', '/etc', '/srv', '/home', '/dev'],
-		stdout=dev_null ).wait()
+	subprocess.check_call(['/bin/true'])
+	subprocess.check_call(
+		['/bin/ls', '-lah', '/', '/usr', '/var', '/etc', '/srv', '/home', '/dev'], stdout=dev_null )
 
 	# tmpfs can be written to and urandom works
 	with tempfile.NamedTemporaryFile() as tmp:
