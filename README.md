@@ -366,6 +366,24 @@ accidental modification (that can be lost).
 
 There're also "-t" and "-m" flags to control timestamps during the whole process.
 
+##### term-pipe
+
+Disables terminal echo and outputs line-buffered stdin to stdout.
+
+Use-case is grepping through huge multiline strings (e.g. webpage source) pasted
+into terminal, i.e.:
+
+	% term-pipe | g -o '\<http://[^"]\+'
+
+	[pasting page here via e.g. Shift+Insert won't cause any echo]
+
+	http://www.w3.org/TR/html4/loose.dtd
+	http://www.bugzilla.org/docs/3.4/en/html/bug_page.html
+	...
+
+There are better tools for that particular use-case, but this solution is
+universal wrt any possible input source.
+
 
 
 ### Dev
