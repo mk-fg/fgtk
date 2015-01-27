@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-from plumbum import local
+from plumbum import local, commands
 from time import time
 from collections import defaultdict
 from os.path import basename, dirname, join, exists, normpath, isfile, splitext
@@ -90,6 +90,9 @@ def main(argv=None):
 		help='Path to temporarily copy files from dst during --shuffle operation, removed afterwards.'
 			' Will be generated in mktemp(1)-fashion if name contains >4 X letters in a row.')
 
+	parser.add_argument('-i', '--ignore-errors', action='store_true',
+		help='Dont abort on any errors from rsync.'
+			' These can usually happen due to e.g. fs name restrictions and whatever other io errors.')
 	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -301,7 +304,11 @@ def main(argv=None):
 			if optz.clean_as_necessary: # free space for a file, if requested
 				df_path = (os.stat(path).st_size + 1*2**20) * 1.2 # for any possible fs overhead
 				if df < df_path: do_cleanup(df_path)
-			if not optz.dry_run: local['rsync']('--inplace', '--size-only', path, path_dst)
+			if not optz.dry_run:
+				try: local['rsync']('--inplace', '--size-only', path, path_dst)
+				except commands.processes.ProcessExecutionError as err:
+					if not optz.ignore_errors: raise
+					log.warn('File transfer error: %s', err)
 		except KeyboardInterrupt:
 			try: os.unlink(path_dst)
 			except OSError: pass
