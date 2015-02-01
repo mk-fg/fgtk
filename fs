@@ -134,6 +134,17 @@ class FSOps(object):
 				sh.walk(p, follow_links=follow_links, **walk_kws) for p in paths )
 		else: return paths
 
+	def opts_dst_mkdir(self, dst):
+		if not self.opts.mkdir: return
+		created = False
+		if not exists(dst):
+			os.makedirs(dst)
+			created = True
+		elif not isdir(dst):
+			self.opts.error( 'Destination path exists and is'
+				' not a directory with --mkdir specified: {!r}'.format(dst) )
+		return created
+
 
 	def mv(self):
 		opts, ops = self.opts, self.opts_flow_parse()
@@ -164,7 +175,8 @@ class FSOps(object):
 		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
 
 		for src, dst in ops:
-			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
+			self.opts_dst_mkdir(dst)
+			dst = sh.join(dst, basename(src)) if isdir(dst) else dst
 			mv_func(src, dst, attrs=attrs)
 			if opts.new_owner:
 				dst_stat = os.stat(dirname(dst))
@@ -186,7 +198,8 @@ class FSOps(object):
 		attrs = opts.attrs if opts.attrs is not None else (os.getuid() == 0)
 
 		for src, dst in ops:
-			dst = sh.join(dst, basename(src)) if sh.isdir(dst) else dst
+			self.opts_dst_mkdir(dst)
+			dst = sh.join(dst, basename(src)) if isdir(dst) else dst
 			cp_func(src, dst, attrs=attrs, dereference=opts.dereference)
 			if opts.new_owner:
 				dst_stat = os.stat(dirname(dst))
@@ -271,6 +284,7 @@ class FSOps(object):
 		rec_links = rec and opts.recursive_files_follow_links
 
 		for src, dst in ops:
+			self.opts_dst_mkdir(dst)
 			src = abspath(src).rstrip(os.sep)
 			if not isdir(dst):
 				if len(ops) > 1: opts.error('Multiple src paths provided with non-dir dst: {}'.format(dst))
@@ -405,6 +419,10 @@ def main(args=None):
 			help='Destination, positional argz will be treated as source(s).')
 		cmd.add_argument('--reverse',
 			action='store_true', help='Reverse source / destination targets.')
+		cmd.add_argument('--mkdir', action='store_true',
+			help='Copy/move/link src path(s) into possibly not yet existing directory.'
+				' Destination and all the intermediate'
+					' dirs will be created (with default umask), if necessary.')
 
 	for cmd in op.itemgetter('mv', 'cp')(cmds.choices):
 		cmd.add_argument('-P', '--attrs', action='store_true',

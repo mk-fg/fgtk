@@ -6,8 +6,7 @@ import itertools as it, operator as op, functools as ft
 from os.path import ( join, exists, isfile, isdir, splitext,
 	expanduser, dirname, basename, realpath, abspath )
 from contextlib import contextmanager, closing
-from collections import defaultdict, OrderedDict, namedtuple
-from tempfile import NamedTemporaryFile
+from collections import OrderedDict
 from hashlib import sha384
 import os, sys, logging, io, types, re, random, json
 import sqlite3, ConfigParser
@@ -120,35 +119,42 @@ class BackupStuff(object):
 
 	def ytcenter_get(self):
 		conf, log = self.cfg_data.ytcenter, logging.getLogger('ytcenter')
-
 		data = OrderedDict(_hashes=OrderedDict())
-		with self.sqlite_conn(conf.db.path) as conn:
 
-			with closing(conn.cursor()) as c:
-				c.execute('select * from scriptvals')
-				db_dump = c.fetchall()
-				if db_dump:
-					assert len(db_dump[0]) == 2\
-						and not set(db_dump[0].viewkeys()).difference(['name', 'value']),\
-						db_dump[0]
-				db_dump = dict(it.imap(op.itemgetter('name', 'value'), db_dump))
+		if conf.type == 'greasemonkey':
+			with self.sqlite_conn(conf.db.path) as conn:
 
-			for name in conf.db.process:
-				if name not in db_dump:
-					log.error('Unable to find db key: %r', name)
-					continue
-				val = json.loads(json.loads(db_dump.pop(name))) # double-json \o/
-				assert name not in data, [name, data.keys()]
-				data[name] = self.ytcenter_clean(val, conf.strip, log=log)
+				with closing(conn.cursor()) as c:
+					c.execute('select * from scriptvals')
+					db_dump = c.fetchall()
+					if db_dump:
+						assert len(db_dump[0]) == 2\
+							and not set(db_dump[0].viewkeys()).difference(['name', 'value']),\
+							db_dump[0]
+					db_dump = dict(it.imap(op.itemgetter('name', 'value'), db_dump))
 
-			for name, val in db_dump.viewitems():
-				if name not in conf.db.skip:
-					log.warn('Unmatched db key: %r', name)
-					continue
-				skip_conf = conf.db.skip[name]
-				if skip_conf.get('hash'):
-					data['_hashes'][name] = self.sane_hash(val)
+				for name in conf.db.process:
+					if name not in db_dump:
+						log.error('Unable to find db key: %r', name)
+						continue
+					val = json.loads(json.loads(db_dump.pop(name))) # double-json \o/
+					assert name not in data, [name, data.keys()]
+					data[name] = self.ytcenter_clean(val, conf.strip, log=log)
 
+				for name, val in db_dump.viewitems():
+					if name not in conf.db.skip:
+						log.warn('Unmatched db key: %r', name)
+						continue
+					skip_conf = conf.db.skip[name]
+					if skip_conf.get('hash'):
+						data['_hashes'][name] = self.sane_hash(val)
+
+		elif conf.type == 'addon':
+			with self.profile_file(conf.addon.path) as src: val = json.load(src)
+			val = self.ytcenter_clean(val, conf.strip, log=log)
+			data[conf.addon.key] = val
+
+		data['_hashes'] = data['_hashes'] or None
 		return data
 
 

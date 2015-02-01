@@ -366,6 +366,24 @@ accidental modification (that can be lost).
 
 There're also "-t" and "-m" flags to control timestamps during the whole process.
 
+##### term-pipe
+
+Disables terminal echo and outputs line-buffered stdin to stdout.
+
+Use-case is grepping through huge multiline strings (e.g. webpage source) pasted
+into terminal, i.e.:
+
+	% term-pipe | g -o '\<http://[^"]\+'
+
+	[pasting page here via e.g. Shift+Insert won't cause any echo]
+
+	http://www.w3.org/TR/html4/loose.dtd
+	http://www.bugzilla.org/docs/3.4/en/html/bug_page.html
+	...
+
+There are better tools for that particular use-case, but this solution is
+universal wrt any possible input source.
+
 
 
 ### Dev
@@ -763,6 +781,47 @@ stuff back.
 
 In short, allows to run e.g. `kernel-patch 3.14.22` to get 3.14.22 in
 /usr/src/linux from any other clean 3.14.* version there.
+
+##### blinky
+
+Script to blink gpio-connected leds via `/sys/class/gpio` interface.
+
+Includes oneshot mode, countdown mode (with some interval scaling option),
+direct on-off phase delay control (see --pre, --post and --interval* options),
+cooperation between several instances using same gpio pin, "until" timestamp
+spec, and generally everything I can think of being useful (mostly for use from
+other scripts though).
+
+##### systemd-watchdog
+
+Trivial script to ping systemd watchdog and do some trivial actions in-between
+to make sure os still works.
+
+Wrote it after yet another silent non-crash, where linux kernel refuses to
+create new pids (with some backtraces) and seem to hang on some fs ops.
+In these cases network works, most running daemons kinda-work, while
+syslog/journal get totally jammed and backtraces (or any errors) never make it
+to remote logging sinks.
+
+So this trivial script, tied into systemd-controlled watchdog timers, tries to
+create pids every once in a while, with either hang or crash bubbling-up to
+systemd (pid-1), which should reliably reboot/crash the system via hardware wdt.
+
+Example watchdog.service:
+
+	[Service]
+	WatchdogSec=60s
+	Restart=on-failure
+	StartLimitInterval=10min
+	StartLimitBurst=10
+	StartLimitAction=reboot-force
+	Type=notify
+	ExecStart=/usr/local/sbin/systemd-watchdog
+
+	[Install]
+	WantedBy=multi-user.target
+
+Useless without systemd and requires systemd python module.
 
 
 
