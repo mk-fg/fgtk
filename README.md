@@ -879,6 +879,10 @@ Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
 
+###### pa_mute
+
+Simple script to toggle mute for all pluseaudio streams from a specified pid.
+
 ###### mpv_icy_track_history
 
 Same as pa_track_history above, but gets tracks when [mpv](http://mpv.io/) dumps
