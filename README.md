@@ -384,6 +384,14 @@ into terminal, i.e.:
 There are better tools for that particular use-case, but this solution is
 universal wrt any possible input source.
 
+##### yaml-to-pretty-json
+
+Converts yaml files to an indented json, which is a bit more readable and
+editable by hand than the usual compact one-liner serialization.
+
+Due to yaml itself being json superset, can be used to convert json to
+pretty-json as well.
+
 
 
 ### Dev

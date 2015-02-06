@@ -1,0 +1,28 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, json
+
+import yaml
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Convert YAML input file to a prettified JSON.')
+	parser.add_argument('path', help='Path to the YAML file to convert.')
+	parser.add_argument('-r', '--reverse',
+		action='store_true', help='Convert JSON to pretty YAML instead (requires "pyaml" module).')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	with open(opts.path) as src: data = yaml.safe_load(src)
+	if not opts.reverse:
+		print(json.dumps(data, sort_keys=True, indent=2, separators=(',', ': ')))
+	else:
+		import pyaml
+		pyaml.dump(data, sys.stdout)
+
+
+if __name__ == '__main__': sys.exit(main())
