@@ -1,7 +1,10 @@
 #!/bin/bash
 
 dst=/tmp/media.img2tty.png
-read tty_rows tty_cols < <(stty size)
+if [[ -z "$TOTTY_X" || -z "$TOTTY_Y" ]]
+then read tty_rows tty_cols < <(stty size)
+else tty_cols=$TOTTY_X tty_rows=$TOTTY_Y
+fi
 err=0
 
 for p in "$@"; do
@@ -15,7 +18,7 @@ for p in "$@"; do
 	[[ "$ct" =~ ^image/ ]]\
 		|| { echo >&2 "Unknown content type ($ct): $p"; err=1; continue; }
 	[[ "$#" -gt 1 ]] && echo "--- $p"
-	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm "$dst" || err=1
+	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm -p "$dst" || err=1
 done
 
 rm -f "$dst"
