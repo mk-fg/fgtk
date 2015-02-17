@@ -10,7 +10,7 @@ from gi.repository import Gtk, GObject
 
 class SliderWindow(Gtk.ApplicationWindow):
 
-	def __init__( self, app,
+	def __init__( self, app, name=None,
 			val=None, val_min=0, val_max=100, use_floats=False,
 			size_w=400, size_h=30, size_pad=5, step_cursor=5, step_click=10,
 			writeback_delay=1.0, writeback_func=None ):
@@ -35,15 +35,19 @@ class SliderWindow(Gtk.ApplicationWindow):
 		self.scale.set_valign(Gtk.Align.START)
 		self.scale.connect('value-changed', self.slider_moved)
 
-		self.label = Gtk.Label()
-		self.label.set_text('No value written yet')
+		if name:
+			self.label = Gtk.Label()
+			self.label.set_text(name)
+		self.value_desc = Gtk.Label()
+		self.value_desc.set_text('No value written yet')
 
 		# https://developer.gnome.org/gtk3/stable/LayoutContainers.html
 		grid = Gtk.Grid()
 		grid.set_column_spacing(10)
 		grid.set_column_homogeneous(True)
-		grid.attach(self.scale, 0, 0, 1, 1) # col, row, span-rows, span-cols
+		grid.attach(self.scale, 0, 0, 2, 1) # col, row, span-cols, span-rows
 		grid.attach(self.label, 0, 1, 1, 1)
+		grid.attach(self.value_desc, 1, 1, 1, 1)
 
 		self.add(grid)
 
@@ -52,16 +56,16 @@ class SliderWindow(Gtk.ApplicationWindow):
 			if self.writeback_delay:
 				self.writeback_timer = GObject.timeout_add_seconds(self.writeback_delay, self.writeback)
 			else: self.writeback()
-		label_text = 'Value: {{:{0}}} -> {{:{0}}}'\
+		value_desc = 'Value: {{:{0}}} -> {{:{0}}}'\
 			.format(self.value_fmt).format(self.value, self.scale.get_value())
-		if self.writeback_delay: label_text += ' ({:.2f}s)'.format(self.writeback_delay)
-		self.label.set_text(label_text)
+		if self.writeback_delay: value_desc += ' ({:.2f}s)'.format(self.writeback_delay)
+		self.value_desc.set_text(value_desc)
 
 	def writeback(self):
 		if self.writeback_timer: GObject.source_remove(self.writeback_timer)
 		self.value = self.scale.get_value()
 		if not self.use_floats: self.value = int(self.value)
-		self.label.set_text('Value: {{:{}}}'.format(self.value_fmt).format(self.value))
+		self.value_desc.set_text('Value: {{:{}}}'.format(self.value_fmt).format(self.value))
 		if self.writeback_func: self.writeback_func(self.value)
 		self.writeback_timer = None
 
@@ -92,6 +96,8 @@ def main(args=None):
 	parser.add_argument('-v', '--val-init',
 		metavar='val', type=float, help='Initial value (default: random).')
 
+	parser.add_argument('-n', '--name',
+		help='Value name. Purely cosmetic. Default is to display basename of the dst file instead.')
 	parser.add_argument('-f', '--floats',
 		action='store_true', help='Output float values instead of integers.')
 	parser.add_argument('-d', '--writeback-delay',
@@ -101,16 +107,17 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.path:
-		dst = open(opts.path, 'wb')
+		dst, name = open(opts.path, 'wb'), os.path.basename(opts.path)
 		def write_val(val):
 			dst.seek(0)
 			dst.truncate()
 			dst.write(bytes(val))
 			dst.flush()
-	else: dst, write_val = None, print
+	else:
+		dst, name, write_val = None, 'stdout', print
 
 	try:
-		return SliderApp(
+		return SliderApp( name=opts.name or name,
 			val=opts.val_init, val_min=opts.min, val_max=opts.max, use_floats=opts.floats,
 			writeback_delay=opts.writeback_delay, writeback_func=write_val ).run()
 	finally:
