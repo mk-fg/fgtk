@@ -565,6 +565,18 @@ Essentially does `git rev-list <tree-ish2> | grep $(git rev-parse <tree-ish1>)`.
 
 Lines in square brackets above are comments, not actual output.
 
+##### gtk-val-slider
+
+Renders gtk3 window with a slider widget and writes value (float or int) picked
+there either to stdout or to a specified file, with some rate-limiting delay.
+
+Useful to mock/control values on a dev machine.
+
+E.g. instead of hardware sensors (which might be hard to get/connect/use), just
+setup app to read value(s) that should be there from file(s), specify proper
+value range to the thing and play around with values all you want to see what
+happens.
+
 
 
 ### Misc
