@@ -11,7 +11,7 @@ from gi.repository import Gtk, GObject
 class SliderWindow(Gtk.ApplicationWindow):
 
 	def __init__( self, app, name=None,
-			val=None, val_min=0, val_max=100, use_floats=False,
+			val=None, val_min=0, val_max=100, val_init=False, use_floats=False,
 			size_w=400, size_h=30, size_pad=5, step_cursor=5, step_click=10,
 			writeback_delay=1.0, writeback_func=None ):
 		Gtk.Window.__init__(self, title='Slider Value Control', application=app)
@@ -24,6 +24,8 @@ class SliderWindow(Gtk.ApplicationWindow):
 
 		if val is None: val = random.random() * (val_max - val_min) + val_min
 		if not use_floats: val = int(val)
+		if val_init: GObject.timeout_add_seconds(0, self.writeback)
+
 		# initial/min/max, step (cursor keys), page (click), page-size (unused here)
 		adj = Gtk.Adjustment(val, val_min, val_max, step_cursor, step_click, 0)
 		self.value = val
@@ -96,6 +98,12 @@ def main(args=None):
 	parser.add_argument('-v', '--val-init',
 		metavar='val', type=float, help='Initial value (default: random).')
 
+	parser.add_argument('-r', '--val-read',
+		action='store_true', help='Read initial value from path,'
+			' if specified, exists and can be parsed as float.')
+	parser.add_argument('-w', '--val-init-write',
+		action='store_true', help='Write initial value to the destination.')
+
 	parser.add_argument('-n', '--name',
 		help='Value name. Purely cosmetic. Default is to display basename of the dst file instead.')
 	parser.add_argument('-f', '--floats',
@@ -107,6 +115,10 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.path:
+		if opts.val_read:
+			try:
+				with open(opts.path, 'rb') as src: opts.val_init = float(src.read())
+			except (OSError, IOError, ValueError): pass # don't even bother reporting it
 		dst, name = open(opts.path, 'wb'), os.path.basename(opts.path)
 		def write_val(val):
 			dst.seek(0)
@@ -118,7 +130,8 @@ def main(args=None):
 
 	try:
 		return SliderApp( name=opts.name or name,
-			val=opts.val_init, val_min=opts.min, val_max=opts.max, use_floats=opts.floats,
+			val=opts.val_init, val_min=opts.min, val_max=opts.max,
+			val_init=opts.val_init_write, use_floats=opts.floats,
 			writeback_delay=opts.writeback_delay, writeback_func=write_val ).run()
 	finally:
 		if dst: dst.close()
