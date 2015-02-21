@@ -87,8 +87,8 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Create a window with a slider, writing values to the specified file.')
-	parser.add_argument('path', nargs='?',
-		help='Path to file to create and write slider values to.'
+	parser.add_argument('path', nargs='*',
+		help='Path(s) to a file(s) to create and write slider values to.'
 			' If not specified, each value will be written to stdout.')
 
 	parser.add_argument('-a', '--min', default=0,
@@ -98,8 +98,8 @@ def main(args=None):
 	parser.add_argument('-v', '--val-init',
 		metavar='val', type=float, help='Initial value (default: random).')
 
-	parser.add_argument('-r', '--val-read',
-		action='store_true', help='Read initial value from path,'
+	parser.add_argument('-r', '--val-read', action='store_true',
+		help='Read initial value from path (first one available),'
 			' if specified, exists and can be parsed as float.')
 	parser.add_argument('-w', '--val-init-write',
 		action='store_true', help='Write initial value to the destination.')
@@ -115,18 +115,22 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.path:
+		dsts = list(open(p, 'ab+') for p in opts.path)
+		name = os.path.basename(dsts[0].name)
 		if opts.val_read:
-			try:
-				with open(opts.path, 'rb') as src: opts.val_init = float(src.read())
-			except (OSError, IOError, ValueError): pass # don't even bother reporting it
-		dst, name = open(opts.path, 'wb'), os.path.basename(opts.path)
+			for src in dsts:
+				src.seek(0)
+				try: opts.val_init = float(src.read())
+				except (OSError, IOError, ValueError): pass
+				else: break
 		def write_val(val):
-			dst.seek(0)
-			dst.truncate()
-			dst.write(bytes(val))
-			dst.flush()
+			for dst in dsts:
+				dst.seek(0)
+				dst.truncate()
+				dst.write(bytes(val))
+				dst.flush()
 	else:
-		dst, name, write_val = None, 'stdout', print
+		dsts, name, write_val = list(), 'stdout', print
 
 	try:
 		return SliderApp( name=opts.name or name,
@@ -134,7 +138,7 @@ def main(args=None):
 			val_init=opts.val_init_write, use_floats=opts.floats,
 			writeback_delay=opts.writeback_delay, writeback_func=write_val ).run()
 	finally:
-		if dst: dst.close()
+		for dst in dsts: dst.close()
 
 if __name__ == '__main__':
 	import signal
