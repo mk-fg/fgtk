@@ -203,9 +203,10 @@ alignment:
 
 ##### pysort
 
-Sort file contents, based on some key-field with support for multiple field
-delimeters. Wrote this one when my /etc/passwd got messy and I just wanted to
-sort its contents by uid.
+Unlike tool from coreutils, can overwrite files with sorted results
+(e.g. `pysort -b file_a file_b && diff file_a file_b`) and has some options for
+splitting fields and sorting by one of these (example: `pysort -d: -f2 -n
+/etc/passwd`).
 
 ##### color
 
