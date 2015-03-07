@@ -5,7 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 import os, sys, io, random
 
-from gi.repository import Gtk, GObject
+from gi.repository import Gtk, GLib
 
 
 class SliderWindow(Gtk.ApplicationWindow):
@@ -24,10 +24,10 @@ class SliderWindow(Gtk.ApplicationWindow):
 
 		if val is None: val = random.random() * (val_max - val_min) + val_min
 		if not use_floats: val = int(val)
-		if val_init: GObject.timeout_add_seconds(0, self.writeback)
+		if val_init: GLib.timeout_add_seconds(0, self.writeback)
 
-		# initial/min/max, step (cursor keys), page (click), page-size (unused here)
-		adj = Gtk.Adjustment(val, val_min, val_max, step_cursor, step_click, 0)
+		adj = Gtk.Adjustment( value=val, lower=val_min, upper=val_max,
+			step_increment=step_cursor, page_increment=step_click, page_size=0 )
 		self.value = val
 		self.value_fmt = '.2f' if use_floats else '.0f'
 
@@ -56,7 +56,7 @@ class SliderWindow(Gtk.ApplicationWindow):
 	def slider_moved(self, ev):
 		if not self.writeback_timer:
 			if self.writeback_delay:
-				self.writeback_timer = GObject.timeout_add_seconds(self.writeback_delay, self.writeback)
+				self.writeback_timer = GLib.timeout_add_seconds(self.writeback_delay, self.writeback)
 			else: self.writeback()
 		value_desc = 'Value: {{:{0}}} -> {{:{0}}}'\
 			.format(self.value_fmt).format(self.value, self.scale.get_value())
@@ -64,7 +64,7 @@ class SliderWindow(Gtk.ApplicationWindow):
 		self.value_desc.set_text(value_desc)
 
 	def writeback(self):
-		if self.writeback_timer: GObject.source_remove(self.writeback_timer)
+		if self.writeback_timer: GLib.source_remove(self.writeback_timer)
 		self.value = self.scale.get_value()
 		if not self.use_floats: self.value = int(self.value)
 		self.value_desc.set_text('Value: {{:{}}}'.format(self.value_fmt).format(self.value))
