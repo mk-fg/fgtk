@@ -866,11 +866,6 @@ about in some distant past).
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
 various media files and streams.
 
-###### video_to_ogg
-
-Straightforward "ffmpeg -f wav | oggenc" script to convert any media that has
-sound to an ogg file.
-
 ###### flv_merge
 
 Merges multiple segments of video downloaded from some streaming service
@@ -910,10 +905,15 @@ Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
 with appropriate settings, generally simplified ui, logging and echoing what's
 being played, with a mute button (on SIGQUIT button from terminal).
 
+###### toogg
+
+Straightforward "ffmpeg -f wav | oggenc" script to convert any media that has
+sound to an ogg file.
+
 ###### totty
 
 Wrapper around awesome [img2xterm](https://github.com/rossy2401/img2xterm) tool
-to display images in a color-capable terminal (e.g. xterm).
+to display images in a color-capable terminal (e.g. xterm, not necessarily terminology).
 
 Useful to query "which image is it" right from tty.
 Quality of the resulting images is kinda amazing, given tty limitations.
