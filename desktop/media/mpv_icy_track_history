@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 from subprocess import Popen, PIPE, STDOUT
+from datetime import datetime
 import os, sys, logging, string, re, time, signal
 
 
@@ -139,7 +140,8 @@ class MpvCtl(object):
 			track = track\
 				.decode(self.recode, 'replace')\
 				.encode('utf-8', 'backslashreplace')
-		ts = time.strftime(self.ts_format) if self.ts_format else ''
+		# "datetime" allows for more strftime options here than just "time"
+		ts = datetime.now().strftime(self.ts_format) if self.ts_format else ''
 		self.dst.write(self.line_format.format(track, ts=ts, mute=mute_prefix))
 		self.dst.flush()
 
