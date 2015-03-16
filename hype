@@ -108,11 +108,17 @@ class BTE(object):
 
 
 
-def read_admin_conf():
-	conf_admin, conf_admin_path = None,\
-		os.path.expanduser('~/.cjdnsadmin')
-	with io.open(conf_admin_path, encoding='utf-8') as src:
-		return json.load(src)
+def read_admin_conf(path='~/.cjdnsadmin', rtfm=True):
+	path = os.path.expanduser(path)
+	try:
+		with io.open(path, encoding='utf-8') as src: return json.load(src)
+	except (OSError, IOError, ValueError) as err:
+		if not rtfm: raise
+		p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
+		p('ERROR: Unable to process "cjdnsadmin" configuration file at: {!r}', path)
+		p('  It can be created with the following contents (template, use your own values):')
+		p('    {{"addr": "127.0.0.1", "port": 1234, "password": "adin_password_from_cjdroute.conf"}}')
+		sys.exit(1)
 
 
 def public_to_ipv6(key, colons=False,
@@ -319,6 +325,10 @@ def main(args=None):
 		if len(opts.path) > 1: opts.echo = True
 		for path in opts.path:
 			if opts.echo: print(path, end=' ')
+			m = re.search(r'^v\d+\.(.*)$', path)
+			if m: path = m.group(1)
+			m = re.search(r'^((?:[0-9a-f]{4}\.)+)[0-9a-z]{52}\.k$', path)
+			if m: path = m.group(1)
 			print(' '.join(it.imap(bytes, path_breakdown(path))))
 
 	elif opts.call == 'conf-paste':
@@ -365,8 +375,7 @@ def main(args=None):
 	elif opts.call == 'peers':
 		admin = CjdnsAdmin()
 		res = admin.get_peer_stats()
-		for p in res:
-			p['ipv6'] = public_to_ipv6(p['publicKey'], colons=True)
+		for p in res: p['ipv6'] = public_to_ipv6(p['publicKey'], colons=True)
 		pprint(res)
 
 	else: parser.error('Unrecognized command: {}'.format(opts.call))
