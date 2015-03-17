@@ -910,6 +910,11 @@ number, timestamp of a track start and a stream title (in a filename-friendly fo
 
 Sample usage: `icy_record --debug -x http://pub5.di.fm/di_vocaltrance`
 
+Note that by default dumped streams will be in some raw adts format (as streamed
+over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
+This doesn't seem to be an issue for at least mp3 streams though, which work
+fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
+
 ###### radio
 
 Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams

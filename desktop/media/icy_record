@@ -19,26 +19,27 @@ except ImportError:
 	from pprint import pprint as pp
 
 
-def find_frame_n(chunk0=None, chunk1=None):
+def find_frame_n(chunk0=None, chunk1=None, n_target=None):
 	'''Locates start of adts frame as close to the middle of chunk0 as possible.
 		Presumably stream title changes between chunk0
 			and chunk1, so new track is expected to start somewhere in chunk0.
 		Returns 0 <= n < (len(chunk0) + len(chunk1)).'''
 	# http://wiki.multimedia.cx/index.php?title=ADTS
 	chunk0, chunk1 = chunk0 or '', chunk1 or ''
-	nn, n, n_offset, chunk_half = None, -1, None, len(chunk0) // 2
+	if n_target is None: n_target = len(chunk0) // 2
+	nn, n, n_offset = None, -1, None
 	chunk = chunk0 + chunk1
 	for m in xrange(len(chunk)):
 		n = chunk.find('\xff', n+1)
 		if n == -1: break
 		if ord(chunk[n+1]) >> 4 != 0xf: continue
-		n_offset_new = abs(chunk_half - n)
+		n_offset_new = abs(n_target - n)
 		if n_offset is None or n_offset_new < n_offset: nn, n_offset = n, n_offset_new
 		else: break
 	else: raise RuntimeError(chunk)
 	if nn is None:
 		log.debug('Failed to find ADTS frame header in supplied chunks')
-		nn = chunk_half
+		nn = n_target
 	return nn
 
 
@@ -101,8 +102,10 @@ def main(args=None):
 	with closing(r):
 		ts_start = ts_format(opts.ts_format)
 		title_err_streak, title_err_streak_max = 0, 10
-		title = title_new = chunk = chunk_new = None
+		title = title_new = None
+		chunk = chunk_new = ''
 		dst, dst_buff, dst_n, dst_n_iter = None, deque(), 0, iter(xrange(1, 2**30))
+		n_target = 0 if opts.cut_on_meta_blocks else None
 
 		title_changed = Event()
 		signal.signal(signal.SIGQUIT, lambda sig,frm: title_changed.set())
@@ -116,8 +119,7 @@ def main(args=None):
 					if not title_new:
 						title_new = '{} [#{:03d}]'.format(re.sub(r'^(.*) \[#\d+\]$', r'\1', title), dst_n)
 					log.info('Detected stream title change: %r -> %r', title, title_new)
-					if not opts.cut_on_meta_blocks: n = 0
-					else: n = find_frame_n(chunk, chunk_new)
+					n = find_frame_n(chunk, chunk_new, n_target=n_target)
 					if n >= len(chunk):
 						dst_buff.append(chunk)
 						n = n - len(chunk)
