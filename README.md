@@ -899,6 +899,17 @@ of every next track.
 
 More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
+###### icy_record
+
+Simple script to dump "online radio" kind of streams to a bunch of separate
+files, separated when stream title (as passed in icy StreamTitle metadata)
+changes.
+
+By default, filenames will include timestamp of recording start, sequence
+number, timestamp of a track start and a stream title (in a filename-friendly form).
+
+Sample usage: `icy_record --debug -x http://pub5.di.fm/di_vocaltrance`
+
 ###### radio
 
 Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
