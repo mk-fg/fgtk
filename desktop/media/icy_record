@@ -78,6 +78,10 @@ def main(args=None):
 	parser.add_argument('-x', '--cut-on-meta-blocks', action='store_true',
 		help='Assume that media blocks always belong to track in the following icy-meta.'
 			' Seem to be the case with at least some online radios.')
+	parser.add_argument('-1', '--skip-first', action='store_true',
+		help='Skip dumping first track in the stream, which should be incomplete.')
+	parser.add_argument('-s', '--skip-regexp', metavar='title_regexp',
+		help='Skip dumping tracks where title matches specified (python) regexp.')
 	# parser.add_argument('-c', '--convert', action='store_true',
 	# 	help='Convert each track to ogg in the background after it is stored.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -89,6 +93,7 @@ def main(args=None):
 	log = logging.getLogger()
 
 	if opts.dir: os.chdir(os.path.expanduser(opts.dir))
+	skip_regexp = opts.skip_regexp and re.compile(opts.skip_regexp)
 
 	r = requests.get(opts.url, headers={'Icy-MetaData': '1'}, stream=True)
 	r.raise_for_status()
@@ -128,17 +133,25 @@ def main(args=None):
 					else:
 						chunk, chunk_new = chunk[:n], chunk[n:] + chunk_new
 						dst_buff.append(chunk)
-					title, chunk = title_new, None
+					if not opts.skip_first or title is not None: chunk = None
+					title = title_new
 					title_changed.clear()
 
 				if dst_buff and dst:
 					while dst_buff: dst.write(dst_buff.popleft())
 				if chunk is None and title is not None:
-					if dst: dst.close()
-					dst_n = next(dst_n_iter)
-					dst = open(
-						opts.filename_format.format( ts_start=ts_start, n=dst_n,
-							ts=ts_format(opts.ts_format), name=filename_process(title) ), 'wb' )
+					if dst:
+						dst.close()
+						dst = None
+					dst_buff.clear()
+					if skip_regexp and skip_regexp.search(title):
+						log.debug('Skipping dump of track title: %r', title)
+					else:
+						dst_n = next(dst_n_iter)
+						name = opts.filename_format.format( ts_start=ts_start, n=dst_n,
+							ts=ts_format(opts.ts_format), name=filename_process(title) )
+						log.debug('Creating new file: %r', name)
+						dst = open(name, 'wb')
 				chunk = chunk_new
 
 				title_new_bs = ord(r.raw.read(1)) * 16
