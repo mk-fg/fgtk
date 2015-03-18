@@ -96,15 +96,15 @@ def main(args=None):
 	skip_regexp = opts.skip_regexp and re.compile(opts.skip_regexp)
 
 	r = requests.get(opts.url, headers={'Icy-MetaData': '1'}, stream=True)
-	r.raise_for_status()
-	bs = int(r.headers.get('icy-metaint') or 0)
-	if not bs:
-		p('HTTP response is missing "icy-metaint" header, aborting.')
-		pp(dict(response=dict(code=r.status_code, headers=dict(r.headers.items()))))
-		return 1
-	log.debug('icy-metaint block size: %dB', bs)
-
 	with closing(r):
+		r.raise_for_status()
+		bs = int(r.headers.get('icy-metaint') or 0)
+		if not bs:
+			p('HTTP response is missing "icy-metaint" header, aborting.')
+			pp(dict(response=dict(code=r.status_code, headers=dict(r.headers.items()))))
+			return 1
+		log.debug('icy-metaint block size: %dB', bs)
+
 		ts_start = ts_format(opts.ts_format)
 		title_err_streak, title_err_streak_max = 0, 10
 		title = title_new = None
@@ -153,8 +153,13 @@ def main(args=None):
 						log.debug('Creating new file: %r', name)
 						dst = open(name, 'wb')
 				chunk = chunk_new
+				if not chunk:
+					log.debug('Reached the end of stream, exiting')
+					return
 
-				title_new_bs = ord(r.raw.read(1)) * 16
+				title_new_bs = r.raw.read(1)
+				if not title_new_bs: continue
+				title_new_bs = ord(title_new_bs) * 16
 				title_new = r.raw.read(title_new_bs).rstrip('\0')
 				if title_new:
 					m = re.search(r'\bStreamTitle=\'(.*?)\';', title_new)
