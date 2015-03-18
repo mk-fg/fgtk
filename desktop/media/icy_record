@@ -89,7 +89,10 @@ def main(args=None):
 
 	global log
 	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	logging.basicConfig(
+		level=logging.DEBUG if opts.debug else logging.WARNING,
+		format='%(asctime)s :: %(levelname)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S' )
 	log = logging.getLogger()
 
 	if opts.dir: os.chdir(os.path.expanduser(opts.dir))
