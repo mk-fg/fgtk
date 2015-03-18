@@ -933,6 +933,16 @@ to display images in a color-capable terminal (e.g. xterm, not necessarily termi
 Useful to query "which image is it" right from tty.
 Quality of the resulting images is kinda amazing, given tty limitations.
 
+###### audio_split
+
+Simple bash script to split media files with any audio into chunks of specified
+length (in minutes), e.g.: `audio_split some-long-audiobook.mp3 sla 20` will
+produce 20-min-long sla-001.mp3, sla-002.mp3, sla-003.mp3, etc.  Last length arg
+can be omitted, and defaults to 15 min.
+
+Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn" to grab
+the chunks from source file.
+
 
 #### notifications
 
