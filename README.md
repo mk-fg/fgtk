@@ -298,17 +298,6 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-##### pcap-process
-
-Wrapper around tshark to run it (with specified parameters) on a pcap file and
-pick stuff (via specified on command line selectors) from its "pdml" (xml)
-output.
-
-Kinda same as `tshark -T fields`, but with python on top.
-
-For example, `pcap-process -f http.request.uri/show dump.pcap` will print full
-parsed values (as presented by tshark dissector) of "http.request.uri" fields.
-
 ##### hype
 
 Tools to work with [cjdns](https://github.com/cjdelisle/cjdns/) and

@@ -1,0 +1,108 @@
+#!/bin/bash
+
+
+points=30
+interval=1
+
+
+####################
+
+set -o pipefail
+spool=$(mktemp -d /tmp/free_plot.XXXXX)
+cd "$spool"
+
+cleanup() {
+	rm -rf --one-file-system "$spool"
+	jobs=$(jobs -rp)
+	[[ -n "$jobs" ]] && {
+		kill $(jobs -rp) 2>/dev/null
+		wait $(jobs -rp) 2>/dev/null
+	}
+	pkill -g 0
+}
+trap cleanup EXIT
+
+####################
+
+free -m -s $interval |
+	awk '
+		BEGIN {
+			# exports="available"
+			exports="total used free shared available"
+			agg="free_plot.datz"
+			dst="free_plot.dat"}
+		$1=="total" {
+			for (n=1;n<=NF;n++)
+				if (index(exports,$n)) headers[n+1]=$n }
+		$1=="Mem:" {
+			first=1
+			printf "" >dst
+			for (n in headers) {
+				if (!first) {
+					printf " " >>agg
+					printf " " >>dst }
+				printf "%d", $n >>agg
+				printf "%s", headers[n] >>dst
+				first=0 }
+			printf "\n" >>agg
+			printf "\n" >>dst
+			fflush(agg)
+			close(dst)
+			system("tail -n '$points' " agg " >>" dst) }' &
+
+####################
+
+cat >free_plot.gnu <<EOF
+src='free_plot.dat'
+y0=100; y1=2000;
+set xrange [1:30]
+set yrange [y0:y1]
+
+# --------------------
+set terminal unknown
+stats src using 5 name 'y' nooutput
+
+is_NaN(v) = v+0 != v
+y_first=0
+grab_first_y(y) = y_first = y_first!=0 && !is_NaN(y_first) ? y_first : y
+grab_last_y(y) = y_last = y
+
+plot src u (grab_first_y(grab_last_y(\$5)))
+x_first=GPVAL_DATA_X_MIN
+x_last=GPVAL_DATA_X_MAX
+
+# --------------------
+set label 1 sprintf('first: %d', y_first) at x_first,y_first left offset 5,-1
+set label 2 sprintf('last: %d', y_last) at x_last,y_last right offset 0,1
+set label 3 sprintf('min: %d', y_min) at 0,y0-(y1-y0)/15 left offset 5,0
+set label 4 sprintf('max: %d', y_max) at 0,y0-(y1-y0)/15 left offset 5,1
+
+# --------------------
+set terminal x11 nopersist noraise enhanced
+set xlabel 'n'
+set ylabel 'megs'
+
+set style line 1 lt 1 lw 1 pt 2 pi -1 ps 1.5
+set pointintervalbox 2
+
+plot\
+	src u 5 w linespoints linestyle 1 t columnheader,\
+	src u 1 w lines title columnheader,\
+	src u 2 w lines title columnheader,\
+	src u 3 w lines title columnheader,\
+	src u 4 w lines title columnheader,\
+
+# --------------------
+pause 1
+reread
+EOF
+gnuplot free_plot.gnu 2>&1 |
+	grep -vE -e '^[[:space:]]*$'\
+		-e '^WARNING: Plotting with an '\''unknown'\'' terminal\.$'\
+		-e '^No output will be generated\.'\
+		-e 'All points out of range' &
+
+####################
+
+sleep 1 # gives awk time to create a file
+tail -f free_plot.datz
