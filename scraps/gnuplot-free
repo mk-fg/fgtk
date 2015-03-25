@@ -28,9 +28,9 @@ free -m -s $interval |
 	awk '
 		BEGIN {
 			# exports="available"
-			exports="total used free shared available"
+			exports="total used free buff/cache available"
 			agg="free_plot.datz"
-			dst="free_plot.dat"}
+			dst="free_plot.dat" }
 		$1=="total" {
 			for (n=1;n<=NF;n++)
 				if (index(exports,$n)) headers[n+1]=$n }
