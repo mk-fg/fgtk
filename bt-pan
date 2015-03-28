@@ -1,0 +1,153 @@
+#!/usr/bin/python2
+from __future__ import absolute_import, print_function
+
+import os, sys, time, types, subprocess
+
+import dbus
+
+
+### ~bluezutils.py
+
+iface_base = 'org.bluez'
+iface_dev = '{}.Device1'.format(iface_base)
+iface_adapter = '{}.Adapter1'.format(iface_base)
+iface_props = 'org.freedesktop.DBus.Properties'
+
+class BTError(Exception): pass
+
+def get_bus():
+	bus = getattr(get_bus, 'cached_obj', None)
+	if not bus: bus = get_bus.cached_obj = dbus.SystemBus()
+	return bus
+
+def get_manager():
+	manager = getattr(get_manager, 'cached_obj', None)
+	if not manager:
+		manager = get_manager.cached_obj = dbus.Interface(
+			get_bus().get_object(iface_base, '/'),
+			'org.freedesktop.DBus.ObjectManager' )
+	return manager
+
+def prop_get(obj, k, iface=None):
+	if iface is None: iface = obj.dbus_interface
+	return obj.Get(iface, k, dbus_interface=iface_props)
+def prop_set(obj, k, v, iface=None):
+	if iface is None: iface = obj.dbus_interface
+	return obj.Set(iface, k, v, dbus_interface=iface_props)
+
+def find_adapter(pattern=None):
+	return find_adapter_in_objects(get_manager().GetManagedObjects(), pattern)
+
+def find_adapter_in_objects(objects, pattern=None):
+	bus = get_bus()
+	for path, ifaces in objects.iteritems():
+		adapter = ifaces.get(iface_adapter)
+		if adapter is None: continue
+		if not pattern or pattern == adapter['Address'] or path.endswith(pattern):
+			obj = bus.get_object(iface_base, path)
+			return dbus.Interface(obj, iface_adapter)
+	raise BTError('Bluetooth adapter not found')
+
+def find_device(device_address, adapter_pattern=None):
+	return find_device_in_objects(get_manager().GetManagedObjects(), device_address, adapter_pattern)
+
+def find_device_in_objects(objects, device_address, adapter_pattern=None):
+	bus = get_bus()
+	path_prefix = ''
+	if adapter_pattern:
+		if not isinstance(adapter_pattern, types.StringTypes): adapter = adapter_pattern
+		else: adapter = find_adapter_in_objects(objects, adapter_pattern)
+		path_prefix = adapter.object_path
+	for path, ifaces in objects.iteritems():
+		device = ifaces.get(iface_dev)
+		if device is None: continue
+		if device['Address'] == device_address and path.startswith(path_prefix):
+			obj = bus.get_object(iface_base, path)
+			return dbus.Interface(obj, iface_dev)
+	raise BTError('Bluetooth device not found')
+
+
+### bt-pan
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='BlueZ bluetooth PAN network server/client.')
+
+	parser.add_argument('-i', '--device', metavar='local-addr/pattern',
+		help='Local device address/pattern to use (if not default).')
+	parser.add_argument('-u', '--uuid',
+		metavar='uuid_or_shortcut', default='nap',
+		help='Service UUID to use. Can be either full UUID'
+			' or one of the shortcuts: gn, panu, nap. Default: %(default)s.')
+	parser.add_argument('--debug',
+		action='store_true', help='Verbose operation mode.')
+
+	cmds = parser.add_subparsers( dest='call',
+		title='Supported operations (have their own suboptions as well)' )
+
+	cmd = cmds.add_parser('server', help='Run infinitely as a NAP network server.')
+	cmd.add_argument('iface_name',
+		help='Bridge interface name to which each link will be added by bluez.'
+			' It must be created and configured before starting the server.')
+
+	cmd = cmds.add_parser('client',
+		help='Run infinitely as a PAN network client.')
+	cmd.add_argument('remote_addr', help='Remote device address to connect to.')
+
+	opts = parser.parse_args()
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	dev_local = find_adapter(opts.device)
+	prop_set(dev_local, 'Powered', True)
+	log.debug( 'Using local device (addr: %s): %s',
+		prop_get(dev_local, 'Address'), dev_local.object_path )
+
+	if opts.call == 'server':
+		brctl = subprocess.Popen(
+			['brctl', 'show', opts.iface_name],
+			stdout=open(os.devnull, 'wb'), stderr=subprocess.PIPE )
+		brctl_stderr = brctl.stderr.read()
+		if brctl.wait() or brctl_stderr:
+			p = lambda fmt='',*a,**k: print(fmt.format(*a,**k), file=sys.stderr)
+			p('brctl check failed for interface: {}', opts.iface_name)
+			p()
+			p('Bridge interface must be added and configured before starting server, e.g. with:')
+			p('  brctl addbr bnep-bridge')
+			p('  brctl setfd bnep-bridge 0')
+			p('  brctl stp bnep-bridge off')
+			p('  ip addr add 10.101.225.84/24 dev bnep-bridge')
+			p('  ip link set bnep-bridge up')
+			return 1
+
+		server = dbus.Interface(dev_local, 'org.bluez.NetworkServer1')
+		server.Register(opts.uuid, opts.iface_name)
+		log.debug('Registered uuid %r with bridge: %s', opts.uuid, opts.iface_name)
+		try:
+			while True: time.sleep(3600)
+		except KeyboardInterrupt: pass
+		finally: server.Unregister(opts.uuid)
+
+	elif opts.call == 'client':
+		dev_remote = find_device(opts.remote_addr, dev_local)
+		log.debug( 'Using remote device (addr: %s): %s',
+			prop_get(dev_remote, 'Address'), dev_remote.object_path )
+		dev_remote.ConnectProfile(opts.uuid)
+		net = dbus.Interface(dev_remote, 'org.bluez.Network1')
+		iface = net.Connect(opts.uuid)
+		log.debug(
+			'Connected to network (dev_remote: %s, addr: %s) uuid %r with iface: %s',
+			dev_remote.object_path, prop_get(dev_remote, 'Address'), opts.uuid, iface )
+		try:
+			while True: time.sleep(3600)
+		except KeyboardInterrupt: pass
+		finally: net.Disconnect()
+
+	else: raise ValueError(opts.call)
+	log.debug('Finished')
+
+if __name__ == '__main__': sys.exit(main())

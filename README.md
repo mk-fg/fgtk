@@ -833,6 +833,35 @@ Example watchdog.service:
 
 Useless without systemd and requires systemd python module.
 
+##### bt-pan
+
+Bluetooth Personal Area Network (PAN) client/server setup script.
+
+BlueZ does all the work here, script just sends it commands to enable/register
+appropriate services.
+Can probably be done with one of the shipped tools, but I haven't found it, and
+there's just too many of them to remember anyway.
+
+	machine-1 # ./bt-pan --debug server bnep
+	machine-2 # ./bt-pan --debug client <machine-1-bdaddr>
+
+First line above will probably complain that "bnep" bridge is missing and list
+commands to bring it up (brctl, ip).
+
+Default mode for both "server" and "client" is NAP (AP mode, like with WiFi).
+
+Both commands make bluetoothd (that should be running) create "bnepX" network
+interfaces, connected to server/clients, and "server" also automatically (as
+clients are connecting) adds these to specified bridge.
+
+Not sure how PANU and GN "ad-hoc" modes are supposed to work - both BlueZ
+"NetworkServer" and "Network" (client) interfaces support these, so I suppose
+one might need to run both or either of server/client commands (with e.g. "-u
+panu" option).
+
+Couldn't get either one of ad-hoc modes to work myself, but didn't try
+particulary hard, and it might be hardware issue as well, I guess.
+
 
 
 ### Desktop
