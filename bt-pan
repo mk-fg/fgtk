@@ -136,7 +136,8 @@ def main(args=None):
 		dev_remote = find_device(opts.remote_addr, dev_local)
 		log.debug( 'Using remote device (addr: %s): %s',
 			prop_get(dev_remote, 'Address'), dev_remote.object_path )
-		dev_remote.ConnectProfile(opts.uuid)
+		try: dev_remote.ConnectProfile(opts.uuid)
+		except: pass # no idea why it fails sometimes, but still creates dbus interface
 		net = dbus.Interface(dev_remote, 'org.bluez.Network1')
 		iface = net.Connect(opts.uuid)
 		log.debug(
