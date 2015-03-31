@@ -4,7 +4,7 @@ from __future__ import print_function
 
 from subprocess import Popen, PIPE, STDOUT
 from datetime import datetime
-import os, sys, logging, string, re, time, signal
+import os, sys, logging, string, re, time, signal, tempfile, atexit
 
 
 # Since mpv-0.6.2, it doesn't seem to accept chars to stdin as control anymore
@@ -58,19 +58,21 @@ mute_prefix_default = 'muted: '
 
 class MpvCtl(object):
 
-	player_cmd_base = ['mpv', '--input-terminal', '--term-status-msg=']
+	player_cmd_base = ['mpv', '--term-status-msg=']
 	player = track_last = None
 	muted = muted_auto = muted_change = False
+	mute_types = 'stdin', 'pulse', 'input-file'
 
 	def __init__( self, dst_file=None,
-			mute_re=None, mute_delay=None, mute_old=False, mute_prefix=None,
+			mute_re=None, mute_delay=None, mute_type='input-file', mute_prefix=None,
 			recode=None, line_format=None, ts_format=None ):
 		self.log = logging.getLogger('mpvctl')
 
 		self.line_format = line_format or '{ts}{mute}{}\n'
 		self.ts_format, self.recode = ts_format, recode
 		self.mute_re, self.mute_delay = mute_re, mute_delay
-		self.mute_old, self.mute_prefix = mute_old, mute_prefix
+		self.mute_type, self.mute_prefix = mute_type, mute_prefix
+		assert self.mute_type in self.mute_types, [self.mute_type, self.mute_types]
 		if dst_file:
 			self.dst = dst = open(dst_file, 'a+b')
 			dst.seek(max(0, os.fstat(dst.fileno()).st_size - (track_max_len + 2)))
@@ -103,8 +105,12 @@ class MpvCtl(object):
 		if not self.muted: self.muted_auto = False
 		self.log.debug( 'Toggling "mute" on a running player'
 			' instance (sig: %s, auto: %s) to: %s', sig, auto, self.muted )
-		if self.mute_old: self.player.stdin.write('m') # doesn't work with newer mpv
-		else: pa_mute(self.player.pid, self.muted)
+		if self.mute_type == 'input-file':
+			with open(self.player.input_fifo, 'wb') as dst:
+				dst.write('set mute {}\n'.format(['no', 'yes'][bool(self.muted)]))
+		elif self.mute_type == 'stdin': self.player.stdin.write('m')
+		elif self.mute_type == 'pulse': pa_mute(self.player.pid, self.muted)
+		else: raise ValueError(self.mute_type)
 		self.muted_change = False
 		return self.muted
 
@@ -146,7 +152,17 @@ class MpvCtl(object):
 		self.dst.flush()
 
 	def track_dump_loop(self, opts):
-		player_cmd = self.player_cmd_base + list(opts.mpv_args)
+		player_cmd, player_input = self.player_cmd_base, None
+		if self.mute_type == 'input-file':
+			player_input = os.path.join(
+				tempfile.gettempdir(),
+				'.mpv_input.{}.fifo'.format(os.getpid()) )
+			os.mkfifo(player_input, 0700) # probably insecure
+			atexit.register(os.unlink, player_input)
+			player_cmd.extend(['--input-file', player_input])
+		elif self.mute_type == 'stdin': player_cmd.append('--input-terminal')
+		player_cmd.extend(opts.mpv_args)
+
 		ts = time.time()
 		while True:
 			if self.player:
@@ -160,6 +176,7 @@ class MpvCtl(object):
 			if not self.player:
 				self.player = Popen( player_cmd,
 					stdin=PIPE, stdout=PIPE, stderr=STDOUT, preexec_fn=os.setsid )
+				self.player.input_fifo = player_input
 
 				line_last = None
 				for line in iter(self.player.stdout.readline, ''):
@@ -188,11 +205,15 @@ def main(args=None):
 	parser.add_argument('--mute-delay', type=float, metavar='seconds', default=1,
 		help='When auto-toggling mute, delay by this many seconds'
 			' (useful for long track crossfades, default: %(default)s).')
-	parser.add_argument('--mute-old', action='store_true',
-		help='Use "old" way of toggling mute by writing "m" to mpv stdin.'
-			' Doesnt seem to work for newer mpv versions'
-				' (probably due to it being too clever),'
-				' so corresponding pulseaudio stream is muted via dbus instead.')
+	parser.add_argument('--mute-type',
+		metavar='type', default='input-file', choices=MpvCtl.mute_types,
+		help='Way to mute the stream. Possible choices: stdin, pulse, input-file.'
+			' "stdin" is the "old" way to do it, by writing "m"'
+				' to mpv stdin, doesnt seem to work with newer mpv versions.'
+			' "pulse" will use dbus to mute stream corresponding to'
+				' mpv pid in pulseaudio - reliable, but only works with PA, obviously.'
+			' "input-file" (default) will use fifo and --input-file option for mpv'
+				' to pass "set mute" commands, probably the best way to do it.')
 	parser.add_argument('--mute-title-prefix',
 		nargs='?', default=False, metavar='prefix',
 		help=(
@@ -236,7 +257,7 @@ def main(args=None):
 		dst_file=opts.dst_file, recode=opts.recode_from,
 		line_format=opts.line_format,
 		mute_delay=opts.mute_delay, mute_re=mute_re,
-		mute_old=opts.mute_old, mute_prefix=opts.mute_title_prefix,
+		mute_type=opts.mute_type, mute_prefix=opts.mute_title_prefix,
 		ts_format=opts.timestamp and opts.timestamp_format )
 	try: return mpvctl.track_dump_loop(opts)
 	finally: mpvctl.terminate()
