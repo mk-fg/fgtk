@@ -27,6 +27,8 @@ data_types:
       updateCheckerLastUpdate:
       experimentalFeatureTopGuide:
       resize-playersizes:
+      lastUpdated:
+      signatureDecipher:
 
   convergence:
     enabled: true
