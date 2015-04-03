@@ -36,7 +36,7 @@ data_types:
     notaries_xml: convergence.xml
 
   tabs:
-    enabled: false
+    enabled: true
     file:
       - sessions.js
       - sessionstore-backups/recovery.js
