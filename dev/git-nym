@@ -3,6 +3,8 @@
 # NYM=... - part of *unique* key name of any ~/.ssh/id_*
 # NYM_CLEAN=flag - if set, uses "clean" ssh - without control/agent sockets
 
+# XXX: with git-2.3, also possible with GIT_SSH_COMMAND var
+
 [[ -n "$NYM_RUN" ]] && {
 	extras=
 	[[ -n "$NYM_CLEAN" ]] && {

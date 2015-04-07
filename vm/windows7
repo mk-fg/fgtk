@@ -91,6 +91,8 @@ for n in {0..5}; do
 	sleep 0.1
 done
 
+[[ -n "$net_only" ]] && exit 0
+
 
 ### Run qemu
 

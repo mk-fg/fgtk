@@ -27,6 +27,8 @@ data_types:
       updateCheckerLastUpdate:
       experimentalFeatureTopGuide:
       resize-playersizes:
+      lastUpdated:
+      signatureDecipher:
 
   convergence:
     enabled: true
@@ -34,7 +36,7 @@ data_types:
     notaries_xml: convergence.xml
 
   tabs:
-    enabled: false
+    enabled: true
     file:
       - sessions.js
       - sessionstore-backups/recovery.js

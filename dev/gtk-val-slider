@@ -1,0 +1,146 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, io, random
+
+from gi.repository import Gtk, GLib
+
+
+class SliderWindow(Gtk.ApplicationWindow):
+
+	def __init__( self, app, name=None,
+			val=None, val_min=0, val_max=100, val_init=False, use_floats=False,
+			size_w=400, size_h=30, size_pad=5, step_cursor=5, step_click=10,
+			writeback_delay=1.0, writeback_func=None ):
+		Gtk.Window.__init__(self, title='Slider Value Control', application=app)
+		if writeback_delay and writeback_delay <= 0: writeback_delay = None
+		self.writeback_delay, self.writeback_timer = writeback_delay, None
+		self.writeback_func, self.use_floats = writeback_func, use_floats
+
+		self.set_default_size(size_w, size_h)
+		self.set_border_width(size_pad)
+
+		if val is None: val = random.random() * (val_max - val_min) + val_min
+		if not use_floats: val = int(val)
+		if val_init: GLib.timeout_add_seconds(0, self.writeback)
+
+		adj = Gtk.Adjustment( value=val, lower=val_min, upper=val_max,
+			step_increment=step_cursor, page_increment=step_click, page_size=0 )
+		self.value = val
+		self.value_fmt = '.2f' if use_floats else '.0f'
+
+		self.scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj)
+		self.scale.set_digits(2 if use_floats else 0)
+		self.scale.set_hexpand(True)
+		self.scale.set_valign(Gtk.Align.START)
+		self.scale.connect('value-changed', self.slider_moved)
+
+		if name:
+			self.label = Gtk.Label()
+			self.label.set_text(name)
+		self.value_desc = Gtk.Label()
+		self.value_desc.set_text('No value written yet')
+
+		# https://developer.gnome.org/gtk3/stable/LayoutContainers.html
+		grid = Gtk.Grid()
+		grid.set_column_spacing(10)
+		grid.set_column_homogeneous(True)
+		grid.attach(self.scale, 0, 0, 2, 1) # col, row, span-cols, span-rows
+		grid.attach(self.label, 0, 1, 1, 1)
+		grid.attach(self.value_desc, 1, 1, 1, 1)
+
+		self.add(grid)
+
+	def slider_moved(self, ev):
+		if not self.writeback_timer:
+			if self.writeback_delay:
+				self.writeback_timer = GLib.timeout_add_seconds(self.writeback_delay, self.writeback)
+			else: self.writeback()
+		value_desc = 'Value: {{:{0}}} -> {{:{0}}}'\
+			.format(self.value_fmt).format(self.value, self.scale.get_value())
+		if self.writeback_delay: value_desc += ' ({:.2f}s)'.format(self.writeback_delay)
+		self.value_desc.set_text(value_desc)
+
+	def writeback(self):
+		if self.writeback_timer: GLib.source_remove(self.writeback_timer)
+		self.value = self.scale.get_value()
+		if not self.use_floats: self.value = int(self.value)
+		self.value_desc.set_text('Value: {{:{}}}'.format(self.value_fmt).format(self.value))
+		if self.writeback_func: self.writeback_func(self.value)
+		self.writeback_timer = None
+
+
+class SliderApp(Gtk.Application):
+
+	def __init__(self, **win_opts):
+		self.win_opts = win_opts
+		super(SliderApp, self).__init__()
+
+	def do_activate(self):
+		win = SliderWindow(self, **self.win_opts)
+		win.show_all()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Create a window with a slider, writing values to the specified file.')
+	parser.add_argument('path', nargs='*',
+		help='Path(s) to a file(s) to create and write slider values to.'
+			' If not specified, each value will be written to stdout.')
+
+	parser.add_argument('-a', '--min', default=0,
+		metavar='min', type=float, help='Min slider value (default: %(default)s).')
+	parser.add_argument('-b', '--max', default=100,
+		metavar='max', type=float, help='Max slider value (default: %(default)s).')
+	parser.add_argument('-v', '--val-init',
+		metavar='val', type=float, help='Initial value (default: random).')
+
+	parser.add_argument('-r', '--val-read', action='store_true',
+		help='Read initial value from path (first one available),'
+			' if specified, exists and can be parsed as float.')
+	parser.add_argument('-w', '--val-init-write',
+		action='store_true', help='Write initial value to the destination.')
+
+	parser.add_argument('-n', '--name',
+		help='Value name. Purely cosmetic. Default is to display basename of the dst file instead.')
+	parser.add_argument('-f', '--floats',
+		action='store_true', help='Output float values instead of integers.')
+	parser.add_argument('-d', '--writeback-delay',
+		metavar='seconds', default=1.0, type=float,
+		help='Delay before last-picked value gets written (default: %(default)s).')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.path:
+		dsts = list(open(p, 'ab+') for p in opts.path)
+		name = os.path.basename(dsts[0].name)
+		if opts.val_read:
+			for src in dsts:
+				src.seek(0)
+				try: opts.val_init = float(src.read())
+				except (OSError, IOError, ValueError): pass
+				else: break
+		def write_val(val):
+			for dst in dsts:
+				dst.seek(0)
+				dst.truncate()
+				dst.write(bytes(val))
+				dst.flush()
+	else:
+		dsts, name, write_val = list(), 'stdout', print
+
+	try:
+		return SliderApp( name=opts.name or name,
+			val=opts.val_init, val_min=opts.min, val_max=opts.max,
+			val_init=opts.val_init_write, use_floats=opts.floats,
+			writeback_delay=opts.writeback_delay, writeback_func=write_val ).run()
+	finally:
+		for dst in dsts: dst.close()
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())

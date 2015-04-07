@@ -2,11 +2,12 @@
 
 
 ### For bencode bits below
-# Different from vanilla bencode in handling "leading zeroes" in keys
-# Derived from a thing under BitTorrent Open Source License
-# Written by Petru Paler
+# Derived from a thing under BitTorrent Open Source License, written by Petru Paler
 
-import types
+# Different from vanilla bencode in:
+#  * Handling "leading zeroes" in keys (doesn't error - for cjdns compat)
+#  * encode_none method (to "n")
+#  * encode_string encodes unicode as utf-8 bytes
 
 def _ns_class(cls_name, cls_parents, cls_attrs):
 	for k, v in cls_attrs.viewitems():
@@ -23,6 +24,11 @@ class Bencached(object):
 class BTE(object):
 	__metaclass__ = _ns_class
 
+	unicode_enc = 'utf-8'
+	enable_none = False
+	enable_bool = True
+	cjdns_compat = False
+
 	def decode_int(cls, x, f):
 		f += 1
 		newf = x.index('e', f)
@@ -30,11 +36,12 @@ class BTE(object):
 		if x[f] == '-':
 			if x[f + 1] == '0': raise ValueError
 		elif x[f] == '0' and newf != f+1: raise ValueError
-		return (n, newf+1)
+		return n, newf+1
 	def decode_string(cls, x, f):
 		colon = x.index(':', f)
 		n = int(x[f:colon])
-		if x[f] == '0' and colon != f+1: raise ValueError
+		if not cls.cjdns_compat\
+			and x[f] == '0' and colon != f+1: raise ValueError
 		colon += 1
 		return (x[colon:colon+n], colon+n)
 	def decode_list(cls, x, f):
@@ -42,22 +49,31 @@ class BTE(object):
 		while x[f] != 'e':
 			v, f = cls.decode_func[x[f]](cls, x, f)
 			r.append(v)
-		return (r, f + 1)
+		return r, f + 1
 	def decode_dict(cls, x, f):
 		r, f = {}, f+1
 		while x[f] != 'e':
 			k, f = cls.decode_string(x, f)
 			r[k], f = cls.decode_func[x[f]](cls, x, f)
-		return (r, f + 1)
-	decode_func = dict(l=decode_list, d=decode_dict, i=decode_int)
+		return r, f + 1
+	def decode_none(cls, x, f):
+		if not cls.enable_none: raise ValueError(x[f])
+		return None, f+1
+	decode_func = dict(l=decode_list, d=decode_dict, i=decode_int, n=decode_none)
 	for n in xrange(10): decode_func[bytes(n)] = decode_string
 
 	def encode_bencached(cls, x, r): r.append(x.bencoded)
 	def encode_int(cls, x, r): r.extend(('i', str(x), 'e'))
+	def encode_float(cls, x, r): r.extend(('f', struct.pack('!d', x), 'e'))
 	def encode_bool(cls, x, r):
-		if x: BTE.encode_int(cls, 1, r)
-		else: BTE.encode_int(cls, 0, r)
-	def encode_string(cls, x, r): r.extend((str(len(x)), ':', x))
+		if not cls.enable_bool: raise ValueError(x)
+		if x: cls.encode_int(1, r)
+		else: cls.encode_int(0, r)
+	def encode_string(cls, x, r):
+		if isinstance(x, unicode):
+			if not cls.unicode_enc: raise ValueError(x)
+			x = x.encode(cls.unicode_enc)
+		r.extend((str(len(x)), ':', x))
 	def encode_list(cls, x, r):
 		r.append('l')
 		for i in x: cls.encode_func[type(i)](cls, i, r)
@@ -70,15 +86,22 @@ class BTE(object):
 			r.extend((str(len(k)), ':', k))
 			cls.encode_func[type(v)](cls, v, r)
 		r.append('e')
+	def encode_none(cls, x, r):
+		if not cls.enable_none: raise ValueError(x)
+		r.append('n')
 	encode_func = {
 		Bencached: encode_bencached,
+		unicode: encode_string,
+		str: encode_string,
 		types.IntType: encode_int,
 		types.LongType: encode_int,
-		types.StringType: encode_string,
+		types.FloatType: encode_float,
 		types.ListType: encode_list,
 		types.TupleType: encode_list,
 		types.DictType: encode_dict,
-		types.BooleanType: encode_bool }
+		types.BooleanType: encode_bool,
+		types.NoneType: encode_none,
+	}
 
 	def bdecode(cls, x):
 		try: r, l = cls.decode_func[x[0]](cls, x, 0)

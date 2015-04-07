@@ -203,9 +203,10 @@ alignment:
 
 ##### pysort
 
-Sort file contents, based on some key-field with support for multiple field
-delimeters. Wrote this one when my /etc/passwd got messy and I just wanted to
-sort its contents by uid.
+Unlike tool from coreutils, can overwrite files with sorted results
+(e.g. `pysort -b file_a file_b && diff file_a file_b`) and has some options for
+splitting fields and sorting by one of these (example: `pysort -d: -f2 -n
+/etc/passwd`).
 
 ##### color
 
@@ -297,17 +298,6 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-##### pcap-process
-
-Wrapper around tshark to run it (with specified parameters) on a pcap file and
-pick stuff (via specified on command line selectors) from its "pdml" (xml)
-output.
-
-Kinda same as `tshark -T fields`, but with python on top.
-
-For example, `pcap-process -f http.request.uri/show dump.pcap` will print full
-parsed values (as presented by tshark dissector) of "http.request.uri" fields.
-
 ##### hype
 
 Tools to work with [cjdns](https://github.com/cjdelisle/cjdns/) and
@@ -383,6 +373,14 @@ into terminal, i.e.:
 
 There are better tools for that particular use-case, but this solution is
 universal wrt any possible input source.
+
+##### yaml-to-pretty-json
+
+Converts yaml files to an indented json, which is a bit more readable and
+editable by hand than the usual compact one-liner serialization.
+
+Due to yaml itself being json superset, can be used to convert json to
+pretty-json as well.
 
 
 
@@ -556,6 +554,18 @@ Essentially does `git rev-list <tree-ish2> | grep $(git rev-parse <tree-ish1>)`.
 	git rev-parse failed for tree-ish 'notarealting' (command: ['git', 'rev-parse', 'notarealting'])
 
 Lines in square brackets above are comments, not actual output.
+
+##### gtk-val-slider
+
+Renders gtk3 window with a slider widget and writes value (float or int) picked
+there either to stdout or to a specified file, with some rate-limiting delay.
+
+Useful to mock/control values on a dev machine.
+
+E.g. instead of hardware sensors (which might be hard to get/connect/use), just
+setup app to read value(s) that should be there from file(s), specify proper
+value range to the thing and play around with values all you want to see what
+happens.
 
 
 
@@ -823,6 +833,35 @@ Example watchdog.service:
 
 Useless without systemd and requires systemd python module.
 
+##### bt-pan
+
+Bluetooth Personal Area Network (PAN) client/server setup script.
+
+BlueZ does all the work here, script just sends it commands to enable/register
+appropriate services.
+Can probably be done with one of the shipped tools, but I haven't found it, and
+there's just too many of them to remember anyway.
+
+	machine-1 # ./bt-pan --debug server bnep
+	machine-2 # ./bt-pan --debug client <machine-1-bdaddr>
+
+First line above will probably complain that "bnep" bridge is missing and list
+commands to bring it up (brctl, ip).
+
+Default mode for both "server" and "client" is NAP (AP mode, like with WiFi).
+
+Both commands make bluetoothd (that should be running) create "bnepX" network
+interfaces, connected to server/clients, and "server" also automatically (as
+clients are connecting) adds these to specified bridge.
+
+Not sure how PANU and GN "ad-hoc" modes are supposed to work - both BlueZ
+"NetworkServer" and "Network" (client) interfaces support these, so I suppose
+one might need to run both or either of server/client commands (with e.g. "-u
+panu" option).
+
+Couldn't get either one of ad-hoc modes to work myself, but didn't try
+particulary hard, and it might be hardware issue as well, I guess.
+
 
 
 ### Desktop
@@ -845,11 +884,6 @@ about in some distant past).
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
 various media files and streams.
 
-###### video_to_ogg
-
-Straightforward "ffmpeg -f wav | oggenc" script to convert any media that has
-sound to an ogg file.
-
 ###### flv_merge
 
 Merges multiple segments of video downloaded from some streaming service
@@ -871,6 +905,10 @@ Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
 
+###### pa_mute
+
+Simple script to toggle mute for all pluseaudio streams from a specified pid.
+
 ###### mpv_icy_track_history
 
 Same as pa_track_history above, but gets tracks when [mpv](http://mpv.io/) dumps
@@ -879,19 +917,49 @@ of every next track.
 
 More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
+###### icy_record
+
+Simple script to dump "online radio" kind of streams to a bunch of separate
+files, split when stream title (as passed in icy StreamTitle metadata) changes.
+
+By default, filenames will include timestamp of recording start, sequence
+number, timestamp of a track start and a stream title (in a filename-friendly form).
+
+Sample usage: `icy_record --debug -x http://pub5.di.fm/di_vocaltrance`
+
+Note that by default dumped streams will be in some raw adts format (as streamed
+over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
+This doesn't seem to be an issue for at least mp3 streams though, which work
+fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
+
 ###### radio
 
 Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
 with appropriate settings, generally simplified ui, logging and echoing what's
 being played, with a mute button (on SIGQUIT button from terminal).
 
+###### toogg
+
+Straightforward "ffmpeg -f wav | oggenc" script to convert any media that has
+sound to an ogg file.
+
 ###### totty
 
 Wrapper around awesome [img2xterm](https://github.com/rossy2401/img2xterm) tool
-to display images in a color-capable terminal (e.g. xterm).
+to display images in a color-capable terminal (e.g. xterm, not necessarily terminology).
 
 Useful to query "which image is it" right from tty.
 Quality of the resulting images is kinda amazing, given tty limitations.
+
+###### audio_split
+
+Simple bash script to split media files with any audio into chunks of specified
+length (in minutes), e.g.: `audio_split some-long-audiobook.mp3 sla 20` will
+produce 20-min-long sla-001.mp3, sla-002.mp3, sla-003.mp3, etc.  Last length arg
+can be omitted, and defaults to 15 min.
+
+Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn" to grab
+the chunks from source file.
 
 
 #### notifications
