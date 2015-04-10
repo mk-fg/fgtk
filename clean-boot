@@ -13,7 +13,8 @@ def main(args=None):
 		description='Tool to cleanup /boot'
 			' from older kernels and config/System.map files.')
 
-	parser.add_argument('-d', '--boot-dir', default='/boot',
+	parser.add_argument('-d', '--boot-dir',
+		metavar='path', default='/boot',
 		help='Path to dir where kernels and'
 			' config/System.map files are stored (default: %(default)s).')
 
@@ -28,6 +29,11 @@ def main(args=None):
 			' These are treated same as slightly older versions by default.')
 	parser.add_argument('-c', '--keep-configs', action='store_true',
 		help='Keep config-* files, removing only vmlinuz-* and System.map-*.')
+
+	parser.add_argument('-r', '--force-remove-count',
+		type=int, metavar='count',
+		help='Number of least relevant versions to explicitly remove.'
+			' --keep-min overrides this option.')
 
 	parser.add_argument('-n', '--dry-run',
 		action='store_true', help='Do not actually remove anything.')
@@ -111,6 +117,7 @@ def main(args=None):
 	def free():
 		df = os.statvfs('.')
 		return (df.f_bavail * df.f_bsize / float(df.f_blocks * df.f_bsize)) * 100
+	rm_count = opts.force_remove_count
 
 	rmq_set = set() # check to make sure these don't get repeated anywhere
 	if rmq_kept:
@@ -124,7 +131,8 @@ def main(args=None):
 	rmq_len_start = len(rmq)
 	for v, files in rmq.items():
 		df = free()
-		if df >= opts.free_space_min: break
+		if rm_count is not None and rm_count > 0: rm_count -= 1
+		elif df >= opts.free_space_min: break
 		log.debug('Removing files for version (df: %.1f%%): %s', df, format_v(v))
 		for p in files:
 			log.debug(' - %s', p)
