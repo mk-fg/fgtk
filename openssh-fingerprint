@@ -1,0 +1,24 @@
+#!/bin/bash
+
+usage() {
+	echo >&2 "Usage: $0 [ --debug ] [ hosts ]"
+	exit 1
+}
+
+[[ "$1" = --debug ]] && { set -x; shift; }
+[[ "$#" -eq 0 ]] && usage
+
+ip=
+while read line; do
+	[[ "$line" =~ ^# ]] && continue # comment from stderr
+	echo
+
+	echo "$line"
+	key=$(mktemp /tmp/.ssh_keyscan.key.XXXXXXX)
+	cut -d' ' -f2- >"$key" <<< "$line"
+	for h in md5 sha256; do ssh-keygen -l -E $h -f "$key"; done
+	for fmt in RFC4716 PKCS8 PEM; do ssh-keygen -e -m "$fmt" -f "$key"; done
+	rm -f "$key"
+
+	echo
+done < <(ssh-keyscan "$@" 2>&1)

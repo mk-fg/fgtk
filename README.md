@@ -862,6 +862,34 @@ panu" option).
 Couldn't get either one of ad-hoc modes to work myself, but didn't try
 particulary hard, and it might be hardware issue as well, I guess.
 
+##### openssh-fingerprint
+
+ssh-keyscan, but outputting each key in every possible format.
+
+Imagine you have an incoming IM message "hey, someone haxxors me, it says 'ECDSA
+key fingerprint is f5:e5:f9:b6:a4:6b:fd:b3:07:15:f6:d9:0c:f5:47:54', what do?",
+this tool allows to dump any such fingerprint for a remote host, with:
+
+	% openssh-fingerprint congo.fg.nym
+	...
+	congo.fg.nym ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNo...zoU04g=
+	256 MD5:f5:e5:f9:b6:a4:6b:fd:b3:07:15:f6:d9:0c:f5:47:54 /tmp/.ssh_keyscan.key.kc3ur3C (ECDSA)
+	256 SHA256:lFLzFQR...2ZBmIgQi/w /tmp/.ssh_keyscan.key.kc3ur3C (ECDSA)
+	---- BEGIN SSH2 PUBLIC KEY ----
+	...
+
+Only way I know how to get that "f5:e5:f9:b6:a4:6b:fd:b3:07:15:f6:d9:0c:f5:47:54"
+secret-sauce is to either do your own md5 + hexdigest on ssh-keyscan output (and
+not mess-up due to some extra space or newline), or store one of the keys from
+there with first field cut off into a file and run `ssh-keygen -l -E md5 -f key.pub`.
+
+Note how "intuitive" it is to confirm something that ssh prints (and it prints
+only that md5-fp thing!) for every new host you connect to with just openssh.
+
+With this command, just running it on the remote host - presumably from diff
+location, or even localhost - should give (hopefully) any possible gibberish
+permutation that openssh (or something else) may decide to throw at you.
+
 
 
 ### Desktop
