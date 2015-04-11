@@ -78,7 +78,7 @@ class BackupStuff(object):
 			.digest().encode('base64').rstrip('=\n').replace('/', '-')[:trim]
 
 	def profile_file(self, *path, **opts):
-		return io.open(join(self.cfg.common.profile_dir, *path), **opts)
+		return io.open(join(self.cfg.common.profile_dir, *path), 'rb', **opts)
 
 	def _xml_to_py(self, tree):
 		root = dict()
