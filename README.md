@@ -1253,9 +1253,9 @@ Parsed time_spec 'now' as 2015-04-26 14:23:54.658134 (delta: just now)
 Parsed time_spec 'tomorrow 9am' as 2015-04-27 09:00:00 (delta: 18h 25m)
 ```
 
-Currently only uses desktop notifications and libcanberra sounds (optional)
-and/or runs whatever commands (use e.g. "zenity" to create modal windows or
-"wall" for terminal broadcasts).
+Currently only uses desktop notifications, libcanberra sounds (optional),
+mail/wall (optional fallbacks) and/or runs whatever commands (use e.g. "zenity"
+to create modal windows or "wall" for terminal broadcasts).
 
 
 

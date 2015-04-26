@@ -6,6 +6,7 @@ import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
+from HTMLParser import HTMLParser
 import os, sys, stat, types, tempfile, re, time, subprocess, traceback
 
 
@@ -64,7 +65,7 @@ def parse_timestamp(ts_str):
 		with open(os.devnull, 'w') as devnull:
 			proc = subprocess.Popen(
 				['date', '+%s', '-d', ts_str],
-				stdout=subprocess.PIPE, stderr=devnull)
+				stdout=subprocess.PIPE, stderr=devnull, close_fds=True )
 			val = proc.stdout.read()
 			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
 
@@ -136,6 +137,19 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 	if fork: os._exit(0)
 
 
+class MLStripper(HTMLParser):
+	def __init__(self):
+		self.reset()
+		self.fed = list()
+	def handle_data(self, d): self.fed.append(d)
+	def get_data(self): return ''.join(self.fed)
+
+def strip_tags(html):
+	s = MLStripper()
+	s.feed(html)
+	return s.get_data()
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -158,7 +172,14 @@ def main(args=None):
 
 	parser.add_argument('-f', '--fork', action='store_true',
 		help='Fork-out immediately and wait for time to come in the background.')
-	# XXX: persistent timer option, maybe systemd timer
+	# parser.add_argument('-a', '--at', action='store_true',
+	# 	help='Schedule notification as a job via "at" daemon/command.'
+	# 		' This should work with any posix-ish at(1p), and allow for reboot-persistent alarms.'
+	# 		' One issue though is that desktop environment might go stale/away between reboots.')
+	# parser.add_argument('-l', '--lock', nargs='?', const=True, metavar='name_or_path',
+	# 	help='Create temporary file on tmpfs upon notification and do not act if it exists already.'
+	# 		' File is not removed, but will probably be cleaned-up eventually'
+	# 			' by systemd-tmpfiles or reboot, unless some persistent path is specified.')
 
 	parser.add_argument('-x', '--notification-non-critical', action='store_true',
 		help='Default is to issue notifications with'
@@ -170,8 +191,12 @@ def main(args=None):
 	parser.add_argument('-i', '--notification-icon',
 		default='alarm', metavar='xdg-icon-or-path',
 		help='Icon to use for notification (default: %(default)s). Empty - no icon.')
+
 	parser.add_argument('-s', '--notification-sound', metavar='xdg-sound',
 		help='Sound to play via canberra-gtk-play for notification (default: no sound).')
+	parser.add_argument('-1', '--important', action='store_true',
+		help='If any of the usual notification means fail,'
+			' try email (to current $USER) and wall(1) notifications.')
 
 	parser.add_argument('-q', '--quiet', action='store_true', help='Quiet operation mode.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -193,13 +218,12 @@ def main(args=None):
 		p('Parsed time_spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
 
 	if opts.fork:
+		if not os.fork(): sys.exit()
 		try: os.setsid()
 		except OSError: pass
 		if not os.fork(): sys.exit()
-		if not os.fork(): sys.exit()
 
-	summary = opts.summary
-	summary = 'Alarm: {}'.format( summary
+	summary = ( opts.summary
 		or 'notification from {}'.format(naturaltime_diff(ts, ts0, 'ago')) )
 
 	body_cmd = None
@@ -208,7 +232,7 @@ def main(args=None):
 		if len(body_cmd) == 1: body_cmd = body_cmd[0].split()
 		try:
 			body_cmd = 'Command output', '\n<tt>{}</tt>'.format(
-				xml_escape(subprocess.check_output(body_cmd)) )
+				xml_escape(subprocess.check_output(body_cmd, close_fds=True)) )
 		except Exception as err:
 			body_cmd = ( '<span color="red"'
 					' stretch="expanded" underline="double">'
@@ -232,20 +256,45 @@ def main(args=None):
 		('<tt>{{:<{}s}}</tt>{{}}'.format(label_len).format(t + ':', v) if t else v)
 		for t, v in body )
 
-	sound = None
-	if opts.notification_sound:
-		try: sound = Popen(['canberra-gtk-play', '-i', opts.notification_sound])
-		except Exception as err:
-			log.exception('Failed to start "canberra-gtk-play" subprocess: %s', err)
+	any_fails = None
+	try:
+		proc = None
+		if opts.notification_sound:
+			try: proc = Popen(['canberra-gtk-play', '-i', opts.notification_sound])
+			except Exception as err:
+				log.exception('Failed to start "canberra-gtk-play" subprocess: %s', err)
+				any_fails = True
 
-	notify(
-		summary, body, fork=False,
-		critical=not opts.notification_non_critical,
-		timeout=opts.notification_timeout * 1000,
-		icon=opts.notification_icon or None )
+		notify(
+			'Alarm: {}'.format(summary), body, fork=False,
+			critical=not opts.notification_non_critical,
+			timeout=opts.notification_timeout * 1000,
+			icon=opts.notification_icon or None )
 
-	if sound:
-		err = sound.wait()
-		if err != 0: log.error('"canberra-gtk-play" subprocess exited with error status: %s', err)
+		if proc:
+			err = proc.wait()
+			if err:
+				log.error('"canberra-gtk-play" subprocess exited with error status: %s', err)
+				any_fails = True
+	except Exception as err:
+		any_fails = True
+		log.exception('Notification delivery failure: %s', err)
+
+	if any_fails and opts.important:
+		log.debug('Using fallback notification mechanisms due to --important flag')
+		proc_summary, proc_body = '[Alarm] {} [fallback delivery]'.format(summary), strip_tags(body)
+		proc = subprocess.Popen([ 'mail', '-s', proc_summary,
+			os.environ['USER'] ], stdin=subprocess.PIPE, close_fds=True)
+		proc.stdin.write(proc_body)
+		proc.stdin.close()
+		err = proc.wait()
+		if err: log.error('"mail" subprocess exited with error status: %s', err)
+		proc = subprocess.Popen(['wall', '-t', '5'], stdin=subprocess.PIPE, close_fds=True)
+		proc.stdin.write('\n'.join([proc_summary, '', proc_body, '']))
+		proc.stdin.close()
+		err = proc.wait()
+		if err: log.error('"wall" subprocess exited with error status: %s', err)
+
+	return any_fails
 
 if __name__ == '__main__': sys.exit(main())
