@@ -1,0 +1,251 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+from xml.sax.saxutils import escape as xml_escape
+import os, sys, stat, types, tempfile, re, time, subprocess, traceback
+
+
+_short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
+_short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
+
+def _short_ts_regexp():
+	'''Generates regexp for parsing of
+		shortened relative timestamps, as shown in the table.'''
+	ts_re = ['^']
+	for k in it.chain(_short_ts_days, _short_ts_s):
+		ts_re.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
+	return re.compile(''.join(ts_re), re.I | re.U)
+_short_ts_regexp = _short_ts_regexp()
+
+def parse_timestamp(ts_str):
+	'''Match time either in human-readable format (as accepted by dateutil),
+		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
+	assert isinstance(ts_str, bytes), [type(ts_str), repr(ts_str)]
+	ts_str = ts_str.replace('_', ' ')
+
+	# Try to parse time offset in short format
+	match = _short_ts_regexp.search(ts_str)
+	if match and any(match.groups()):
+		delta = list()
+		parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
+		for units in [_short_ts_days, _short_ts_s]:
+			val = 0
+			for k, v in units.iteritems():
+				try:
+					if not match.group(k): continue
+					n = parse_int(match.group(k))
+				except IndexError: continue
+				val += n * v
+			delta.append(val)
+		return datetime.now() + timedelta(*delta)
+
+	# Fallback to other generic formats
+	ts = None
+	if not ts:
+		match = re.search( # common BE format
+			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )
+		if match:
+			tpl = 'y' if not match.group('Y') else 'Y'
+			tpl, ts_str = '%{}-%m-%d'.format(tpl), match.group('date')
+			if match.group('time'):
+				tpl_time = ['%H', '%M', '%S']
+				ts_str_time = match.group('time').split(':')
+				ts_str += ' ' + ':'.join(ts_str_time)
+				tpl += ' ' + ':'.join(tpl_time[:len(ts_str_time)])
+			try: ts = datetime.strptime(ts_str, tpl)
+			except ValueError: pass
+	if not ts:
+		# coreutils' "date" parses virtually everything, but is more expensive to use
+		with open(os.devnull, 'w') as devnull:
+			proc = subprocess.Popen(
+				['date', '+%s', '-d', ts_str],
+				stdout=subprocess.PIPE, stderr=devnull)
+			val = proc.stdout.read()
+			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
+
+	if ts: return ts
+	raise ValueError('Unable to parse date/time string: {0}'.format(ts_str))
+
+
+def naturaltime_diff( ts, ts0=None, ext=None,
+		_units_days=dict(y=365.25, mo=30.5, w=7, d=0),
+		_units_s=dict(h=3600, m=60, s=0) ):
+	delta = abs(ts - (ts0 or datetime.now())) # should always be positive
+
+	res, days = list(), delta.days
+	for unit, unit_days in sorted(
+			_units_days.iteritems(), key=op.itemgetter(1), reverse=True):
+		if days > unit_days or res:
+			res.append('{0:.0f}{1}'.format(
+				math.floor(days / unit_days) if unit_days else days, unit ))
+			if len(res) >= 2 or not unit_days: break
+			days = delta.days % unit_days
+
+	if len(res) < 2:
+		s = delta.seconds
+		for unit, unit_s in sorted(
+				_units_s.iteritems(), key=op.itemgetter(1), reverse=True):
+			if s > unit_s or res:
+				res.append('{0:.0f}{1}'.format(s / unit_s if unit_s else s, unit))
+				if len(res) >= 2 or not unit_s: break
+				s = delta.seconds % unit_s
+
+	if not res: return 'just now'
+	else:
+		if ext: res.append(ext)
+		return ' '.join(res)
+
+
+@contextmanager
+def safe_replacement(path, mode=None):
+	if mode is None:
+		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
+		except (OSError, IOError): pass
+	kws = dict( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	with tempfile.NamedTemporaryFile(**kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			yield tmp
+			if not tmp.closed: tmp.flush()
+			os.rename(tmp.name, path)
+		finally:
+			try: os.unlink(tmp.name)
+			except (OSError, IOError): pass
+
+
+_notify_init = False
+def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
+	global _notify_init
+	if fork and os.fork(): return
+	try:
+		from gi.repository import Notify
+		if not _notify_init:
+			Notify.init('alarm')
+			_notify_init = True
+		note = Notify.Notification.new(summary=title, body=body, icon=icon)
+		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
+		if timeout is not None: note.set_timeout(timeout)
+		note.show()
+	except: pass
+	if fork: os._exit(0)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Send notification at a certain future point in time.')
+
+	parser.add_argument('time',
+		help='Absolute or relative time spec until notification.')
+	parser.add_argument('summary', nargs='?',
+		help='Optional notification summary (e.g. alarm reason).')
+	parser.add_argument('body', nargs='?',
+		help='Optional notification body. Always prefixed by timer info.'
+			' Default is to print some machine info (uname) here.')
+
+	parser.add_argument('-c', '--body-cmd', action='append', metavar='cmd/args',
+		help='Command to run at the time of triggering and use output in a notification body.'
+			' Not passed to shell, but split into arguments on spaces, if specified only once.'
+			' Can be specified multiple times, in which case all'
+				' values will be used as command/args as-is, without splitting.'
+			' Notification will be delayed until command exits.')
+
+	parser.add_argument('-f', '--fork', action='store_true',
+		help='Fork-out immediately and wait for time to come in the background.')
+	# XXX: persistent timer option, maybe systemd timer
+
+	parser.add_argument('-x', '--notification-non-critical', action='store_true',
+		help='Default is to issue notifications with'
+			' "critical" urgency set. This option disables that.')
+	parser.add_argument('-t', '--notification-timeout',
+		default=0, type=int, metavar='seconds',
+		help='Timeout to use for notification, in seconds (default: %(default)s).'
+			' "0" means "no timeout" (according to desktop notification spec).')
+	parser.add_argument('-i', '--notification-icon',
+		default='alarm', metavar='xdg-icon-or-path',
+		help='Icon to use for notification (default: %(default)s). Empty - no icon.')
+	parser.add_argument('-s', '--notification-sound', metavar='xdg-sound',
+		help='Sound to play via canberra-gtk-play for notification (default: no sound).')
+
+	parser.add_argument('-q', '--quiet', action='store_true', help='Quiet operation mode.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	p = lambda fmt,*a,**k: print(fmt.format(*a,**k))
+
+	ts0, ts = datetime.now(), parse_timestamp(opts.time)
+	if abs(ts - ts0).total_seconds() < 5: ts = ts0
+	if ts0 > ts:
+		parser.error( 'Destination time cannot be in the past'
+			' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
+	if not opts.quiet:
+		p('Parsed time_spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
+
+	if opts.fork:
+		try: os.setsid()
+		except OSError: pass
+		if not os.fork(): sys.exit()
+		if not os.fork(): sys.exit()
+
+	summary = opts.summary
+	summary = 'Alarm: {}'.format( summary
+		or 'notification from {}'.format(naturaltime_diff(ts, ts0, 'ago')) )
+
+	body_cmd = None
+	if opts.body_cmd:
+		body_cmd = opts.body_cmd
+		if len(body_cmd) == 1: body_cmd = body_cmd[0].split()
+		try:
+			body_cmd = 'Command output', '\n<tt>{}</tt>'.format(
+				xml_escape(subprocess.check_output(body_cmd)) )
+		except Exception as err:
+			body_cmd = ( '<span color="red"'
+					' stretch="expanded" underline="double">'
+				'Error while running command:</span>\n' )
+			body_cmd += xml_escape(traceback.format_exc())
+
+	label_len, uname = 14, map(xml_escape, os.uname())
+	body = [
+		('Current time', datetime.now()),
+		('Set', '{} (<b>{}</b>)'.format(ts0, naturaltime_diff(ts, ts0, 'ago'))) ]
+	if opts.body: body.extend([('', ''), ('Info', '\n' + opts.body)])
+	else:
+		body.append(
+			('Machine', '\n  {}\n  {}'.format(' '.join(uname[:3] + [uname[4]]), uname[3])) )
+	if body_cmd:
+		body.append(('', ''))
+		if isinstance(body_cmd, tuple): body.append(body_cmd)
+		elif isinstance(body_cmd, list): body.extend(body_cmd)
+		else: body.append((None, body_cmd))
+	body = '\n'.join(
+		('<tt>{{:<{}s}}</tt>{{}}'.format(label_len).format(t + ':', v) if t else v)
+		for t, v in body )
+
+	sound = None
+	if opts.notification_sound:
+		try: sound = Popen(['canberra-gtk-play', '-i', opts.notification_sound])
+		except Exception as err:
+			log.exception('Failed to start "canberra-gtk-play" subprocess: %s', err)
+
+	notify(
+		summary, body, fork=False,
+		critical=not opts.notification_non_critical,
+		timeout=opts.notification_timeout * 1000,
+		icon=opts.notification_icon or None )
+
+	if sound:
+		err = sound.wait()
+		if err != 0: log.error('"canberra-gtk-play" subprocess exited with error status: %s', err)
+
+if __name__ == '__main__': sys.exit(main())

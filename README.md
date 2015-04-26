@@ -1224,6 +1224,37 @@ any paired device to (re-)connect without asking, and `--non-interactive` flag
 will turn off any possible prompts, allowing to run it in the background to only
 authorize paired (and/or whitelisted) devices.
 
+##### alarm
+
+Script to issue notification(s) after some specified period of time.
+
+Mostly to simplify combining "sleep" with "date" and whatever notification means
+in the shell.
+
+Parses timestamps as relative short times (e.g. "30s", "10min", "1h 20m", etc),
+iso8601-ish times/dates or falls back to just using "date" binary (which parses
+a lot of stuff).
+Checks that specified time was parsed as a timestamp in the future and outputs
+how it was interpreted (by default).
+
+Examples:
+
+```console
+% alarm -c timedatectl now
+Parsed time_spec 'now' as 2015-04-26 14:23:54.658134 (delta: just now)
+```
+![notification popup](http://fraggod.net/static/misc/notification-thing__alarm.jpg)
+
+```console
+% alarm -t 3600 -i my-alarm-icon -s my-alarm-sound -f 'tomorrow 9am' \
+  'hey, wake up!!!' "It's time to do some stuff... here's the schedule:" \
+  -c 'curl -s http://my-site.com/schedule/today'
+Parsed time_spec 'tomorrow 9am' as 2015-04-27 09:00:00 (delta: 18h 25m)
+```
+
+Currently only uses desktop notifications and libcanberra sounds (optional)
+and/or runs whatever commands.
+
 
 
 ### VM
