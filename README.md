@@ -1257,6 +1257,9 @@ Currently only uses desktop notifications, libcanberra sounds (optional),
 mail/wall (optional fallbacks) and/or runs whatever commands (use e.g. "zenity"
 to create modal windows or "wall" for terminal broadcasts).
 
+For persistent notifications (between reboots and such), there's an --at option
+to use at(1p).
+
 
 
 ### VM

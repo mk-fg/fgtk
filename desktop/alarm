@@ -172,10 +172,10 @@ def main(args=None):
 
 	parser.add_argument('-f', '--fork', action='store_true',
 		help='Fork-out immediately and wait for time to come in the background.')
-	# parser.add_argument('-a', '--at', action='store_true',
-	# 	help='Schedule notification as a job via "at" daemon/command.'
-	# 		' This should work with any posix-ish at(1p), and allow for reboot-persistent alarms.'
-	# 		' One issue though is that desktop environment might go stale/away between reboots.')
+	parser.add_argument('-a', '--at', action='store_true',
+		help='Schedule notification as a job via "at" daemon/command.'
+			' This should work with any posix-ish at(1p), and allow for reboot-persistent alarms.'
+			' One issue though is that desktop environment might go stale/away between reboots.')
 	# parser.add_argument('-l', '--lock', nargs='?', const=True, metavar='name_or_path',
 	# 	help='Create temporary file on tmpfs upon notification and do not act if it exists already.'
 	# 		' File is not removed, but will probably be cleaned-up eventually'
@@ -209,19 +209,49 @@ def main(args=None):
 
 	p = lambda fmt,*a,**k: print(fmt.format(*a,**k))
 
-	ts0, ts = datetime.now(), parse_timestamp(opts.time)
-	if abs(ts - ts0).total_seconds() < 5: ts = ts0
-	if ts0 > ts:
-		parser.error( 'Destination time cannot be in the past'
-			' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
-	if not opts.quiet:
-		p('Parsed time_spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
+	ts_env = os.environ.get('ALARM_AT_TS')
+	if not ts_env:
+		ts0, ts = datetime.now(), parse_timestamp(opts.time)
+		ts_diff = abs(ts - ts0).total_seconds()
+		if ts_diff < 5: ts, ts_diff = ts0, 0
+		if ts0 > ts:
+			parser.error( 'Destination time cannot be in the past'
+				' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
+		if not opts.quiet:
+			p('Parsed time_spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
 
-	if opts.fork:
-		if not os.fork(): sys.exit()
-		try: os.setsid()
-		except OSError: pass
-		if not os.fork(): sys.exit()
+		if opts.fork:
+			if not os.fork(): sys.exit()
+			try: os.setsid()
+			except OSError: pass
+			if not os.fork(): sys.exit()
+
+		if opts.at:
+			os.environ['ALARM_AT_TS'] = '{} {}'.format(
+				time.mktime(ts0.timetuple()), time.mktime(ts.timetuple()) )
+			with open(os.devnull, 'w') as devnull:
+				proc = subprocess.Popen(
+					['at', ts.strftime('%H:%M %Y-%m-%d')],
+					stdin=subprocess.PIPE, stdout=devnull,
+					stderr=subprocess.STDOUT, close_fds=True )
+				proc.stdin.write(' '.join( [sys.argv[0]]
+					+ list("'{}'".format(arg.replace("'", r"'\''")) for arg in sys.argv[1:]) ))
+				proc.stdin.close()
+				err = proc.wait()
+				if err: raise RuntimeError('"at" command failed (exit status: {})'.format(err))
+			return
+
+		if ts_diff: time.sleep(ts_diff)
+
+	else: # running from serialized state at the right time, e.g. "at" job
+		ts0, ts = (datetime.fromtimestamp(float(ts)) for ts in ts_env.strip().split())
+
+	ts1 = datetime.now()
+	ts_diff = abs(ts1 - ts).total_seconds()
+	if ts_diff > 60:
+		log.info( 'Detected significant deviation from'
+			' expected wake-up time: %ss (expected: %s, actual: %s)', ts_diff, ts, ts1 )
+	ts = ts1
 
 	summary = ( opts.summary
 		or 'notification from {}'.format(naturaltime_diff(ts, ts0, 'ago')) )
