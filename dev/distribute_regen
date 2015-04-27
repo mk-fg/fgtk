@@ -158,7 +158,7 @@ if any(regen_docs.values()):
 				try: os.unlink(tmp.name)
 				except (OSError, IOError): pass
 				raise
-		proc_desc = Popen([ 'python', 'setup.py',
+		proc_desc = Popen([ 'python2', 'setup.py',
 			'--long-description' ], stdout=PIPE, env=dict(PATH=os.environ['PATH']))
 		if Popen( ['rst2html.py'], stdin=proc_desc.stdout,
 				stdout=open(os.devnull, 'w') ).wait() or proc_desc.wait():
