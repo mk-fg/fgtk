@@ -1,38 +1,27 @@
 #!/bin/bash
 
-src_remove=
-[[ "$1" = '-x' ]] && { src_remove=true; shift; }
-[[ "$#" -gt 0 ]]\
-	&& srcs=( "$@" )\
-	|| {
-		cd "${0%/*}"
-		echo "Processing dumps in $(readlink -f video_dumps)..."
-		readarray -t srcs < <(ls -1U video_dumps); }
+usage() {
+	bin=$(basename "$0")
+	echo >&2 "Usage: $bin [ --debug ] [ -x ] [ -t dir ] files..."
+	exit 1
+}
 
-dst_last= src_rename=
+src_remove= dst_dir=.
+[[ "$1" = '-x' ]] && { src_remove=t; shift; }
+[[ "$1" = '--debug' ]] && { set -x; shift; }
+[[ "$1" = '-t' ]] && { shift; dst_dir=$1; shift; }
+[[ $# -eq 0 || "$1" = -h || "$1" == --help ]] && usage
+srcs=( "$@" )
+
+set -e -o pipefail
+
 for src in "${srcs[@]}"; do
-	# Special case: '--' encountered
-	[[ "$src" = '--' ]] && {
-		src_rename=true
-		continue
-	}
-	[[ -n "$src_rename" ]] && {
-		[[ -z "$dst_last" ]] && {
-			echo >&2 "Nothng to mv (to: ${src}), exiting"
-			exit 1; }
-		rsync -P --size-only "$dst_last" "$src" || exit 1
-		rm -v "$dst_last" || exit 1
-		src_rename= dst_last=
-		continue
-	}
-
 	# Recode the thing
 	dst=${src##*/}
 	dst=${dst%.*}.ogg
-	ffmpeg -i "$src" -f wav - 2>/dev/null | oggenc -o "$dst" -
-	[[ ${PIPESTATUS[0]} -gt 0 || ${PIPESTATUS[1]} -gt 0 ]] && exit 1
+	ffmpeg -i "$src" -f wav - 2>/dev/null | oggenc -o "${dst_dir}/${dst}" -
+	[[ $? -ne 0 ]] && exit 1
 
 	# Remove source, if requested
 	[[ -n "$src_remove" ]] && { rm -v "$src" || exit 1; }
-	dst_last=$dst
 done
