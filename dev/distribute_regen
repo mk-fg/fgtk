@@ -68,7 +68,8 @@ if regen_setup:
 		minute=0, second=0, microsecond=0 ) - timedelta(0, 1)
 	ver_minor = len(list(Popen([ 'git', 'rev-list',
 		'--since={}'.format(ts.strftime('%Y-%m-%dT%H:%M:%S')), 'master' ], stdout=PIPE).stdout))
-	version = datetime.now().strftime('%y.%m.{}').lstrip('0').format(ver_minor)
+	version = datetime.now()
+	version = '{}.{}.{}'.format(version.year % 100, version.month, ver_minor)
 
 	from tempfile import NamedTemporaryFile
 	import re, ast
