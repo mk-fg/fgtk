@@ -7,7 +7,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
 from HTMLParser import HTMLParser
-import os, sys, stat, types, tempfile, re, time, subprocess, traceback
+import os, sys, stat, types, tempfile, re
+import time, subprocess, traceback, signal
 
 
 _short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
@@ -76,7 +77,9 @@ def parse_timestamp(ts_str):
 def naturaltime_diff( ts, ts0=None, ext=None,
 		_units_days=dict(y=365.25, mo=30.5, w=7, d=0),
 		_units_s=dict(h=3600, m=60, s=0) ):
-	delta = abs(ts - (ts0 or datetime.now())) # should always be positive
+	delta = abs(
+		(ts - (ts0 or datetime.now()))
+		if not isinstance(ts, timedelta) else ts )
 
 	res, days = list(), delta.days
 	for unit, unit_days in sorted(
@@ -153,7 +156,9 @@ def strip_tags(html):
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Send notification at a certain future point in time.')
+		description='Send notification at a certain future point in time.',
+		epilog='Sending SIGQUIT (Ctrl+\ [Ctrl + backslash] from'
+			' terminal) to the process will print time left until notification to stdout.')
 
 	parser.add_argument('time',
 		help='Absolute or relative time spec until notification.')
@@ -218,7 +223,7 @@ def main(args=None):
 			parser.error( 'Destination time cannot be in the past'
 				' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
 		if not opts.quiet:
-			p('Parsed time_spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
+			p('Parsed time spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
 
 		if opts.fork:
 			if not os.fork(): sys.exit()
@@ -241,7 +246,18 @@ def main(args=None):
 				if err: raise RuntimeError('"at" command failed (exit status: {})'.format(err))
 			return
 
-		if ts_diff: time.sleep(ts_diff)
+		if ts_diff and ts_diff > 0:
+			ts_diff_print = set()
+			signal.signal(signal.SIGQUIT, lambda sig,frm: ts_diff_print.add(True))
+			while True:
+				ts1 = datetime.now()
+				ts_diff = ts - ts1
+				if ts_diff.total_seconds() < 0: break
+				if ts_diff_print:
+					p( 'Time left: {} (total: {:.1f}s)',\
+						naturaltime_diff(ts_diff), abs(ts_diff.total_seconds()) )
+					ts_diff_print.clear()
+				time.sleep(max(0, ts_diff.total_seconds()))
 
 	else: # running from serialized state at the right time, e.g. "at" job
 		ts0, ts = (datetime.fromtimestamp(float(ts)) for ts in ts_env.strip().split())
