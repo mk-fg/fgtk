@@ -87,7 +87,7 @@ def main(args=None):
 
 	files_cleanup = set()
 	radios = os.path.expanduser(opts.conf)
-	with io.open(radios) as src: radios = yaml.load(src)
+	with io.open(radios) as src: radios = yaml.safe_load(src)
 
 	chan = chan_name = opts.chan
 	if chan not in radios:
@@ -123,7 +123,7 @@ def main(args=None):
 	if not os.path.exists(tracks):
 		with open(tracks, 'ab'): pass
 
-	notify_kws = yaml.load(opts.desktop_notification_props)
+	notify_kws = yaml.safe_load(opts.desktop_notification_props)
 	if notify_kws is not False: notify_kws = notify_kws or dict()
 
 	pid_player = os.getpid()

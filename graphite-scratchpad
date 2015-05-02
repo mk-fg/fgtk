@@ -153,7 +153,7 @@ def dump_yaml(data, dst):
 
 def load_yaml(src):
 	import yaml
-	data = yaml.load(src)
+	data = yaml.safe_load(src)
 	if 'target' in data:
 		data['target'] = dump_targets(data['target'])
 	return data

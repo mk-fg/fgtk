@@ -39,7 +39,7 @@ def build_host_lists(roam, use_ip):
 				while True:
 					if src.endswith('.yaml'):
 						import yaml
-						ext, src = yaml.load(ext), src[:-5]
+						ext, src = yaml.safe_load(ext), src[:-5]
 					elif src.endswith('.json'):
 						import json
 						ext, src = json.loads(ext), src[:-5]

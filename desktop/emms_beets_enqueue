@@ -36,7 +36,7 @@ def main(args=None):
 
 	cmd = local
 	if opts.remote:
-		remote = yaml.load(opts.remote)
+		remote = yaml.safe_load(opts.remote)
 		if isinstance(remote, types.StringTypes): a, kw = [remote], {}
 		elif isinstance(remote, list): a, kw = remote, {}
 		elif isinstance(remote, dict): a, kw = [], remote
