@@ -9,6 +9,8 @@
 #  * encode_none method (to "n")
 #  * encode_string encodes unicode as utf-8 bytes
 
+import types, struct
+
 def _ns_class(cls_name, cls_parents, cls_attrs):
 	for k, v in cls_attrs.viewitems():
 		if isinstance(v, types.FunctionType):
