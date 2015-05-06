@@ -2,7 +2,7 @@
 
 step=15
 
-[[ -z "$1" || -z "$2" || -n "$4" || "$1"= -h || "$1"= --help ]] && {
+[[ -z "$1" || -z "$2" || -n "$4" || "$1" = -h || "$1" = --help ]] && {
 	cmd=$(basename "$0")
 	echo >&2 "Usage: $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ]"
 	echo >&2 "Example: $cmd some-long-book.mp3 slb"
