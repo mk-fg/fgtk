@@ -907,16 +907,10 @@ long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
 
 
-#### media
+#### Media
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
 various media files and streams.
-
-###### flv_merge
-
-Merges multiple segments of video downloaded from some streaming service
-(e.g. twitch.tv) into one full flv via tricky ffmpeg h264/aac
-[stream concatenation functionality](http://ffmpeg.org/trac/ffmpeg/wiki/How%20to%20concatenate%20%28join%2C%20merge%29%20media%20files).
 
 ###### parec_from_flash
 
@@ -988,6 +982,34 @@ can be omitted, and defaults to 15 min.
 
 Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn" to grab
 the chunks from source file.
+
+###### twitch_vod_fetch
+
+Script to download any time slice of a twitch.tv VoD (video-on-demand).
+
+youtube-dl - the usual tool for the job - [doesn't support neither seeking to
+time or length limits](https://github.com/rg3/youtube-dl/issues/622),
+but does a good job of getting a VoD m3u8 playlist with chunks of the video
+(--get-url option).
+
+Also, some chunks getting stuck at ~10-20 KiB/s download rates, making
+"sequentially download each one" approach of mpv/youtube-dl/ffmpeg/etc
+highly inpractical.
+
+So this wrapper grabs that playlist, skips chunks according to EXTINF tags
+(specifying exact time length of each) to satisfy --start-pos / --length, and
+then passes all these URLs to [aria2](http://aria2.sourceforge.net/) for
+parallel downloading with stuff like --max-concurrent-downloads=5,
+--max-connection-per-server=5, --lowest-speed-limit=100K, etc.
+
+In the end, chunks just get concatenated together into one resulting mp4 file.
+
+Process is designed to tolerate Ctrl+C and resume from any point, and allows
+whatever tweaks (e.g. update url, change playlist, skip some chunks, etc), as it
+keeps all the state between these in plaintext files.
+
+A bit more info on it can be found in
+[this blog post](http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html).
 
 
 #### notifications

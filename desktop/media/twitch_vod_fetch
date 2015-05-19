@@ -1,0 +1,308 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from os.path import exists, dirname
+from contextlib import contextmanager, closing
+import subprocess, tempfile, time, glob
+import os, sys, re, json, types, base64
+
+import requests
+
+def get_uid(n=3):
+	assert n * 8 % 6 == 0, n
+	return base64.urlsafe_b64encode(os.urandom(n))
+
+def log_lines(log_func, lines, log_func_last=False):
+	'''Log passed sequence of lines or a newline-delimited string via log_func.
+		Sequence elements can also be tuples of (template, *args, **kws) to pass to log_func.
+
+		log_func_last (if passed) will be applied to the last line instead of log_func,
+			with idea behind it is to pass e.g. log.exception there,
+			so it'd dump proper traceback at the end of the message.'''
+	if isinstance(lines, types.StringTypes):
+		lines = list(line.rstrip() for line in lines.rstrip().split('\n'))
+	uid = get_uid()
+	for n, line in enumerate(lines, 1):
+		if isinstance(line, types.StringTypes): line = '[%s] %s', uid, line
+		else: line = ('[{}] {}'.format(uid, line[0]),) + line[1:]
+		if log_func_last and n == len(lines): log_func_last(*line)
+		else: log_func(*line)
+
+req_jrpc_uid = lambda _ns=get_uid(),\
+	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
+req_ctx = type('Ctx', (object,), dict(s=None))
+
+@contextmanager
+def req(method, *args, **kws):
+	if not req_ctx.s:
+		# Mostly for cases when aria2c lags on startup
+		from requests.packages.urllib3.util.retry import Retry
+		req_ctx.s = requests.Session()
+		req_ctx.s.mount( 'http://',
+			requests.adapters.HTTPAdapter(
+				max_retries=Retry(total=4, backoff_factor=1) ) )
+
+	with closing(req_ctx.s.request(method, *args, **kws)) as r:
+		try: r.raise_for_status()
+		except Exception as err:
+			log_lines(log.error, [
+				'HTTP request failed:',
+				('  args: %s', args), ('  kws: %s', kws),
+				('  response content: %s', r.content) ])
+			raise
+		yield r
+
+def req_jrpc(url, method, *params):
+	data_req = dict(
+		jsonrpc='2.0', id=req_jrpc_uid(),
+		method=method, params=params )
+	with req('post', url, json=data_req) as r: data_res = r.json()
+	assert data_res.get('result'), [data_req, data_res]
+	return data_res['result']
+
+class VodFileCache(object):
+
+	update_lock = True
+
+	def __init__(self, prefix, ext):
+		self.path = '{}.{}'.format(prefix, ext)
+
+	@property
+	def cached(self):
+		if not exists(self.path): return None
+		with open(self.path, 'rb') as src: return src.read()
+
+	def update(self, data):
+		assert not self.update_lock
+		with open(self.path, 'wb') as dst: dst.write(data)
+		return data
+
+	def __enter__(self):
+		assert self.update_lock
+		self.update_lock = False
+		return self
+
+	def __exit__(self, *err):
+		self.update_lock = True
+
+
+def parse_pos(pos):
+	try: mins, secs = pos.rsplit(':', 1)
+	except ValueError: hrs, mins, secs = 0, 0, pos
+	else:
+		try: hrs, mins = mins.rsplit(':', 1)
+		except ValueError: hrs = 0
+	return sum( a*b for a, b in
+		it.izip([3600, 60, 1], map(float, [hrs, mins, secs])) )
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(description='Grab a VoD from twitch.tv, properly.')
+	parser.add_argument('url', help='URL for a VoD to fetch.')
+	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
+	parser.add_argument('-y', '--ytdl-opts',
+		action='append', metavar='opts',
+		help='Extra opts for youtube-dl --get-url command.'
+			' Will be split on spaces, unless option is used multiple times.')
+
+	parser.add_argument('-s', '--start-pos',
+		metavar='[[hours:]minutes:]seconds',
+		help='Only download video chunks after specified start position.')
+	parser.add_argument('-l', '--length',
+		metavar='[[hours:]minutes:]seconds',
+		help='Only download specified length of the video (from specified start).')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger()
+
+	if re.search(r'^https?:', opts.file_prefix):
+		if re.search(r'^https?:', opts.url):
+			parser.error('Both args seem to be an URL, only first one should be.')
+		log.warn('Looks like url/prefix args got mixed-up, correcting that')
+		opts.file_prefix, opts.url = opts.url, opts.file_prefix
+
+	start_delay = parse_pos(opts.start_pos) if opts.start_pos else 0
+	max_length = opts.length and parse_pos(opts.length)
+
+	vod_cache = ft.partial(VodFileCache, opts.file_prefix)
+
+	with vod_cache('m3u8.url') as vc:
+		url_pls = vc.cached
+		if not url_pls:
+			ytdl_opts = opts.ytdl_opts or list()
+			if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].split()
+
+			url_pls = vc.update(subprocess.check_output(
+				['youtube-dl', '--get-url'] + ytdl_opts + [opts.url], close_fds=True ).strip())
+	url_base = url_pls.rsplit('/', 1)[0]
+
+	with vod_cache('m3u8.ua') as vc:
+		ua = vc.cached
+		if not ua:
+			ua = vc.update(subprocess.check_output(
+				['youtube-dl', '--dump-user-agent'], close_fds=True ).strip())
+
+	with vod_cache('m3u8') as vc:
+		pls = vc.cached
+		if not pls:
+			with req('get', url_pls, headers={'user-agent': ua}) as r:
+				pls = vc.update(r.text)
+
+	with vod_cache('rpc_key') as vc:
+		key = vc.cached
+		if not key: key = vc.update(get_uid(6))
+	port = 6801
+
+	# aria2c requires 16-char gid, gid_format fits number in
+	#  first 6 chars because it looks nice in (tuncated) aria2c output
+	gid_seq = iter(xrange(1, 2**30))
+	gid_format, gid_parse = '{:06d}0000000000'.format, lambda gid: int(gid[:6])
+	with vod_cache('gids') as vc:
+		gids_done, gids_done_path = vc.cached, vc.path
+		if not gids_done: gids_done = vc.update('')
+		gids_done = set(it.imap(gid_parse, gids_done.splitlines()))
+	gids_started, gids_needed = list(), list()
+
+	# Try to pick leaner shell than bash, since hook is dead-simple
+	sh_path = '/bin/dash'
+	if not exists(sh_path): sh_path = '/bin/ash' # busybox
+	if not exists(sh_path): sh_path = '/bin/sh'
+
+	hook = '/tmp/.fetch_twitch_vod.hook'
+	assert "'" not in opts.file_prefix, opts.file_prefix
+	assert "'" not in gids_done_path, gids_done_path
+	with open(hook, 'wb') as dst:
+		dst.write('\n'.join([
+			'#!{}'.format(sh_path),
+			'echo "$1" >>\'{}\''.format(gids_done_path),
+			'exec mv "$3" \'{}\'.chunk."$1".mp4'.format(opts.file_prefix) ]))
+		os.fchmod(dst.fileno(), 0700)
+
+	aria2c = subprocess.Popen([
+		'aria2c',
+
+		'--stop-with-process={}'.format(os.getpid()),
+		'--enable-rpc=true',
+		'--rpc-listen-port={}'.format(port),
+		'--rpc-secret={}'.format(key),
+
+		'--no-netrc', '--no-proxy',
+		'--max-concurrent-downloads=5',
+		'--max-connection-per-server=5',
+		'--max-file-not-found=5',
+		'--max-tries=8',
+		'--timeout=15',
+		'--connect-timeout=10',
+		'--lowest-speed-limit=100K',
+		'--user-agent={}'.format(ua),
+
+		'--on-download-complete={}'.format(hook),
+	], close_fds=True)
+	aria2c_exit_clean = False
+	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
+
+	log.debug('Starting downloads...')
+	try:
+		key = 'token:{}'.format(key)
+		line_buff, line_buff_max = list(), 50
+		wait_last_gids, poll_delay = line_buff_max, 3
+
+		def line_buff_flush():
+			lines = list((next(gid_seq), line) for line in line_buff)
+			gids_needed.extend(gid_format(gid) for gid, line in lines)
+			lines = list((gid, line) for gid, line in lines if gid not in gids_done)
+			gids_started.extend(it.imap(op.itemgetter(0), lines))
+			lines = list((gid_format(gid), line) for gid, line in lines)
+			if lines:
+				# system.multicall(methods)
+				# aria2.addUri([secret], uris[, options[, position]])
+				res = aria2c_jrpc('system.multicall', list(
+					dict( methodName='aria2.addUri',
+						params=[ key,
+							['{}/{}'.format(url_base, line)], dict(gid=gid) ] )
+					for gid, line in lines ))
+				res_chk = list([gid] for gid, line in lines)
+				if res != res_chk:
+					log_lines(log.error, [
+						'Result gid match check failed for submitted urls.',
+						('  expected: %s', ', '.join(bytes(r[0]) for r in res_chk)),
+						('  returned: %s', ', '.join(bytes(r[0]) for r in res)) ])
+					raise RuntimeError('Result gid match check failed')
+			del line_buff[:]
+
+		for line in pls.splitlines():
+			m = re.search(r'^#EXTINF:([\d.]+),', line)
+			if m: start_delay -= float(m.group(1))
+			if start_delay > 0: continue
+			if not line or line.startswith('#'): continue
+			if max_length and max_length + start_delay < 0: break
+			line_buff.append(line)
+			if len(line_buff) >= line_buff_max: line_buff_flush()
+		if line_buff: line_buff_flush()
+
+		log.debug('Waiting for last gids (count: %s)...', wait_last_gids)
+		for gid in reversed(gids_started[-wait_last_gids:]):
+			while True:
+				res = aria2c_jrpc('aria2.tellStatus', key, gid_format(gid), ['status'])
+				if res['status'] not in ['active', 'waiting']: break
+				time.sleep(poll_delay)
+
+		aria2c_jrpc('aria2.shutdown', key)
+		aria2c_exit_clean = True
+		log.debug(
+			'Finished with downloads (%s chunks downloaded, %s existing)',
+			len(gids_started), len(gids_done) )
+
+	finally:
+		if not aria2c_exit_clean: aria2c.terminate()
+		aria2c_exit_clean = not aria2c.wait()
+		os.unlink(hook)
+
+	if not aria2c_exit_clean:
+		log.error('aria2c exited with error status, aborting')
+		return 1
+
+	chunks_needed = list('{}.chunk.{}.mp4'.format(opts.file_prefix, gid) for gid in gids_needed)
+	chunks = filter(exists, chunks_needed)
+	chunks_missing = set(chunks_needed).difference(chunks)
+	if chunks_missing:
+		log.error(
+			'Aborting due to %s missing chunk(s)'
+				' (use --debug for full list, fix/remove %r to re-download)',
+			len(chunks_missing), gids_done_path )
+		log_lines( log.debug, ['Missing chunks:']
+			+ list(('  %s', chunk) for chunk in sorted(chunks_missing)) )
+		return 1
+	assert sorted(chunks) == chunks
+
+	log.debug('Concatenating %s chunk files...', len(chunks))
+	dst_file = '{}.mp4'.format(opts.file_prefix)
+
+	## Simple "cat" works for players like vlc and mpv, with minor seek inprecision
+	if not exists(dst_file):
+		dst_file_tmp = '{}.tmp'.format(dst_file)
+		with open(dst_file_tmp, 'wb') as dst:
+			subprocess.check_call(['cat'] + chunks, stdout=dst, close_fds=True)
+		os.rename(dst_file_tmp, dst_file)
+
+	## ffmpeg otoh makes file unplayable on the second pass, well done!
+	# with vod_cache('chunk.ffmpeg_concat') as vc:
+	# 	pls_chunks_path = vc.path
+	# 	if not vc.cached: vc.update(''.join(map('file \'{}\'\n'.format, chunks)))
+	# if not exists(dst_file):
+	# 	subprocess.check_call([ 'ffmpeg',
+	# 		'-y', '-f', 'concat', '-i', pls_chunks_path,
+	# 		'-movflags', 'empty_moov', # makes file playable right away
+	# 		'-c', 'copy', '-bsf:a', 'aac_adtstoasc', dst_file ])
+
+	log.debug('Finished, resulting file: %s', dst_file)
+
+if __name__ == '__main__': sys.exit(main())
