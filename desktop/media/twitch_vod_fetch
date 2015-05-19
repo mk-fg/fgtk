@@ -10,6 +10,7 @@ import os, sys, re, json, types, base64
 
 import requests
 
+
 def get_uid(n=3):
 	assert n * 8 % 6 == 0, n
 	return base64.urlsafe_b64encode(os.urandom(n))
@@ -17,7 +18,6 @@ def get_uid(n=3):
 def log_lines(log_func, lines, log_func_last=False):
 	'''Log passed sequence of lines or a newline-delimited string via log_func.
 		Sequence elements can also be tuples of (template, *args, **kws) to pass to log_func.
-
 		log_func_last (if passed) will be applied to the last line instead of log_func,
 			with idea behind it is to pass e.g. log.exception there,
 			so it'd dump proper traceback at the end of the message.'''
@@ -30,37 +30,15 @@ def log_lines(log_func, lines, log_func_last=False):
 		if log_func_last and n == len(lines): log_func_last(*line)
 		else: log_func(*line)
 
-req_jrpc_uid = lambda _ns=get_uid(),\
-	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
-req_ctx = type('Ctx', (object,), dict(s=None))
+def parse_pos_spec(pos):
+	try: mins, secs = pos.rsplit(':', 1)
+	except ValueError: hrs, mins, secs = 0, 0, pos
+	else:
+		try: hrs, mins = mins.rsplit(':', 1)
+		except ValueError: hrs = 0
+	return sum( a*b for a, b in
+		it.izip([3600, 60, 1], map(float, [hrs, mins, secs])) )
 
-@contextmanager
-def req(method, *args, **kws):
-	if not req_ctx.s:
-		# Mostly for cases when aria2c lags on startup
-		from requests.packages.urllib3.util.retry import Retry
-		req_ctx.s = requests.Session()
-		req_ctx.s.mount( 'http://',
-			requests.adapters.HTTPAdapter(
-				max_retries=Retry(total=4, backoff_factor=1) ) )
-
-	with closing(req_ctx.s.request(method, *args, **kws)) as r:
-		try: r.raise_for_status()
-		except Exception as err:
-			log_lines(log.error, [
-				'HTTP request failed:',
-				('  args: %s', args), ('  kws: %s', kws),
-				('  response content: %s', r.content) ])
-			raise
-		yield r
-
-def req_jrpc(url, method, *params):
-	data_req = dict(
-		jsonrpc='2.0', id=req_jrpc_uid(),
-		method=method, params=params )
-	with req('post', url, json=data_req) as r: data_res = r.json()
-	assert data_res.get('result'), [data_req, data_res]
-	return data_res['result']
 
 class VodFileCache(object):
 
@@ -88,19 +66,43 @@ class VodFileCache(object):
 		self.update_lock = True
 
 
-def parse_pos(pos):
-	try: mins, secs = pos.rsplit(':', 1)
-	except ValueError: hrs, mins, secs = 0, 0, pos
-	else:
-		try: hrs, mins = mins.rsplit(':', 1)
-		except ValueError: hrs = 0
-	return sum( a*b for a, b in
-		it.izip([3600, 60, 1], map(float, [hrs, mins, secs])) )
+@contextmanager
+def req(method, *args, **kws):
+	if not getattr(req, 's', None):
+		# Mostly for cases when aria2c lags on startup
+		from requests.packages.urllib3.util.retry import Retry
+		req.s = requests.Session()
+		req.s.mount( 'http://',
+			requests.adapters.HTTPAdapter(
+				max_retries=Retry(total=4, backoff_factor=1) ) )
+
+	with closing(req.s.request(method, *args, **kws)) as r:
+		try: r.raise_for_status()
+		except Exception as err:
+			log_lines(log.error, [
+				'HTTP request failed:',
+				('  args: %s', args), ('  kws: %s', kws),
+				('  response content: %s', r.content) ])
+			raise
+		yield r
+
+req_jrpc_uid = lambda _ns=get_uid(),\
+	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
+
+def req_jrpc(url, method, *params):
+	data_req = dict(
+		jsonrpc='2.0', id=req_jrpc_uid(),
+		method=method, params=params )
+	with req('post', url, json=data_req) as r: data_res = r.json()
+	assert data_res.get('result'), [data_req, data_res]
+	return data_res['result']
 
 
 def main(args=None):
 	import argparse
-	parser = argparse.ArgumentParser(description='Grab a VoD from twitch.tv, properly.')
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] url file_prefix',
+		description='Grab a VoD or a specified slice of it from twitch.tv, properly.')
 	parser.add_argument('url', help='URL for a VoD to fetch.')
 	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
 	parser.add_argument('-y', '--ytdl-opts',
@@ -129,8 +131,8 @@ def main(args=None):
 		log.warn('Looks like url/prefix args got mixed-up, correcting that')
 		opts.file_prefix, opts.url = opts.url, opts.file_prefix
 
-	start_delay = parse_pos(opts.start_pos) if opts.start_pos else 0
-	max_length = opts.length and parse_pos(opts.length)
+	start_delay = parse_pos_spec(opts.start_pos) if opts.start_pos else 0
+	max_length = opts.length and parse_pos_spec(opts.length)
 
 	vod_cache = ft.partial(VodFileCache, opts.file_prefix)
 
