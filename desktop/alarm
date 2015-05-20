@@ -20,8 +20,6 @@ _short_ts_s = dict(
 	s=1, sec=1, second=1 )
 
 def _short_ts_regexp():
-	'''Generates regexp for parsing of
-		shortened relative timestamps, as shown in the table.'''
 	ts_re = ['^']
 	for k in it.chain(_short_ts_days, _short_ts_s):
 		ts_re.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
@@ -29,8 +27,6 @@ def _short_ts_regexp():
 _short_ts_regexp = _short_ts_regexp()
 
 def parse_timestamp(ts_str):
-	'''Match time either in human-readable format (as accepted by dateutil),
-		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
 	assert isinstance(ts_str, bytes), [type(ts_str), repr(ts_str)]
 	ts_str = ts_str.replace('_', ' ')
 
