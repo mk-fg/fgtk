@@ -3,8 +3,9 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from os.path import exists, dirname
+from collections import OrderedDict
 from contextlib import contextmanager, closing
+from os.path import exists, dirname
 import subprocess, tempfile, time, glob
 import os, sys, re, json, types, base64
 
@@ -171,17 +172,18 @@ def main(args=None):
 		gids_done, gids_done_path = vc.cached, vc.path
 		if not gids_done: gids_done = vc.update('')
 		gids_done = set(it.imap(gid_parse, gids_done.splitlines()))
-	gids_started, gids_needed = list(), list()
+	gids_started, gids_needed = OrderedDict(), list()
 
 	# Try to pick leaner shell than bash, since hook is dead-simple
+	# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
 	sh_path = '/bin/dash'
 	if not exists(sh_path): sh_path = '/bin/ash' # busybox
 	if not exists(sh_path): sh_path = '/bin/sh'
 
-	hook = '/tmp/.fetch_twitch_vod.hook'
+	hook_done = '/tmp/.fetch_twitch_vod.done.hook'
 	assert "'" not in opts.file_prefix, opts.file_prefix
 	assert "'" not in gids_done_path, gids_done_path
-	with open(hook, 'wb') as dst:
+	with open(hook_done, 'wb') as dst:
 		dst.write('\n'.join([
 			'#!{}'.format(sh_path),
 			'echo "$1" >>\'{}\''.format(gids_done_path),
@@ -206,7 +208,7 @@ def main(args=None):
 		'--lowest-speed-limit=100K',
 		'--user-agent={}'.format(ua),
 
-		'--on-download-complete={}'.format(hook),
+		'--on-download-complete={}'.format(hook_done),
 	], close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
@@ -215,31 +217,34 @@ def main(args=None):
 	try:
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
-		wait_last_gids, poll_delay = line_buff_max, 3
+		wait_last_gids, poll_delay, chunk_err_retries = line_buff_max, 3, 5
+
+		def queue_gid_downloads(gid_files):
+			# system.multicall(methods)
+			# aria2.addUri([secret], uris[, options[, position]])
+			res = aria2c_jrpc('system.multicall', list(
+				dict( methodName='aria2.addUri',
+					params=[ key,
+						['{}/{}'.format(url_base, path)], dict(gid=gid) ] )
+				for gid, path in gid_files ))
+			res_chk = list([gid] for gid, path in gid_files)
+			if res != res_chk:
+				log_lines(log.error, [
+					'Result gid match check failed for submitted urls.',
+					('  expected: %s', ', '.join(bytes(r[0]) for r in res_chk)),
+					('  returned: %s', ', '.join(bytes(r[0]) for r in res)) ])
+				raise RuntimeError('Result gid match check failed')
 
 		def line_buff_flush():
-			lines = list((next(gid_seq), line) for line in line_buff)
-			gids_needed.extend(gid_format(gid) for gid, line in lines)
-			lines = list((gid, line) for gid, line in lines if gid not in gids_done)
-			gids_started.extend(it.imap(op.itemgetter(0), lines))
-			lines = list((gid_format(gid), line) for gid, line in lines)
-			if lines:
-				# system.multicall(methods)
-				# aria2.addUri([secret], uris[, options[, position]])
-				res = aria2c_jrpc('system.multicall', list(
-					dict( methodName='aria2.addUri',
-						params=[ key,
-							['{}/{}'.format(url_base, line)], dict(gid=gid) ] )
-					for gid, line in lines ))
-				res_chk = list([gid] for gid, line in lines)
-				if res != res_chk:
-					log_lines(log.error, [
-						'Result gid match check failed for submitted urls.',
-						('  expected: %s', ', '.join(bytes(r[0]) for r in res_chk)),
-						('  returned: %s', ', '.join(bytes(r[0]) for r in res)) ])
-					raise RuntimeError('Result gid match check failed')
+			gid_files = list((next(gid_seq), path) for path in line_buff)
+			gids_needed.extend(gid_format(gid) for gid, path in gid_files)
+			gid_files = list((gid, path) for gid, path in gid_files if gid not in gids_done)
+			gids_started.update(gid_files)
+			gid_files = list((gid_format(gid), path) for gid, path in gid_files)
+			if gid_files: queue_gid_downloads(gid_files)
 			del line_buff[:]
 
+		# Queue all initial downloads
 		for line in pls.splitlines():
 			m = re.search(r'^#EXTINF:([\d.]+),', line)
 			if m: start_delay -= float(m.group(1))
@@ -250,23 +255,39 @@ def main(args=None):
 			if len(line_buff) >= line_buff_max: line_buff_flush()
 		if line_buff: line_buff_flush()
 
-		log.debug('Waiting for last gids (count: %s)...', wait_last_gids)
-		for gid in reversed(gids_started[-wait_last_gids:]):
-			while True:
-				res = aria2c_jrpc('aria2.tellStatus', key, gid_format(gid), ['status'])
-				if res['status'] not in ['active', 'waiting']: break
-				time.sleep(poll_delay)
+		# Wait-to-complete - check missing - retry loop
+		gid_retries, gids_started_count = None, len(gids_started)
+		for n in xrange(1, chunk_err_retries+1):
+			if gid_retries:
+				aria2c_jrpc('aria2.purgeDownloadResult', key)
+				queue_gid_downloads(gid_retries)
+
+			gids_wait = list(gids_started)[-wait_last_gids:]
+			log.debug('Waiting for last gids (count: %s, err-retry-pass: %s)...', len(gids_wait), n)
+			for gid in reversed(gids_wait):
+				while True:
+					res = aria2c_jrpc('aria2.tellStatus', key, gid_format(gid), ['status'])
+					if res['status'] not in ['active', 'waiting']: break
+					time.sleep(poll_delay)
+
+			with vod_cache('gids') as vc:
+				for gid in it.imap(gid_parse, vc.cached.splitlines()):
+					gids_started.pop(gid, None)
+			gid_retries = list((gid_format(gid), path) for gid, path in gids_started.viewitems())
+			if not gid_retries: break
+		else:
+			log.error('Failed to download %s chunks (after %s retries)', len(gid_retries), n)
 
 		aria2c_jrpc('aria2.shutdown', key)
-		aria2c_exit_clean = True
+		aria2c_exit_clean = not gid_retries
 		log.debug(
-			'Finished with downloads (%s chunks downloaded, %s existing)',
-			len(gids_started), len(gids_done) )
+			'Finished with downloads (%s chunks downloaded, %s failed, %s existing)',
+			gids_started_count - len(gid_retries), len(gid_retries), len(gids_done) )
 
 	finally:
 		if not aria2c_exit_clean: aria2c.terminate()
 		aria2c_exit_clean = not aria2c.wait()
-		os.unlink(hook)
+		os.unlink(hook_done)
 
 	if not aria2c_exit_clean:
 		log.error('aria2c exited with error status, aborting')
