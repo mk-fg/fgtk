@@ -123,9 +123,12 @@ def run( pins, t_on, t_off, phase=False, phase_shared=None,
 			elif countdown_func == 'flat': a = 0 # f = b, b = t_on
 			else: raise ValueError(countdown_func)
 			def t_update(t):
-				t_on = a * t + t_on0
-				t_off = t_on / t_on_off_ratio
-				return max(t_on, t_min), max(t_off, t_min)
+				t0 = (t_on, t_off)
+				t_on1 = a * t + t_on0
+				t_off1 = t_on1 / t_on_off_ratio
+				t1 = max(t_on1, t_min), max(t_off1, t_min)
+				# log.debug('t_on/t_off update: %s -> %s', t0, t1)
+				return t1
 			ts_sync, ts_sync_max, ts0 = 0, 100, time.time()
 
 	def skip_shared(n, phase, state):
@@ -169,7 +172,7 @@ def run( pins, t_on, t_off, phase=False, phase_shared=None,
 		if countdown:
 			ts_sync += 1
 			if ts_sync >= ts_sync_max: ts_sync, ts = 0, time.time() - ts0
-			if t_on > t_min: t_on, t_off = t_update(ts)
+			t_on, t_off = t_update(ts)
 			if ts >= countdown:
 				log.debug('Finished countdown on: %.2fs / %.2f', ts, countdown)
 				break
@@ -220,6 +223,10 @@ def main(args=None):
 	parser.add_argument('--interval-on',
 		type=float, metavar='seconds',
 		help='Separate interval for keeping led(s) enabled. Equals to --interval by default.')
+	parser.add_argument('--interval-min',
+		type=float, metavar='seconds', default=0.02,
+		help='Minimal interval for keeping led(s)'
+			' enabled/disabled (default: %(default)s). Can be useful with --countdown.')
 	parser.add_argument('-s', '--start-phase',
 		type=int, metavar='0/1', choices=[0, 1], default=0,
 		help='Start blinking from specified phase (1 or 0, default: %(default)s).')
@@ -289,7 +296,7 @@ def main(args=None):
 	try:
 		run(
 			opts.pins, t_on, t_off, phase=phase, phase_shared=opts.shared,
-			pre=pre, post=post, end=opts.end_phase,
+			pre=pre, post=post, end=opts.end_phase, t_min=opts.interval_min,
 			count=opts.count, countdown=countdown, countdown_func=opts.countdown_func )
 	except: # do end-phase stuff if something goes wrong
 		if opts.end_phase is not None:
