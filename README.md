@@ -908,6 +908,8 @@ you, and is designed to be "hands-off" kind of easy.
 Using it to keep track of SoC sensor readings on boards like RPi (to see if
 maybe it's time to cram a heatsink on top of one or something).
 
+Uses: layered-yaml-attrdict-config (lya), rrdtool.
+
 
 
 ### Desktop

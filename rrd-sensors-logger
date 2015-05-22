@@ -10,7 +10,7 @@ import os, sys, io, re, types, string, base64, time, math
 import stat, errno, tempfile, glob, subprocess, signal
 import struct, contextlib, hashlib, logging
 
-import yaml, lya, pyaml, rrdtool
+import yaml, lya, rrdtool
 
 
 p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
@@ -18,10 +18,7 @@ p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
 yaml_load = yaml.load
 yaml_dump = lambda data, dst:\
 	yaml.safe_dump(data, dst, allow_unicode=True, default_flow_style=False)
-
 yaml.SafeDumper.add_representer(lya.AttrDict, yaml.SafeDumper.represent_dict)
-pyaml.PrettyYAMLDumper.add_representer(
-	lya.AttrDict, pyaml.PrettyYAMLDumper.represent_dict )
 
 
 ### systemd unit file:
@@ -855,15 +852,15 @@ def main(args=None):
 		raise RuntimeError # should never get here
 
 
-	if opts.cmd == 'print-last':
+	elif opts.cmd == 'print-last':
 		vals = dict()
 		if opts.last_update: ts, vals_raw = rrdb.fetch_last_update()
 		else: vals_raw = rrdb.fetch_last_values(opts.time_delta, cf=opts.cf)
 		for (s, k), v in vals_raw.viewitems(): vals['{}.{}'.format(s, k)] = v
-		pyaml.p(vals)
+		yaml.safe_dump(vals, sys.stdout, allow_unicode=True, default_flow_style=False)
 
 
-	if opts.cmd == 'graph':
+	elif opts.cmd == 'graph':
 		ss = opts.sensor
 		if not ss: ss = list(conf.meas.sensors)
 		metric, units = opts.metric, sensors.units[opts.metric]
