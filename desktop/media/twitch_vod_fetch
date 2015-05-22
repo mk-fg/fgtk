@@ -106,9 +106,14 @@ def main(args=None):
 		description='Grab a VoD or a specified slice of it from twitch.tv, properly.')
 	parser.add_argument('url', help='URL for a VoD to fetch.')
 	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
+
 	parser.add_argument('-y', '--ytdl-opts',
 		action='append', metavar='opts',
 		help='Extra opts for youtube-dl --get-url command.'
+			' Will be split on spaces, unless option is used multiple times.')
+	parser.add_argument('-a', '--aria2c-opts',
+		action='append', metavar='opts',
+		help='Extra opts for aria2c command.'
 			' Will be split on spaces, unless option is used multiple times.')
 
 	parser.add_argument('-s', '--start-pos',
@@ -190,9 +195,15 @@ def main(args=None):
 			'exec mv "$3" \'{}\'.chunk."$1".mp4'.format(opts.file_prefix) ]))
 		os.fchmod(dst.fileno(), 0700)
 
+	aria2c_log_level = 'notice' if opts.debug else 'warn'
+	aria2c_opts = opts.aria2c_opts or list()
+	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].split()
 	aria2c = subprocess.Popen([
 		'aria2c',
 
+		'--console-log-level={}'.format(aria2c_log_level),
+
+		'--continue=false',
 		'--stop-with-process={}'.format(os.getpid()),
 		'--enable-rpc=true',
 		'--rpc-listen-port={}'.format(port),
@@ -209,7 +220,7 @@ def main(args=None):
 		'--user-agent={}'.format(ua),
 
 		'--on-download-complete={}'.format(hook_done),
-	], close_fds=True)
+	] + aria2c_opts, close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
 
@@ -217,7 +228,7 @@ def main(args=None):
 	try:
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
-		wait_last_gids, poll_delay, chunk_err_retries = line_buff_max, 3, 5
+		wait_last_gids, poll_delay, chunk_err_retries = line_buff_max, 5, 5
 
 		def queue_gid_downloads(gid_files):
 			# system.multicall(methods)
@@ -244,7 +255,7 @@ def main(args=None):
 			if gid_files: queue_gid_downloads(gid_files)
 			del line_buff[:]
 
-		# Queue all initial downloads
+		### Queue all initial downloads
 		for line in pls.splitlines():
 			m = re.search(r'^#EXTINF:([\d.]+),', line)
 			if m: start_delay -= float(m.group(1))
@@ -255,7 +266,7 @@ def main(args=None):
 			if len(line_buff) >= line_buff_max: line_buff_flush()
 		if line_buff: line_buff_flush()
 
-		# Wait-to-complete - check missing - retry loop
+		### Wait-to-complete - check missing - retry loop
 		gid_retries, gids_started_count = None, len(gids_started)
 		for n in xrange(1, chunk_err_retries+1):
 			if gid_retries:
@@ -263,16 +274,19 @@ def main(args=None):
 				queue_gid_downloads(gid_retries)
 
 			gids_wait = list(gids_started)[-wait_last_gids:]
-			log.debug('Waiting for last gids (count: %s, err-retry-pass: %s)...', len(gids_wait), n)
-			for gid in reversed(gids_wait):
+			gid_last = gids_wait and gids_wait[-1]
+			for m, gid in enumerate(reversed(gids_wait)):
 				while True:
+					log.info( # helps to determine the overall progress
+						'\n\n  ------ waiting for last gids (count: %s, all'
+							' downloads: %s, last gid: %s, err-retry-pass: %s) ------  \n',
+						len(gids_wait) - m, gids_started_count, gid_last, n )
 					res = aria2c_jrpc('aria2.tellStatus', key, gid_format(gid), ['status'])
 					if res['status'] not in ['active', 'waiting']: break
 					time.sleep(poll_delay)
 
 			with vod_cache('gids') as vc:
-				for gid in it.imap(gid_parse, vc.cached.splitlines()):
-					gids_started.pop(gid, None)
+				for gid in it.imap(gid_parse, vc.cached.splitlines()): gids_started.pop(gid, None)
 			gid_retries = list((gid_format(gid), path) for gid, path in gids_started.viewitems())
 			if not gid_retries: break
 		else:

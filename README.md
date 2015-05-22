@@ -1007,8 +1007,8 @@ the chunks from source file.
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
-youtube-dl - the usual tool for the job - [doesn't support neither seeking to
-time or length limits](https://github.com/rg3/youtube-dl/issues/622),
+youtube-dl - the usual tool for the job - [doesn't support neither seeking
+to time nor length limits](https://github.com/rg3/youtube-dl/issues/622),
 but does a good job of getting a VoD m3u8 playlist with chunks of the video
 (--get-url option).
 
