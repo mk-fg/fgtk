@@ -95,7 +95,7 @@ def req_jrpc(url, method, *params):
 		jsonrpc='2.0', id=req_jrpc_uid(),
 		method=method, params=params )
 	with req('post', url, json=data_req) as r: data_res = r.json()
-	assert data_res.get('result'), [data_req, data_res]
+	assert data_res.get('result') is not None, [data_req, data_res]
 	return data_res['result']
 
 
@@ -121,7 +121,7 @@ def main(args=None):
 		help='Only download video chunks after specified start position.')
 	parser.add_argument('-l', '--length',
 		metavar='[[hours:]minutes:]seconds',
-		help='Only download specified length of the video (from specified start).')
+		help='Only download specified length of the video (from specified start or beginning).')
 
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -147,9 +147,9 @@ def main(args=None):
 		if not url_pls:
 			ytdl_opts = opts.ytdl_opts or list()
 			if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].split()
-
-			url_pls = vc.update(subprocess.check_output(
-				['youtube-dl', '--get-url'] + ytdl_opts + [opts.url], close_fds=True ).strip())
+			cmd = ['youtube-dl', '--get-url'] + ytdl_opts + [opts.url]
+			log.debug('Running "youtube-dl --get-url" command: %s', ' '.join(cmd))
+			url_pls = vc.update(subprocess.check_output(cmd, close_fds=True).strip())
 	url_base = url_pls.rsplit('/', 1)[0]
 
 	with vod_cache('m3u8.ua') as vc:
@@ -191,8 +191,8 @@ def main(args=None):
 	with open(hook_done, 'wb') as dst:
 		dst.write('\n'.join([
 			'#!{}'.format(sh_path),
-			'echo "$1" >>\'{}\''.format(gids_done_path),
-			'exec mv "$3" \'{}\'.chunk."$1".mp4'.format(opts.file_prefix) ]))
+			'mv "$3" \'{}\'.chunk."$1".mp4\\'.format(opts.file_prefix),
+			'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
 		os.fchmod(dst.fileno(), 0700)
 
 	aria2c_log_level = 'notice' if opts.debug else 'warn'
@@ -228,7 +228,7 @@ def main(args=None):
 	try:
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
-		wait_last_gids, poll_delay, chunk_err_retries = line_buff_max, 5, 5
+		wait_last_gids, poll_delay, chunk_err_retries = 100, 5, 5
 
 		def queue_gid_downloads(gid_files):
 			# system.multicall(methods)
@@ -248,7 +248,7 @@ def main(args=None):
 
 		def line_buff_flush():
 			gid_files = list((next(gid_seq), path) for path in line_buff)
-			gids_needed.extend(gid_format(gid) for gid, path in gid_files)
+			gids_needed.extend(map(op.itemgetter(0), gid_files))
 			gid_files = list((gid, path) for gid, path in gid_files if gid not in gids_done)
 			gids_started.update(gid_files)
 			gid_files = list((gid_format(gid), path) for gid, path in gid_files)
@@ -273,17 +273,18 @@ def main(args=None):
 				aria2c_jrpc('aria2.purgeDownloadResult', key)
 				queue_gid_downloads(gid_retries)
 
-			gids_wait = list(gids_started)[-wait_last_gids:]
-			gid_last = gids_wait and gids_wait[-1]
-			for m, gid in enumerate(reversed(gids_wait)):
-				while True:
-					log.info( # helps to determine the overall progress
-						'\n\n  ------ waiting for last gids (count: %s, all'
-							' downloads: %s, last gid: %s, err-retry-pass: %s) ------  \n',
-						len(gids_wait) - m, gids_started_count, gid_last, n )
-					res = aria2c_jrpc('aria2.tellStatus', key, gid_format(gid), ['status'])
-					if res['status'] not in ['active', 'waiting']: break
-					time.sleep(poll_delay)
+			gid_last = list(gids_started)[-1]
+			while True:
+				gids_wait = len(aria2c_jrpc('aria2.tellActive', key, ['status']))
+				res = aria2c_jrpc('aria2.tellWaiting', key, 0, wait_last_gids, ['status'])
+				if len(res) == wait_last_gids: gids_wait = '>{}'.format(wait_last_gids)
+				else: gids_wait += len(res)
+				if not gids_wait: break
+				log.info( # helps to see the overall progress
+					'\n\n  ------ waiting for downloads (count: %s'
+						' / %s, last gid: %06d, err-retry-pass: %s) ------  \n',
+					gids_wait, gids_started_count, gid_last, n )
+				time.sleep(poll_delay)
 
 			with vod_cache('gids') as vc:
 				for gid in it.imap(gid_parse, vc.cached.splitlines()): gids_started.pop(gid, None)
@@ -292,6 +293,7 @@ def main(args=None):
 		else:
 			log.error('Failed to download %s chunks (after %s retries)', len(gid_retries), n)
 
+		### Proper shutdown
 		aria2c_jrpc('aria2.shutdown', key)
 		aria2c_exit_clean = not gid_retries
 		log.debug(
@@ -307,7 +309,9 @@ def main(args=None):
 		log.error('aria2c exited with error status, aborting')
 		return 1
 
-	chunks_needed = list('{}.chunk.{}.mp4'.format(opts.file_prefix, gid) for gid in gids_needed)
+	chunks_needed = list(
+		'{}.chunk.{}.mp4'.format(opts.file_prefix, gid_format(gid))
+		for gid in gids_needed )
 	chunks = filter(exists, chunks_needed)
 	chunks_missing = set(chunks_needed).difference(chunks)
 	if chunks_missing:
