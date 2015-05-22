@@ -890,6 +890,24 @@ With this command, just running it on the remote host - presumably from diff
 location, or even localhost - should give (hopefully) any possible gibberish
 permutation that openssh (or something else) may decide to throw at you.
 
+##### rrd-sensors-logger
+
+Daemon script to grab data from whatever sensors and log it all via rrdtool.
+
+Self-contained, configurable, integrates with systemd (Type=notify, watchdog),
+has commands to easily produce graphs from this data and print last values.
+
+Auto-generates rrd schema from config (and filename from that), inits db, checks
+for time jumps and aborts if necessary (rrdtool can't handle these, and they are
+common on arm boards), cleans up after itself.
+
+Same things can be done by using rrdtool directly, but it requires a ton of
+typing for graph options and such, while this script auto-generates it all for
+you, and is designed to be "hands-off" kind of easy.
+
+Using it to keep track of SoC sensor readings on boards like RPi (to see if
+maybe it's time to cram a heatsink on top of one or something).
+
 
 
 ### Desktop
@@ -1008,6 +1026,7 @@ Process is designed to tolerate Ctrl+C and resume from any point, and allows
 whatever tweaks (e.g. update url, change playlist, skip some chunks, etc), as it
 keeps all the state between these in plaintext files.
 
+Needs youtube-dl, requests and aria2.
 A bit more info on it can be found in
 [this blog post](http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html).
 

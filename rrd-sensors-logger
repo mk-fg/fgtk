@@ -1,0 +1,893 @@
+#!/usr/bin/env python2
+#-*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from collections import deque, OrderedDict
+from os.path import join, exists, realpath, abspath
+from datetime import datetime, timedelta
+import os, sys, io, re, types, string, base64, time, math
+import stat, errno, tempfile, glob, subprocess, signal
+import struct, contextlib, hashlib, logging
+
+import yaml, lya, pyaml, rrdtool
+
+
+p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
+
+yaml_load = yaml.load
+yaml_dump = lambda data, dst:\
+	yaml.safe_dump(data, dst, allow_unicode=True, default_flow_style=False)
+
+yaml.SafeDumper.add_representer(lya.AttrDict, yaml.SafeDumper.represent_dict)
+pyaml.PrettyYAMLDumper.add_representer(
+	lya.AttrDict, pyaml.PrettyYAMLDumper.represent_dict )
+
+
+### systemd unit file:
+#
+# [Unit]
+# After=time-sync.target
+#
+# [Service]
+# Type=notify
+# WatchdogSec=30
+# Restart=always
+# RestartSec=30
+# StartLimitInterval=10min
+# StartLimitBurst=10
+# ExecStart=/usr/local/bin/rrd-sensors-logger --systemd daemon
+#
+# [Install]
+# WantedBy=multi-user.target
+
+conf_base = lya.AttrDict(yaml_load('''
+rrd:
+	# Parameters for the created rrd databases
+	# Most are translated directly to values for "rrdtool create":
+	#  http://oss.oetiker.ch/rrdtool/doc/rrdcreate.en.html
+
+	storage_dir: /var/lib/rrd_logger
+	name: rrd_logger.0 # can be used to encode schema version
+	cleanup_after: 14d # remove unused rrd files older than that
+
+	# Symlink that gets updated to point to a currently-used rrd file
+	current_symlink: rrd_logger.current.rrd
+
+	# See http://oss.oetiker.ch/rrdtool/doc/rrdcreate.en.html#IThe_HEARTBEAT_and_the_STEP
+	step: 30s # finest granularity of stored data
+	heartbeat: 60s # used for all DS'es, must be at least 20% greater than measurement interval
+
+	aggregate:
+		# RRA parameters for rrdtool
+		cf: average
+		xff: 0.8
+		keep: 30d
+		# "aggregate.step" gets converted to a number
+		#  of datapoints, so it must be a multiple of "step" above
+		step: 5min
+
+	# "timesync_file" will contain current posix timestamp and uptime values
+	# It should be checked on system boot to make sure clock doesn't get reset to
+	#  some insanely-backwards value, as it will make datapoints completely meaningless
+	# Best way to use the file would be to start some script with root privileges
+	#  that would detect uptime wrap-arounds (abort if it wasn't),
+	#  then check if time has been synced via NTP (abort if it was),
+	#  then set the time to timestamp to this value + new uptime + update_interval
+	# File will be created under "storage_dir" (can be set above)
+	timesync_file:
+		enabled: true
+		offset: 5s # roughly the time for RPi to boot
+		path: last_write.timestamps
+		check: true
+		check_fatal: true
+
+meas:
+	interval: 20
+	sensors:
+		rpi_soc: # sensor name (will correspond to rrd DS name)
+			type: rpi_soc # used to pick the code to query the sensor
+			# path: /sys/class/thermal/thermal_zoneX/temp
+
+graph:
+	opts:
+		width: 1000
+		height: 500
+		start: -5h
+		end:
+		left-axis-format: '%0.1lf'
+
+'''.replace('\t', '  ')))
+
+
+### For bencode bits below
+# Derived from a thing under BitTorrent Open Source License, written by Petru Paler
+
+# Different from vanilla bencode in:
+#  * Handling "leading zeroes" in keys (doesn't error - for cjdns compat)
+#  * encode_none method (to "n")
+#  * encode_string encodes unicode as utf-8 bytes
+
+def _ns_class(cls_name, cls_parents, cls_attrs):
+	for k, v in cls_attrs.viewitems():
+		if isinstance(v, types.FunctionType):
+			cls_attrs[k] = classmethod(v)
+	return type(cls_name, cls_parents, cls_attrs)
+
+class BTEError(Exception): pass
+
+class Bencached(object):
+	__slots__ = 'bencoded',
+	def __init__(self, s): self.bencoded = s
+
+class BTE(object):
+	__metaclass__ = _ns_class
+
+	unicode_enc = 'utf-8'
+	enable_none = True
+	enable_bool = True
+	cjdns_compat = False
+
+	def decode_int(cls, x, f):
+		f += 1
+		newf = x.index('e', f)
+		n = int(x[f:newf])
+		if x[f] == '-':
+			if x[f + 1] == '0': raise ValueError
+		elif x[f] == '0' and newf != f+1: raise ValueError
+		return n, newf+1
+	def decode_string(cls, x, f):
+		colon = x.index(':', f)
+		n = int(x[f:colon])
+		if not cls.cjdns_compat\
+			and x[f] == '0' and colon != f+1: raise ValueError
+		colon += 1
+		return (x[colon:colon+n], colon+n)
+	def decode_list(cls, x, f):
+		r, f = [], f+1
+		while x[f] != 'e':
+			v, f = cls.decode_func[x[f]](cls, x, f)
+			r.append(v)
+		return r, f + 1
+	def decode_dict(cls, x, f):
+		r, f = {}, f+1
+		while x[f] != 'e':
+			k, f = cls.decode_string(x, f)
+			r[k], f = cls.decode_func[x[f]](cls, x, f)
+		return r, f + 1
+	def decode_none(cls, x, f):
+		if not cls.enable_none: raise ValueError(x[f])
+		return None, f+1
+	decode_func = dict(l=decode_list, d=decode_dict, i=decode_int, n=decode_none)
+	for n in xrange(10): decode_func[bytes(n)] = decode_string
+
+	def encode_bencached(cls, x, r): r.append(x.bencoded)
+	def encode_int(cls, x, r): r.extend(('i', str(x), 'e'))
+	def encode_float(cls, x, r): r.extend(('f', struct.pack('!d', x), 'e'))
+	def encode_bool(cls, x, r):
+		if not cls.enable_bool: raise ValueError(x)
+		if x: cls.encode_int(1, r)
+		else: cls.encode_int(0, r)
+	def encode_string(cls, x, r):
+		if isinstance(x, unicode):
+			if not cls.unicode_enc: raise ValueError(x)
+			x = x.encode(cls.unicode_enc)
+		r.extend((str(len(x)), ':', x))
+	def encode_list(cls, x, r):
+		r.append('l')
+		for i in x: cls.encode_func[type(i)](cls, i, r)
+		r.append('e')
+	def encode_dict(cls, x, r):
+		r.append('d')
+		ilist = x.items()
+		ilist.sort()
+		for k, v in ilist:
+			r.extend((str(len(k)), ':', k))
+			cls.encode_func[type(v)](cls, v, r)
+		r.append('e')
+	def encode_none(cls, x, r):
+		if not cls.enable_none: raise ValueError(x)
+		r.append('n')
+	encode_func = {
+		Bencached: encode_bencached,
+		unicode: encode_string,
+		str: encode_string,
+		types.IntType: encode_int,
+		types.LongType: encode_int,
+		types.FloatType: encode_float,
+		types.ListType: encode_list,
+		types.TupleType: encode_list,
+		types.DictType: encode_dict,
+		types.BooleanType: encode_bool,
+		types.NoneType: encode_none,
+	}
+
+	def bdecode(cls, x):
+		try: r, l = cls.decode_func[x[0]](cls, x, 0)
+		except (IndexError, KeyError, ValueError) as err:
+			raise BTEError('Not a valid bencoded string: {}'.format(err))
+		if l != len(x):
+			raise BTEError('Invalid bencoded value (data after valid prefix)')
+		return r
+
+	def bencode(cls, x):
+		r = []
+		cls.encode_func[type(x)](cls, x, r)
+		return ''.join(r)
+
+
+def b64(data):
+	return base64.urlsafe_b64encode(data).rstrip('=')
+
+def get_uid_token(chars=4):
+	assert chars * 6 % 8 == 0, chars
+	return b64(os.urandom(chars * 6 / 8))
+
+def data_hash(data, n=20, **kws):
+	data = _data_hash(data, **kws)
+	if not n or n <= 0: return data
+	assert n <= len(data), [n, len(data)]
+	return data[:n]
+
+def _data_hash(data, as_bencode=False, as_hex=False):
+	data = BTE.bencode(data)
+	if as_bencode: return data
+	data = hashlib.sha256(data)
+	if as_hex: return data.hexdigest()
+	return b64(data.digest())
+
+
+class TSValueError(Exception): pass
+
+_short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
+_short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
+
+def _short_ts_regexp():
+	rex = list('^-?')
+	for k in it.chain(_short_ts_days, _short_ts_s):
+		rex.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
+	return re.compile(''.join(rex), re.I | re.U)
+_short_ts_regexp = _short_ts_regexp()
+
+def ts_diff_parse(spec, t=float, as_td_obj=False):
+	try: spec = float(spec)
+	except ValueError: pass
+	else: return t(spec)
+	spec = spec.strip()
+	if re.search(r'^[\d.]+$', spec): spec = '{}s'.format(spec)
+	m = _short_ts_regexp.search(spec)
+	if not m: raise ValueError(spec)
+	delta, delta_any = list(), False
+	parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
+	for units in [_short_ts_days, _short_ts_s]:
+		val = 0
+		for k, v in units.iteritems():
+			try:
+				if not m.group(k): continue
+				n = parse_int(m.group(k))
+			except IndexError: continue
+			delta_any, val = True, val + n * v
+		delta.append(val)
+	if not delta_any:
+		raise ValueError('Invalid time delta specification: {!r}'.format(spec))
+	td = timedelta(*delta)
+	return td if as_td_obj else t(td.total_seconds())
+
+def ts_diff_repr( ts_or_delta, ts0=None, ext=None, absolute_diff=False,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	if isinstance(ts0, (int, float, long)): ts0 = datetime.fromtimestamp(ts_or_delta)
+	assert ts0 is None or isinstance(ts0, (int, float, long, datetime)), ts0
+	if isinstance(ts_or_delta, (int, float, long)):
+		ts_or_delta = timedelta(seconds=ts_or_delta)\
+			if not ts0 else datetime.fromtimestamp(ts_or_delta)
+	delta = (ts_or_delta - (ts0 or datetime.now()))\
+		if not isinstance(ts_or_delta, timedelta) else ts_or_delta
+	if absolute_diff: delta = abs(delta)
+	res, s = list(), delta.total_seconds()
+	for unit, unit_s in sorted(_units.viewitems(), key=op.itemgetter(1), reverse=True):
+		val = math.floor(s / float(unit_s))
+		if not val: continue
+		res.append('{:.0f}{}'.format(val, unit))
+		if len(res) >= 2: break
+		s -= val * unit_s
+	if not res: return 'now'
+	else:
+		if ext: res.append(ext)
+		return ' '.join(res)
+
+def get_uptime():
+	with open('/proc/uptime', 'rb') as src: return float(src.readline().split()[0])
+
+
+@contextlib.contextmanager
+def safe_replacement(path):
+	if not isinstance(path, types.StringTypes): path = path.path # twisted.python.filepath.FilePath
+	kws = dict( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	with tempfile.NamedTemporaryFile(**kws) as tmp:
+		try: mode = stat.S_IMODE(os.stat(path).st_mode)
+		except (OSError, IOError): mode = None
+		try:
+			yield tmp
+			tmp.flush()
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			os.rename(tmp.name, path)
+		except safe_replacement.cancel: pass
+		finally:
+			try: os.unlink(tmp.name)
+			except (OSError, IOError): pass
+
+class CancelFileReplacement(Exception): pass
+safe_replacement.cancel = CancelFileReplacement
+
+
+
+class RRD(object):
+
+	# DS:ds-name:GAUGE | COUNTER | DERIVE | ABSOLUTE:heartbeat:min:max
+	# RRA:AVERAGE | MIN | MAX | LAST:xff:steps:rows
+
+	ds_types = 'gauge', 'counter', 'derive', 'absolute' # "compute" is different
+	rra_cfs = 'average', 'min', 'max', 'last'
+
+	def __init__(self, storage_dir, name, timesync=None, log=None):
+		self.storage_dir, self.name = storage_dir, name
+		self._path = self._dss = None
+		self.log = log or logging.getLogger('rrd.{:x}'.format(id(self)))
+
+		self.timesync = timesync
+		if timesync:
+			timesync.path = join(self.storage_dir, timesync.path)
+			if timesync.offset: timesync.offset = ts_diff_parse(timesync.offset)
+			self.timesync_file_check()
+
+
+	def ds_for_sensor_metric(self, sensor_name, metric):
+		assert '__' not in sensor_name + metric, [sensor_name, metric]
+		return '{}__{}'.format(sensor_name, metric)
+	def sensor_metric_for_ds(self, ds): return tuple(ds.split('__'))
+
+	def timesync_file_write(self):
+		if not self.timesync: return
+		uptime, ts = get_uptime(), time.time()
+		if self.timesync.offset: ts += self.timesync.offset
+		with safe_replacement(self.timesync.path) as dst:
+			dst.write('{!r} {!r}\n'.format(uptime, ts))
+
+	def timesync_file_check(self):
+		if not self.timesync or not self.timesync.check: return
+		try:
+			with open(self.timesync.path, 'rb') as src:
+				src_uptime, src_ts = map(float, src.read().split())
+		except IOError as err:
+			if err.errno != errno.ENOENT: raise
+		except Exception as err:
+			self.log.warn( 'Failed to process/check timestamp/uptime'
+				' values from timesync file %r: %s', self.timesync.path, err )
+		else:
+			uptime, ts = get_uptime(), time.time()
+			if src_uptime > uptime and src_ts > ts:
+				err_msg = ( 'Detected uptime roll-over ({:.1f} -> {:.1f})'
+					' with backwards time (delta: {:.1f}), this will'
+					' cause a lot of issues' ).format(src_uptime, uptime, abs(src_ts - ts))
+				if self.timesync.check_fatal: raise RuntimeError(err_msg)
+				else: log.error(err_msg)
+
+
+	@property
+	def path(self):
+		assert self._path, ( '"ensure_schema" method must'
+			' be called before any kind of access/manipulation methods' )
+		return self._path
+
+	@staticmethod
+	def _path_meta(path):
+		return '{}.meta'.format(path)
+	@property
+	def path_meta(self):
+		return self._path_meta(self.path)
+
+	def ensure_schema(self, step, dss, rras, symlink_to=None, cleanup_td=None):
+		assert dss and rras, [dss, rras]
+		for ds in dss:
+			if 'name' not in ds:
+				ds['name'] = self.ds_for_sensor_metric(*ds['src'])
+			assert ds['t'] in self.ds_types, ds['t']
+
+		schema = dict(step=step, dss=dss, rras=rras)
+		self._path = join( self.storage_dir,
+			'{}.{}.rrd'.format(self.name, data_hash(schema, n=10)) )
+		self._dss = map(op.itemgetter('name'), dss)
+		assert len(set(self._dss)) == len(self._dss), dss
+
+		if not exists(self.path):
+			self.log.debug('Creating new rrd database: %r', self.path)
+			if not exists(self.storage_dir): os.makedirs(self.storage_dir)
+			rrd_clause = lambda t, *a: opts.append(':'.join(map(bytes, [t.upper()] + list(a))))
+			opts = [self.path, '--step', bytes(step)]
+			for ds in dss:
+				rrd_clause( 'ds', ds['name'], ds['t'].upper(),
+					int(ds['hb']), ds.get('min') or 'U', ds.get('max') or 'U' )
+			for rra in rras:
+				rrd_clause( 'rra', rra['cf'].upper(),
+					'{:.2f}'.format(rra['xff']), rra['steps'], rra['rows'] )
+			rrdtool.create(opts)
+			with open(self.path_meta, 'wb') as dst:
+				dst.write('### Auto-generated on database creation\n'
+					'### Only some timestamps are used for dir cleanup purposes\n')
+				yaml_dump(dict(schema=schema, ts=dict(created=time.time())), dst)
+
+		if symlink_to:
+			symlink_to = join(self.storage_dir, symlink_to)
+			try: dst = os.readlink(symlink_to)
+			except OSError: dst = None
+			if not dst or realpath(self.path) != realpath(dst):
+				if exists(symlink_to): os.unlink(symlink_to)
+				os.symlink(abspath(self.path), symlink_to)
+
+		if cleanup_td is not None:
+			ts = time.time()
+			for p in glob.glob(join(self.storage_dir, '{}.*.rrd'.format(self.name))):
+				if realpath(p) == realpath(self.path): continue
+				p_meta = self._path_meta(p)
+				try:
+					ts_p = os.stat(p).st_mtime
+					try: ts_p = max(ts_p, os.stat(p_meta).st_mtime)
+					except (OSError, IOError): pass
+				except (OSError, IOError): continue
+				if ts_p < ts - cleanup_td:
+					self.log.debug('Removing old rrd file: %r', p)
+					for p in p, p_meta:
+						try: os.unlink(p)
+						except (OSError, IOError): pass
+
+	def load_schema(self, path):
+		self._path = realpath(join(self.storage_dir, path))
+		paths = self.path, self.path_meta
+		assert all(map(exists, paths)), paths
+		# meta = lya.AttrDict.from_yaml(self.path_meta)
+
+
+	def update(self, vals_dict, ts=None):
+		'vals_dict should be {(sensor_name, metric): value, ...}.'
+		if not vals_dict: return
+		if ts is None: ts = time.time()
+		entry = dict((self.ds_for_sensor_metric(*k), v) for k, v in vals_dict.viewitems())
+		entry_str = ':'.join(it.chain([bytes(ts)], (bytes(entry.pop(k, 'U')) for k in self._dss)))
+		assert not entry, entry # some unknown keys left-over
+		self.timesync_file_write()
+		rrdtool.update(self.path , entry_str)
+
+	def fetch_last_update(self):
+		'Returns ts and dict with values stored on last db update.'
+		# There is no way to do it through API atm, sadly
+		lines = subprocess.check_output(
+			['rrdtool', 'lastupdate', self.path], close_fds=True ).splitlines()
+		ts, keys = None, map(self.sensor_metric_for_ds, lines[0].split())
+		vals = dict.fromkeys(keys)
+		for line in lines[1:]:
+			if not line.strip(): continue
+			ts, line = line.split(':', 1)
+			line = line.split()
+			assert len(line) == len(keys), [keys, line]
+			for k, v in zip(keys, line):
+				try: vals[k] = float(v)
+				except ValueError: pass # assuming unknown
+		if ts: ts = float(ts)
+		return ts, vals
+
+	def fetch_last_values(self, time_delta, cf='average'):
+		'''Returns a dict with average value for each metric for specified time delta.
+			"cf" argument specifies consolidation function to pass to rrdtool, used for
+				picking appropriate RRAs, but values returned from rrdtool will still be averaged.'''
+		assert cf in self.rra_cfs, cf
+		td = int(round(ts_diff_parse(time_delta)))
+		(rra_ts0, rra_ts1, rra_step), keys, vals = rrdtool.fetch(
+			self.path, cf.upper(), '--resolution', bytes(td), '--start', '-{}'.format(td) )
+		vals = dict(( self.sensor_metric_for_ds(k),
+			list(v[n] for v in vals if v[n] is not None) ) for n,k in enumerate(keys))
+		for k, vs in vals.viewitems(): # average what's left there
+			vals[k] = (float(sum(vs)) / len(vs)) if vs else None
+		return vals
+
+	def get_meta(self):
+		with open(self.path_meta) as src:
+			return lya.AttrDict.from_yaml(src)
+
+	def get_info(self):
+		info_tree = lya.AttrDict()
+		for k, v in rrdtool.info(self.path).viewitems():
+			# Parse stuff like "rra[1].cdp_prep[0].value" and "ds[speed].minimal_heartbeat"
+			br, keys = info_tree, deque(k.split('.'))
+			while keys:
+				kk = keys.popleft()
+				m = re.search(r'^(?P<n>[\w\d_]+)(?:\[(?P<k>[\w\d_]+)\])?', kk)
+				if not m: raise KeyError(k)
+				mn, mk = m.group('n'), m.group('k')
+				br_prev, br = br, br.setdefault(mn, dict())
+				if mk:
+					assert mk not in br, [k, mk, br]
+					keys.append(mk)
+				elif not keys: br_prev[mn] = v
+		return info_tree
+
+
+	color_scale_c10 = ( '#1f77b4 #ff7f0e #2ca02c' # d3.scale.category10
+		' #d62728 #9467bd #8c564b #e377c2 #7f7f7f #bcbd22 #17becf' ).split()
+
+	def graph( self, k, sensors, image_path=None,
+			legend_style='stats-table',
+			hrules=None, colors=None, units=None, percentiles=None,
+			**cli_opts ):
+		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
+		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS
+		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_graph.en.html
+		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_data.en.html
+		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_examples.en.html
+
+		if image_path is None:
+			image_path = tempfile.NamedTemporaryFile(
+				prefix='rrd.chart.', suffix='.png', delete=False ).name
+		assert legend_style == 'stats-table', legend_style
+
+		opts = OrderedDict( # sane-ish defaults
+			width=1000, height=500,
+			start='-24h', end=None, imgformat='PNG',
+			pango_markup=True, font='LEGEND:7:monospace',
+		)
+		opts.update(cli_opts or dict())
+
+		colors = iter(colors or self.color_scale_c10)
+		defs_table_len = 90
+
+		defs = ['TEXTALIGN:left']
+		def vdef_label(sn, cf=None, length=3, _src=list()):
+			if not _src: _src.extend([iter(xrange(2**30)), string.ascii_lowercase])
+			u, un, us, ul = '', next(_src[0]), _src[1], len(_src[1])
+			for n in xrange(length): u, un = us[un % ul] + u, un / ul
+			return '{}_{}_{}'.format(sn, cf or '', u)
+		def defs_add_vdef(sn, cf, fmt, vdef=None):
+			vdef = vdef_label(sn)
+			defs.extend([
+				'VDEF:{vdef}={sn},{cf}'.format(vdef=vdef, sn=sn, cf=cf),
+				'GPRINT:{vdef}:{fmt}'.format(vdef=vdef, fmt=fmt.replace(':', r'\:')) ])
+
+		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
+		sns = list('{}_{}'.format(s, k) for s in sensors)
+		sn_len, u = max(map(len, sns)), ' {}'.format(units.replace('%', '%%'))
+		for s, sn in it.izip(sensors, sns):
+
+			# Line
+			defs.append('DEF:{sn}={p}:{s}__{k}:AVERAGE'.format(sn=sn, s=s, k=k, p=self.path))
+			defs.append('LINE1:{sn}{c}:{sn}'.format(sn=sn, c=next(colors)))
+
+			# Legend
+			sn_pad = sn_len - len(sn)
+			for label, cf in ('min', 'MINIMUM'), ('max', 'MAXIMUM'), ('avg', 'AVERAGE'):
+				fmt = ''
+				if sn_pad: fmt, sn_pad = ' '*(sn_pad), None
+				vdef = '{sn}_{label}'.format(sn=sn, label=label)
+				defs_add_vdef(sn, cf, '{pad}{label}: %02.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
+			for p in percentiles or list():
+				if p.endswith('σ'): perc, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
+				else: perc = '{}%'.format(p)
+				defs_add_vdef(sn, '{},PERCENT'.format(p), '{}: %02.1lf{}'.format(perc, u))
+			defs.append(r'COMMENT:\n')
+
+		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
+
+		for hrule in hrules or list():
+			if not isinstance(hrule, dict): hrule = dict(v=hrule)
+			hrule = lya.AttrDict(hrule)
+			if not hrule.get('c'): hrule['c'] = next(colors)
+			d = 'HRULE:{}{}'.format(hrule['v'], hrule['c'])
+			if hrule.get('legend'): d += ':{}'.format(hrule['legend'])
+			if hrule.get('dashes'):
+				d += ':dashes{}'.format('' if hrule['dashes'] is True else '={}'.format(hrule['dashes']))
+				if hrule.get('dash_offset'): d += ':dash-offset={}'.format(hrule['dash_offset'])
+			defs.append(d)
+
+		args = [bytes(image_path)]
+		for k, v in opts.viewitems():
+			if v in [None, False]: continue
+			args.append(''.join([ '-'*(1 if len(k)==1 else 2),
+				k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+		rrdtool.graph(*map(bytes, args + defs))
+
+		return image_path
+
+
+def init_rrd(sensors_interval, sensors, conf):
+	rrdb_timesync = conf.timesync_file.enabled and conf.timesync_file
+	rrdb = RRD(conf.storage_dir, conf.name, rrdb_timesync)
+	ds_step = ts_diff_parse(conf.step, t=int)
+	ds_hb = ts_diff_parse(conf.heartbeat, t=int)
+
+	if ds_hb < sensors_interval * 1.2:
+		raise AssertionError(
+			'rrd.heartbeat ({:.2f}s) must be at least 20%'
+				' greater than interval between measurements ({:.2f}s)'\
+			.format(conf.heartbeat, sensors_interval) )
+
+	dss = list()
+	for k,s in sensors.viewitems():
+		for sk,sv in s.values.viewitems():
+			dss.append(dict(
+				min=sv.get('min'), max=sv.get('max'),
+				src=(k, sk), t=sv.t, hb=ts_diff_parse(conf.heartbeat, t=int) ))
+
+	rra_step = ts_diff_parse(conf.aggregate.step, t=int)
+	if rra_step % ds_step != 0:
+		raise AssertionError(
+			'Aggregation (RRA) step ({!r}) must be a multiple of data source (DS) step ({!r})'\
+			.format(conf.aggregate.step, conf.step) )
+	rras =[dict(
+		xff=conf.aggregate.xff, cf='average',
+		steps=int(round(rra_step / ds_step)),
+		rows=ts_diff_parse(conf.aggregate.keep, t=int) // rra_step + 1 )]
+
+	rrdb.ensure_schema( step=ds_step,
+		dss=dss, rras=rras, symlink_to=conf.current_symlink,
+		cleanup_td=conf.cleanup_after and ts_diff_parse(conf.cleanup_after) )
+	return rrdb
+
+
+class Sensor(object):
+
+	values = tuple() # must be overidden
+	disabled = True
+
+	def __init__(self, conf, log=None):
+		self.conf, self.log = conf, log
+		if not self.log:
+			log = self.__class__.__name__
+			if log.startswith('Sensor'): log = log[6:]
+			self.log = logging.getLogger('sensor.{}.{:x}'.format(log, id(self)))
+
+	def __repr__(self):
+		return ( '<{1.__class__.__name__} {0:x},'
+			' disabled: {1.disabled}, values: {1.values}>' ).format(id(self), self)
+
+	def read_keys(self, *ks):
+		return op.itemgetter(ks)(self.read())
+
+	def read(self):
+		if self.disabled: return dict()
+		data = self.read_raw() or dict()
+		# self.log.debug('Raw data: %r', data)
+		for k, v in data.items():
+			ka = self.values[k]
+			if not isinstance(v, (int, float, long)):
+				del data[k]
+				continue
+			v_min, v_max = (ka.get(k) for k in ['min', 'max'])
+			if v_min is not None: v = max(v_min, v)
+			if v_max is not None: v = min(v_max, v)
+			data[k] = v
+		return data
+
+	def read_raw(self):
+		raise NotImplementedError
+
+class SensorRPiSoC(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(t=dict(min=0, max=100, t='gauge'))
+	path = '/sys/class/thermal/thermal_zone0/temp'
+
+	def __init__(self, conf, log=None):
+		super(SensorRPiSoC, self).__init__(conf, log=log)
+		self.path = conf.get('path') or self.path
+
+	def read_raw(self):
+		try:
+			with open(self.path, 'rb') as src: src = src.read().strip().split()[0]
+		except Exception as err:
+			self.log.error('Failed to get SoC temperature value: %s %s', type(err), err)
+		else: return dict(t=int(src[:3]) / 10.0)
+
+
+class SensorMeta(object):
+
+	units = dict(t='°C', rh='%RH')
+	metrics = dict(t='temperature', rh='humidity')
+	formats = dict(t='.1f', rh='.1f')
+	types = dict(rpi_soc=SensorRPiSoC)
+
+	def value_repr(self, n, metric, units=True, decode=False):
+		if isinstance(n, (int, long)): n = bytes(n)
+		else: n = format(n, self.formats[metric])
+		if units: n = '{} {}'.format(n, cls.units[metric])
+		if decode: n = n.decode('utf-8')
+		return n
+
+	def get_sensor(self, t, conf, log=None, **kws):
+		return self.types[t](conf, log=log, **kws)
+
+sensors = SensorMeta()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Daemon to log sensor data to an rrd database.')
+
+	parser.add_argument('-c', '--conf',
+		action='append', metavar='path', default=list(),
+		help='YAML configuration files to process.'
+			' Can be specified more than once.'
+			' Values from the latter ones override values in the former.'
+			' Available CLI options override values in any config.')
+	parser.add_argument('-x', '--conf-data',
+		action='append', metavar='yaml-data', default=list(),
+		help='YAML data to process and add on top of other configs.'
+			' Automatically wrapped into mapping, can be specified more than once.'
+			' Values from the latter data override values in the former.'
+			' Applied after all --conf arguments (if any).'
+			' Available CLI options override values in any config.'
+			' Example (quoted): "rrd: {storage_dir: /some/my/path}".')
+
+	parser.add_argument('--systemd', action='store_true',
+		help='Use systemd service'
+			' notification/watchdog mechanisms in daemon modes, if available.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	cmds = parser.add_subparsers(
+		dest='cmd', title='Actions',
+		description='Supported actions (have their own suboptions as well)')
+
+
+	cmd = cmds.add_parser('daemon',
+		help='Run as daemon and update values in an rrd file.')
+
+
+	cmd = cmds.add_parser('print-last', help='Print last stored value for each sensor.')
+	cmd.add_argument('-t', '--time-delta',
+		metavar='ts-diff-spec', default='20min',
+		help='Time delta (from now) to show values for (default: %(default)s).')
+	cmd.add_argument('-c', '--cf',
+		metavar='{ average | min | max | last }', default='average',
+		help='Consolidation function (see rrdtool docs) to use (default: %(default)s).')
+	cmd.add_argument('-l', '--last-update', action='store_true',
+		help='Do not use --time-delat or --cf,'
+			' just print last (raw) stored values (rrdtool lastupdate).')
+
+
+	cmd = cmds.add_parser('graph',
+		help='Build and store graph of last measurements.',
+		epilog='Prints path to resulting image to stdout.')
+	cmd.add_argument('metric', help='Name of a metric to graph (example: t).')
+	cmd.add_argument('-s', '--sensor',
+		action='append', metavar='sensor-name', default=list(),
+		help='Name of a sensor to graph metric for'
+			' (default: all of them). Can be used multiple times.')
+	cmd.add_argument('-t', '--threshold',
+		action='append', metavar='name:value', default=list(),
+		help='Named threshold value (horizontal line)'
+			' to add to a graph. Can be used multiple times.')
+	cmd.add_argument('-p', '--path', metavar='path',
+		help='Path to resulting image file. Default is to use random temporary path.')
+	cmd.add_argument('-o', '--opts',
+		action='append', metavar='yaml-data', default=list(),
+		help='YAML data to pass as rrdtool options for a graph.'
+			' Automatically wrapped into mapping, can be specified more than once.'
+			' See http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS for a list of these.'
+			' Example (quoted): "start: -1h, width: 1280, height: 800, title: last data"')
+
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	log = '%(levelname)s :: %(message)s'
+	if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
+	logging.basicConfig(
+		format=log, datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = logging.getLogger()
+
+	if opts.systemd:
+		from systemd import daemon
+		def sd_cycle(ts=None):
+			if not sd_cycle.ready:
+				daemon.notify('READY=1')
+				daemon.notify('STATUS=Running in {} mode...'.format(opts.cmd))
+				sd_cycle.ready = True
+			if sd_cycle.delay:
+				if ts is None: ts = time.time()
+				delay = ts - sd_cycle.ts_next
+				if delay > 0: time.sleep(delay)
+				sd_cycle.ts_next += sd_cycle.delay
+			else: sd_cycle.ts_next = None
+			if sd_cycle.wdt: daemon.notify('WATCHDOG=1')
+		sd_cycle.ts_next = time.time()
+		wd_pid, wd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
+		if wd_pid and wd_pid.isdigit() and int(wd_pid) == os.getpid():
+			wd_interval = float(wd_usec) / 2e6 # half of interval in seconds
+			assert wd_interval > 0, wd_interval
+		else: wd_interval = None
+		if wd_interval:
+			log.debug('Initializing systemd watchdog pinger with interval: %ss', wd_interval)
+			sd_cycle.wdt, sd_cycle.delay = True, wd_interval
+		else: sd_cycle.wdt, sd_cycle.delay = False, None
+		sd_cycle.ready = False
+	else: sd_cycle = None
+	signal.signal(signal.SIGTERM, lambda sig,frm: sys.exit(0))
+
+	conf = conf_base.clone()
+	for k in opts.conf: conf.update_yaml(k)
+	for d in opts.conf_data:
+		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
+		conf.update_dict(yaml_load(d))
+	ss_interval, ss = ts_diff_parse(conf.meas.interval), lya.AttrDict()
+	for k, spec in conf.meas.sensors.viewitems():
+		if not spec.get('type'): continue
+		ss[k] = sensors.get_sensor(spec.type, spec)
+	rrdb = init_rrd(ss_interval, ss, conf.rrd)
+
+
+	if opts.cmd == 'daemon':
+		log.debug('Entering sensor/rrdb read/update loop...')
+		ts_read = time.time()
+		while True:
+			while True:
+				if not sd_cycle or not sd_cycle.ts_next: break
+				ts_next = min(sd_cycle.ts_next, ts_read)
+				if ts_next == sd_cycle.ts_next: sd_cycle()
+				else: break
+			delay = ts_read - time.time()
+			if delay > 0: time.sleep(delay)
+			ts_read += ss_interval
+
+			vals = dict()
+			for k, s in ss.viewitems():
+				try:
+					data = s.read()
+					if not data: raise ValueError('No data returned')
+				except Exception as err:
+					log.debug('Failed to read data from sensor %r: %s', k, err)
+					continue
+				log.debug('Sensor %r data: %s', k, data)
+				for m, v in data.viewitems(): vals[k, m] = v
+			try: rrdb.update(vals)
+			except Exception as err: log.exception('rrd db update failed: %s', err)
+		raise RuntimeError # should never get here
+
+
+	if opts.cmd == 'print-last':
+		vals = dict()
+		if opts.last_update: ts, vals_raw = rrdb.fetch_last_update()
+		else: vals_raw = rrdb.fetch_last_values(opts.time_delta, cf=opts.cf)
+		for (s, k), v in vals_raw.viewitems(): vals['{}.{}'.format(s, k)] = v
+		pyaml.p(vals)
+
+
+	if opts.cmd == 'graph':
+		ss = opts.sensor
+		if not ss: ss = list(conf.meas.sensors)
+		metric, units = opts.metric, sensors.units[opts.metric]
+
+		graph_opts = conf.graph.opts
+		graph_opts.update(
+			vertical_label='{}, {}'.format(metric, units),
+			title='{} history'.format(sensors.metrics[metric].title()) )
+		for d in opts.opts:
+			if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
+			graph_opts.update_dict(yaml_load(d))
+
+		hrules = list()
+		for spec in opts.threshold:
+			desc, v = spec.split(':', 1)
+			v = float(v)
+			hrules.append(dict( v=v, dashes=True,
+				legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
+
+		image_path = rrdb.graph( metric, ss, image_path=opts.path,
+			hrules=hrules, units=units, percentiles=['1σ', '2σ'], **graph_opts )
+		print(image_path)
+
+
+	else: parser.error('Unrecognized command: {}'.format(opts.cmd))
+
+if __name__ == '__main__': sys.exit(main())
