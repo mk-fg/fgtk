@@ -128,8 +128,11 @@ def main(args=None):
 
 	global log
 	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
-	log = logging.getLogger()
+	logging.basicConfig(
+		datefmt='%Y-%m-%d %H:%M:%S',
+		format='%(asctime)s :: %(name)s %(levelname)s :: %(message)s',
+		level=logging.DEBUG if opts.debug else logging.INFO )
+	log = logging.getLogger('main')
 
 	# Retries logged from here are kinda useless, especially before aria2c starts
 	logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.ERROR)
@@ -204,6 +207,7 @@ def main(args=None):
 	aria2c = subprocess.Popen([
 		'aria2c',
 
+		'--summary-interval=0',
 		'--console-log-level={}'.format(aria2c_log_level),
 
 		'--continue=false',
@@ -270,20 +274,21 @@ def main(args=None):
 		if line_buff: line_buff_flush()
 
 		### Wait-to-complete - check missing - retry loop
-		gid_retries, gids_started_count = None, len(gids_started)
+		gid_retries, gids_started_count, gid_last = None, len(gids_started), list(gids_started)[-1]
+		log.info( '\n\n  ------ Started %s downloads,'
+			' last gid: %06d ------  \n', gids_started_count, gid_last )
 		for n in xrange(1, chunk_err_retries+1):
 			if gid_retries:
 				aria2c_jrpc('aria2.purgeDownloadResult', key)
 				queue_gid_downloads(gid_retries)
 
-			gid_last = list(gids_started)[-1]
 			while True:
 				gids_wait = len(aria2c_jrpc('aria2.tellActive', key, ['status']))
 				res = aria2c_jrpc('aria2.tellWaiting', key, 0, wait_last_gids, ['status'])
 				if len(res) == wait_last_gids: gids_wait = '>{}'.format(wait_last_gids)
 				else: gids_wait += len(res)
 				if not gids_wait: break
-				log.info( # helps to see the overall progress
+				log.debug( # helps to see the overall progress
 					'\n\n  ------ waiting for downloads (count: %s'
 						' / %s, last gid: %06d, err-retry-pass: %s) ------  \n',
 					gids_wait, gids_started_count, gid_last, n )
@@ -293,6 +298,7 @@ def main(args=None):
 				for gid in it.imap(gid_parse, vc.cached.splitlines()): gids_started.pop(gid, None)
 			gid_retries = list((gid_format(gid), path) for gid, path in gids_started.viewitems())
 			if not gid_retries: break
+			gid_last = list(gids_started)[-1]
 		else:
 			log.error('Failed to download %s chunks (after %s retries)', len(gid_retries), n)
 
@@ -327,7 +333,7 @@ def main(args=None):
 		return 1
 	assert sorted(chunks) == chunks
 
-	log.debug('Concatenating %s chunk files...', len(chunks))
+	log.info('Concatenating %s chunk files...', len(chunks))
 	dst_file = '{}.mp4'.format(opts.file_prefix)
 
 	## Simple "cat" works for players like vlc and mpv, with minor seek inprecision
@@ -347,6 +353,6 @@ def main(args=None):
 	# 		'-movflags', 'empty_moov', # makes file playable right away
 	# 		'-c', 'copy', '-bsf:a', 'aac_adtstoasc', dst_file ])
 
-	log.debug('Finished, resulting file: %s', dst_file)
+	log.info('Finished, resulting file: %s', dst_file)
 
 if __name__ == '__main__': sys.exit(main())
