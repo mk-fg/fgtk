@@ -210,11 +210,15 @@ def main(args=None):
 		'--summary-interval=0',
 		'--console-log-level={}'.format(aria2c_log_level),
 
-		'--continue=false',
 		'--stop-with-process={}'.format(os.getpid()),
 		'--enable-rpc=true',
 		'--rpc-listen-port={}'.format(port),
 		'--rpc-secret={}'.format(key),
+
+		'--continue=false',
+		'--always-resume=false',
+		'--auto-save-interval=0',
+		'--remove-control-file=true',
 
 		'--no-netrc', '--no-proxy',
 		'--max-concurrent-downloads=5',
