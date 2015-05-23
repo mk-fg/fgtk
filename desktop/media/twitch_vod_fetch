@@ -178,7 +178,7 @@ def main(args=None):
 	# aria2c requires 16-char gid, gid_format fits number in
 	#  first 6 chars because it looks nice in (tuncated) aria2c output
 	gid_seq = iter(xrange(1, 2**30))
-	gid_format, gid_parse = '{:06d}0000000000'.format, lambda gid: int(gid[:6])
+	gid_format, gid_parse = '{:06d}0000000000'.format, lambda gid_str: int(gid_str[:6])
 	with vod_cache('gids') as vc:
 		gids_done, gids_done_path = vc.cached, vc.path
 		if not gids_done: gids_done = vc.update('')
@@ -244,8 +244,8 @@ def main(args=None):
 			res = aria2c_jrpc('system.multicall', list(
 				dict( methodName='aria2.addUri',
 					params=[ key, ['{}/{}'.format(url_base, path)],
-						dict(gid=gid, out='{}.chunk.{}.mp4.tmp'.format(opts.file_prefix, gid)) ] )
-				for gid, path in gid_files ))
+						dict(gid=gid_str, out='{}.chunk.{}.mp4.tmp'.format(opts.file_prefix, gid_str)) ] )
+				for gid_str, path in gid_files ))
 			res_chk = list([gid] for gid, path in gid_files)
 			if res != res_chk:
 				log_lines(log.error, [
