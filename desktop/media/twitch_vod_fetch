@@ -131,6 +131,9 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
+	# Retries logged from here are kinda useless, especially before aria2c starts
+	logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.ERROR)
+
 	if re.search(r'^https?:', opts.file_prefix):
 		if re.search(r'^https?:', opts.url):
 			parser.error('Both args seem to be an URL, only first one should be.')
