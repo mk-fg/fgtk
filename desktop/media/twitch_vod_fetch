@@ -215,12 +215,8 @@ def main(args=None):
 		'--rpc-listen-port={}'.format(port),
 		'--rpc-secret={}'.format(key),
 
-		'--continue=false',
-		'--always-resume=false',
-		'--auto-save-interval=0',
-		'--remove-control-file=true',
-
 		'--no-netrc', '--no-proxy',
+		'--always-resume=false',
 		'--max-concurrent-downloads=5',
 		'--max-connection-per-server=5',
 		'--max-file-not-found=5',
@@ -240,15 +236,15 @@ def main(args=None):
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
 		wait_last_gids, poll_delay = 100, 5
-		chunk_err_retries, chunk_err_retry_delay = 10, 3
+		chunk_err_retries, chunk_err_retry_delay = 5, 2
 
 		def queue_gid_downloads(gid_files):
 			# system.multicall(methods)
 			# aria2.addUri([secret], uris[, options[, position]])
 			res = aria2c_jrpc('system.multicall', list(
 				dict( methodName='aria2.addUri',
-					params=[ key,
-						['{}/{}'.format(url_base, path)], dict(gid=gid) ] )
+					params=[ key, ['{}/{}'.format(url_base, path)],
+						dict(gid=gid, out='{}.chunk.{}.mp4.tmp'.format(opts.file_prefix, gid)) ] )
 				for gid, path in gid_files ))
 			res_chk = list([gid] for gid, path in gid_files)
 			if res != res_chk:
