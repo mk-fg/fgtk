@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from collections import OrderedDict
 from contextlib import contextmanager, closing
 from os.path import exists, dirname
-import subprocess, tempfile, time, glob
+import subprocess, tempfile, time, glob, socket
 import os, sys, re, json, types, base64
 
 import requests
@@ -173,7 +173,11 @@ def main(args=None):
 	with vod_cache('rpc_key') as vc:
 		key = vc.cached
 		if not key: key = vc.update(get_uid(6))
-	port = 6801
+	with vod_cache('rpc_port') as vc: # always updated
+		with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+			s.bind(('localhost', 0))
+			addr, port = s.getsockname()
+		port = int(vc.update(bytes(port)))
 
 	# aria2c requires 16-char gid, gid_format fits number in
 	#  first 6 chars because it looks nice in (tuncated) aria2c output
@@ -191,7 +195,7 @@ def main(args=None):
 	if not exists(sh_path): sh_path = '/bin/ash' # busybox
 	if not exists(sh_path): sh_path = '/bin/sh'
 
-	hook_done = '/tmp/.fetch_twitch_vod.done.hook'
+	hook_done = '/tmp/.fetch_twitch_vod.{}.done.hook'.format(os.getpid())
 	assert "'" not in opts.file_prefix, opts.file_prefix
 	assert "'" not in gids_done_path, gids_done_path
 	with open(hook_done, 'wb') as dst:
@@ -231,7 +235,7 @@ def main(args=None):
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
 
-	log.debug('Starting downloads...')
+	log.debug('Starting downloads (rpc port: %s)...', port)
 	try:
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
@@ -251,7 +255,8 @@ def main(args=None):
 				log_lines(log.error, [
 					'Result gid match check failed for submitted urls.',
 					('  expected: %s', ', '.join(bytes(r[0]) for r in res_chk)),
-					('  returned: %s', ', '.join(bytes(r[0]) for r in res)) ])
+					('  returned: %s', ', '.join(( bytes(r[0])
+						if isinstance(r, list) else repr(r) ) for r in res)) ])
 				raise RuntimeError('Result gid match check failed')
 
 		def line_buff_flush():
