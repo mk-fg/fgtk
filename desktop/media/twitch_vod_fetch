@@ -279,7 +279,8 @@ def main(args=None):
 		if line_buff: line_buff_flush()
 
 		### Wait-to-complete - check missing - retry loop
-		gid_retries, gids_started_count, gid_last = None, len(gids_started), list(gids_started)[-1]
+		gid_retries, gids_started_count = None, len(gids_started)
+		gid_last = list(gids_started)[-1] if gids_started else 0
 		log.info( '\n\n  ------ Started %s downloads,'
 			' last gid: %06d ------  \n', gids_started_count, gid_last )
 		for n in xrange(1, chunk_err_retries+1):
@@ -318,11 +319,11 @@ def main(args=None):
 
 	finally:
 		if not aria2c_exit_clean: aria2c.terminate()
-		aria2c_exit_clean = not aria2c.wait()
+		aria2c.wait()
 		os.unlink(hook_done)
 
 	if not aria2c_exit_clean:
-		log.error('aria2c exited with error status, aborting')
+		log.error('Unresolved download errors detected, aborting')
 		return 1
 
 	chunks_needed = list(
