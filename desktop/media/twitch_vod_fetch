@@ -170,10 +170,9 @@ def main(args=None):
 			with req('get', url_pls, headers={'user-agent': ua}) as r:
 				pls = vc.update(r.text)
 
-	with vod_cache('rpc_key') as vc:
-		key = vc.cached
-		if not key: key = vc.update(get_uid(6))
-	with vod_cache('rpc_port') as vc: # always updated
+	# port/key are always updated between aria2c runs
+	with vod_cache('rpc_key') as vc: key = vc.update(get_uid(18))
+	with vod_cache('rpc_port') as vc:
 		with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
 			s.bind(('localhost', 0))
 			addr, port = s.getsockname()
@@ -240,7 +239,7 @@ def main(args=None):
 		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
 		wait_last_gids, poll_delay = 100, 5
-		chunk_err_retries, chunk_err_retry_delay = 5, 2
+		chunk_err_retries, chunk_err_retry_delay = 10, 2
 
 		def queue_gid_downloads(gid_files):
 			# system.multicall(methods)
