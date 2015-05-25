@@ -906,7 +906,8 @@ typing for graph options and such, while this script auto-generates it all for
 you, and is designed to be "hands-off" kind of easy.
 
 Using it to keep track of SoC sensor readings on boards like RPi (to see if
-maybe it's time to cram a heatsink on top of one or something).
+maybe it's time to cram a heatsink on top of one or something), for more serious
+systems something like collectd + graphite might be a better option.
 
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 

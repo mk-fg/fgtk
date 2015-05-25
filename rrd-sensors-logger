@@ -3,7 +3,7 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from collections import deque, OrderedDict
+from collections import deque, defaultdict, OrderedDict
 from os.path import join, exists, realpath, abspath
 from datetime import datetime, timedelta
 import os, sys, io, re, types, string, base64, time, math
@@ -82,9 +82,18 @@ rrd:
 meas:
 	interval: 20
 	sensors:
-		rpi_soc: # sensor name (will correspond to rrd DS name)
-			type: rpi_soc # used to pick the code to query the sensor
-			# path: /sys/class/thermal/thermal_zoneX/temp
+		# rpi_soc: # sensor name (will correspond to rrd DS name)
+		#   type: rpi_soc # used to pick the code to query the sensor
+		#   # path: /sys/class/thermal/thermal_zoneX/temp
+		# mb:
+		#   type: lm
+		#   chip: atk0110-acpi-0 # see "sensors -u" output
+		#   feature: temp1 # either this or "feature_type" can be specified to remove ambiguity
+		#   # feature_type: t # v, rpm, t
+		# cpu:
+		#   type: lm
+		#   chip: k10temp-pci-00c3
+		#   # only one feature here, so no need for other specs
 
 graph:
 	opts:
@@ -684,13 +693,60 @@ class SensorRPiSoC(Sensor):
 			self.log.error('Failed to get SoC temperature value: %s %s', type(err), err)
 		else: return dict(t=int(src[:3]) / 10.0)
 
+class SensorLM(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(t=dict(min=0, max=200, t='gauge'))
+	types = 'v', 'rpm', 't'
+	lib = lib_err = lib_ss = None
+
+	def lib_init(self):
+		if not self.lib:
+			import atexit, sensors # pysensors
+			sensors.init()
+			atexit.register(sensors.cleanup)
+			cls = self.__class__
+			cls.lib, cls.lib_err = sensors, sensors.SensorsError
+			cls.lib_ss = dict()
+			for chip in sensors.iter_detected_chips():
+				chip_name = bytes(chip)
+				chip_ss, chip_st = cls.lib_ss[chip_name] = dict(), defaultdict(list)
+				for s in chip:
+					try: st = self.types[s.type]
+					except IndexError:
+						self.log.debug('Skipping sensor of unknown type (%s): %s', s.type, s.name)
+					chip_ss[s.name] = s, st
+					chip_st[st].append(s.name)
+
+	def __init__(self, conf, log=None):
+		super(SensorLM, self).__init__(conf, log=log)
+		self.lib_init()
+		chip_ss, chip_st = self.lib_ss[conf.chip]
+		feat, ft = conf.get('feature'), conf.get('feature_type')
+		if feat:
+			self.s, self.st = chip_ss[feat]
+			if ft: assert self.st == ft, [self.s.name, self.st, ft, chip_st[ft]]
+		else:
+			if ft: ss = chip_st[ft]
+			else: ss = chip_ss.values()
+			assert len(ss) == 1, ss
+			self.s, self.st = ss[0]
+
+	def read_raw(self):
+		try: val = self.s.get_value()
+		except Exception as err:
+			self.log.error( 'Failed to get value (type: %s, chip: %s,'
+				' sensor: %s): %s %s', self.st, self.conf.chip, self.s.name, type(err), err )
+		else: return {self.st: val}
+
+
 
 class SensorMeta(object):
 
-	units = dict(t='°C', rh='%RH')
-	metrics = dict(t='temperature', rh='humidity')
-	formats = dict(t='.1f', rh='.1f')
-	types = dict(rpi_soc=SensorRPiSoC)
+	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
+	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
+	formats = dict(t='.1f', rh='.1f', v='.2f', rpm='.0f')
+	types = dict(rpi_soc=SensorRPiSoC, lm=SensorLM)
 
 	def value_repr(self, n, metric, units=True, decode=False):
 		if isinstance(n, (int, long)): n = bytes(n)
@@ -818,7 +874,7 @@ def main(args=None):
 		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
 		conf.update_dict(yaml_load(d))
 	ss_interval, ss = ts_diff_parse(conf.meas.interval), lya.AttrDict()
-	for k, spec in conf.meas.sensors.viewitems():
+	for k, spec in (conf.meas.sensors or dict()).viewitems():
 		if not spec.get('type'): continue
 		ss[k] = sensors.get_sensor(spec.type, spec)
 	rrdb = init_rrd(ss_interval, ss, conf.rrd)
