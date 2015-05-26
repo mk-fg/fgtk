@@ -120,7 +120,12 @@ def main(argv=None):
 		if optz.clean_df: optz.clean_df = optz.clean_df * MiB
 	if not optz.clean_path: optz.clean_path = optz.dst
 
-	if not optz.name_format or not mw: optz.raw_names = True
+	if not optz.name_format or not mw:
+		if not optz.raw_names:
+			log.debug( 'Auto-setting --raw-names due to missing prequesites for'
+					' tag-based renaming (empty format: %r, mutagenwrapper module available: %r)',
+				not optz.name_format, mw )
+		optz.raw_names = True
 	optz.name_format_check = filter( None,
 		map(bytes.strip, optz.name_format_check.split(',')) )
 	optz.name_format_mappings, specs = dict(), optz.name_format_mappings.split('|')
