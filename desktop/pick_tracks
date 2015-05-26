@@ -11,6 +11,9 @@ import os, sys, re, random, tempfile, traceback, shutil, math, types
 try: import mutagen, mutagenwrapper as mw
 except ImportError: mutagen = mw = None
 
+try: from unidecode import unidecode
+except ImportError: unidecode = None
+
 
 cleanup_ops = list() # list of callbacks to reliably run on exit
 rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
@@ -134,13 +137,19 @@ def main(argv=None):
 		k, vs = spec.split('=', 1)
 		vs = filter(None, map(bytes.strip, vs.split(',')))
 		optz.name_format_mappings[k] = vs
+	if not unidecode:
+		log.debug('Failed to import unidecode module, name transliteration will be disabled.')
 
 
 	### Misc helpers
 
-	def force_bytes(path):
-		if isinstance(path, unicode): return path.encode('utf-8')
-		return path
+	def force_bytes(s):
+		if isinstance(s, unicode): return s.encode('utf-8')
+		return s
+
+	def force_unicode(s, encoding='utf-8', errors='replace'):
+		if isinstance(s, unicode): return s
+		return s.decode(encoding, errors)
 
 	def to_bytes(obj, **conv_kws):
 		if not isinstance(obj, types.StringTypes): obj = bytes(obj)
@@ -304,7 +313,9 @@ def main(argv=None):
 		path = force_bytes(pop_path(src_files))
 		log.debug('Copying: {!r}'.format(path))
 
-		path_dst = join(optz.dst, track_name(path))
+		path_dst = force_unicode(track_name(path))
+		if unidecode: path_dst = unidecode(path_dst)
+		path_dst = join(optz.dst, path_dst.encode('utf-8', 'backslashreplace'))
 		try:
 			if optz.clean_as_necessary: # free space for a file, if requested
 				df_path = (os.stat(path).st_size + 1*2**20) * 1.2 # for any possible fs overhead
