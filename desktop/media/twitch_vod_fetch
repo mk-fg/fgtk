@@ -123,6 +123,11 @@ def main(args=None):
 		metavar='[[hours:]minutes:]seconds',
 		help='Only download specified length of the video (from specified start or beginning).')
 
+	parser.add_argument('-k', '--keep-tempfiles',
+		action='store_true', help='Do not remove all the'
+				' temporary files after successfully assembling resulting mp4.'
+			' Chunks in particular might be useful to download different but overlapping video slices.')
+
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -360,6 +365,12 @@ def main(args=None):
 	# 		'-y', '-f', 'concat', '-i', pls_chunks_path,
 	# 		'-movflags', 'empty_moov', # makes file playable right away
 	# 		'-c', 'copy', '-bsf:a', 'aac_adtstoasc', dst_file ])
+
+	if not opts.keep_tempfiles:
+		tmp_files = list(it.chain(( vod_cache(ext).path for ext in
+				['m3u8.url', 'm3u8.ua', 'm3u8', 'rpc_key', 'rpc_port', 'gids'] ), chunks))
+		log.debug('Cleaning up temporary files (count: %s)...', len(tmp_files))
+		for p in tmp_files: os.unlink(p)
 
 	log.info('Finished, resulting file: %s', dst_file)
 
