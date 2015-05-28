@@ -767,13 +767,13 @@ def main(args=None):
 		description='Daemon to log sensor data to an rrd database.')
 
 	parser.add_argument('-c', '--conf',
-		action='append', metavar='path', default='~/.rrd-sensors-logger.yaml',
+		action='append', metavar='path', default=list(),
 		help='YAML configuration files to process.'
 			' Can be specified more than once.'
 			' Values from the latter ones override values in the former.'
 			' Available CLI options override values in any config.'
 			' Config with all possible options is embedded in the'
-				' code and is always used as a baseline, %(default)r path'
+				' code and is always used as a baseline, ~/.rrd-sensors-logger.yaml path'
 				' is used (if exists) on top of that, unless this option is specified.'
 			' Empty values for this option are safely ignored.')
 	parser.add_argument('-x', '--conf-data',
@@ -873,8 +873,8 @@ def main(args=None):
 	signal.signal(signal.SIGTERM, lambda sig,frm: sys.exit(0))
 
 	conf = conf_base.clone()
-	if isinstance(opts.conf, types.StringTypes):
-		opts.conf = [expanduser(opts.conf)]
+	if not opts.conf:
+		opts.conf = [expanduser('~/.rrd-sensors-logger.yaml')]
 		if not exists(opts.conf[0]): opts.conf = list()
 	for k in filter(None, opts.conf): conf.update_yaml(k)
 	for d in opts.conf_data:
