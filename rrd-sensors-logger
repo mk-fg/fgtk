@@ -524,12 +524,14 @@ class RRD(object):
 
 	def graph( self, k, sensors, image_path=None,
 			legend_style='stats-table',
-			hrules=None, colors=None, units=None, percentiles=None,
+			hrules=None, colors=None, units=None,
+			perc=None, perc_direction='+-',
 			**cli_opts ):
 		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_graph.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_data.en.html
+		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_rpn.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_examples.en.html
 
 		if image_path is None:
@@ -545,19 +547,28 @@ class RRD(object):
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
-		defs_table_len = 90
+		defs_table_len = 90 if len(perc_direction) == 1 else 115
+		perc_direction = sorted(perc_direction)
+		assert not set(perc_direction).difference('+-'), perc_direction
 
 		defs = ['TEXTALIGN:left']
-		def vdef_label(sn, cf=None, length=3, _src=list()):
+		def def_label(sn, cf=None, length=3, _src=list()):
 			if not _src: _src.extend([iter(xrange(2**30)), string.ascii_lowercase])
 			u, un, us, ul = '', next(_src[0]), _src[1], len(_src[1])
 			for n in xrange(length): u, un = us[un % ul] + u, un / ul
 			return '{}_{}_{}'.format(sn, cf or '', u)
-		def defs_add_vdef(sn, cf, fmt, vdef=None):
-			vdef = vdef_label(sn)
-			defs.extend([
-				'VDEF:{vdef}={sn},{cf}'.format(vdef=vdef, sn=sn, cf=cf),
-				'GPRINT:{vdef}:{fmt}'.format(vdef=vdef, fmt=fmt.replace(':', r'\:')) ])
+		def defs_add(sn, cfs, fmt=None, def_t=None):
+			if isinstance(cfs, types.StringTypes): cfs = [cfs]
+			if not def_t: def_t = 'cdef' if len(cfs) > 1 else 'vdef'
+			gprint, sn_base = None, sn
+			for cf in cfs:
+				if isinstance(cf, types.StringTypes): cf = [def_t, cf]
+				(cf_t, cf), k = cf, def_label(sn_base)
+				if '{sn}' not in cf: cf = '{{sn}},{}'.format(cf.replace('{', '{{').replace('}', '}}'))
+				defs.append('{t}:{k}={cf}'.format(t=cf_t.upper(), k=k, cf=cf).format(sn=sn))
+				if fmt: gprint = 'GPRINT:{k}:{fmt}'.format(k=k, fmt=fmt.replace(':', r'\:'))
+				sn, k = k, None
+			if gprint: defs.append(gprint)
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
 		sns = list('{}_{}'.format(s, k) for s in sensors)
@@ -574,11 +585,16 @@ class RRD(object):
 				fmt = ''
 				if sn_pad: fmt, sn_pad = ' '*(sn_pad), None
 				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add_vdef(sn, cf, '{pad}{label}: %02.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
-			for p in percentiles or list():
-				if p.endswith('σ'): perc, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
-				else: perc = '{}%'.format(p)
-				defs_add_vdef(sn, '{},PERCENT'.format(p), '{}: %02.1lf{}'.format(perc, u))
+				defs_add(sn, cf, '{pad}{label}: %02.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
+			for pd, p in it.product(perc_direction, perc or list()):
+				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
+				else: pn = '{}%'.format(p)
+				pn += pd
+				if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '{}: %02.1lf{}'.format(pn, u))
+				else:
+					defs_add( sn,
+						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
+						'{}: %02.1lf{}'.format(pn, u) )
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
@@ -618,6 +634,7 @@ def init_rrd(sensors_interval, sensors, conf):
 
 	dss = list()
 	for k,s in sensors.viewitems():
+		assert re.search(r'^[a-zA-Z0-9_]+$', k), k
 		for sk,sv in s.values.viewitems():
 			dss.append(dict(
 				min=sv.get('min'), max=sv.get('max'),
@@ -944,7 +961,7 @@ def main(args=None):
 				legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
 
 		image_path = rrdb.graph( metric, ss, image_path=opts.path,
-			hrules=hrules, units=units, percentiles=['1σ', '2σ'], **graph_opts )
+			hrules=hrules, units=units, perc=['1σ', '2σ'], **graph_opts )
 		print(image_path)
 
 
