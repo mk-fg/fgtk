@@ -15,6 +15,24 @@ try: from unidecode import unidecode
 except ImportError: unidecode = None
 
 
+_size_units=list(
+	reversed(list((u, 2 ** (i * 10))
+	for i, u in enumerate('BKMGT'))) )
+
+def size_human(size):
+	for u, u1 in _size_units:
+		if size > u1: break
+	return '{:.1f}{}'.format(size / float(u1), u)
+
+def size_human_parse(size):
+	if not size or not isinstance(size, types.StringTypes): return size
+	if size[-1].isdigit(): return float(size)
+	for u, u1 in _size_units:
+		if size[-1] == u: break
+	else: raise ValueError('Unrecognized units: {} (value: {!r})'.format(size[-1], size))
+	return float(size[:-1]) * u1
+
+
 cleanup_ops = list() # list of callbacks to reliably run on exit
 rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
 
@@ -32,7 +50,7 @@ def main(argv=None):
 		usage='%(prog)s [opts] src dst',
 		description='Randomly pick and copy tracks from source to destination.')
 	parser.add_argument('src', nargs='*', help='Source path(s).')
-	parser.add_argument('dst', help='Destination path.')
+	parser.add_argument('dst', nargs='?', help='Destination path.')
 
 	parser.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
@@ -65,13 +83,16 @@ def main(argv=None):
 		help='Trim name to specified length.'
 			' No collision-detection afterwards. Default: %(default)s')
 
-	parser.add_argument('-s', '--min-df',
-		type=float, metavar='MiB', help='Threshold of df on dst path to stop on.')
+	parser.add_argument('-s', '--min-df', metavar='float [ B | K | M | G | T ]',
+		help='Threshold of df on dst path to stop on.'
+			' Simple number (float) will be interpreted as MiB, but unit letter'
+				' (B, K, M, G, T) can be specified immediately after, e.g. "2.2G" for 2.2 GiB.')
 
-	parser.add_argument('-c', '--clean-df',
-		type=float, metavar='MiB', help='Before copying stuff, clean up files from'
-			' destination path (also see --clean-path) up to specified free-space'
-			' threshold (or until theres nothing left). Files to remove are picked at random.')
+	parser.add_argument('-c', '--clean-df', metavar='float [ B | K | M | G | T ]',
+		help='Before copying stuff, clean up files from'
+				' destination path (also see --clean-path) up to specified free-space'
+				' threshold (or until theres nothing left). Files to remove are picked at random.'
+			' Same value spec format as with --min-df.')
 	parser.add_argument('-a', '--clean-as-necessary',
 		action='store_true', help='Clean up files from destination path'
 			' (also see --clean-path) as necessary to copy *all* the source files.'
@@ -104,23 +125,36 @@ def main(argv=None):
 	logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
 	log = logging.getLogger()
 
+	if optz.src and not optz.dst: optz.src, optz.dst = optz.src[:-1], optz.src[-1]
 	if optz.shuffle is None: optz.shuffle = True
-	if optz.clean_as_necessary and optz.min_df:
+	if optz.src and (optz.clean_as_necessary and optz.min_df):
 		parser.error('Options --min-df and --clean-as-necessary do not make sense together')
 	if optz.shuffle and (optz.clean_df or optz.clean_as_necessary or optz.clean_path):
 		parser.error('Options --clean* and --shuffle do not make sense together')
-	if not optz.src and not optz.shuffle:
-		parser.error('At least one "src" path must be specified, unless --shuffle is used.')
+	if not (optz.clean_df or optz.clean_as_necessary or optz.clean_path):
+		if not optz.dst: parser.error('No "dst" path specified.')
+		if not optz.src and not optz.shuffle:
+			parser.error('At least one "src" path must be specified, unless --shuffle is used.')
+	else:
+		if not optz.src and not optz.shuffle and optz.clean_path: optz.clean_as_necessary = True
+		if not optz.dst:
+			if not optz.clean_path:
+				parser.error('Either "dst" or --cleanup-path must be specified for cleanup.')
+			else: optz.dst = optz.clean_path
 
-	MiB = 2**20
+	MiB = float(2**20)
 	if not exists(optz.dst):
 		local['mkdir']('-p', optz.dst)
 		log.debug('Created: {}'.format(optz.dst))
-	if optz.min_df: optz.min_df = optz.min_df * MiB
+	if optz.min_df:
+		try: optz.min_df = float(optz.min_df) * MiB
+		except ValueError: optz.min_df = size_human_parse(optz.min_df)
 
 	optz.clean = optz.clean_df or optz.clean_as_necessary
 	if optz.clean:
-		if optz.clean_df: optz.clean_df = optz.clean_df * MiB
+		if optz.clean_df:
+			try: optz.clean_df = float(optz.clean_df) * MiB
+			except ValueError: optz.clean_df = size_human_parse(optz.clean_df)
 	if not optz.clean_path: optz.clean_path = optz.dst
 
 	if not optz.name_format or not mw:
@@ -165,7 +199,9 @@ def main(argv=None):
 		return path
 
 	def do_cleanup(df_goal=optz.clean_df):
-		if optz.dry_run: return
+		if optz.dry_run:
+			log.debug('Cleanup dry-run (goal: %.0f MiB)', df_goal / MiB)
+			return
 		while cleanup:
 			df = free(optz.clean_path)
 			if df >= df_goal: break
@@ -286,12 +322,16 @@ def main(argv=None):
 		if not optz.dry_run:
 			for path in cleanup: os.unlink(path)
 
+	# Perform --clean-as-necessary cleanup to specified --min-df, if no sources specified
+	elif optz.clean_as_necessary and optz.min_df and not src_files: do_cleanup(optz.min_df)
+
 	### Stats
 	df0, ts0 = free(), time()
 	df_last, ts_last, rate = df0, ts0, None
 	stats = lambda: 'Done: {:.1f} MiB, rate: {:.2f} MiB/s'.format((df0 - df) / MiB, rate / MiB)
 
 	### Copy files
+	df, ts, rate = free(), time(), 0
 	while src_files:
 		# ewma is used here reflect changing speeds
 		#  (due to cached writes and/or other activity) faster.
