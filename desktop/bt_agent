@@ -74,6 +74,12 @@ class Agent(dbus.service.Object):
 
 
 	def ask(self, prompt, device=None):
+		if device and not isinstance(self.auth_svc, bool):
+			bdaddr = self.get_bdaddr(device)
+			if bdaddr in self.auth_svc:
+				log.info('Returning cached pin code for bdaddr: %r', bdaddr)
+				# log.info('Cached pin for bdaddr %r: %r', bdaddr, self.auth_svc[bdaddr])
+				return self.auth_svc[bdaddr]
 		if not self.interactive:
 			raise RuntimeError('Agent does not support interaction')
 		prompt = self.p(prompt, device, format_only=True)
@@ -174,6 +180,8 @@ def main(args=None):
 				' file with bdaddrs (in xx:xx:xx:xx:xx:xx format) to allow connections from,'
 				' while explicitly blocking all others'
 				' (default with this option is to allow any one marked as "trusted").'
+			' Also, each line can contain "pin code" after bdaddr'
+				' (separated by spaces), to simulate interactive entry of this code.'
 			' File (if specified) will only be read once, on agent startup.')
 	parser.add_argument('-n', '--non-interactive', action='store_true',
 		help='Do not require any interactive input (to e.g. run as daemon).')
@@ -190,8 +198,16 @@ def main(args=None):
 	auth = True if opts.authorize_services is None else opts.authorize_services
 	if not isinstance(auth, bool):
 		auth_path = os.path.expanduser(auth)
-		with io.open(auth_path, encoding='utf-8', errors='ignore') as src:
-			auth = set(filter(None, (line.strip().lower() for line in src.readlines())))
+		with io.open( auth_path, encoding='utf-8',
+			errors='ignore' ) as src: auth_lines = src.readlines()
+		auth = dict()
+		for line in auth_lines:
+			line = line.strip().split()
+			if not line: continue
+			bdaddr = line[0].lower()
+			if len(line) == 1: auth[bdaddr] = None
+			elif len(line) == 2: auth[bdaddr] = line[1]
+			else: raise RuntimeError(line)
 		for bdaddr in auth:
 			if not re.match(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', bdaddr):
 				log.warn('Invalid bdaddr (file: %r), skipped: %r', auth_path, bdaddr)
