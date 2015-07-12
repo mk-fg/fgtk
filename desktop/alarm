@@ -217,10 +217,10 @@ def main(args=None):
 			p('Parsed time spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
 
 		if opts.fork:
-			if not os.fork(): sys.exit()
+			if os.fork(): sys.exit()
 			try: os.setsid()
 			except OSError: pass
-			if not os.fork(): sys.exit()
+			if os.fork(): sys.exit()
 
 		if opts.at:
 			os.environ['ALARM_AT_TS'] = '{} {}'.format(
