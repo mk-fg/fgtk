@@ -27,7 +27,7 @@
 		done
 	}
 	[[ -z "${NYM_RUN}" ]] && {
-		readarray -t ids < <(ls -1 "$HOME"/.ssh/id_* | grep -F "$NYM" | grep -v ".pub$")
+		readarray -t ids < <(ls -1 "$HOME"/.ssh/id_* | grep -F "$NYM" | grep -v '\.pub$')
 		[[ ${#ids[@]} -gt 1 ]] && {
 			echo >&2 "More than one ID matching NYM ('${NYM}'): ${ids[@]}"
 			exit 2; }
