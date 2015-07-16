@@ -46,7 +46,14 @@ optz.smessage = ' '.join(optz.smessage)
 
 import itertools as it, operator as op, functools as ft
 from gi.repository import Gtk, Notify
-import os, sys
+import os, sys, re
+
+garbled_mark = '⚏garbled-{}⚏'
+for k, v in optz._get_kwargs():
+	if not v.strip(): continue
+	v = ''.join(v.split())
+	if not v.strip('?') or (k == 'smessage' and re.search(r'^[?\s+]+:', v)):
+		setattr(optz, k, garbled_mark.format(k))
 
 # Ripped from https://gist.github.com/1361027
 notifications = dict(
