@@ -194,6 +194,8 @@ def main(args=None):
 		help='If any of the usual notification means fail,'
 			' try email (to current $USER) and wall(1) notifications.')
 
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Do not queue the actual alarm, stopping after time parsing stage.')
 	parser.add_argument('-q', '--quiet', action='store_true', help='Quiet operation mode.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -215,6 +217,7 @@ def main(args=None):
 				' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
 		if not opts.quiet:
 			p('Parsed time spec {!r} as {} (delta: {})', opts.time, ts, naturaltime_diff(ts, ts0))
+		if opts.dry_run: sys.exit()
 
 		if opts.fork:
 			if os.fork(): sys.exit()
