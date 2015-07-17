@@ -94,7 +94,7 @@ def main(args=None):
 	# Prioritize .old variants removal for all but linked version
 	if opts.clean_old:
 		for v, files in vfiles.viewitems():
-			if v[4] == 0: rmq[v] = files
+			if v[3] == 0: rmq[v] = files
 
 	for v_major, files in vfiles_by_major.viewitems():
 		files = files.items()[:-1] # keep last patchset of each major ver, if possible
@@ -128,7 +128,7 @@ def main(args=None):
 				log.debug(' - %s - %s', format_v(v), p)
 				rmq_set.add(p)
 
-	rmq_len_start = len(rmq)
+	df, rmq_len_start = free(), len(rmq)
 	for v, files in rmq.items():
 		df = free()
 		if rm_count is not None and rm_count > 0: rm_count -= 1
