@@ -1,12 +1,12 @@
 #!/bin/bash
 
 usage() {
-	echo >&2 "Usage: $0 [ --debug ] [ hosts ]"
+	echo >&2 "Usage: $0 [ --debug ] [ ssh-keyscan-args ]"
 	exit 1
 }
 
 [[ "$1" = --debug ]] && { set -x; shift; }
-[[ "$#" -eq 0 ]] && usage
+[[ "$#" -eq 0 || "$1" = -h || "$1" = --help ]] && usage
 
 ip=
 while read line; do
