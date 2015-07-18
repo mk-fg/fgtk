@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 usage() {
 	bin=$(basename $0)
@@ -7,9 +7,10 @@ usage() {
 	echo >&2 "  or: $bin [-q] file:line[:ctx_lines]"
 	exit ${1:-0}
 }
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
 
 q=
-[[ "$1" = '-q' ]] && { q=t; shift; }
+[[ "$1" = -q ]] && { q=t; shift; }
 
 ctx=
 case "$#" in
