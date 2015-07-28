@@ -1299,6 +1299,19 @@ to create modal windows or "wall" for terminal broadcasts).
 For persistent notifications (between reboots and such), there's an --at option
 to use at(1p).
 
+##### acpi-wakeup-config
+
+Bash script to statelessly enable/disable (and not toggle) events in
+/proc/acpi/wakeup (wakeup events from various system sleep states).
+
+E.g. `acpi-wakeup-config -LID0` to disable "opening lid wakes up laptop"
+regardless of its current setting.
+Usual `echo LID0 > /proc/acpi/wakeup` toggles the knob, which is inconvenient
+when one wants to set it to a specific value.
+
+Also has special `+all` and `-all` switches to enable/disable all events and
+prints the whole wakeup-table if ran without arguments.
+
 
 
 ### VM

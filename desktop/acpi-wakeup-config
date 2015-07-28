@@ -1,0 +1,31 @@
+#!/bin/bash
+
+declare -A events
+while read ev val; do events[$ev]=$val
+done < <(awk 'NR>1 {print $1, $3=="*enabled"?"t":""}' /proc/acpi/wakeup)
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [-all] [+all] +event1 -event2"
+	echo >&2 "  where 'eventX' is a name of event ('Device' column) in /proc/acpi/wakeup"
+	echo >&2 "Example: $bin -all +SLPB +LID0"
+	echo >&2
+	echo >&2 "Events in /proc/acpi/wakeup:"
+	nl -bn -w2 /proc/acpi/wakeup >&2
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+
+ev_off() { [[ -n ${events[$1]} ]] && echo $1 >/proc/acpi/wakeup; events[$1]=; }
+ev_on() { [[ -z ${events[$1]} ]] && echo $1 >/proc/acpi/wakeup; events[$1]=t; }
+
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-all) for ev in ${!events[@]}; do ev_off $ev; done;;
+		+all) for ev in ${!events[@]}; do ev_on $ev; done;;
+		-*) ev_off ${1#-};;
+		+*) ev_on ${1#+};;
+		*) echo >&2 "ERROR: unrecognized argument: $1"; echo >&2; usage 1;;
+	esac
+	shift
+done
