@@ -101,7 +101,11 @@ def req_jrpc(url, method, *params):
 
 def vod_fetch(url, file_prefix,
 		start_delay=None, max_length=None, ytdl_opts=None, aria2c_opts=None,
-		aria2c_debug=False, keep_tempfiles=False, dl_info_suffix=None ):
+		verbose=False, keep_tempfiles=False, dl_info_suffix=None ):
+	dst_file = '{}.mp4'.format(file_prefix)
+	if exists(dst_file):
+		log.info('--- Skipping download for existing file: %s (rename/remove it to force)', dst_file)
+		return
 	log.info('--- Downloading VoD %s (url: %s)%s', file_prefix, url, dl_info_suffix or '')
 
 	start_delay = start_delay or 0
@@ -110,9 +114,12 @@ def vod_fetch(url, file_prefix,
 	with vod_cache('m3u8.url') as vc:
 		url_pls = vc.cached
 		if not url_pls:
-			cmd = ['youtube-dl', '--get-url'] + (ytdl_opts or list()) + [url]
+			cmd = ['youtube-dl']
+			if verbose: cmd.append('--verbose')
+			cmd = cmd + ['--get-url'] + (ytdl_opts or list()) + [url]
 			log.debug('Running "youtube-dl --get-url" command: %s', ' '.join(cmd))
 			url_pls = vc.update(subprocess.check_output(cmd, close_fds=True).strip())
+	assert ' ' not in url_pls, url_pls
 	url_base = url_pls.rsplit('/', 1)[0]
 
 	with vod_cache('m3u8.ua') as vc:
@@ -124,8 +131,8 @@ def vod_fetch(url, file_prefix,
 	with vod_cache('m3u8') as vc:
 		pls = vc.cached
 		if not pls:
-			with req('get', url_pls, headers={'user-agent': ua}) as r:
-				pls = vc.update(r.text)
+			log.debug('Fetching playlist from URL: %s', url_pls)
+			with req('get', url_pls, headers={'user-agent': ua}) as r: pls = vc.update(r.text)
 
 	# port/key are always updated between aria2c runs
 	with vod_cache('rpc_key') as vc: key = vc.update(get_uid(18))
@@ -161,31 +168,33 @@ def vod_fetch(url, file_prefix,
 			'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
 		os.fchmod(dst.fileno(), 0700)
 
-	aria2c_log_level = 'notice' if aria2c_debug else 'warn'
-	aria2c = subprocess.Popen([
-		'aria2c',
+	aria2c_log_level = 'notice' if verbose else 'warn'
+	cmd = [
+			'aria2c',
 
-		'--summary-interval=0',
-		'--console-log-level={}'.format(aria2c_log_level),
+			'--summary-interval=0',
+			'--console-log-level={}'.format(aria2c_log_level),
 
-		'--stop-with-process={}'.format(os.getpid()),
-		'--enable-rpc=true',
-		'--rpc-listen-port={}'.format(port),
-		'--rpc-secret={}'.format(key),
+			'--stop-with-process={}'.format(os.getpid()),
+			'--enable-rpc=true',
+			'--rpc-listen-port={}'.format(port),
+			'--rpc-secret={}'.format(key),
 
-		'--no-netrc', '--no-proxy',
-		'--always-resume=false',
-		'--max-concurrent-downloads=5',
-		'--max-connection-per-server=5',
-		'--max-file-not-found=5',
-		'--max-tries=8',
-		'--timeout=15',
-		'--connect-timeout=10',
-		'--lowest-speed-limit=100K',
-		'--user-agent={}'.format(ua),
+			'--no-netrc', '--no-proxy',
+			'--always-resume=false',
+			'--max-concurrent-downloads=5',
+			'--max-connection-per-server=5',
+			'--max-file-not-found=5',
+			'--max-tries=8',
+			'--timeout=15',
+			'--connect-timeout=10',
+			'--lowest-speed-limit=100K',
+			'--user-agent={}'.format(ua),
 
-		'--on-download-complete={}'.format(hook_done),
-	] + (aria2c_opts or list()), close_fds=True)
+			'--on-download-complete={}'.format(hook_done),
+		] + (aria2c_opts or list())
+	log.debug('Starting aria2c daemon: %s', ' '.join(cmd))
+	aria2c = subprocess.Popen(cmd, close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
 
@@ -251,8 +260,8 @@ def vod_fetch(url, file_prefix,
 				if not gids_wait: break
 				log.debug( # helps to see the overall progress
 					'\n\n  ------ waiting for downloads (count: %s'
-						' / %s, last gid: %06d, err-retry-pass: %s) ------  \n',
-					gids_wait, gids_started_count, gid_last, n )
+						' / %s, last gid: %06d, err-retry-pass: %s / %s) ------  \n',
+					gids_wait, gids_started_count, gid_last, n, chunk_err_retries )
 				time.sleep(poll_delay)
 
 			with vod_cache('gids') as vc:
@@ -325,8 +334,6 @@ def vod_fetch(url, file_prefix,
 	log.info('Finished, resulting file: %s', dst_file)
 
 
-
-
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -383,21 +390,25 @@ def main(args=None):
 		start_delay=parse_pos_spec(opts.start_pos) if opts.start_pos else 0,
 		max_length=opts.length and parse_pos_spec(opts.length),
 		ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
-		aria2c_debug=opts.debug, keep_tempfiles=opts.keep_tempfiles )
+		verbose=opts.debug, keep_tempfiles=opts.keep_tempfiles )
 
 	it_adjacent = lambda seq, n: zip(*([iter(seq)] * n))
 	vod_queue, args = list(),\
 		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
-	if len(vod_queue) % 2:
-		parser.error( 'Odd number of url/prefix args'
-			' specified, while these should always come in pairs.' )
+	if len(args) % 2:
+		parser.error( 'Odd number of url/prefix args specified'
+			' ({}), while these should always come in pairs.'.format(len(args)) )
 	for url, prefix in it_adjacent(args, 2):
 		if re.search(r'^https?:', prefix):
 			if re.search(r'^https?:', url):
 				parser.error( 'Both url/file_prefix args seem'
 					' to be an URL, only first one should be: {} {}'.format(url, prefix) )
-			log.warn('Looks like url/prefix args got mixed-up, correcting that')
 			prefix, url = url, prefix
+			log.warn( 'Looks like url/prefix args got'
+				' mixed-up, correcting that to prefix=%s url=%s', prefix, url )
+		if not re.search('^https?://[^/]+/[^/]+/v/', url):
+			parser.error( 'Provided URL appears to be for the'
+				' unsupported VoD format (only /v/ VoDs are supported): {}'.format(url) )
 		vod_queue.append((url, prefix))
 
 	for n, (url, prefix) in enumerate(vod_queue, 1):
