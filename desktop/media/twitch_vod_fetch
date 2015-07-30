@@ -99,66 +99,18 @@ def req_jrpc(url, method, *params):
 	return data_res['result']
 
 
-def main(args=None):
-	import argparse
-	parser = argparse.ArgumentParser(
-		usage='%(prog)s [options] url file_prefix',
-		description='Grab a VoD or a specified slice of it from twitch.tv, properly.')
-	parser.add_argument('url', help='URL for a VoD to fetch.')
-	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
+def vod_fetch(url, file_prefix,
+		start_delay=None, max_length=None, ytdl_opts=None, aria2c_opts=None,
+		aria2c_debug=False, keep_tempfiles=False, dl_info_suffix=None ):
+	log.info('--- Downloading VoD %s (url: %s)%s', file_prefix, url, dl_info_suffix or '')
 
-	parser.add_argument('-y', '--ytdl-opts',
-		action='append', metavar='opts',
-		help='Extra opts for youtube-dl --get-url command.'
-			' Will be split on spaces, unless option is used multiple times.')
-	parser.add_argument('-a', '--aria2c-opts',
-		action='append', metavar='opts',
-		help='Extra opts for aria2c command.'
-			' Will be split on spaces, unless option is used multiple times.')
-
-	parser.add_argument('-s', '--start-pos',
-		metavar='[[hours:]minutes:]seconds',
-		help='Only download video chunks after specified start position.')
-	parser.add_argument('-l', '--length',
-		metavar='[[hours:]minutes:]seconds',
-		help='Only download specified length of the video (from specified start or beginning).')
-
-	parser.add_argument('-k', '--keep-tempfiles',
-		action='store_true', help='Do not remove all the'
-				' temporary files after successfully assembling resulting mp4.'
-			' Chunks in particular might be useful to download different but overlapping video slices.')
-
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	opts = parser.parse_args(sys.argv[1:] if args is None else args)
-
-	global log
-	import logging
-	logging.basicConfig(
-		datefmt='%Y-%m-%d %H:%M:%S',
-		format='%(asctime)s :: %(name)s %(levelname)s :: %(message)s',
-		level=logging.DEBUG if opts.debug else logging.INFO )
-	log = logging.getLogger('main')
-
-	# Retries logged from here are kinda useless, especially before aria2c starts
-	logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.ERROR)
-
-	if re.search(r'^https?:', opts.file_prefix):
-		if re.search(r'^https?:', opts.url):
-			parser.error('Both args seem to be an URL, only first one should be.')
-		log.warn('Looks like url/prefix args got mixed-up, correcting that')
-		opts.file_prefix, opts.url = opts.url, opts.file_prefix
-
-	start_delay = parse_pos_spec(opts.start_pos) if opts.start_pos else 0
-	max_length = opts.length and parse_pos_spec(opts.length)
-
-	vod_cache = ft.partial(VodFileCache, opts.file_prefix)
+	start_delay = start_delay or 0
+	vod_cache = ft.partial(VodFileCache, file_prefix)
 
 	with vod_cache('m3u8.url') as vc:
 		url_pls = vc.cached
 		if not url_pls:
-			ytdl_opts = opts.ytdl_opts or list()
-			if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].split()
-			cmd = ['youtube-dl', '--get-url'] + ytdl_opts + [opts.url]
+			cmd = ['youtube-dl', '--get-url'] + (ytdl_opts or list()) + [url]
 			log.debug('Running "youtube-dl --get-url" command: %s', ' '.join(cmd))
 			url_pls = vc.update(subprocess.check_output(cmd, close_fds=True).strip())
 	url_base = url_pls.rsplit('/', 1)[0]
@@ -200,18 +152,16 @@ def main(args=None):
 	if not exists(sh_path): sh_path = '/bin/sh'
 
 	hook_done = '/tmp/.fetch_twitch_vod.{}.done.hook'.format(os.getpid())
-	assert "'" not in opts.file_prefix, opts.file_prefix
+	assert "'" not in file_prefix, file_prefix
 	assert "'" not in gids_done_path, gids_done_path
 	with open(hook_done, 'wb') as dst:
 		dst.write('\n'.join([
 			'#!{}'.format(sh_path),
-			'mv "$3" \'{}\'.chunk."$1".mp4\\'.format(opts.file_prefix),
+			'mv "$3" \'{}\'.chunk."$1".mp4\\'.format(file_prefix),
 			'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
 		os.fchmod(dst.fileno(), 0700)
 
-	aria2c_log_level = 'notice' if opts.debug else 'warn'
-	aria2c_opts = opts.aria2c_opts or list()
-	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].split()
+	aria2c_log_level = 'notice' if aria2c_debug else 'warn'
 	aria2c = subprocess.Popen([
 		'aria2c',
 
@@ -235,7 +185,7 @@ def main(args=None):
 		'--user-agent={}'.format(ua),
 
 		'--on-download-complete={}'.format(hook_done),
-	] + aria2c_opts, close_fds=True)
+	] + (aria2c_opts or list()), close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
 
@@ -252,7 +202,7 @@ def main(args=None):
 			res = aria2c_jrpc('system.multicall', list(
 				dict( methodName='aria2.addUri',
 					params=[ key, ['{}/{}'.format(url_base, path)],
-						dict(gid=gid_str, out='{}.chunk.{}.mp4.tmp'.format(opts.file_prefix, gid_str)) ] )
+						dict(gid=gid_str, out='{}.chunk.{}.mp4.tmp'.format(file_prefix, gid_str)) ] )
 				for gid_str, path in gid_files ))
 			res_chk = list([gid] for gid, path in gid_files)
 			if res != res_chk:
@@ -332,7 +282,7 @@ def main(args=None):
 		return 1
 
 	chunks_needed = list(
-		'{}.chunk.{}.mp4'.format(opts.file_prefix, gid_format(gid))
+		'{}.chunk.{}.mp4'.format(file_prefix, gid_format(gid))
 		for gid in gids_needed )
 	chunks = filter(exists, chunks_needed)
 	chunks_missing = set(chunks_needed).difference(chunks)
@@ -347,7 +297,7 @@ def main(args=None):
 	assert sorted(chunks) == chunks
 
 	log.info('Concatenating %s chunk files...', len(chunks))
-	dst_file = '{}.mp4'.format(opts.file_prefix)
+	dst_file = '{}.mp4'.format(file_prefix)
 
 	## Simple "cat" works for players like vlc and mpv, with minor seek inprecision
 	if not exists(dst_file):
@@ -366,12 +316,92 @@ def main(args=None):
 	# 		'-movflags', 'empty_moov', # makes file playable right away
 	# 		'-c', 'copy', '-bsf:a', 'aac_adtstoasc', dst_file ])
 
-	if not opts.keep_tempfiles:
+	if not keep_tempfiles:
 		tmp_files = list(it.chain(( vod_cache(ext).path for ext in
 				['m3u8.url', 'm3u8.ua', 'm3u8', 'rpc_key', 'rpc_port', 'gids'] ), chunks))
 		log.debug('Cleaning up temporary files (count: %s)...', len(tmp_files))
 		for p in tmp_files: os.unlink(p)
 
 	log.info('Finished, resulting file: %s', dst_file)
+
+
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] url file_prefix [url-2 file_prefix-2 ...]',
+		description='Grab a VoD or a specified slice of it from twitch.tv, properly.')
+	parser.add_argument('url', help='URL for a VoD to fetch.')
+	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
+	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
+		help='Any number of extra "url file_prefix" arguments can be specified.')
+
+	parser.add_argument('-y', '--ytdl-opts',
+		action='append', metavar='opts',
+		help='Extra opts for youtube-dl --get-url command.'
+			' Will be split on spaces, unless option is used multiple times.')
+	parser.add_argument('-a', '--aria2c-opts',
+		action='append', metavar='opts',
+		help='Extra opts for aria2c command.'
+			' Will be split on spaces, unless option is used multiple times.')
+
+	parser.add_argument('-s', '--start-pos',
+		metavar='[[hours:]minutes:]seconds',
+		help='Only download video chunks after specified start position.'
+			' If multiple url/prefix args are specified, this option will be applied to all of them.')
+	parser.add_argument('-l', '--length',
+		metavar='[[hours:]minutes:]seconds',
+		help='Only download specified length of the video (from specified start or beginning).'
+			' If multiple url/prefix args are specified, this option will be applied to all of them.')
+
+	parser.add_argument('-k', '--keep-tempfiles',
+		action='store_true', help='Do not remove all the'
+				' temporary files after successfully assembling resulting mp4.'
+			' Chunks in particular might be useful to download different but overlapping video slices.')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(
+		datefmt='%Y-%m-%d %H:%M:%S',
+		format='%(asctime)s :: %(name)s %(levelname)s :: %(message)s',
+		level=logging.DEBUG if opts.debug else logging.INFO )
+	log = logging.getLogger('main')
+
+	# Retries logged from here are kinda useless, especially before aria2c starts
+	logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.ERROR)
+
+	ytdl_opts = opts.ytdl_opts or list()
+	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].split()
+	aria2c_opts = opts.aria2c_opts or list()
+	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].split()
+
+	dl_kws = dict(
+		start_delay=parse_pos_spec(opts.start_pos) if opts.start_pos else 0,
+		max_length=opts.length and parse_pos_spec(opts.length),
+		ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
+		aria2c_debug=opts.debug, keep_tempfiles=opts.keep_tempfiles )
+
+	it_adjacent = lambda seq, n: zip(*([iter(seq)] * n))
+	vod_queue, args = list(),\
+		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
+	if len(vod_queue) % 2:
+		parser.error( 'Odd number of url/prefix args'
+			' specified, while these should always come in pairs.' )
+	for url, prefix in it_adjacent(args, 2):
+		if re.search(r'^https?:', prefix):
+			if re.search(r'^https?:', url):
+				parser.error( 'Both url/file_prefix args seem'
+					' to be an URL, only first one should be: {} {}'.format(url, prefix) )
+			log.warn('Looks like url/prefix args got mixed-up, correcting that')
+			prefix, url = url, prefix
+		vod_queue.append((url, prefix))
+
+	for n, (url, prefix) in enumerate(vod_queue, 1):
+		info_suffix = None if len(vod_queue) == 1 else ' [{} / {}]'.format(n, len(vod_queue))
+		vod_fetch(url, prefix, dl_info_suffix=info_suffix, **dl_kws)
 
 if __name__ == '__main__': sys.exit(main())
