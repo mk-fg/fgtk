@@ -32,3 +32,5 @@ while [[ $n -le $ns ]]; do
 	ffmpeg -loglevel warning -y -i "$1" -acodec copy -vn -ss $s -to $e "$dst"
 	(( n += 1 ))
 done
+
+:
