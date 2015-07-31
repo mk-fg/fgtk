@@ -1004,6 +1004,19 @@ can be omitted, and defaults to 15 min.
 Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn" to grab
 the chunks from source file.
 
+###### audio_split_m4b
+
+Splits m4b audiobook files on chapters (list of which are encoded into m4b as
+metadata) with ffprobe/ffmpeg.
+
+Chapter offsets and titles are detected via `ffprobe -v 0 -show_chapters`, and
+then each gets extracted with `ffmpeg -i ... -acodec copy -ss ... -to ...`,
+producing aac files with names corresponding to metadata titles (by default, can
+be controlled with --name-format, default is `{n:03d}__{title}.aac`).
+
+Doesn't do any transcoding, which can easily be performed later to e.g. convert
+resulting aac files to mp3 or ogg, if necessary.
+
 ###### twitch_vod_fetch
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
