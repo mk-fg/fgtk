@@ -146,7 +146,15 @@ def read_admin_conf(path='~/.cjdnsadmin', rtfm=True):
 		sys.exit(1)
 
 
-def public_to_ipv6(key, colons=False,
+def parse_ipv6(ipv6):
+	if '::' in ipv6: ipv6 = ipv6.replace('::', ':'*(9 - ipv6.count(':')))
+	return ':'.join(('0'*(4-len(v)) + v) for v in ipv6.split(':'))
+
+def parse_pubkey(key):
+	if not key.endswith('.k'): key += '.k'
+	return key
+
+def pubkey_to_ipv6(key, colons=True,
 		_cjdns_b32_map = [ # directly from util/Base32.h
 			99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,
 			99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,
@@ -178,6 +186,33 @@ def public_to_ipv6(key, colons=False,
 
 	if colons: addr = ':'.join(addr[n*4:(n+1)*4] for n in xrange(8))
 	return addr
+
+
+class AddrLookupError(Exception): pass
+
+addr_re = re.compile(r'(?i)^v(\d+)\.((?:[0-9a-f]{4}\.)+[0-9a-f]{4})\.([0-9a-z]{52}(?:\.k)?)$')
+ipv6_re = re.compile(r'(?i)^fc[\da-f]{1,2}:[:\da-f]+$')
+path_re = re.compile(r'(?i)^(?:[\da-f]{4}\.){3}[\da-f]{4}$')
+key_re = re.compile(r'^[0-9a-z]{52}(?:\.k)?$')
+
+def cjdns_addr_parse(spec, pick='all', ipv6_colons=True):
+	spec = spec.strip().lower()
+	res = dict(addr=None, ipv6=None, ver=None, path=None, pubkey=None)
+	if ipv6_re.search(spec): res['ipv6'] = spec
+	if path_re.search(spec): res['path'] = spec
+	if key_re.search(spec): res['pubkey'] = parse_pubkey(spec)
+	m = addr_re.search(spec)
+	if m:
+		res.update(zip(['ver', 'path', 'pubkey'], m.groups()))
+		res.update(addr=spec, pubkey=parse_pubkey(res['pubkey']))
+	if res['pubkey'] and not res['ipv6']:
+		res['ipv6'] = pubkey_to_ipv6(res['pubkey'], colons=ipv6_colons)
+	if pick == 'all': return res
+	elif isinstance(pick, types.StringTypes):
+		val = res[pick]
+		if val is None: raise AddrLookupError(spec, pick, res)
+		return val
+	else: return op.itemgetter(pick)(res)
 
 
 def int2base(x, base, _digs=string.digits+string.lowercase):
@@ -229,7 +264,23 @@ class CjdnsAdmin(object):
 	def get_txid(self):
 		return os.urandom(5).encode('hex')
 
-	def __call__(self, call, _auth=True, **call_args):
+	def get_responses(self, req, errors=False, max_bogus=10):
+		try:
+			self.sock.send(BTE.bencode(req))
+			while True:
+				for n in xrange(max_bogus + 1):
+					res = BTE.bdecode(self.sock.recv(self.bs))
+					if res.get('txid') != req['txid']:
+						log.debug('Received out-of-order response (n: %s, request: %s): %s', n, req, res)
+					else: break
+				if not errors and res.get('error') not in [None, 'none']:
+					raise CjdnsAdminError('Unhandled cjdns error reponse', res)
+				yield res
+		except Exception as err:
+			raise CjdnsAdminError('Failure communicating with cjdns', err)
+
+	def __call__( self, call, _auth=True,
+			_one_res=True, _res_errors=False, **call_args ):
 		if not _auth:
 			req = dict(q=call, args=call_args, txid=self.get_txid())
 		else:
@@ -237,21 +288,13 @@ class CjdnsAdmin(object):
 				self.sock.send(BTE.bencode(dict(q='cookie')))
 				cookie = BTE.bdecode(self.sock.recv(self.bs))['cookie']
 			except Exception as err:
-				raise
 				raise CjdnsAdminError('Failed to get auth cookie', err)
-			req = dict( q='auth',
-				aq='InterfaceController_peerStats',
-				args=call_args,
+			req = dict( q='auth', aq=call, args=call_args,
 				hash=sha256('{}{}'.format(self.admin_password, cookie)).hexdigest(),
 				cookie=cookie, txid=self.get_txid() )
 			req['hash'] = sha256(BTE.bencode(req)).hexdigest()
-		try:
-			self.sock.send(BTE.bencode(req))
-			res = BTE.bdecode(self.sock.recv(self.bs))
-			assert res.get('txid') == req['txid'], [req, res]
-		except Exception as err:
-			raise CjdnsAdminError('Failure communicating with cjdns', err)
-		return res
+		res_iter = self.get_responses(req, errors=_res_errors)
+		return res_iter if not _one_res else next(res_iter)
 
 	def get_peer_stats(self):
 		peers, page, more = list(), 0, True
@@ -260,6 +303,18 @@ class CjdnsAdmin(object):
 			peers.extend(res['peers'])
 			more, page = res.get('more'), page + 1
 		return peers
+
+	def get_peers(self, path, nearby_path=False):
+		res = self('RouterModule_getPeers', path=path, nearbyPath=int(nearby_path))
+		assert res['result'] == 'peers', res
+		return res['peers']
+
+	def search(self, ipv6, count=None):
+		res_iter = self( 'SearchRunner_search',
+			ipv6=parse_ipv6(ipv6), count=count or -1, _one_res=False )
+		for res in res_iter:
+			if res.get('complete'): break
+			yield (res['from'], res['nodes'])
 
 
 def main(args=None):
@@ -320,9 +375,22 @@ def main(args=None):
 			help='Skip obfuscating certain values. Can be specified multiple times.'
 				' Possible keywords: {}.'.format(', '.join(paste_checklist)))
 
-	with subcommand('peers', help='Get peer information.') as cmd:
+	with subcommand('peers', help='Get peer information of a local node.') as cmd:
 		cmd.add_argument('-r', '--raw', action='store_true',
 			help='Only output what cjdns returns, do not add any derivative data.')
+
+	with subcommand('peers-remote', help='Get peer information of a remote node.') as cmd:
+		cmd.add_argument('remote',
+			help='IPv6, pubkey, switchLabel path or full cjdns-address of a remote node to query.')
+		cmd.add_argument('-t', '--timeout',
+			metavar='seconds', type=float, default=2.0,
+			help='Timeout for RouterModule_getPeers request(s)'
+				' (which can hang indefinitely). Default: %(default)s')
+		cmd.add_argument('-r', '--raw', action='store_true',
+			help='Only output what cjdns returns, do not add any derivative data.')
+		cmd.add_argument('-f', '--fast', action='store_true',
+			help='Returning first non-empty list of peers received, dont bother querying past that.')
+
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -330,6 +398,7 @@ def main(args=None):
 	import logging
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
+
 
 	if opts.call == 'ipv6-to-record':
 		import ipaddr
@@ -339,22 +408,22 @@ def main(args=None):
 		if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
 		else: print(addr)
 
+
 	elif opts.call == 'key-to-ipv6':
 		colons = not (opts.djbdns or opts.record)
-		addr = public_to_ipv6(opts.key, colons=colons)
+		addr = pubkey_to_ipv6(opts.key, colons=colons)
 		if opts.djbdns: print(addr)
 		elif opts.record: print('.'.join(reversed(addr)) + '.ip6.arpa')
 		else: print(addr)
+
 
 	elif opts.call == 'decode-path':
 		if len(opts.path) > 1: opts.echo = True
 		for path in opts.path:
 			if opts.echo: print(path, end=' ')
-			m = re.search(r'^v\d+\.(.*)$', path)
-			if m: path = m.group(1)
-			m = re.search(r'^((?:[0-9a-f]{4}\.)+)[0-9a-z]{52}\.k$', path)
-			if m: path = m.group(1)
+			path = cjdns_addr_parse(path, 'path')
 			print(' '.join(it.imap(bytes, path_breakdown(path))))
+
 
 	elif opts.call == 'conf-paste':
 		if not opts.pbkdf2_salt: opts.pbkdf2_salt = os.urandom(16)
@@ -397,11 +466,44 @@ def main(args=None):
 
 		sys.stdout.write(src)
 
+
 	elif opts.call == 'peers':
 		admin = CjdnsAdmin()
 		res = admin.get_peer_stats()
-		for p in res: p['ipv6'] = public_to_ipv6(p['publicKey'], colons=True)
+		for p in res: p['ipv6'] = pubkey_to_ipv6(p['publicKey'])
 		pprint(res)
+
+
+	elif opts.call == 'peers-remote':
+		addr = cjdns_addr_parse(opts.remote)
+		if not addr['ipv6'] and not addr['path']:
+			parser.error('Unable to parse ipv6/path from spec: {}'.format(opts.remote))
+		admin = CjdnsAdmin(timeout=2)
+
+		path = addr.get('addr') or addr.get('path')
+		if not path:
+			path = set()
+			for src, src_nodes in admin.search(addr['ipv6']):
+				if opts.fast and path: break
+				path.update(src_nodes)
+			path = sorted(path)
+			log.debug('Resolved IPv6 to path(s): %s', ', '.join(path))
+		else: path = [path]
+
+		peers = set()
+		for p in path:
+			if opts.fast and peers: break
+			try: peers.update(admin.get_peers(p))
+			except CjdnsAdminError as err:
+				if not isinstance(err.args[1], socket.timeout): raise
+				log.debug('RouterModule_getPeers request timed-out for path: %s', p)
+		peers = sorted(peers)
+
+		if not opts.raw:
+			for n, addr in enumerate(peers):
+				peers[n] = cjdns_addr_parse(addr)
+			pprint(peers)
+
 
 	else: parser.error('Unrecognized command: {}'.format(opts.call))
 
