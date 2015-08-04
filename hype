@@ -350,6 +350,7 @@ def main(args=None):
 			help='Hex-encoded path string, possibly with dots in it (example: 0000.013c.bed9.5363).')
 		cmd.add_argument('-e', '--echo', action='store_true',
 			help='Force echo input path(s) as well.')
+		cmd.add_argument('-x', '--hex', action='store_true', help='Print all numbers in hex.')
 
 	with subcommand('conf-paste',
 			help='Obfuscate cjdns config (cjdroute.conf) in a secure and deterministic way.') as cmd:
@@ -422,7 +423,9 @@ def main(args=None):
 		for path in opts.path:
 			if opts.echo: print(path, end=' ')
 			path = cjdns_addr_parse(path, 'path')
-			print(' '.join(it.imap(bytes, path_breakdown(path))))
+			path = path_breakdown(path)
+			if opts.hex: path = map('{:02x}'.format, path)
+			print(' '.join(map(bytes, path)))
 
 
 	elif opts.call == 'conf-paste':

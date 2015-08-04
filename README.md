@@ -319,7 +319,9 @@ Nodes are not required to use it in theory, and there are other encoding schemas
 implemented which should break this tool's operation, but in practice no one
 bothers to change that default.
 
-Example: hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30
+Examples:
+* `hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30`
+* `hype decode-path -x 0ff9.e22d.6cb5.19e3 -> 03 1e 03 6a 32 0b 16 62 03 0f 0f`
 
 -- Subcommand: conf-paste
 
@@ -336,6 +338,22 @@ through pbkdf2-sha256 and output is truncated to appear less massive.
 pbkdf2 parameters are configurable (see --help output), and at least
 --pbkdf2-salt should be passed for output to be deterministic, otherwise random
 salt value will be used.
+
+-- Subcommand: peers
+
+Shows peer stats, with some extra info, like ipv6'es derived from keys (--raw to
+disable all that).
+
+-- Subcommand: peers-remote
+
+Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
+specified by its ipv6, path, pubkey or addr, resolving these via
+SearchRunner_search as necessary.
+
+-- Subcommands: ipv6-to-record, key-to-ipv6
+
+Misc pubkey/ipv6 representation/conversion helpers.
+
 
 ##### temp-patch
 
