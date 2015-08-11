@@ -411,7 +411,10 @@ option).
 
 Common use-case is probably has something to do with filenames, e.g.:
 
-	find -type f -print0 | shuf -z | hz -n10 | xargs -0 some-cool-command
+	find -type f -print0 | shuf -z | hz -10 | xargs -0 some-cool-command
+
+I have "h" as an alias for "head" in shells, so "head -z" (if there were such
+option) would be aliased neatly to "hz", hence the script name.
 
 
 
