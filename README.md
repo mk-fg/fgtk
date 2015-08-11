@@ -354,7 +354,6 @@ SearchRunner_search as necessary.
 
 Misc pubkey/ipv6 representation/conversion helpers.
 
-
 ##### temp-patch
 
 Tool to temporarily modify (patch) a file - until reboot or for a specified
@@ -399,6 +398,20 @@ editable by hand than the usual compact one-liner serialization.
 
 Due to yaml itself being json superset, can be used to convert json to
 pretty-json as well.
+
+##### hz
+
+Same thing as the common "head" tool, but works with \x00 delimeters.
+
+Can be done with putting "tr" in the pipeline before and after "head", but this
+one is probably less fugly.
+
+Allows replacing null-bytes with newlines in the output (--replace-with-newlines
+option).
+
+Common use-case is probably has something to do with filenames, e.g.:
+
+	find -type f -print0 | shuf -z | hz -n10 | xargs -0 some-cool-command
 
 
 

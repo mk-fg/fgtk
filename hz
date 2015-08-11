@@ -1,0 +1,73 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, io
+
+
+bs_start = 2**7
+bs_max = 20 * 2**20
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='"head", but with \\x00 delimeters.'
+			' Ensures that final chunk ends with delimeter by default.')
+
+	parser.add_argument('-n', '--count',
+		metavar='number', type=int, help='Max number of entries to read.')
+
+	parser.add_argument('-b', '--max-buffer-size',
+		metavar='bytes', type=int, default=2*2**20,
+		help='Max size of a single entry (in bytes), i.e. a peek buffer.'
+			' Cannot be larger than {}B.'.format(bs_max))
+	parser.add_argument('-r', '--replace-with-newlines',
+		action='store_true', help='Replace zero bytes with newlines in the output.')
+	parser.add_argument('--no-final-delimiter',
+		action='store_true', help='Do not ensure that final chunk ends with delimeter (e.g. \\x00).')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.max_buffer_size > bs_max:
+		parser.error('--max-buffer-size cannot be larger than {} (hardcoded limit).'.format(bs_max))
+
+	src = io.open(sys.stdin.fileno(), 'rb')
+	src = io.BufferedReader(src, buffer_size=opts.max_buffer_size)
+
+	with src as src:
+		bs, bs_last, count = None, None, 0
+		while True:
+			if bs is None: bs = bs_start
+
+			buff = src.peek(bs)
+			bs_now = len(buff)
+
+			if buff:
+				if bs_now < bs and bs_now == bs_last: pos = None
+				else: pos = buff.find('\0')
+				if pos == -1:
+					if bs == opts.max_buffer_size:
+						raise RuntimeError( 'Failed to find next'
+							' \\x00 byte with buffer size: {}'.format(opts.max_buffer_size) )
+					bs, bs_last = max(bs * 2, opts.max_buffer_size), bs_now
+					continue
+			bs_last = None
+
+			if count and (buff or not opts.no_final_delimiter):
+				sys.stdout.write('\0' if not opts.replace_with_newlines else '\n')
+			if opts.count and count >= opts.count: break
+			if not buff: break
+			count += 1
+
+			if pos is not None:
+				buff = src.read(pos)
+				assert '\0' not in buff and src.read(1) == '\0', 'bad chunk read'
+				sys.stdout.write(buff)
+			else: # "read until the end" command
+				for buff in iter(ft.partial(src.read, bs_max), ''):
+					assert '\0' not in buff, 'bad unlimited read'
+					sys.stdout.write(buff)
+			bs = None
+
+if __name__ == '__main__': sys.exit(main())
