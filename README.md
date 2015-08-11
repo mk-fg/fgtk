@@ -406,10 +406,11 @@ Same thing as the common "head" tool, but works with \x00 delimeters.
 Can be done with putting "tr" in the pipeline before and after "head", but this
 one is probably less fugly.
 
-Allows replacing null-bytes with newlines in the output (--replace-with-newlines
-option).
+Allows replacing input null-bytes with newlines in the output
+(--replace-with-newlines option) and vice-versa.
 
-Common use-case is probably has something to do with filenames, e.g.:
+Common use-case is probably has something to do with filenames,
+find and xargs, e.g.:
 
 	find -type f -print0 | shuf -z | hz -10 | xargs -0 some-cool-command
 

@@ -26,12 +26,17 @@ def main(args=None):
 	parser.add_argument('-n', '--count',
 		metavar='number', type=int, help='Max number of entries to read.')
 
+	parser.add_argument('-r', '--replace-with-newlines',
+		action='store_true', help='Replace zero bytes with newlines in the output.')
+	parser.add_argument('-z', '--replace-with-nulls',
+		action='store_true', help='Handle newlines in the'
+				' input and replace them with zero bytes in the output.'
+			'If --replace-with-newlines is also specified, behaves same as "head".')
+
 	parser.add_argument('-b', '--max-buffer-size',
 		metavar='bytes', type=int, default=2*2**20,
 		help='Max size of a single entry (in bytes), i.e. a peek buffer.'
 			' Cannot be larger than {}B.'.format(bs_max))
-	parser.add_argument('-r', '--replace-with-newlines',
-		action='store_true', help='Replace zero bytes with newlines in the output.')
 	parser.add_argument('--no-final-delimiter',
 		action='store_true', help='Do not ensure that final chunk ends with delimeter (e.g. \\x00).')
 
@@ -39,6 +44,9 @@ def main(args=None):
 
 	if opts.max_buffer_size > bs_max:
 		parser.error('--max-buffer-size cannot be larger than {} (hardcoded limit).'.format(bs_max))
+
+	sep = '\0' if not opts.replace_with_nulls else '\n'
+	glue = '\0' if not opts.replace_with_newlines else '\n'
 
 	src = sys.stdin.fileno() if not opts.file else opts.file
 	src = io.open(src, 'rb')
@@ -54,7 +62,7 @@ def main(args=None):
 
 			if buff:
 				if bs_now < bs and bs_now == bs_last: pos = None
-				else: pos = buff.find('\0')
+				else: pos = buff.find(sep)
 				if pos == -1:
 					if bs == opts.max_buffer_size:
 						raise RuntimeError( 'Failed to find next'
@@ -63,19 +71,18 @@ def main(args=None):
 					continue
 			bs_last = None
 
-			if count and (buff or not opts.no_final_delimiter):
-				sys.stdout.write('\0' if not opts.replace_with_newlines else '\n')
+			if count and (buff or not opts.no_final_delimiter): sys.stdout.write(glue)
 			if opts.count and count >= opts.count: break
 			if not buff: break
 			count += 1
 
 			if pos is not None:
 				buff = src.read(pos)
-				assert '\0' not in buff and src.read(1) == '\0', 'bad chunk read'
+				assert sep not in buff and src.read(1) == sep, 'bad chunk read'
 				sys.stdout.write(buff)
 			else: # "read until the end" command
 				for buff in iter(ft.partial(src.read, bs_max), ''):
-					assert '\0' not in buff, 'bad unlimited read'
+					assert sep not in buff, 'bad unlimited read'
 					sys.stdout.write(buff)
 			bs = None
 
