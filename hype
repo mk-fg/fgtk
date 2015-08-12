@@ -4,15 +4,27 @@ from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
+from collections import namedtuple
 from hashlib import sha256, sha512, pbkdf2_hmac
 import json, socket, string
 import os, sys, io, re, types
 
+
 try:
-	import pyaml
+	import pyaml # nicer than pprint
 	pprint = lambda data: pyaml.dump(data, sys.stdout)
+
 except ImportError:
 	from pprint import pprint
+	def pprint(data, _p=pprint, **pprint_kws):
+		def _proc(data): # for CjdnsAddr tuples
+			if isinstance(data, dict): return dict(map(_proc,kv) for kv in data.viewitems())
+			elif isinstance(data, list): return map(_proc, data)
+			elif isinstance(data, tuple):
+				if hasattr(data, '_asdict'): return dict(data._asdict())
+				return map(_proc, data)
+			else: return data
+		return _p(_proc(data), **pprint_kws)
 
 
 
@@ -187,8 +199,15 @@ def pubkey_to_ipv6(key, colons=True,
 	if colons: addr = ':'.join(addr[n*4:(n+1)*4] for n in xrange(8))
 	return addr
 
+def dict_with(d, **kws):
+	d.update(kws)
+	return d
+
 
 class AddrLookupError(Exception): pass
+
+class CjdnsAddr(namedtuple('CjdnsAddr', 'addr ipv6 ver path pubkey')):
+	def get(self, k): return getattr(self, k)
 
 addr_re = re.compile(r'(?i)^v(\d+)\.((?:[0-9a-f]{4}\.)+[0-9a-f]{4})\.([0-9a-z]{52}(?:\.k)?)$')
 ipv6_re = re.compile(r'(?i)^fc[\da-f]{1,2}:[:\da-f]+$')
@@ -196,23 +215,33 @@ path_re = re.compile(r'(?i)^(?:[\da-f]{4}\.){3}[\da-f]{4}$')
 key_re = re.compile(r'^[0-9a-z]{52}(?:\.k)?$')
 
 def cjdns_addr_parse(spec, pick='all', ipv6_colons=True):
-	spec = spec.strip().lower()
-	res = dict(addr=None, ipv6=None, ver=None, path=None, pubkey=None)
-	if ipv6_re.search(spec): res['ipv6'] = spec
-	if path_re.search(spec): res['path'] = spec
-	if key_re.search(spec): res['pubkey'] = parse_pubkey(spec)
-	m = addr_re.search(spec)
-	if m:
-		res.update(zip(['ver', 'path', 'pubkey'], m.groups()))
-		res.update(addr=spec, pubkey=parse_pubkey(res['pubkey']))
-	if res['pubkey'] and not res['ipv6']:
-		res['ipv6'] = pubkey_to_ipv6(res['pubkey'], colons=ipv6_colons)
-	if pick == 'all': return res
+	if isinstance(spec, CjdnsAddr): res = spec._asdict()
+	else:
+		spec = spec.strip().lower()
+		res = dict.fromkeys(CjdnsAddr._fields)
+		if ipv6_re.search(spec): res['ipv6'] = spec
+		if path_re.search(spec): res['path'] = spec
+		if key_re.search(spec): res['pubkey'] = parse_pubkey(spec)
+		m = addr_re.search(spec)
+		if m:
+			res.update(zip(['ver', 'path', 'pubkey'], m.groups()))
+			res.update(addr=spec, pubkey=parse_pubkey(res['pubkey']))
+		if res['pubkey'] and not res['ipv6']:
+			res['ipv6'] = pubkey_to_ipv6(res['pubkey'], colons=ipv6_colons)
+	if pick == 'all': return CjdnsAddr(**res)
 	elif isinstance(pick, types.StringTypes):
 		val = res[pick]
 		if val is None: raise AddrLookupError(spec, pick, res)
 		return val
 	else: return op.itemgetter(pick)(res)
+
+def filter_addrs(addrs, both_sets=False, **filter_keys):
+	matched, addrs = set(), set(map(cjdns_addr_parse, addrs))
+	for addr in addrs:
+		for k, v in filter_keys.viewitems():
+			if addr.get(k) != v: break
+		else: matched.add(addr)
+	return matched if not both_sets else (matched, addrs.difference(matched))
 
 
 def int2base(x, base, _digs=string.digits+string.lowercase):
@@ -320,7 +349,12 @@ class CjdnsAdmin(object):
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(description='cjdns control tool.')
+
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-t', '--timeout',
+		metavar='seconds', type=float, default=4.0,
+		help='Timeout for admin api request(s)'
+			' (some of which can hang indefinitely by design). Default: %(default)s')
 
 	cmds = parser.add_subparsers(
 		title='Supported operations (have their own suboptions as well)')
@@ -383,14 +417,11 @@ def main(args=None):
 	with subcommand('peers-remote', help='Get peer information of a remote node.') as cmd:
 		cmd.add_argument('remote',
 			help='IPv6, pubkey, switchLabel path or full cjdns-address of a remote node to query.')
-		cmd.add_argument('-t', '--timeout',
-			metavar='seconds', type=float, default=2.0,
-			help='Timeout for RouterModule_getPeers request(s)'
-				' (which can hang indefinitely). Default: %(default)s')
 		cmd.add_argument('-r', '--raw', action='store_true',
 			help='Only output what cjdns returns, do not add any derivative data.')
-		cmd.add_argument('-f', '--fast', action='store_true',
-			help='Returning first non-empty list of peers received, dont bother querying past that.')
+		cmd.add_argument('-a', '--all', action='store_true',
+			help='Return superset of lists of peers'
+				' received from all resolved paths, not just first one.')
 
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -471,7 +502,7 @@ def main(args=None):
 
 
 	elif opts.call == 'peers':
-		admin = CjdnsAdmin()
+		admin = CjdnsAdmin(timeout=opts.timeout)
 		res = admin.get_peer_stats()
 		for p in res: p['ipv6'] = pubkey_to_ipv6(p['publicKey'])
 		pprint(res)
@@ -479,27 +510,43 @@ def main(args=None):
 
 	elif opts.call == 'peers-remote':
 		addr = cjdns_addr_parse(opts.remote)
-		if not addr['ipv6'] and not addr['path']:
+		if not addr.ipv6 or addr.addr or addr.path:
 			parser.error('Unable to parse ipv6/path from spec: {}'.format(opts.remote))
-		admin = CjdnsAdmin(timeout=2)
+		if not addr.ipv6: raise NotImplementedError('resolve ipv6 from path here')
+		admin = CjdnsAdmin(timeout=opts.timeout)
 
-		path = addr.get('addr') or addr.get('path')
+		path = addr.addr or addr.path
 		if not path:
 			path = set()
-			for src, src_nodes in admin.search(addr['ipv6']):
-				if opts.fast and path: break
-				path.update(src_nodes)
-			path = sorted(path)
+			for src, addrs in admin.search(addr.ipv6):
+				# if not opts.all and path: break
+				addrs, unmatched = filter_addrs(addrs, both_sets=True, ipv6=addr.ipv6)
+				for p in unmatched:
+					log.debug('Discarding bogus search result: %s (ipv6: %s)', p.addr, p.ipv6)
+				path.update(addrs)
+			path = sorted(map(op.attrgetter('addr'), path))
 			log.debug('Resolved IPv6 to path(s): %s', ', '.join(path))
 		else: path = [path]
 
 		peers = set()
 		for p in path:
-			if opts.fast and peers: break
-			try: peers.update(admin.get_peers(p))
+			if not opts.all and peers: break
+
+			try: addrs = admin.get_peers(p)
 			except CjdnsAdminError as err:
 				if not isinstance(err.args[1], socket.timeout): raise
 				log.debug('RouterModule_getPeers request timed-out for path: %s', p)
+				continue
+
+			chk, unmatched = filter_addrs( addrs,
+				both_sets=True, path='0000.0000.0000.0001', ipv6=addr.ipv6 )
+			if not chk:
+				bogey = filter_addrs(unmatched, path='0000.0000.0000.0001')
+				bogey = list(bogey)[0] if bogey else 'no-0001-peer!!!'
+				log.debug('Discarding bogus getPeers result with 0001 being %s', bogey)
+				continue
+
+			peers.update(addrs)
 		peers = sorted(peers)
 
 		if not opts.raw:
