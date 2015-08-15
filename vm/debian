@@ -120,4 +120,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
 
-exec cgrc vm/misc qemu-system-i386 "${qemu_opts[@]}"
+exec cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
