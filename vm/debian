@@ -5,8 +5,8 @@
 
 root=/mnt/volatiles/vms
 dst="$root"/debian/live.dump
-telnet_port=8200
-vde_mac=52:54:00:12:34:57
+telnet_port=8201
+vde_mac=52:54:00:12:34:58
 vde_path=~/tmp/vde
 dump_inc=
 restore=
@@ -58,6 +58,13 @@ esac
 cd "$root"
 
 
+### Slugfest otherwise
+
+modprobe kvm || exit 1
+modprobe kvm-intel
+modprobe kvm-amd
+
+
 ### VDE
 
 mkdir -p "$vde_path"
@@ -87,73 +94,25 @@ done
 [[ -n "$net_only" ]] && exit 0
 
 
-### Get latest kernel/initrd from vm
-
-mountpoint -q /mnt/nbd || {
-	modprobe nbd || exit 1
-	sudo qemu-nbd -c /dev/nbd0 -P1 debian/sd_inc.qcow2
-	mount /mnt/nbd || exit 1
-}
-
-rsync -Lt --inplace /mnt/nbd/vmlinuz debian/current__vmlinuz\
-	&& rsync -Lt --inplace /mnt/nbd/initrd.img debian/current__initramfs\
-	&& umount /mnt/nbd\
-	&& sudo qemu-nbd -d /dev/nbd0\
-	|| { echo >&2 "Failed to get kernel/initramfs from vm image"; exit 1; }
-
-
 ### Run qemu
 
 qemu_opts=(
 	-name "$(basename "$0")"
 
-	-m 1024
+	-m 512
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
 	-net nic,macaddr=${vde_mac},name=vde
 	-net vde,sock="$vde_path"/link.sock
 	-k en-us
 
-	-cpu cortex-a9
-	-machine vexpress-a9
-	-drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
-	-kernel debian/current__vmlinuz
-	-initrd debian/current__initramfs
-	-append "root=/dev/mmcblk0p2"
+	-enable-kvm
+	-cpu host
+	-smp 2
+	-vga std
 
-	# -nographic
-	# -serial pty
-	# -append "root=/dev/mmcblk0p2 console=ttyAMA0 console=ttyS0"
-
-	# -cpu cortex-a9
-	# -machine vexpress-a9
-	# -drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
-	# -kernel debian/vmlinuz-3.2.0-4-vexpress
-	# -initrd debian/initrd-vexpress.gz
-
-	# -machine versatilepb
-	# -drive file=debian/sd_inc.qcow2,if=sd,aio=native,cache=writeback
-	# -kernel debian/vmlinuz-3.2.0-4-versatile
-	# -initrd debian/initrd-versatile.gz
-
-	# -cpu cortex-a9
-	# -machine vexpress-a9
-	# -drive file=ubuntu/sd_inc.qcow2,if=sd,aio=native,cache=writeback
-	# -kernel ubuntu/armhf_generic__vmlinuz
-	# -initrd ubuntu/armhf_generic__initrd.gz
-
-	# -nographic
-	# -serial pty
-	# -append "console=ttyAMA0 console=ttyS0"
-
-	-usb
-	# -device usb-kbd
-	# -device usb-mouse
-	# -device help
-
-	-no-reboot
-	-no-frame
-
+	-cdrom debian/netinst.iso
+	-drive file=debian/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
 )
 
 ulimit -c 0
@@ -161,4 +120,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
 
-exec cgrc vm/misc qemu-system-arm "${qemu_opts[@]}"
+exec cgrc vm/misc qemu-system-i386 "${qemu_opts[@]}"
