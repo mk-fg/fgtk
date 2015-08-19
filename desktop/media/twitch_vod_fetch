@@ -164,7 +164,7 @@ def vod_fetch(url, file_prefix,
 	with open(hook_done, 'wb') as dst:
 		dst.write('\n'.join([
 			'#!{}'.format(sh_path),
-			'mv "$3" \'{}\'.chunk."$1".mp4\\'.format(file_prefix),
+			'mv "$3" \'{}\'."$1".mp4.chunk\\'.format(file_prefix),
 			'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
 		os.fchmod(dst.fileno(), 0700)
 
@@ -211,7 +211,7 @@ def vod_fetch(url, file_prefix,
 			res = aria2c_jrpc('system.multicall', list(
 				dict( methodName='aria2.addUri',
 					params=[ key, ['{}/{}'.format(url_base, path)],
-						dict(gid=gid_str, out='{}.chunk.{}.mp4.tmp'.format(file_prefix, gid_str)) ] )
+						dict(gid=gid_str, out='{}.{}.mp4.chunk.tmp'.format(file_prefix, gid_str)) ] )
 				for gid_str, path in gid_files ))
 			res_chk = list([gid] for gid, path in gid_files)
 			if res != res_chk:
@@ -291,7 +291,7 @@ def vod_fetch(url, file_prefix,
 		return 1
 
 	chunks_needed = list(
-		'{}.chunk.{}.mp4'.format(file_prefix, gid_format(gid))
+		'{}.{}.mp4.chunk'.format(file_prefix, gid_format(gid))
 		for gid in gids_needed )
 	chunks = filter(exists, chunks_needed)
 	chunks_missing = set(chunks_needed).difference(chunks)
