@@ -1,0 +1,66 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin { readelf-deps | readelf-pkgs | ldd-deep | ldd-deep-pkgs } [args]"
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+cmd=$1; shift
+resolve_pkgs=
+
+set -e -o pipefail
+
+
+if [[ "$cmd" =~ ^readelf-(deps|pkgs)$ ]]; then
+	libs=( $(readelf -d "$2" | awk 'match($0,/Shared library: \[([^]]+)\]/,m) {print m[1]}' | xargs locate) )
+	[[ "$cmd" != readelf-deps ]] || {
+		for lib in "${libs[@]}"; do echo "$lib"; done | sort -u
+		exit 0
+	}
+	resolve_pkgs=t
+fi
+
+
+if [[ "$cmd" =~ ^ldd-deep(-pkgs)?$ ]]; then
+	declare -A deps
+	echo_deps() {
+		while read dep
+		do
+			k="$(basename "$dep")"
+			[[ -z "${deps[$k]}" ]] || continue
+			deps[$k]=$dep
+			echo "$dep"
+			echo_deps "$dep"
+		done < <(
+			set -o pipefail
+			ldd "$1" 2>/dev/null |
+			awk '/linux-gate/ {next}
+				$3 {print $3; next}
+				match($1,/^\//) {print $1}'
+			[[ $? -ne 0 ]] && echo "${1}-ldd-fail" )
+	}
+
+	libs=( $(for p in "$@"; do echo_deps "$p"; done) )
+
+	[[ "$cmd" != ldd-deep ]] || {
+		for lib in "${libs[@]}"; do echo "$lib"; done | sort -u
+		exit 0
+	}
+
+	resolve_pkgs=t
+fi
+
+
+[[ -z "$resolve_pkgs" ]] || {
+	for lib in "${libs[@]}"; do
+		[[ "$lib" =~ ^/usr ]] || continue
+		pacman -Qo "$lib" |
+			awk 'match($0,/is owned by (\S+)\s/,m) {print m[1]; exit 0} {print; exit 1}' ||:
+	done | sort -u
+	exit 0
+}
+
+
+echo >&2 "Unrecognized command: $cmd"
+exit 1

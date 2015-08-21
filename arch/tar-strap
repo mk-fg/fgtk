@@ -1,0 +1,50 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin tar-url [path]"
+	echo >&2
+	echo >&2 "Creates arch chroot using tarball url"
+	echo >&2  " in specified path (default: arch-root, must not exist)."
+	echo >&2 "Get the tarball url from: https://mirrors.kernel.org/archlinux/iso/latest/"
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+[[ "$#" -gt 2 ]] && usage 1
+
+set -e -o pipefail
+
+url=$1 p=${2:-arch-root}
+
+[[ -e "$p" ]] || {
+	[[ -f "$url" ]] && url=$(readlink -f "$url")
+
+	mkdir -m0700 "$p"
+	pushd "$p"
+
+	if [[ -f "$url" ]]
+	then
+		ln -s "$url".sig src.tar.xx.sig
+		ln -s "$url" src.tar.xx
+	else
+		echo $url
+		curl "$url".sig >src.tar.xx.sig
+		curl "$url" >src.tar.xx
+	fi
+
+	pacman-key -v src.tar.xx.sig
+
+	rm -f src.tar.xx.sig
+	bsdtar -xf src.tar.xx
+	rm -f src.tar.xx
+
+	mv root.*/* .
+	rmdir root.*
+
+	popd
+}
+
+cp -a /etc/{locale.gen,localtime,hostname,resolv.conf} "$p"/etc/
+cp -a /etc/pacman.d/{mirrorlist,gnupg} "$p"/etc/pacman.d/
+
+exec arch-chroot "$p" /bin/bash

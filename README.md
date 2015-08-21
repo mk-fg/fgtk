@@ -419,7 +419,7 @@ option) would be aliased neatly to "hz", hence the script name.
 
 
 
-### Dev
+### dev
 
 ##### tabs_filter
 
@@ -948,7 +948,7 @@ Uses: layered-yaml-attrdict-config (lya), rrdtool.
 
 
 
-### Desktop
+### desktop
 
 Helpers for more interactive (client) machine, DE and apps there.
 
@@ -1403,3 +1403,77 @@ Can also just list what's there to be synced with "check" command.
 
 	Usage: aufs_sync { copy | move | check } module
 	Example (flushes /var): aufs_sync move var
+
+
+
+### arch
+
+Tools for automating various Arch Linux tasks.
+
+##### elf-deps
+
+Shows shared-lib dependencies for specified binary/so even if it's for different
+arch (`readelf-deps` option), packages they might belong to (`readelf-pkgs`) and
+deps-of-deps recursively (`ldd-deep` / `ldd-deep-pkgs`).
+
+For instance, when one wants to figure out which .so files ELF32 binary might
+want to use:
+
+	% elf-deps readelf-deps ~player/gog/SRHK/game/SRHK
+	/usr/lib/libGL.so.1
+	/usr/lib/libGL.so.1.2.0
+	/usr/lib/libGLU.so.1
+	...
+
+If one then wants to grab all these from some 32-bit packages (on a vm or
+maybe some chroot, see also `tar-strap` tool), `readelf-pkgs` might help:
+
+	% elf-deps readelf-pkgs ~player/gog/SRHK/game/SRHK
+	gcc-libs
+	glibc
+	...
+
+And to list all deps of a binary or a lib and their deps recursively, there's
+`ldd-deep` and `ldd-deep-pkgs`:
+
+	% elf-deps ldd-deep /usr/lib/libGL.so
+	/usr/lib/ld-linux-x86-64.so.2
+	/usr/lib/libX11-xcb.so.1
+	...
+
+	% elf-deps ldd-deep-pkgs /usr/lib/libGL.so
+	expat
+	glibc
+	libdrm
+	...
+
+Can be useful for providing necessary stuff to run proprietary 32-bit binaries
+(like games or crapware) on amd64.
+
+##### tar-strap
+
+Wrapper to quickly download and setup archlinux chroot from a bootstrap tarball
+from https://mirrors.kernel.org/archlinux/iso/latest/
+
+Checks gpg sig on the tarball with pacman-key, copies basic stuff like
+locale.gen, resolv.conf, mirrorlist, pacman gnupg setup, etc from the current
+root into the new one and runs arch-chroot into that.
+
+Should be way faster than pacstrap, but kinda similar otherwise.
+
+##### pacman-manifest
+
+Creates text manifests for Arch setup in `/var/lib/pacman/`:
+
+* db.explict - explicitly installed packages, names only.
+* db.leaf - packages without anything depending on them, names only.
+* db.extras - packages not in any pacman repos, names only.
+* db.all - all installed packages, names and versions.
+* db.diffs - list of `\.pac(new|orig|save)$` files on the system (found via mlocate).
+* db.local - list of stuff in `/usr/local`.
+
+Taken together, these represent some kind of "current os state".
+
+Useful to pull them all into some git to keep track what gets installed or
+updated in the system over time, including makepkg'ed things and ad-hoc stuff in
+/usr/local.
