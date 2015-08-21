@@ -1,4 +1,12 @@
 #!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin"
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+
 set -e -o pipefail
 export LC_ALL=C
 

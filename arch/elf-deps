@@ -10,6 +10,7 @@ cmd=$1; shift
 resolve_pkgs=
 
 set -e -o pipefail
+export LC_ALL=C
 
 
 if [[ "$cmd" =~ ^readelf-(deps|pkgs)$ ]]; then

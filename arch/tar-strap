@@ -13,6 +13,7 @@ usage() {
 [[ "$#" -gt 2 ]] && usage 1
 
 set -e -o pipefail
+export LC_ALL=C
 
 url=$1 p=${2:-arch-root}
 

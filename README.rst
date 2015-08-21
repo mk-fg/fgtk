@@ -14,7 +14,7 @@ Various oldish helper binaries I wrote to help myself with day-to-day tasks.
 Files
 ~~~~~
 
-Mostly file/dir/fs-manipulation tools.
+Mostly file/link/dir-entry manipulation tools.
 
 
 scim set
@@ -1092,8 +1092,8 @@ about in some distant past).
 media
 ^^^^^
 
-Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (process)
-various media files and streams.
+Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
+process) various media files and streams.
 
 parec\_from\_flash
 ''''''''''''''''''
@@ -1220,8 +1220,8 @@ Process is designed to tolerate Ctrl+C and resume from any point, and allows
 whatever tweaks (e.g. update url, change playlist, skip some chunks, etc), as it
 keeps all the state between these in plaintext files.
 
-Needs youtube-dl, requests and aria2. A bit more info on it can be found in
-`this twitchtv-vods-... blog post`_.
+| Needs youtube-dl, requests and aria2.
+| A bit more info on it can be found in `this twitchtv-vods-... blog post`_.
 
 .. _doesn't support neither seeking to time nor length limits: https://github.com/rg3/youtube-dl/issues/622
 .. _aria2: http://aria2.sourceforge.net/
@@ -1362,7 +1362,7 @@ time", while this tool will create the dst path for you, copy always-new
 selection there and - due to "-s 200" - leave 200 MiB there for podcasts
 you might want to also upload.
 
-As with "cp", ``pick\_tracks /path1 /path2 /dst`` is perfectly valid.
+As with "cp", ``pick_tracks /path1 /path2 /dst`` is perfectly valid.
 
 And there are neat cleaup flags for cases when I need to cram something new to
 the destination, preserving as much of the stuff that's already there as
@@ -1683,3 +1683,9 @@ Taken together, these represent some kind of "current os state".
 Useful to pull them all into some git to keep track what gets installed or
 updated in the system over time, including makepkg'ed things and ad-hoc stuff in
 /usr/local.
+
+pacman-extra-files
+^^^^^^^^^^^^^^^^^^
+
+Lists files that don't belong to any of the packages in either in default
+``/etc /opt /usr`` dirs or whichever ones are specified.

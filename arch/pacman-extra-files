@@ -1,0 +1,22 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin"
+	exit ${1:-0}
+}
+[[ "$1" = -h || "$1" = --help ]] && usage
+
+dirs=()
+[[ -z "$1" ]] && dirs+=( /etc /opt /usr ) || dirs+=( "$@" )
+
+set -e -o pipefail
+export LC_ALL=C
+
+tmp=$(mktemp -d /tmp/.sync_pacman.XXXXX)
+trap "rm -rf --one-file-system '$tmp'" EXIT
+
+pacman -Qlq | sort -u >"$tmp"/files.db
+find "${dirs[@]}" -xdev ! -name lost+found \( -type d -printf '%p/\n' -o -print \) |
+	sort -u >"$tmp"/files.fs
+comm -23 "$tmp"/files.{fs,db}
