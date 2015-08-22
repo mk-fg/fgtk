@@ -14,7 +14,12 @@ export LC_ALL=C
 
 
 if [[ "$cmd" =~ ^readelf-(deps|pkgs)$ ]]; then
-	libs=( $(readelf -d "$2" | awk 'match($0,/Shared library: \[([^]]+)\]/,m) {print m[1]}' | xargs locate) )
+	libs=( $(
+		for p in "$@"; do
+			readelf -d "$p" |
+			awk 'match($0,/Shared library: \[([^]]+)\]/,m) {print m[1]}' |
+			xargs locate
+		done ) )
 	[[ "$cmd" != readelf-deps ]] || {
 		for lib in "${libs[@]}"; do echo "$lib"; done | sort -u
 		exit 0
