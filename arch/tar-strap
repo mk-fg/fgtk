@@ -42,10 +42,10 @@ url=$1 p=${2:-arch-root}
 	mv root.*/* .
 	rmdir root.*
 
+	cp -aL /etc/{locale.gen,localtime,hostname,resolv.conf} etc/
+	cp -aL /etc/pacman.d/{mirrorlist,gnupg} etc/pacman.d/
+
 	popd >/dev/null
 }
-
-cp -a /etc/{locale.gen,localtime,hostname,resolv.conf} "$p"/etc/
-cp -a /etc/pacman.d/{mirrorlist,gnupg} "$p"/etc/pacman.d/
 
 exec arch-chroot "$p" /bin/bash
