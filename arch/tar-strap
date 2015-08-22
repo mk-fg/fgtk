@@ -21,7 +21,7 @@ url=$1 p=${2:-arch-root}
 	[[ -f "$url" ]] && url=$(readlink -f "$url")
 
 	mkdir -m0700 "$p"
-	pushd "$p"
+	pushd "$p" >/dev/null
 
 	if [[ -f "$url" ]]
 	then
@@ -42,7 +42,7 @@ url=$1 p=${2:-arch-root}
 	mv root.*/* .
 	rmdir root.*
 
-	popd
+	popd >/dev/null
 }
 
 cp -a /etc/{locale.gen,localtime,hostname,resolv.conf} "$p"/etc/
