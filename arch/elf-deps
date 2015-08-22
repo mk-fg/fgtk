@@ -2,7 +2,7 @@
 
 usage() {
 	bin=$(basename $0)
-	echo >&2 "Usage: $bin { readelf-deps | readelf-pkgs | ldd-deep | ldd-deep-pkgs } [args]"
+	echo >&2 "Usage: $bin { objdump-deps | objdump-pkgs | ldd-deep | ldd-deep-pkgs } [args]"
 	exit ${1:-0}
 }
 [[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
@@ -13,14 +13,14 @@ set -e -o pipefail
 export LC_ALL=C
 
 
-if [[ "$cmd" =~ ^readelf-(deps|pkgs)$ ]]; then
+if [[ "$cmd" =~ ^objdump-(deps|pkgs)$ ]]; then
 	libs=( $(
 		for p in "$@"; do
-			readelf -d "$p" |
-			awk 'match($0,/Shared library: \[([^]]+)\]/,m) {print m[1]}' |
+			objdump -x "$p" |
+			awk '$1=="NEEDED" {print $2}' |
 			xargs locate
 		done ) )
-	[[ "$cmd" != readelf-deps ]] || {
+	[[ "$cmd" != objdump-deps ]] || {
 		for lib in "${libs[@]}"; do echo "$lib"; done | sort -u
 		exit 0
 	}

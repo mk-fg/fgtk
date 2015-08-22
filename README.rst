@@ -1611,22 +1611,22 @@ elf-deps
 ^^^^^^^^
 
 Shows shared-lib dependencies for specified binary/so even if it's for different
-arch (``readelf-deps`` option), packages they might belong to (``readelf-pkgs``)
+arch (``objdump-deps`` option), packages they might belong to (``objdump-pkgs``)
 and deps-of-deps recursively (``ldd-deep`` / ``ldd-deep-pkgs``).
 
 For instance, when one wants to figure out which .so files ELF32 binary might
 want to use::
 
-  % elf-deps readelf-deps ~player/gog/SRHK/game/SRHK
+  % elf-deps objdump-deps ~player/gog/SRHK/game/SRHK
   /usr/lib/libGL.so.1
   /usr/lib/libGL.so.1.2.0
   /usr/lib/libGLU.so.1
   ...
 
 If one then wants to grab all these from some 32-bit packages (on a vm or maybe
-some chroot, see also ``tar-strap`` tool), ``readelf-pkgs`` might help::
+some chroot, see also ``tar-strap`` tool), ``objdump-pkgs`` might help::
 
-  % elf-deps readelf-pkgs ~player/gog/SRHK/game/SRHK
+  % elf-deps objdump-pkgs ~player/gog/SRHK/game/SRHK
   gcc-libs
   glibc
   ...
