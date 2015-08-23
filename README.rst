@@ -1651,14 +1651,16 @@ Can be useful for providing necessary stuff to run proprietary 32-bit binaries
 tar-strap
 ^^^^^^^^^
 
-Wrapper to quickly download and setup archlinux chroot from a bootstrap tarball
-from https://mirrors.kernel.org/archlinux/iso/latest/
+Wrapper to quickly download and setup archlinux chroot (for e.g. systemd-nspawn
+container) using bootstrap tarball from https://mirrors.kernel.org/archlinux/iso/latest/
 
 Checks gpg sig on the tarball with pacman-key, copies basic stuff like
 locale.gen, resolv.conf, mirrorlist, pacman gnupg setup, etc from the current
 root into the new one and runs arch-chroot into that.
 
 Should be way faster than pacstrap, but kinda similar otherwise.
+
+Either URL or path to source tarball should be specified on the command line.
 
 pacman-manifest
 ^^^^^^^^^^^^^^^
