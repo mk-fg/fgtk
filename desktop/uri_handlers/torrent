@@ -183,7 +183,7 @@ def main():
 			else: return True
 
 	def chain_lists(src):
-		if isinstance(src, StringTypes): yield src
+		if isinstance(src, types.StringTypes): yield src
 		else:
 			for atom in it.chain.from_iterable(
 				it.imap(chain_lists, src) ): yield atom
