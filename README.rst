@@ -468,7 +468,8 @@ pretty-json as well.
 hz
 ''
 
-Same thing as the common "head" tool, but works with 00 delimeters.
+Same thing as the common "head" tool, but works with \\x00 (aka null character,
+null byte, NUL, ␀, \\0, \\z, \\000, \\u0000, %00, ^@) delimeters.
 
 Can be done with putting "tr" in the pipeline before and after "head", but this
 one is probably less fugly.
@@ -476,13 +477,16 @@ one is probably less fugly.
 Allows replacing input null-bytes with newlines in the output
 (--replace-with-newlines option) and vice-versa.
 
-Common use-case is probably has something to do with filenames, find and xargs,
-e.g.::
+Common use-case is probably has something to do with filenames and xargs, e.g.::
 
   % find -type f -print0 | shuf -z | hz -10 | xargs -0 some-cool-command
+  % ls -1 | hz -z | xargs -0 some-other-command
 
 I have "h" as an alias for "head" in shells, so "head -z" (if there were such
 option) would be aliased neatly to "hz", hence the script name.
+
+Defaults to reading ALL lines, not just arbitrary number (like 10, which is
+default for regular "head")!
 
 
 
