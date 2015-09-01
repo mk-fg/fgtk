@@ -24,7 +24,8 @@ def main(args=None):
 		help='Path to a file to process instead of stdin.')
 
 	parser.add_argument('-n', '--count',
-		metavar='number', type=int, help='Max number of entries to read.')
+		metavar='number', type=int,
+		help='Max number of entries to read. Default is to read ALL of them.')
 
 	parser.add_argument('-r', '--replace-with-newlines',
 		action='store_true', help='Replace zero bytes with newlines in the output.')

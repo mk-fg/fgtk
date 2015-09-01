@@ -100,7 +100,8 @@ def req_jrpc(url, method, *params):
 
 
 def vod_fetch(url, file_prefix,
-		start_delay=None, max_length=None, ytdl_opts=None, aria2c_opts=None,
+		start_delay=None, max_length=None, scatter=None,
+		ytdl_opts=None, aria2c_opts=None,
 		verbose=False, keep_tempfiles=False, dl_info_suffix=None ):
 	dst_file = '{}.mp4'.format(file_prefix)
 	if exists(dst_file):
@@ -231,13 +232,27 @@ def vod_fetch(url, file_prefix,
 			if gid_files: queue_gid_downloads(gid_files)
 			del line_buff[:]
 
+		def scatter_iter():
+			(a, b), res = scatter, True
+			while True:
+				td = yield res
+				if a > 0: a -= td
+				if a <= 0: res = False
+				b -= td
+				if b <= 0: (a, b), res = scatter, True
+
 		### Queue all initial downloads
+		scatter_chk = scatter and scatter_iter()
+		if scatter_chk: next(scatter_chk)
 		for line in pls.splitlines():
 			m = re.search(r'^#EXTINF:([\d.]+),', line)
-			if m: start_delay -= float(m.group(1))
+			if m:
+				td = float(m.group(1))
+				start_delay -= td
 			if start_delay > 0: continue
 			if not line or line.startswith('#'): continue
 			if max_length and max_length + start_delay < 0: break
+			if scatter_chk and not scatter_chk.send(td): continue
 			line_buff.append(line)
 			if len(line_buff) >= line_buff_max: line_buff_flush()
 		if line_buff: line_buff_flush()
@@ -361,6 +376,13 @@ def main(args=None):
 		metavar='[[hours:]minutes:]seconds',
 		help='Only download specified length of the video (from specified start or beginning).'
 			' If multiple url/prefix args are specified, this option will be applied to all of them.')
+	parser.add_argument('-x', '--scatter',
+		metavar='[[hours:]minutes:]seconds/[[hours:]minutes:]seconds',
+		help='Out of whole video (or a chunk specified by --start and --length),'
+				' download only every N seconds (or mins/hours) out of M.'
+			' E.g. "1:00/10:00" spec here will download 1 first min of video out of every 10.'
+			' Idea here is to produce something like preview of the video to allow'
+				' to easily narrow down which part of it is interesting and worth downloading in full.')
 
 	parser.add_argument('-k', '--keep-tempfiles',
 		action='store_true', help='Do not remove all the'
@@ -386,10 +408,15 @@ def main(args=None):
 	aria2c_opts = opts.aria2c_opts or list()
 	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].split()
 
+	scatter = opts.scatter
+	if scatter:
+		scatter = map(parse_pos_spec, scatter.split('/', 1))
+		assert len(scatter) == 2, [opts.scatter, scatter]
+
 	dl_kws = dict(
 		start_delay=parse_pos_spec(opts.start_pos) if opts.start_pos else 0,
 		max_length=opts.length and parse_pos_spec(opts.length),
-		ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
+		scatter=scatter, ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
 		verbose=opts.debug, keep_tempfiles=opts.keep_tempfiles )
 
 	it_adjacent = lambda seq, n: zip(*([iter(seq)] * n))
