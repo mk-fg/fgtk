@@ -1,0 +1,57 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [-x] [-c pacman.conf] name [can-set...] [-- pacstrap-opts...]"
+	echo >&2
+	echo >&2 "Bootstraps arch chroot in /var/lib/machines from"
+	echo >&2 " a can-* meta-package (default: base) using pacstrap."
+	echo >&2 "pacman.conf should have a repo where can-* packages will be available."
+	echo >&2 "See can-base package here:"
+	echo >&2 "  https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD"
+	echo >&2
+	echo >&2 "Example: $bin -c pacman.i686.conf mymachine tools py -- -i"
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+
+pacman_conf=/etc/pacman.conf
+[[ "$1" = -x ]] && { set -x; shift; }
+[[ "$1" = -c ]] && { shift; pacman_conf=$(realpath "$1"); shift; }
+[[ -z "$1" ]] && usage 1
+can=$1
+shift
+
+can_sets=()
+[[ -z "$1" ]]\
+	&& can_sets+=( can-base )\
+	|| while :; do
+			can_set=$1; shift
+			[[ -z "$can_set" || "$can_set" = -- ]] && break
+			can_sets+=( can-"$can_set" )
+		done
+
+
+set -e -o pipefail
+export LC_ALL=C
+
+cd /var/lib/machines
+
+mkdir -p "$can"
+pacstrap "$@" -c -C "$pacman_conf" -d "$can" "${can_sets[@]}"
+
+cp -a /etc/localtime "$can"/etc/
+
+confs=()
+for conf in /etc/{profile,locale.gen,locale.conf,screenrc,nanorc,gitconfig}
+do [[ ! -e "$conf" ]] || confs+=( "$conf" )
+done
+rsync -aL "${confs[@]}" "$can"/etc/
+
+chsh_cmd=true
+[[ "${SHELL##*/}" != zsh ]] || {
+	cp /etc/zsh/* "$can"/etc/zsh/
+	chsh_cmd="chsh -s $SHELL"
+}
+
+systemd-nspawn -D "$can" sh -c "locale-gen && $chsh_cmd"

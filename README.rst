@@ -1648,20 +1648,6 @@ And to list all deps of a binary or a lib and their deps recursively, there's
 Can be useful for providing necessary stuff to run proprietary 32-bit binaries
 (like games or crapware) on amd64.
 
-tar-strap
-^^^^^^^^^
-
-Wrapper to quickly download and setup archlinux chroot (for e.g. systemd-nspawn
-container) using bootstrap tarball from https://mirrors.kernel.org/archlinux/iso/latest/
-
-Checks gpg sig on the tarball with pacman-key, copies basic stuff like
-locale.gen, resolv.conf, mirrorlist, pacman gnupg setup, etc from the current
-root into the new one and runs arch-chroot into that.
-
-Should be way faster than pacstrap, but kinda similar otherwise.
-
-Either URL or path to source tarball should be specified on the command line.
-
 pacman-manifest
 ^^^^^^^^^^^^^^^
 
@@ -1691,3 +1677,50 @@ pacman-extra-files
 
 Lists files that don't belong to any of the packages in either in default
 ``/etc /opt /usr`` dirs or whichever ones are specified.
+
+tar-strap
+^^^^^^^^^
+
+Wrapper to quickly download and setup archlinux chroot (for e.g. systemd-nspawn
+container) using bootstrap tarball from https://mirrors.kernel.org/archlinux/iso/latest/
+
+Checks gpg sig on the tarball with pacman-key, copies basic stuff like
+locale.gen, resolv.conf, mirrorlist, pacman gnupg setup, etc from the current
+root into the new one and runs arch-chroot into that.
+
+Should be way faster than pacstrap, but kinda similar otherwise.
+
+Either URL or path to source tarball should be specified on the command line.
+
+can-strap
+^^^^^^^^^
+
+Wrapper to bootstrap ready-to-use Arch container ("can") in /var/lib/machines,
+which (at the moment of writing) boils down to these steps:
+
+* mkdir && pacstrap
+
+* Copy layout files: localtime, profile, locale.conf, locale.gen.
+
+* Copy basic tools' configuration files,
+  such as: zsh, screenrc, nanorc, gitconfig, etc.
+
+  But only copy each if it exists on the host machine
+  (hence likely to be useful in a container as well).
+
+* systemd-nspawn into container and run locale-gen and do chsh to zsh,
+  if it's set as $SHELL on the host.
+
+pacstrap installs not just any specified packages, but intentionally prefixes
+each with "can-" - these are meta-packages that I use to pull in package groups
+suitable for containers.
+
+These reside in my `archlinux-pkgbuilds`_ repo, see e.g. `can-base PKGBUILD`_
+for example of such metapackage.
+
+Running ``can-strap -c pacman.i686.conf buildbot-32 tools -- -i``
+(intentionally complicated example) will produce "buildbot-32" container,
+suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
+
+.. _archlinux-pkgbuilds: https://github.com/mk-fg/archlinux-pkgbuilds
+.. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
