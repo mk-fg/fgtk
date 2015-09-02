@@ -1022,8 +1022,8 @@ panu" option).
 Couldn't get either one of ad-hoc modes to work myself, but didn't try
 particulary hard, and it might be hardware issue as well, I guess.
 
-openssh-fingerprint
-^^^^^^^^^^^^^^^^^^^
+ssh-fingerprint
+^^^^^^^^^^^^^^^
 
 ssh-keyscan, but outputting each key in every possible format.
 
@@ -1031,7 +1031,7 @@ Imagine you have an incoming IM message "hey, someone haxxors me, it says 'ECDSA
 key fingerprint is f5:e5:f9:b6:a4:6b:fd:b3:07:15:f6:d9:0c:f5:47:54', what do?",
 this tool allows to dump any such fingerprint for a remote host, with::
 
-  % openssh-fingerprint congo.fg.nym
+  % ssh-fingerprint congo.fg.nym
   ...
   congo.fg.nym ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNo...zoU04g=
   256 MD5:f5:e5:f9:b6:a4:6b:fd:b3:07:15:f6:d9:0c:f5:47:54 /tmp/.ssh_keyscan.key.kc3ur3C (ECDSA)
