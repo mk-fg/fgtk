@@ -1052,6 +1052,73 @@ With this command, just running it on the remote host - presumably from diff
 location, or even localhost - should give (hopefully) any possible gibberish
 permutation that openssh (or something else) may decide to throw at you.
 
+ssh-keyparse
+^^^^^^^^^^^^
+
+Tool to extract raw private key string from ed25519 ssh keys.
+
+Main purpose is easy backup of ssh private keys and derivation of new secrets
+from these for other purposes.
+
+For example::
+
+	% ssh-keygen -t ed25519 -f test-key
+	...
+
+	% cat test-key
+	-----BEGIN OPENSSH PRIVATE KEY-----
+	b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+	QyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yAAAAJi1Bt0atQbd
+	GgAAAAtzc2gtZWQyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yA
+	AAAEAc5IRaYYm2Ss4E65MYY4VewwiwyqWdBNYAZxEhZe9GpNopTJz/d2cMv4VLj/fYkWwX
+	zyhChhvaVTRBi0uA7H7IAAAAE2ZyYWdnb2RAbWFsZWRpY3Rpb24BAg==
+	-----END OPENSSH PRIVATE KEY-----
+
+	% ssh-keyparse test-key
+	HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
+
+That one line at the end contains 32-byte ed25519 seed - "secret key" - all the
+necessary info to restore the blob above, without extra openssh wrapping (as per
+PROTOCOL.key).
+
+Original OpenSSH format (as produced by ssh-keygen) stores "magic string",
+ciphername ("none"), kdfname ("none"), kdfoptions (empty string), public key and
+index for that, two "checkint" numbers, seed + public key string, comment and a
+bunch of extra padding at the end. All string values there are length-prefixed,
+so take extra 4 bytes, even when empty.
+
+Gist is that it's a ton of stuff that's not the actual key, which ssh-keyparse
+extracts.
+
+To produce "expanded" key (seed + public key), as used in ed25519_sk field of
+openssh format, use ``ssh-keyparse --expand-seed`` option.
+
+If key is encrypted with passphrase, ``ssh-keygen -p`` will be run on a
+temporary copy of it to decrypt, with a big warning in case it's not desirable.
+
+There's also an option (--pbkdf2) to run the thing through PBKDF2 (tunable via
+--pbkdf2-opts) and various output encodings available::
+
+	% ssh-keyparse test-key
+	HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
+
+	% ssh-keyparse test-key --hex
+	1ce4845a6189b64ace04eb931863855ec308b0caa59d04d60067112165ef46a4
+
+	% ssh-keyparse test-key --base32
+	3KJ8-8PK1-H6V4-NKG4-XE9H-GRW5-BV1G-HC6A-MPEG-9NG0-CW8J-2SFF-8TJ0-e
+
+	% ssh-keyparse test-key --base32-nodashes
+	3KJ88PK1H6V4NKG4XE9HGRW5BV1GHC6AMPEG9NG0CW8J2SFF8TJ0e
+
+	% ssh-keyparse test-key --raw >test-key.bin
+
+With encoding like --base32 (`Douglas Crockford's human-oriented Base32`_, last
+lowercase letter there is a checksum), it's easy to even read the thing over
+voice-comm link, if necessary.
+
+.. _Douglas Crockford's human-oriented Base32: http://www.crockford.com/wrmg/base32.html
+
 rrd-sensors-logger
 ^^^^^^^^^^^^^^^^^^
 
