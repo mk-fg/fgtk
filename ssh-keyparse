@@ -17,8 +17,8 @@ def ssh_key_parse(path):
 		tmp.write(open(path).read())
 		tmp.flush()
 		with tempfile.TemporaryFile() as stderr:
-			cmd = ['ssh-keygen', '-p', '-P', '', '-f', tmp.name]
-			p = subprocess.Popen( cmd, stdin=open('/dev/null', 'r'),
+			cmd = ['ssh-keygen', '-p', '-P', '', '-N', '', '-f', tmp.name]
+			p = subprocess.Popen( cmd, stdin=open('/dev/null', 'ab+'),
 				stdout=subprocess.PIPE, stderr=stderr, close_fds=True )
 			stdout = p.stdout.read().splitlines()
 			err = p.wait()
@@ -37,10 +37,10 @@ def ssh_key_parse(path):
 				print('WARNING:')
 				print( 'WARNING: !!! ssh key will be decrypted'
 					' (via ssh-keygen) to a temporary file {!r} in the next step !!!'.format(tmp.name) )
-				print('WARNING: DO NOT enter key passphrase and ABORT operation'
-					' (^C) if that is too risky, otherwise be sure to leave new passphrase empty.')
+				print('WARNING: DO NOT enter key passphrase'
+					' and ABORT operation (^C) if that is undesirable.')
 				print('WARNING:')
-				cmd = ['ssh-keygen', '-p', '-f', tmp.name]
+				cmd = ['ssh-keygen', '-p', '-N', '', '-f', tmp.name]
 				err, stdout = None, subprocess.check_output(cmd, close_fds=True)
 
 		if err or 'Your identification has been saved with the new passphrase.' not in stdout:
