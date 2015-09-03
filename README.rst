@@ -1141,6 +1141,22 @@ systems something like collectd + graphite might be a better option.
 
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 
+nsh
+^^^
+
+Bash script to "nsenter" into specified machine's (as can be seen in ``ps -eo
+machine``) container namespaces and run login shell there.
+
+Machine in question must run systemd as pid-1 (e.g. systemd-nspawn container),
+as it gets picked as --target pid for nsenter.
+
+Very similar to ``machinectl login <machine>``, but does not asks for
+user/password and does not start new "systemd --user" session, just runs
+``su -`` to get root login shell.
+
+Essentially same as ``machinectl shell <machine>``, but doesn't require
+systemd-225 and machine being registered with systemd at all.
+
 
 
 desktop
