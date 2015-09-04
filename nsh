@@ -22,4 +22,4 @@ ns_init_pid=( $( ps -eo pid,machine,comm,args |
 	exit 1
 }
 
-exec nsenter --target "${ns_init_pid[0]}" --mount --uts --ipc --net --pid su -
+exec nsenter --target "${ns_init_pid[0]}" --mount --uts --ipc --net --pid /bin/su -
