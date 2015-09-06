@@ -4,9 +4,10 @@
 ### Management
 
 root=/mnt/volatiles/vms
-dst="$root"/windows7/live.dump
-telnet_port=8202
-vde_mac=52:54:00:12:34:62
+dst="$root"/pfsense/live.dump
+telnet_port=8201
+vde_mac_wan=52:54:00:12:34:59
+vde_mac_lan=52:54:00:12:34:65
 vde_path=~/tmp/vde
 dump_inc=
 restore=
@@ -68,14 +69,21 @@ modprobe kvm-amd
 ### VDE
 
 mkdir -p "$vde_path"
+mkdir -p "$vde_path"/lan
 
 cgrc vm/misc vde_switch\
 	-s "$vde_path"/link.sock\
 	-M "$vde_path"/mgmt.sock &
 pid1=$!
 
+cgrc vm/misc vde_switch\
+	-s "$vde_path"/lan/link.sock\
+	-M "$vde_path"/lan/mgmt.sock &
+pid1a=$!
+
 for n in {0..50}; do
-	[[ -e "$vde_path"/link.sock ]] && break
+	[[ -e "$vde_path"/link.sock\
+		&& -e "$vde_path"/lan/link.sock ]] && break
 	sleep 0.1
 done
 [[ $n -eq 50 ]] && { echo >&2 "vde switch startup failed"; exit 1; }
@@ -85,9 +93,14 @@ cgrc vm/misc sudo vde_plug2tap\
 	vde &
 pid2=$!
 
+cgrc vm/misc sudo vde_plug2tap\
+	-s "$vde_path"/lan/link.sock\
+	vde_lan &
+pid2a=$!
+
 # Add a little delay if vde stuff is just starting
 for n in {0..5}; do
-	kill -0 $pid1 $pid2 2>/dev/null || break
+	kill -0 $pid1 $pid1a $pid2 $pid2a 2>/dev/null || break
 	sleep 0.1
 done
 
@@ -102,17 +115,23 @@ qemu_opts=(
 	-m 512
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
-	-net nic,macaddr=${vde_mac},name=vde
-	-net vde,sock="$vde_path"/link.sock
 	-k en-us
+
+	# pfSense needs at least one "default" interface
+	#  https://doc.pfsense.org/index.php/VirtIO_Driver_Support
+	-net nic,vlan=1,macaddr=${vde_mac_wan},model=e1000,name=wan
+	-net vde,vlan=1,sock="$vde_path"/link.sock
+
+	-net nic,vlan=2,macaddr=${vde_mac_lan},model=e1000,name=lan
+	-net vde,vlan=2,sock="$vde_path"/lan/link.sock
 
 	-enable-kvm
 	-cpu host
 	-smp 2
 	-vga std
 
-	-cdrom windows7/win7.iso
-	-drive file=windows7/install_inc.qcow2,if=ide,aio=native,cache=writeback
+	# -cdrom pfsense/pfSense-LiveCD-2.2.4-RELEASE-amd64.iso
+	-drive file=pfsense/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
 )
 
 ulimit -c 0
@@ -120,4 +139,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
 
-exec nice ionice -c3 cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
+exec cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"

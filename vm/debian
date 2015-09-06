@@ -6,7 +6,7 @@
 root=/mnt/volatiles/vms
 dst="$root"/debian/live.dump
 telnet_port=8201
-vde_mac=52:54:00:12:34:58
+vde_mac=52:54:00:12:34:63
 vde_path=~/tmp/vde
 dump_inc=
 restore=
