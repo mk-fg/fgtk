@@ -131,7 +131,7 @@ qemu_opts=(
 	-vga std
 
 	# -cdrom pfsense/pfSense-LiveCD-2.2.4-RELEASE-amd64.iso
-	-drive file=pfsense/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
+	-drive file=pfsense/install_inc.qcow2
 )
 
 ulimit -c 0
