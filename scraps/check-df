@@ -1,0 +1,37 @@
+#!/bin/bash
+
+max_space=85
+max_inodes=85
+skip_fstypes=( fuse.sshfs )
+skip_mps=( )
+err=
+
+while read mp perc_space perc_inodes fstype used size; do
+	[[ "$mp" = Mounted ]] && continue
+
+	skip=
+	for fstype_chk in "${skip_fstypes[@]}"
+	do [[ "$fstype" = "$fstype_chk" ]] && { skip=t; break; }
+	done
+	for mp_chk in "${skip_mps[@]}"
+	do eval "[[ \$mp =~ $skip_mps ]] && { skip=t; break; }"
+	done
+	[[ -n "$skip" ]] && continue
+
+	perc_space=${perc_space%\%}
+	perc_inodes=${perc_inodes%\%}
+
+	warn=
+	[[ -n "$max_space" && "$perc_space" != -
+		&& "$perc_space" -gt "$max_space" ]] && warn=t
+	[[ -n "$max_inodes" && "$perc_inodes" != -
+		&& "$perc_inodes" -gt "$max_inodes" ]] && warn=t
+
+	[[ -n "$warn" ]] && {
+		err=t
+		echo >&2 "WARNING: mountpoint is over space/inodes threshold"\
+			"($perc_space/$max_space:$perc_inodes/$max_inodes) - $mp ($fstype, $used/$size)"
+	}
+done < <(LANG=C df -h --output=target,pcent,ipcent,fstype,used,size)
+
+[[ -n "$err" ]] && exit 1 || exit 0

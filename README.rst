@@ -1855,3 +1855,9 @@ data there).
 
 Also stores state of the actual processing there, which is just "check occurence
 of regexp 'name' group within timeout, print line if there isn't" in the script.
+
+check-df
+^^^^^^^^
+
+Standard template for a trivial bash + coreutils "df" checker to put into
+crontab on any random linux box, just in case.
