@@ -1,0 +1,124 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from xattr import xattr
+from datetime import datetime, timedelta
+import os, sys, re, hashlib, pickle, time, calendar
+
+
+class Conf(object):
+
+	xattr_pos = 'user.log-tail-check.pos'
+	xattr_ts = 'user.log-tail-check.ts'
+	tail_check_size = 200
+
+	line_re = ( r'^(?P<ts>\S+)\s(?P<log_id>\S+)\s'
+		r'ping\[(?:\d+|-)\](?:@(?P<src>[^: ]+))?:\s+'
+		r'(?P<stuff>\S+)\s+(?P<name>\S+)\s+' )
+	ts_re = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+([-+]\d{2}:\d{2}|Z)$'
+	ts_tpl = '%Y-%m-%dT%H:%M:%S'
+
+	check_names = list()
+	check_timeout = 60 * 60
+
+
+class TailCheckError(Exception): pass
+
+def tail_seek(src, pos):
+	if pos:
+		pos, mark_len, mark_chk = pickle.loads(pos)
+		src.seek(pos)
+		buff = src.read(mark_len)
+		if len(buff) != mark_len\
+				or hashlib.sha1(buff).digest() != mark_chk:
+			raise TailCheckError
+	else: raise TailCheckError
+
+def tail_pos(src, tail_check_size):
+	pos0 = src.tell()
+	src.seek(-min(tail_check_size, pos0), os.SEEK_CUR)
+	pos = src.tell()
+	mark_len = pos0 - pos
+	mark = hashlib.sha1(src.read(mark_len)).digest()
+	return pickle.dumps((pos, mark_len, mark))
+
+def parse_ts(ts, ts_re, ts_tpl):
+	m = ts_re.search(ts)
+	assert m, ts
+	ts, ts_tz = m.groups()
+	ts = datetime.strptime(ts, ts_tpl)
+	if ts_tz == 'Z': ts_tz = timedelta(0)
+	else:
+		(s,hh,mm), = re.findall(r'^([-+])(\d{2}):(\d{2})$', ts_tz)
+		ts_tz = timedelta(hours=int(hh), minutes=int(mm))
+		if s == '+': ts_tz = -ts_tz
+	ts += ts_tz
+	return calendar.timegm(ts.timetuple())
+
+
+def check_tail(src, conf, report=True, ts_base=dict()):
+	pos_old = None
+	try:
+		pos_old = xattr(src.name).get(conf.xattr_pos)
+		tail_seek(src, pos_old)
+	except (TailCheckError, IOError): src.seek(0)
+
+	ts_last = dict()
+	line_re, ts_re = map(re.compile, (conf.line_re, conf.ts_re))
+	for line in iter(src.readline, ''):
+		m = line_re.search(line)
+		if not m: continue
+		ts_str, name = m.group('ts'), m.group('name')
+		ts = parse_ts(ts_str, ts_re, conf.ts_tpl)
+		ts_last[name] = max(ts_last.get(name, 0), ts)
+
+	pos = tail_pos(src, conf.tail_check_size)
+	if pos != pos_old: xattr(src.name)[conf.xattr_pos] = pos
+
+	try: ts_file = pickle.loads(xattr(src.name).get(conf.xattr_ts))
+	except IOError: ts_file = dict()
+
+	ts_now = time.time()
+	for name in conf.check_names:
+		ts = ts_base.get(name), ts_file.get(name), ts_last.get(name)
+		ts = any(ts) and max(filter(None, ts))
+		if ts: ts_last[name] = ts
+		if not ts or ts_now - ts > conf.check_timeout:
+			if not ts: ts = ts_diff = None
+			else:
+				ts, ts1 = datetime.fromtimestamp(ts), datetime.fromtimestamp(ts_now)
+				ts_diff = ts1 - ts
+			if report:
+				print( 'tail-check failed for name:'
+					' {} (last: {}, delta: {})'.format(name, ts, ts_diff) )
+
+	if sorted(ts_file.items()) != sorted(ts_last.items()):
+		xattr(src.name)[conf.xattr_ts] = pickle.dumps(ts_last)
+
+	return ts_last
+
+
+def main(args=None, defaults=None):
+	conf = defaults or Conf()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Process new entries from a log file,'
+			' find names that fail to appear there within timeout interval from now.')
+	parser.add_argument('log', nargs='+',
+		help='Path to log file to process. Last one should be latest.')
+	parser.add_argument('-n', '--names', action='append', help='Name(s) to track.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	conf.check_names = opts.names or list()
+
+	ts_base = dict()
+	for path in opts.log:
+		report = path == opts.log[-1]
+		if report or os.path.exists(path):
+			with open(path) as src:
+				ts_base = check_tail(src, conf, report=report, ts_base=ts_base)
+
+if __name__ == '__main__': sys.exit(main())

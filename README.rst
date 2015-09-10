@@ -352,71 +352,6 @@ of names (in some arbitrary format) to IP addresses.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-hype
-''''
-
-Tools to work with cjdns_ and Hyperboria_ stuff.
-
-Has lots of subcommands for cjdns admin interface interaction, various related
-data processing, manipulation (ipv6, public key, switchLabel, config file, etc)
-and obfuscation. Full list with descriptions and all possible options is
-in --help output.
-
-Some of the functionality bits are described below.
-
-decode-path
-```````````
-
-Decode cjdns "Path" to a sequence of integer "peer indexes", one for each hop.
-
-Relies on encoding schema described in NumberCompress.h of cjdns. Nodes are not
-required to use it in theory, and there are other encoding schemas implemented
-which should break this tool's operation, but in practice no one bothers to
-change that default.
-
-Examples:
-
-* ``hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30``
-* ``hype decode-path -x 0ff9.e22d.6cb5.19e3 -> 03 1e 03 6a 32 0b 16 62 03 0f 0f``
-
-conf-paste
-``````````
-
-Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
-deterministic way.
-
-Should be useful to pastebin your config file without revealing most sensitive
-data (passwords and keys) in it. Might still reveal some peer info like IP
-endpoints, contacts, comments, general list of nodes you're peered with. Use
-with caution.
-
-Sensitive bits are regexp-matched (by their key) and then value is processed
-through pbkdf2-sha256 and output is truncated to appear less massive. pbkdf2
-parameters are configurable (see --help output), and at least --pbkdf2-salt
-should be passed for output to be deterministic, otherwise random salt value
-will be used.
-
-peers
-`````
-
-Shows peer stats, with some extra info, like ipv6'es derived from keys (--raw to
-disable all that).
-
-peers-remote
-````````````
-
-Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
-specified by its ipv6, path, pubkey or addr, resolving these via
-SearchRunner\_search as necessary.
-
-ipv6-to-record, key-to-ipv6
-```````````````````````````
-
-Misc pubkey/ipv6 representation/conversion helpers.
-
-.. _cjdns: https://github.com/cjdelisle/cjdns/
-.. _Hyperboria: http://hyperboria.net/
-
 temp-patch
 ''''''''''
 
@@ -869,6 +804,71 @@ can assign resulting address to the interface, if missing:
 ``ip-check`` subcommand allows to check if address (ipv4/ipv6) is assigned to
 any of the interfaces and/or run "ip add" (with specified parameters) to assign
 it, if not.
+
+hype
+^^^^
+
+Tools to work with cjdns_ and Hyperboria_ stuff.
+
+Has lots of subcommands for cjdns admin interface interaction, various related
+data processing, manipulation (ipv6, public key, switchLabel, config file, etc)
+and obfuscation. Full list with descriptions and all possible options is
+in --help output.
+
+Some of the functionality bits are described below.
+
+decode-path
+'''''''''''
+
+Decode cjdns "Path" to a sequence of integer "peer indexes", one for each hop.
+
+Relies on encoding schema described in NumberCompress.h of cjdns. Nodes are not
+required to use it in theory, and there are other encoding schemas implemented
+which should break this tool's operation, but in practice no one bothers to
+change that default.
+
+Examples:
+
+* ``hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30``
+* ``hype decode-path -x 0ff9.e22d.6cb5.19e3 -> 03 1e 03 6a 32 0b 16 62 03 0f 0f``
+
+conf-paste
+''''''''''
+
+Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
+deterministic way.
+
+Should be useful to pastebin your config file without revealing most sensitive
+data (passwords and keys) in it. Might still reveal some peer info like IP
+endpoints, contacts, comments, general list of nodes you're peered with. Use
+with caution.
+
+Sensitive bits are regexp-matched (by their key) and then value is processed
+through pbkdf2-sha256 and output is truncated to appear less massive. pbkdf2
+parameters are configurable (see --help output), and at least --pbkdf2-salt
+should be passed for output to be deterministic, otherwise random salt value
+will be used.
+
+peers
+'''''
+
+Shows peer stats, with some extra info, like ipv6'es derived from keys (--raw to
+disable all that).
+
+peers-remote
+''''''''''''
+
+Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
+specified by its ipv6, path, pubkey or addr, resolving these via
+SearchRunner\_search as necessary.
+
+ipv6-to-record, key-to-ipv6
+'''''''''''''''''''''''''''
+
+Misc pubkey/ipv6 representation/conversion helpers.
+
+.. _cjdns: https://github.com/cjdelisle/cjdns/
+.. _Hyperboria: http://hyperboria.net/
 
 adhocapd
 ^^^^^^^^
@@ -1816,3 +1816,42 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 
 .. _archlinux-pkgbuilds: https://github.com/mk-fg/archlinux-pkgbuilds
 .. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
+
+
+scraps
+~~~~~~
+
+Misc prefabs and *really* ad-hoc scripts.
+
+gnuplot-free
+^^^^^^^^^^^^
+
+Rolling plot of "free" output via gnuplot.
+
+Mostly a reminder of how to use the thing and what one can do with it.
+
+There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
+
+.. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
+
+pcap-process
+^^^^^^^^^^^^
+
+Processor for tshark's xml (pdml) output, for cases when wireshark's
+filtering/ui is not enough or it should be automated.
+
+log-tail-check
+^^^^^^^^^^^^^^
+
+Script (or a template of one) designed to be run periodically to process latest
+log entries.
+
+Handles log rotation/truncation and multiple changing logs cases.
+
+Only reads actually last lines, storing last position and hash of "N bytes after
+that" (incl. N itself) in files' "user." xattrs, to reliably detect if file was
+rotated/truncated on the next run (i.e. if offset doesn't exist or there's diff
+data there).
+
+Also stores state of the actual processing there, which is just "check occurence
+of regexp 'name' group within timeout, print line if there isn't" in the script.
