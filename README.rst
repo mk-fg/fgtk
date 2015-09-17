@@ -1062,20 +1062,20 @@ from these for other purposes.
 
 For example::
 
-	% ssh-keygen -t ed25519 -f test-key
-	...
+  % ssh-keygen -t ed25519 -f test-key
+  ...
 
-	% cat test-key
-	-----BEGIN OPENSSH PRIVATE KEY-----
-	b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-	QyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yAAAAJi1Bt0atQbd
-	GgAAAAtzc2gtZWQyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yA
-	AAAEAc5IRaYYm2Ss4E65MYY4VewwiwyqWdBNYAZxEhZe9GpNopTJz/d2cMv4VLj/fYkWwX
-	zyhChhvaVTRBi0uA7H7IAAAAE2ZyYWdnb2RAbWFsZWRpY3Rpb24BAg==
-	-----END OPENSSH PRIVATE KEY-----
+  % cat test-key
+  -----BEGIN OPENSSH PRIVATE KEY-----
+  b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+  QyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yAAAAJi1Bt0atQbd
+  GgAAAAtzc2gtZWQyNTUxOQAAACDaKUyc/3dnDL+FS4/32JFsF88oQoYb2lU0QYtLgOx+yA
+  AAAEAc5IRaYYm2Ss4E65MYY4VewwiwyqWdBNYAZxEhZe9GpNopTJz/d2cMv4VLj/fYkWwX
+  zyhChhvaVTRBi0uA7H7IAAAAE2ZyYWdnb2RAbWFsZWRpY3Rpb24BAg==
+  -----END OPENSSH PRIVATE KEY-----
 
-	% ssh-keyparse test-key
-	HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
+  % ssh-keyparse test-key
+  HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
 
 That one line at the end contains 32-byte ed25519 seed - "secret key" - all the
 necessary info to restore the blob above, without extra openssh wrapping (as per
@@ -1099,19 +1099,19 @@ temporary copy of it to decrypt, with a big warning in case it's not desirable.
 There's also an option (--pbkdf2) to run the thing through PBKDF2 (tunable via
 --pbkdf2-opts) and various output encodings available::
 
-	% ssh-keyparse test-key
-	HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
+  % ssh-keyparse test-key
+  HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
 
-	% ssh-keyparse test-key --hex
-	1ce4845a6189b64ace04eb931863855ec308b0caa59d04d60067112165ef46a4
+  % ssh-keyparse test-key --hex
+  1ce4845a6189b64ace04eb931863855ec308b0caa59d04d60067112165ef46a4
 
-	% ssh-keyparse test-key --base32
-	3KJ8-8PK1-H6V4-NKG4-XE9H-GRW5-BV1G-HC6A-MPEG-9NG0-CW8J-2SFF-8TJ0-e
+  % ssh-keyparse test-key --base32
+  3KJ8-8PK1-H6V4-NKG4-XE9H-GRW5-BV1G-HC6A-MPEG-9NG0-CW8J-2SFF-8TJ0-e
 
-	% ssh-keyparse test-key --base32-nodashes
-	3KJ88PK1H6V4NKG4XE9HGRW5BV1GHC6AMPEG9NG0CW8J2SFF8TJ0e
+  % ssh-keyparse test-key --base32-nodashes
+  3KJ88PK1H6V4NKG4XE9HGRW5BV1GHC6AMPEG9NG0CW8J2SFF8TJ0e
 
-	% ssh-keyparse test-key --raw >test-key.bin
+  % ssh-keyparse test-key --raw >test-key.bin
 
 With encoding like --base32 (`Douglas Crockford's human-oriented Base32`_, last
 lowercase letter there is a checksum), it's easy to even read the thing over
@@ -1124,20 +1124,47 @@ rrd-sensors-logger
 
 Daemon script to grab data from whatever sensors and log it all via rrdtool.
 
-Self-contained, configurable, integrates with systemd (Type=notify, watchdog),
-has commands to easily produce graphs from this data and print last values.
+Self-contained, configurable, handles clock jumps and weirdness (for e.g. arm
+boards that lack battery-backed RTC), integrates with systemd (Type=notify,
+watchdog), has commands to easily produce graphs from this data (and can serve
+these via http), print last values.
 
 Auto-generates rrd schema from config (and filename from that), inits db, checks
 for time jumps and aborts if necessary (rrdtool can't handle these, and they are
 common on arm boards), cleans up after itself.
 
 Same things can be done by using rrdtool directly, but it requires a ton of
-typing for graph options and such, while this script auto-generates it all for
-you, and is designed to be "hands-off" kind of easy.
+typing for graph options and such, while this script generates it all for you,
+and is designed to be "hands-off" kind of easy.
 
 Using it to keep track of SoC sensor readings on boards like RPi (to see if
 maybe it's time to cram a heatsink on top of one or something), for more serious
 systems something like collectd + graphite might be a better option.
+
+Command-line usage::
+
+  % rrd-sensors-logger daemon --http-listen &
+
+  % rrd-sensors-logger print-conf-example
+  ### rrd-sensors-logger configuration file (format: YAML)
+  ### Place this file into ~/.rrd-sensors-logger.yaml or specify explicitly with --conf option.
+  ...
+
+  % rrd-sensors-logger print-last
+  cpu.t: 30.22513627594576
+  gpu.t: 39.44316309653439
+  mb_1.t: 41.77566666851852
+  mb_2.t: 41.27842380952381
+
+  % curl -o graph.png http://localhost:8123/
+  % curl -o graph.png http://localhost:8123/t
+  % curl -o graph.png 'http://localhost:8123/t/start:+-2d,width:+1900,height:+800'
+  % curl -o graph.png 'http://localhost:8123//logarithmic:+true,title:+my+graph'
+
+  % feh $(rrd-sensors-logger graph t -o 'start: -3h')
+
+See top of the script for yaml config (also available via "print-conf-example")
+and systemd unit file example.
 
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 

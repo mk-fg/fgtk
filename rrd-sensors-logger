@@ -33,12 +33,15 @@ yaml.SafeDumper.add_representer(lya.AttrDict, yaml.SafeDumper.represent_dict)
 # RestartSec=30
 # StartLimitInterval=10min
 # StartLimitBurst=10
-# ExecStart=/usr/local/bin/rrd-sensors-logger --systemd daemon
+# ExecStart=/usr/local/bin/rrd-sensors-logger --systemd daemon --http-listen
 #
 # [Install]
 # WantedBy=multi-user.target
 
-conf_base = lya.AttrDict(yaml_load('''
+conf_base_str = '''
+### rrd-sensors-logger configuration file (format: YAML)
+### Place this file into ~/.rrd-sensors-logger.yaml or specify explicitly with --conf option.
+
 rrd:
 	# Parameters for the created rrd databases
 	# Most are translated directly to values for "rrdtool create":
@@ -103,7 +106,8 @@ graph:
 		end:
 		left-axis-format: '%0.1lf'
 
-'''.replace('\t', '  ')))
+'''.replace('\t', '  ')
+conf_base = lya.AttrDict(yaml_load(conf_base_str))
 
 
 ### For bencode bits below
@@ -656,6 +660,100 @@ def init_rrd(sensors_interval, sensors, conf):
 	return rrdb
 
 
+def rrd_conf_graph(conf, rrdb, metric=None, ss=None, opts=None, threshold=None, path=None):
+	if not metric: metric = sensors.metric_default
+	if not ss: ss = list(conf.meas.sensors)
+	units = sensors.units[metric]
+
+	graph_opts = conf.graph.opts
+	graph_opts.update(
+		vertical_label='{}, {}'.format(metric, units),
+		title='{} history'.format(sensors.metrics[metric].title()) )
+	for d in opts or list():
+		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
+		graph_opts.update_dict(yaml_load(d))
+
+	hrules = list()
+	for spec in threshold or list():
+		desc, v = spec.split(':', 1)
+		v = float(v)
+		hrules.append(dict( v=v, dashes=True,
+			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
+
+	image_path = rrdb.graph( metric, ss, image_path=path,
+		hrules=hrules, units=units, perc=['1σ', '2σ'], **graph_opts )
+	return image_path
+
+
+def httpd_poller(conf, rrdb, bind):
+	import BaseHTTPServer, select, mimetypes, urllib, base64
+
+	httpd_log = log or logging.getLogger('httpd')
+
+	@contextlib.contextmanager
+	def rrd_graph(*args, **kws):
+		image_path = rrd_conf_graph(conf, rrdb, *args, **kws)
+		try: yield image_path
+		finally:
+			try: os.unlink(image_path)
+			except (OSError, IOError): pass
+
+	class HTTPReqHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+
+		req_id = None
+
+		def setup(self):
+			self.req_id = os.urandom(3)
+			BaseHTTPServer.BaseHTTPRequestHandler.setup(self)
+
+		def log_message(self, fmt, *args):
+			req_id = base64.urlsafe_b64encode(self.req_id)
+			httpd_log.debug( 'http-req[%s] :: %s - - [%s] %s', req_id,
+				self.client_address[0], self.log_date_time_string(), fmt % args )
+
+		def do_GET(self):
+			params = self.path.split('/', 3)[1:3]
+			try: metric, opts = map(urllib.unquote_plus, params)
+			except ValueError:
+				try: (metric,), opts = params, None
+				except ValueError: metric = opts = None
+			if opts: opts = [opts]
+
+			with rrd_graph(metric=metric, opts=opts) as image_path:
+				ct, enc = mimetypes.guess_type(image_path)
+				if not ct: ct = 'image/png'
+				with open(image_path, 'rb') as src:
+					src.seek(0, os.SEEK_END)
+					self.send_response(200)
+					self.send_header('Content-Type', ct)
+					self.send_header('Content-Length', src.tell())
+					self.end_headers()
+					src.seek(0)
+					for chunk in iter(ft.partial(src.read, 2**20), ''): self.wfile.write(chunk)
+
+	httpd = BaseHTTPServer.HTTPServer(bind, HTTPReqHandler)
+	poller = select.epoll()
+	poller.register(httpd.fileno(), select.EPOLLIN)
+
+	def httpd_poller(delay):
+		ts = time.time()
+		ts1 = ts + delay
+		while True:
+			delay = ts1 - ts
+			if delay <= 0: break
+			events = poller.poll(delay)
+			for fd, ev in events:
+				req, addr = httpd.get_request()
+				httpd.verify_request(req, addr)
+				try: httpd.process_request(req, addr)
+				except:
+					httpd.handle_error(req, addr)
+					httpd.shutdown_request(req)
+			ts = time.time()
+
+	return httpd_poller
+
+
 class Sensor(object):
 
 	values = tuple() # must be overidden
@@ -757,13 +855,13 @@ class SensorLM(Sensor):
 		else: return {self.st: val}
 
 
-
 class SensorMeta(object):
 
 	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
 	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
 	formats = dict(t='.1f', rh='.1f', v='.2f', rpm='.0f')
 	types = dict(rpi_soc=SensorRPiSoC, lm=SensorLM)
+	metric_default = 't'
 
 	def value_repr(self, n, metric, units=True, decode=False):
 		if isinstance(n, (int, long)): n = bytes(n)
@@ -792,6 +890,7 @@ def main(args=None):
 			' Config with all possible options is embedded in the'
 				' code and is always used as a baseline, ~/.rrd-sensors-logger.yaml path'
 				' is used (if exists) on top of that, unless this option is specified.'
+			' Use "print-conf-example" command to produce example conf file.'
 			' Empty values for this option are safely ignored.')
 	parser.add_argument('-x', '--conf-data',
 		action='append', metavar='yaml-data', default=list(),
@@ -812,8 +911,17 @@ def main(args=None):
 		description='Supported actions (have their own suboptions as well)')
 
 
+	cmd = cmds.add_parser('print-conf-example',
+		help='Print example config to stdout and exit.')
+
+
 	cmd = cmds.add_parser('daemon',
 		help='Run as daemon and update values in an rrd file.')
+	cmd.add_argument('-l', '--http-listen', nargs='?',
+		metavar='[address:]port', const='localhost:8123',
+		help='Run http server that would render charts, same as "graph" option.'
+			' Optional argument is the address:port'
+				' or just port to run server on (default: %(default)s).')
 
 
 	cmd = cmds.add_parser('print-last', help='Print last stored value for each sensor.')
@@ -824,14 +932,16 @@ def main(args=None):
 		metavar='{ average | min | max | last }', default='average',
 		help='Consolidation function (see rrdtool docs) to use (default: %(default)s).')
 	cmd.add_argument('-l', '--last-update', action='store_true',
-		help='Do not use --time-delat or --cf,'
+		help='Do not use --time-delta or --cf,'
 			' just print last (raw) stored values (rrdtool lastupdate).')
 
 
 	cmd = cmds.add_parser('graph',
 		help='Build and store graph of last measurements.',
 		epilog='Prints path to resulting image to stdout.')
-	cmd.add_argument('metric', help='Name of a metric to graph (example: t).')
+	cmd.add_argument('metric',
+		nargs='?', default=sensors.metric_default,
+		help='Name of a metric to graph (default: %(default)s).')
 	cmd.add_argument('-s', '--sensor',
 		action='append', metavar='sensor-name', default=list(),
 		help='Name of a sensor to graph metric for'
@@ -905,6 +1015,14 @@ def main(args=None):
 
 
 	if opts.cmd == 'daemon':
+		delay_func = time.sleep
+
+		if opts.http_listen:
+			bind = opts.http_listen.split(':', 1)
+			bind = ('', int(bind[0])) if len(bind) == 1 else (bind[0], int(bind[1]))
+			log.debug('Starting http server on socket (py bind format): %s', bind)
+			delay_func = httpd_poller(conf, rrdb, bind)
+
 		log.debug('Entering sensor/rrdb read/update loop...')
 		ts_read = time.time()
 		while True:
@@ -914,7 +1032,7 @@ def main(args=None):
 				if ts_next == sd_cycle.ts_next: sd_cycle()
 				else: break
 			delay = ts_read - time.time()
-			if delay > 0: time.sleep(delay)
+			if delay > 0: delay_func(delay)
 			ts_read += ss_interval
 
 			vals = dict()
@@ -941,28 +1059,12 @@ def main(args=None):
 
 
 	elif opts.cmd == 'graph':
-		ss = opts.sensor
-		if not ss: ss = list(conf.meas.sensors)
-		metric, units = opts.metric, sensors.units[opts.metric]
-
-		graph_opts = conf.graph.opts
-		graph_opts.update(
-			vertical_label='{}, {}'.format(metric, units),
-			title='{} history'.format(sensors.metrics[metric].title()) )
-		for d in opts.opts:
-			if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
-			graph_opts.update_dict(yaml_load(d))
-
-		hrules = list()
-		for spec in opts.threshold:
-			desc, v = spec.split(':', 1)
-			v = float(v)
-			hrules.append(dict( v=v, dashes=True,
-				legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
-
-		image_path = rrdb.graph( metric, ss, image_path=opts.path,
-			hrules=hrules, units=units, perc=['1σ', '2σ'], **graph_opts )
+		image_path = rrd_conf_graph( conf, rrdb, opts.metric,
+			ss=opts.sensor, opts=opts.opts, threshold=opts.threshold, path=opts.path )
 		print(image_path)
+
+
+	elif opts.cmd == 'print-conf-example': print(conf_base_str)
 
 
 	else: parser.error('Unrecognized command: {}'.format(opts.cmd))
