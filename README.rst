@@ -1143,7 +1143,7 @@ systems something like collectd + graphite might be a better option.
 
 Command-line usage::
 
-  % rrd-sensors-logger daemon --http-listen &
+  % rrd-sensors-logger daemon --http-listen --http-opts-allow &
 
   % rrd-sensors-logger print-conf-example
   ### rrd-sensors-logger configuration file (format: YAML)
@@ -1158,8 +1158,8 @@ Command-line usage::
 
   % curl -o graph.png http://localhost:8123/
   % curl -o graph.png http://localhost:8123/t
-  % curl -o graph.png 'http://localhost:8123/t/start:+-2d,width:+1900,height:+800'
-  % curl -o graph.png 'http://localhost:8123//logarithmic:+true,title:+my+graph'
+  % curl -o graph.png 'http://localhost:8123/t/width:+1900,height:+800,full-size-mode:+true'
+  % curl -o graph.png 'http://localhost:8123//start:+-2d,logarithmic:+true,title:+my+graph'
 
   % feh $(rrd-sensors-logger graph t -o 'start: -3h')
 

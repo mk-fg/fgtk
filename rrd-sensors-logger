@@ -660,7 +660,8 @@ def init_rrd(sensors_interval, sensors, conf):
 	return rrdb
 
 
-def rrd_conf_graph(conf, rrdb, metric=None, ss=None, opts=None, threshold=None, path=None):
+def rrd_conf_graph( conf, rrdb,
+		metric=None, ss=None, opts=None, threshold=None, path=None ):
 	if not metric: metric = sensors.metric_default
 	if not ss: ss = list(conf.meas.sensors)
 	units = sensors.units[metric]
@@ -685,7 +686,7 @@ def rrd_conf_graph(conf, rrdb, metric=None, ss=None, opts=None, threshold=None, 
 	return image_path
 
 
-def httpd_poller(conf, rrdb, bind):
+def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 	import BaseHTTPServer, select, mimetypes, urllib, base64
 
 	httpd_log = log or logging.getLogger('httpd')
@@ -713,11 +714,15 @@ def httpd_poller(conf, rrdb, bind):
 
 		def do_GET(self):
 			params = self.path.split('/', 3)[1:3]
-			try: metric, opts = map(urllib.unquote_plus, params)
+			try: metric, opts_ext = map(urllib.unquote_plus, params)
 			except ValueError:
-				try: (metric,), opts = params, None
-				except ValueError: metric = opts = None
-			if opts: opts = [opts]
+				try: (metric,), opts_ext = params, None
+				except ValueError: metric = opts_ext = None
+			opts = list(http_opts or list())
+			if http_opts_allow and opts_ext: opts.append(opts_ext)
+			if metric and not re.search(r'^[a-zA-Z0-9_]+$', metric):
+				return self.send_error( 400,
+					'Bad request - invalid metric name spec: {!r}'.format(metric) )
 
 			with rrd_graph(metric=metric, opts=opts) as image_path:
 				ct, enc = mimetypes.guess_type(image_path)
@@ -879,6 +884,7 @@ sensors = SensorMeta()
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
+		usage='%(prog)s: [opts]',
 		description='Daemon to log sensor data to an rrd database.')
 
 	parser.add_argument('-c', '--conf',
@@ -916,15 +922,26 @@ def main(args=None):
 
 
 	cmd = cmds.add_parser('daemon',
+		usage='%(prog)s [command-opts]',
 		help='Run as daemon and update values in an rrd file.')
 	cmd.add_argument('-l', '--http-listen', nargs='?',
 		metavar='[address:]port', const='localhost:8123',
 		help='Run http server that would render charts, same as "graph" option.'
 			' Optional argument is the address:port'
 				' or just port to run server on (default: %(default)s).')
+	cmd.add_argument('-o', '--http-opts',
+		action='append', metavar='yaml-data', default=list(),
+		help='Same as --opts for "graph" command, see description there.')
+	cmd.add_argument('--http-opts-allow', action='store_true',
+		help='Allow specifying rrdtool options via URL - VERY DANGEROUS.'
+			' Only intended for testing or whitelist-restricted access,'
+				' as it may allow execution of arbitrary commands,'
+				' if and of the rrdtool options allow that or are handled insecurely.')
 
 
-	cmd = cmds.add_parser('print-last', help='Print last stored value for each sensor.')
+	cmd = cmds.add_parser('print-last',
+		usage='%(prog)s [command-opts]',
+		help='Print last stored value for each sensor.')
 	cmd.add_argument('-t', '--time-delta',
 		metavar='ts-diff-spec', default='20min',
 		help='Time delta (from now) to show values for (default: %(default)s).')
@@ -937,6 +954,7 @@ def main(args=None):
 
 
 	cmd = cmds.add_parser('graph',
+		usage='%(prog)s [command-opts]',
 		help='Build and store graph of last measurements.',
 		epilog='Prints path to resulting image to stdout.')
 	cmd.add_argument('metric',
@@ -1021,7 +1039,8 @@ def main(args=None):
 			bind = opts.http_listen.split(':', 1)
 			bind = ('', int(bind[0])) if len(bind) == 1 else (bind[0], int(bind[1]))
 			log.debug('Starting http server on socket (py bind format): %s', bind)
-			delay_func = httpd_poller(conf, rrdb, bind)
+			delay_func = httpd_poller( conf, rrdb, bind,
+				http_opts=opts.http_opts, http_opts_allow=opts.http_opts_allow )
 
 		log.debug('Entering sensor/rrdb read/update loop...')
 		ts_read = time.time()
