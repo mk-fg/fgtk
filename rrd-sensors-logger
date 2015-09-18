@@ -981,6 +981,8 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+	if opts.cmd == 'print-conf-example': return print(conf_base_str)
+
 	global log
 	import logging
 	log = '%(levelname)s :: %(message)s'
@@ -1082,9 +1084,6 @@ def main(args=None):
 		image_path = rrd_conf_graph( conf, rrdb, opts.metric,
 			ss=opts.sensor, opts=opts.opts, threshold=opts.threshold, path=opts.path )
 		print(image_path)
-
-
-	elif opts.cmd == 'print-conf-example': print(conf_base_str)
 
 
 	else: parser.error('Unrecognized command: {}'.format(opts.cmd))
