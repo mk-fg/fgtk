@@ -1164,7 +1164,7 @@ Command-line usage::
   % feh $(rrd-sensors-logger graph t -o 'start: -3h')
 
 See top of the script for yaml config (also available via "print-conf-example")
-and systemd unit file example.
+and systemd unit file example ("print-systemd-unit" command).
 
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 

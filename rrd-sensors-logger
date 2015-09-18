@@ -920,6 +920,8 @@ def main(args=None):
 
 	cmd = cmds.add_parser('print-conf-example',
 		help='Print example config to stdout and exit.')
+	cmd = cmds.add_parser('print-systemd-unit',
+		help='Print example systemd unit file to stdout and exit.')
 
 
 	cmd = cmds.add_parser('daemon',
@@ -981,7 +983,17 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if opts.cmd == 'print-conf-example': return print(conf_base_str)
+	if opts.cmd == 'print-conf-example':
+		return print(conf_base_str)
+	if opts.cmd == 'print-systemd-unit':
+		with open(__file__) as src:
+			echo = False
+			for line in iter(src.readline, ''):
+				if echo: print(re.sub(r'^#+\s*', '', line.strip()))
+				if re.search('^### systemd unit file:', line):
+					echo = True
+					continue
+				elif echo and not line.strip(): return
 
 	global log
 	import logging
