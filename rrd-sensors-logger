@@ -100,6 +100,7 @@ meas:
 
 graph:
 	opts:
+		full-size-mode: true
 		width: 1000
 		height: 500
 		start: -5h

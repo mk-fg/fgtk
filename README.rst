@@ -1158,7 +1158,7 @@ Command-line usage::
 
   % curl -o graph.png http://localhost:8123/
   % curl -o graph.png http://localhost:8123/t
-  % curl -o graph.png 'http://localhost:8123/t/width:+1900,height:+800,full-size-mode:+true'
+  % curl -o graph.png 'http://localhost:8123/t/width:+1900,height:+800'
   % curl -o graph.png 'http://localhost:8123//start:+-2d,logarithmic:+true,title:+my+graph'
 
   % feh $(rrd-sensors-logger graph t -o 'start: -3h')
