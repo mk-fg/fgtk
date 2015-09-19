@@ -1349,10 +1349,10 @@ easier to pick timespan to download properly).
 General usage examples (wrapped)::
 
   % twitch_vod_fetch \
-    http://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8.mp4 \
-    http://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4.mp4 \
-    http://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals.mp4 \
-    http://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv.mp4
+    http://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8 \
+    http://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4 \
+    http://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals \
+    http://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv
 
   % twitch_vod_fetch -x 120/15:00 \
     http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_preview
