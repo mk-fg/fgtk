@@ -76,8 +76,9 @@ def req(method, *args, **kws):
 		req.s.mount( 'http://',
 			requests.adapters.HTTPAdapter(
 				max_retries=Retry(total=4, backoff_factor=1) ) )
+	s = kws.pop('session', req.s) or requests
 
-	with closing(req.s.request(method, *args, **kws)) as r:
+	with closing(s.request(method, *args, **kws)) as r:
 		try: r.raise_for_status()
 		except Exception as err:
 			log_lines(log.error, [
@@ -90,11 +91,11 @@ def req(method, *args, **kws):
 req_jrpc_uid = lambda _ns=get_uid(),\
 	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
 
-def req_jrpc(url, method, *params):
+def req_jrpc(url, method, *params, **req_kws):
 	data_req = dict(
 		jsonrpc='2.0', id=req_jrpc_uid(),
 		method=method, params=params )
-	with req('post', url, json=data_req) as r: data_res = r.json()
+	with req('post', url, json=data_req, **req_kws) as r: data_res = r.json()
 	assert data_res.get('result') is not None, [data_req, data_res]
 	return data_res['result']
 
@@ -198,10 +199,26 @@ def vod_fetch(url, file_prefix,
 	aria2c = subprocess.Popen(cmd, close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
+	key = 'token:{}'.format(key)
+
+	### Make sure that aria2c was started and rpc is working
+	for n in xrange(4):
+		try: aria2c_jrpc('aria2.getVersion', key, session=None)
+		except requests.exceptions.ConnectionError as err:
+			if aria2c.poll() != None:
+				err = ( 'aria2c exited with error code {}'
+					' (see also stderr output above)' ).format(aria2c.wait())
+				break
+			time.sleep(1)
+		else:
+			err = None
+			break
+	if err:
+		log.error('Failed to connect to aria2c rpc socket - %s', err)
+		return 1
 
 	log.debug('Starting downloads (rpc port: %s)...', port)
 	try:
-		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
 		wait_last_gids, poll_delay = 100, 5
 		chunk_err_retries, chunk_err_retry_delay = 10, 2
