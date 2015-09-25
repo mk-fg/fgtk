@@ -1171,8 +1171,9 @@ Uses: layered-yaml-attrdict-config (lya), rrdtool.
 nsh
 ^^^
 
-Bash script to "nsenter" into specified machine's (as can be seen in
-``ps -eo machine``) container namespaces and run login shell there.
+Bash script to "nsenter" into specified machine's (as can be seen in ``ps -eo
+machine`` or ``nsh`` when run without args) container namespaces and run login
+shell there.
 
 Machine in question must run systemd as pid-1 (e.g. systemd-nspawn container),
 as it gets picked as --target pid for nsenter.
@@ -1188,6 +1189,8 @@ If running ``tty`` there says ``not a tty`` and e.g. ``screen`` bails out with
 ``Must be connected to a terminal.``, just run extra ``getty tty`` there - will
 ask to login (be mindful of /etc/securetty if login fails), and everything
 tty-related should work fine afterwards.
+
+If run without argument or with -l/--list option, will list running machines.
 
 
 

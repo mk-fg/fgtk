@@ -2,10 +2,16 @@
 
 usage() {
 	bin=$(basename $0)
+	echo >&2 "Usage: $bin [ -l | --list | --ls ]"
 	echo >&2 "Usage: $bin machine"
 	exit ${1:-0}
 }
-[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+[[ "$1" = -h || "$1" = --help ]] && usage
+
+[[ -z "$1" || "$1" = -l || "$1" = --list || "$1" = --ls ]] && {
+	ps -eo machine= | grep -v '^-$' | sort -u
+	exit $?
+}
 
 
 set -e -o pipefail
