@@ -189,7 +189,7 @@ def vod_fetch(url, file_prefix,
 			'--rpc-listen-port={}'.format(port),
 			'--rpc-secret={}'.format(key),
 
-			'--no-netrc', '--no-proxy',
+			'--no-netrc',
 			'--always-resume=false',
 			'--max-concurrent-downloads=5',
 			'--max-connection-per-server=5',
