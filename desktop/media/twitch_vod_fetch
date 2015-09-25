@@ -67,6 +67,8 @@ class VodFileCache(object):
 		self.update_lock = True
 
 
+req_debug = os.environ.get('TVF_REQ_DEBUG')
+
 @contextmanager
 def req(method, *args, **kws):
 	if not getattr(req, 's', None):
@@ -92,11 +94,16 @@ req_jrpc_uid = lambda _ns=get_uid(),\
 	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
 
 def req_jrpc(url, method, *params, **req_kws):
+	req_uid = req_jrpc_uid()
 	data_req = dict(
-		jsonrpc='2.0', id=req_jrpc_uid(),
+		jsonrpc='2.0', id=req_uid,
 		method=method, params=params )
+	if req_debug:
+		log.debug( 'aria2c rpc request [%s]: %s', req_uid,
+			json.dumps(dict(url=url, method=method, data=data_req)) )
 	with req('post', url, json=data_req, **req_kws) as r: data_res = r.json()
 	assert data_res.get('result') is not None, [data_req, data_res]
+	if req_debug: log.debug( 'rpc response [%s]: %s', req_uid, data_res)
 	return data_res['result']
 
 
