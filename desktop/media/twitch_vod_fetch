@@ -103,7 +103,7 @@ def req_jrpc(url, method, *params, **req_kws):
 			json.dumps(dict(url=url, method=method, data=data_req)) )
 	with req('post', url, json=data_req, **req_kws) as r: data_res = r.json()
 	assert data_res.get('result') is not None, [data_req, data_res]
-	if req_debug: log.debug( 'rpc response [%s]: %s', req_uid, data_res)
+	if req_debug: log.debug( 'rpc response [%s]: %s', req_uid, json.dumps(data_res))
 	return data_res['result']
 
 
