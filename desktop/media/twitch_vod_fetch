@@ -9,6 +9,13 @@ from os.path import exists, dirname
 import subprocess, tempfile, time, glob, socket
 import os, sys, re, json, types, base64
 
+if sys.platform == 'win32':
+	p = ft.partial(print, file=sys.stderr)
+	p('This version of the script does not support Windows OS.')
+	p('Windows-compatible version can be found here:')
+	p('  https://github.com/Choonster/fgtk#twitch-vod-fetch')
+	sys.exit(1)
+
 import requests
 
 

@@ -1329,6 +1329,9 @@ twitch\_vod\_fetch
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
+This is a unix-ish OS version, github user Choonster has Windows version in
+`Choonster/fgtk repo`_.
+
 youtube-dl - the usual tool for the job - `doesn't support neither seeking to
 time nor length limits`_, but does a good job of getting a VoD m3u8 playlist
 with chunks of the video (--get-url option).
@@ -1373,6 +1376,7 @@ General usage examples (wrapped)::
 | Needs youtube-dl, requests and aria2.
 | A bit more info on it can be found in `this twitchtv-vods-... blog post`_.
 
+.. _Choonster/fgtk repo: https://github.com/Choonster/fgtk#twitch-vod-fetch
 .. _doesn't support neither seeking to time nor length limits: https://github.com/rg3/youtube-dl/issues/622
 .. _aria2: http://aria2.sourceforge.net/
 .. _this twitchtv-vods-... blog post: http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
