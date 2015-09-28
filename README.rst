@@ -5,10 +5,17 @@ A set of a misc tools to work with files and processes.
 
 Various oldish helper binaries I wrote to help myself with day-to-day tasks.
 
+License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`
+(public domain-ish), feel free to just copy and use these in whatever way you like.
+
 
 .. contents::
   :backlinks: none
 
+
+
+Scripts
+-------
 
 
 Files
@@ -1912,3 +1919,24 @@ check-df
 
 Standard template for a trivial bash + coreutils "df" checker to put into
 crontab on any random linux box, just in case.
+
+
+
+License (WTFPL)
+---------------
+
+::
+
+            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+                    Version 2, December 2004
+
+  Copyright (C) 2010-2038 Mike Kazantsev
+
+  Everyone is permitted to copy and distribute verbatim or modified
+  copies of this license document, and changing it is allowed as long
+  as the name is changed.
+
+             DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+    TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+
+   0. You just DO WHAT THE FUCK YOU WANT TO.
