@@ -1332,7 +1332,6 @@ Script to download any time slice of a twitch.tv VoD (video-on-demand).
 This is a unix-ish OS version, github user Choonster has Windows version in
 `Choonster/twitch_vod_fetch repo`_.
 
-
 youtube-dl - the usual tool for the job - `doesn't support neither seeking to
 time nor length limits`_, but does a good job of getting a VoD m3u8 playlist
 with chunks of the video (--get-url option).
