@@ -8,9 +8,11 @@ from contextlib import contextmanager, closing
 from os.path import exists, dirname
 import subprocess, tempfile, time, glob, socket
 import os, sys, re, json, types, base64
+import shutil
 
 import requests
 
+mswindows = (sys.platform == "win32")
 
 def get_uid(n=3):
 	assert n * 8 % 6 == 0, n
@@ -127,7 +129,7 @@ def vod_fetch(url, file_prefix,
 			if verbose: cmd.append('--verbose')
 			cmd = cmd + ['--get-url'] + (ytdl_opts or list()) + [url]
 			log.debug('Running "youtube-dl --get-url" command: %s', ' '.join(cmd))
-			url_pls = vc.update(subprocess.check_output(cmd, close_fds=True).strip())
+			url_pls = vc.update(subprocess.check_output(cmd, close_fds=not mswindows).strip())
 	assert ' ' not in url_pls, url_pls
 	url_base = url_pls.rsplit('/', 1)[0]
 
@@ -135,7 +137,7 @@ def vod_fetch(url, file_prefix,
 		ua = vc.cached
 		if not ua:
 			ua = vc.update(subprocess.check_output(
-				['youtube-dl', '--dump-user-agent'], close_fds=True ).strip())
+				['youtube-dl', '--dump-user-agent'], close_fds=not mswindows ).strip())
 
 	with vod_cache('m3u8') as vc:
 		pls = vc.cached
@@ -161,21 +163,33 @@ def vod_fetch(url, file_prefix,
 		gids_done = set(it.imap(gid_parse, gids_done.splitlines()))
 	gids_started, gids_needed = OrderedDict(), list()
 
-	# Try to pick leaner shell than bash, since hook is dead-simple
-	# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
-	sh_path = '/bin/dash'
-	if not exists(sh_path): sh_path = '/bin/ash' # busybox
-	if not exists(sh_path): sh_path = '/bin/sh'
-
-	hook_done = '/tmp/.fetch_twitch_vod.{}.done.hook'.format(os.getpid())
+	hook_done = None
+	if mswindows:
+		hook_done = '{}/.fetch_twitch_vod.{}.done.hook.bat'.format(os.environ['TEMP'], os.getpid())
+	else:
+		hook_done = '/tmp/.fetch_twitch_vod.{}.done.hook'.format(os.getpid())
+		
 	assert "'" not in file_prefix, file_prefix
 	assert "'" not in gids_done_path, gids_done_path
 	with open(hook_done, 'wb') as dst:
-		dst.write('\n'.join([
-			'#!{}'.format(sh_path),
-			'mv "$3" \'{}\'."$1".mp4.chunk\\'.format(file_prefix),
-			'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
-		os.fchmod(dst.fileno(), 0700)
+		if mswindows:
+			newfilename = '{}.%1.mp4.chunk'.format(os.path.basename(file_prefix))
+			dst.write('\n'.join([
+				'@echo off',
+				'if exist "%~dp3{}" del "%~dp3{}"'.format(newfilename, newfilename),
+				'rename %~f3 "{}"'.format(newfilename) + ' && echo %1 >> "{}"'.format(os.path.abspath(gids_done_path)) ]))
+		else:
+			# Try to pick leaner shell than bash, since hook is dead-simple
+			# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
+			sh_path = '/bin/dash'
+			if not exists(sh_path): sh_path = '/bin/ash' # busybox
+			if not exists(sh_path): sh_path = '/bin/sh'
+		
+			dst.write('\n'.join([
+				'#!{}'.format(sh_path),
+				'mv "$3" \'{}\'."$1".mp4.chunk\\'.format(file_prefix),
+				'  && echo "$1" >>\'{}\''.format(gids_done_path) ]))
+			os.fchmod(dst.fileno(), 0700)
 
 	aria2c_log_level = 'notice' if verbose else 'warn'
 	cmd = [
@@ -203,7 +217,7 @@ def vod_fetch(url, file_prefix,
 			'--on-download-complete={}'.format(hook_done),
 		] + (aria2c_opts or list())
 	log.debug('Starting aria2c daemon: %s', ' '.join(cmd))
-	aria2c = subprocess.Popen(cmd, close_fds=True)
+	aria2c = subprocess.Popen(cmd, close_fds=not mswindows)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
 	key = 'token:{}'.format(key)
@@ -351,7 +365,11 @@ def vod_fetch(url, file_prefix,
 	if not exists(dst_file):
 		dst_file_tmp = '{}.tmp'.format(dst_file)
 		with open(dst_file_tmp, 'wb') as dst:
-			subprocess.check_call(['cat'] + chunks, stdout=dst, close_fds=True)
+			if mswindows:
+				for chunk in chunks:
+					shutil.copyfileobj(open(chunk, "rb"), dst)
+			else:
+				subprocess.check_call(['cat'] + chunks, stdout=dst, close_fds=True)
 		os.rename(dst_file_tmp, dst_file)
 
 	## ffmpeg otoh makes file unplayable on the second pass, well done!
