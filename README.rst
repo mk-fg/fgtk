@@ -5,7 +5,7 @@ A set of a misc tools to work with files and processes.
 
 Various oldish helper binaries I wrote to help myself with day-to-day tasks.
 
-License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`
+License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`__
 (public domain-ish), feel free to just copy and use these in whatever way you like.
 
 
