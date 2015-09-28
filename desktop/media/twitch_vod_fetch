@@ -13,7 +13,7 @@ if sys.platform == 'win32':
 	p = ft.partial(print, file=sys.stderr)
 	p('This version of the script does not support Windows OS.')
 	p('Windows-compatible version can be found here:')
-	p('  https://github.com/Choonster/fgtk#twitch-vod-fetch')
+	p('  https://github.com/Choonster/twitch_vod_fetch/')
 	sys.exit(1)
 
 import requests
