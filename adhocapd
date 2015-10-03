@@ -50,9 +50,13 @@ run() {
 	echo "iptables -I INPUT -s ${ip_net} -i ${dev} -m udp --dport bootps -j ACCEPT"
 	echo '--------------------'
 
+	exec > >(awk '{print strftime("[%Y-%m-%dT%H:%M:%S]"), $0; fflush()}') 2>&1
+
 	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
 	trap "pkill -g 0; sleep 0.3; rm -rf '$conf'" EXIT
 	set -e
+
+	echo 'Starting...'
 
 #################### udhcpd.conf
 	udhcpd_conf="$conf"/udhcpd.conf
