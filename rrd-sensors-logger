@@ -1009,7 +1009,7 @@ def main(args=None):
 		metavar='[address:]port', const='localhost:8123',
 		help='Run http server that would render charts, same as "graph" option.'
 			' Optional argument is the address:port'
-				' or just port to run server on (default: %(default)s).')
+				' or just port to run server on (default: localhost:8123).')
 	cmd.add_argument('-o', '--http-opts',
 		action='append', metavar='yaml-data', default=list(),
 		help='Same as --opts for "graph" command, see description there.')
