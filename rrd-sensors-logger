@@ -698,7 +698,10 @@ def init_rrd(sensors_interval, sensors, conf):
 def rrd_conf_graph( conf, rrdb,
 		metric=None, ss=None, opts=None, threshold=None, path=None ):
 	if not metric: metric = sensors.metric_default
-	if not ss: ss = list(conf.meas.sensors)
+	if not ss:
+		ss = list(
+			sn for sn,sd in conf.meas.sensors.viewitems()
+			if metric in sensors.types[sd.type].values )
 	units = sensors.units[metric]
 
 	graph_opts = conf.graph.opts
@@ -786,8 +789,9 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 				req, addr = httpd.get_request()
 				httpd.verify_request(req, addr)
 				try: httpd.process_request(req, addr)
-				except:
-					httpd.handle_error(req, addr)
+				except Exception as err:
+					httpd_log.exception( 'Error when processing request'
+						' from %s: [%s] %s', addr, err.__class__.__name__, err )
 					httpd.shutdown_request(req)
 			ts = time.time()
 
@@ -796,7 +800,7 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 
 class Sensor(object):
 
-	values = tuple() # must be overidden
+	values = lya.AttrDict() # must be overidden
 	disabled = True
 
 	def __init__(self, conf, log=None):
