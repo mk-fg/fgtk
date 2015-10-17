@@ -652,8 +652,12 @@ class RRD(object):
 		args = [bytes(image_path)]
 		for k, v in opts.viewitems():
 			if v in [None, False]: continue
-			args.append(''.join([ '-'*(1 if len(k)==1 else 2),
-				k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+			if len(k) != 1:
+				args.append(''.join([
+					'--', k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+			else:
+				args.append('-{}'.format(k))
+				if v is not True: args.append(bytes(v))
 		rrdtool.graph(*map(bytes, args + defs))
 
 		return image_path
@@ -704,7 +708,7 @@ def rrd_conf_graph( conf, rrdb,
 			if metric in sensors.types[sd.type].values )
 	units = sensors.units[metric]
 
-	graph_opts = conf.graph.opts
+	graph_opts = conf.graph.opts.copy()
 	graph_opts.update(
 		vertical_label='{}, {}'.format(metric, units),
 		title='{} history'.format(sensors.metrics[metric].title()) )
