@@ -586,7 +586,7 @@ class RRD(object):
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
-		defs_table_len = 90 if len(perc_direction) == 1 else 115
+		defs_table_len = 102 if len(perc_direction) == 1 else 131
 		perc_direction = sorted(perc_direction)
 		assert not set(perc_direction).difference('+-'), perc_direction
 
@@ -620,20 +620,22 @@ class RRD(object):
 
 			# Legend
 			sn_pad = sn_len - len(sn)
-			for label, cf in ('min', 'MINIMUM'), ('max', 'MAXIMUM'), ('avg', 'AVERAGE'):
+			for label, cf in [
+					('last', 'LAST'), ('avg', 'AVERAGE'),
+					('min', 'MINIMUM'), ('max', 'MAXIMUM') ]:
 				fmt = ''
 				if sn_pad: fmt, sn_pad = ' '*(sn_pad), None
 				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add(sn, cf, '{pad}{label}: %02.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
+				defs_add(sn, cf, '{pad}{label}: %04.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
 			for pd, p in it.product(perc_direction, perc or list()):
 				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
 				else: pn = '{}%'.format(p)
 				pn += pd
-				if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '{}: %02.1lf{}'.format(pn, u))
+				if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '{}: %04.1lf{}'.format(pn, u))
 				else:
 					defs_add( sn,
 						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
-						'{}: %02.1lf{}'.format(pn, u) )
+						'{}: %05.1lf{}'.format(pn, u) )
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
