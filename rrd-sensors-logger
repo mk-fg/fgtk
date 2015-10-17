@@ -2,11 +2,39 @@
 #-*- coding: utf-8 -*-
 from __future__ import print_function
 
+
+import os, sys
+
+def Adafruit_DHT_read_func(st, pin):
+	import Adafruit_DHT.common as c
+	driver = c.get_platform().driver
+	dht_err_names = dict((v,k[4:]) for k,v in vars(c).viewitems() if k.startswith('DHT_'))
+	def read_func():
+		res, rh, t = driver.read(st, pin)
+		if res == c.DHT_SUCCESS: read_err = None
+		else:
+			read_err = dht_err_names.get(res) or 'Unknown [{}]'.format(res)
+			rh = t = None
+		return read_err, rh, t
+	return read_func
+
+if __name__ == '__main__' and '--dht-read' in sys.argv[1:]:
+	# Special case for Adafruit_DHT module,
+	#  which fails in the main pid for some reason.
+	assert sys.argv[1] == '--dht-read', sys.argv
+	st, pin = sys.argv[2:]
+	import Adafruit_DHT, json
+	st = getattr(Adafruit_DHT, st or 'DHT22')
+	data = Adafruit_DHT_read_func(st, int(pin))()
+	json.dump(data, sys.stdout)
+	sys.exit(0)
+
+
 import itertools as it, operator as op, functools as ft
 from collections import deque, defaultdict, OrderedDict
 from os.path import join, exists, realpath, abspath, expanduser
 from datetime import datetime, timedelta
-import os, sys, io, re, types, string, base64, time, math
+import io, re, types, string, base64, time, math
 import stat, errno, tempfile, glob, subprocess, signal
 import struct, contextlib, hashlib, logging
 
@@ -97,6 +125,12 @@ meas:
 		#   type: lm
 		#   chip: k10temp-pci-00c3
 		#   # only one feature here, so no need for other specs
+		# dht22_indoors:
+		#   type: adafruit_dht # requires github.com/adafruit/Adafruit_Python_DHT
+		#   brcm_gpio_pin: 9 # must be specified
+		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
+		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
+		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
 
 graph:
 	opts:
@@ -860,13 +894,51 @@ class SensorLM(Sensor):
 				' sensor: %s): %s %s', self.st, self.conf.chip, self.s.name, type(err), err )
 		else: return {self.st: val}
 
+class SensorAdafruitDHT(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(
+		t=dict(min=-40, max=80, t='gauge'),
+		rh=dict(min=0, max=100, t='gauge') )
+
+	def __init__(self, conf, log=None):
+		super(SensorAdafruitDHT, self).__init__(conf, log=log)
+		import Adafruit_DHT
+		self.st = self.conf.get('sensor_type') or 'DHT22'
+		read_st = getattr(Adafruit_DHT, self.st)
+		self.pin = int(self.conf.brcm_gpio_pin)
+		self.read_func = Adafruit_DHT_read_func(read_st, self.pin)\
+			if not self.conf.get('subprocess', True) else None
+		self.read_n, self.read_delay, self.read_delay_k =\
+			self.conf.get('retry') or [15, 0.2, 1.5]
+
+	def read_raw(self):
+		delay = self.read_delay
+		for n in xrange(1, self.read_n + 1):
+			if self.read_func: read_err, rh, t = self.read_func()
+			else:
+				proc = subprocess.Popen(
+					self_exec_cmd('--dht-read', bytes(self.st), bytes(self.pin)),
+					stdout=subprocess.PIPE, close_fds=True )
+				data = proc.stdout.read()
+				proc.wait()
+				read_err, rh, t = yaml.load(data)
+			if rh is None or t is None or rh > 100:
+				self.log.debug( 'Sensor (pin: %s, type: %s) read retry (n: %s)'
+					' in %.1fs, error: %s', self.pin, self.st, n, delay, read_err or 'unknown' )
+				time.sleep(delay)
+				delay *= self.read_delay_k
+				continue
+			return dict(t=t, rh=rh)
+
 
 class SensorMeta(object):
 
 	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
 	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
 	formats = dict(t='.1f', rh='.1f', v='.2f', rpm='.0f')
-	types = dict(rpi_soc=SensorRPiSoC, lm=SensorLM)
+	types = dict( rpi_soc=SensorRPiSoC,
+		lm=SensorLM, adafruit_dht=SensorAdafruitDHT )
 	metric_default = 't'
 
 	def value_repr(self, n, metric, units=True, decode=False):
@@ -881,6 +953,12 @@ class SensorMeta(object):
 
 sensors = SensorMeta()
 
+
+
+def self_exec_cmd(*args):
+	args = [__file__] + list(args)
+	if os.access(__file__, os.X_OK): return args
+	return [sys.executable or 'python2'] + args
 
 def main(args=None):
 	import argparse
