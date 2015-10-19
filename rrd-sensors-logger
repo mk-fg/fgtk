@@ -564,7 +564,7 @@ class RRD(object):
 	def graph( self, k, sensors, image_path=None,
 			legend_style='stats-table',
 			hrules=None, colors=None, units=None,
-			perc=None, perc_direction='+-',
+			perc=None, perc_direction='+-', defs_table_len=100,
 			**cli_opts ):
 		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS
@@ -586,8 +586,6 @@ class RRD(object):
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
-		defs_table_len = 102 if len(perc_direction) == 1 else 131
-		perc_direction = sorted(perc_direction)
 		assert not set(perc_direction).difference('+-'), perc_direction
 
 		defs = ['TEXTALIGN:left']
@@ -620,22 +618,24 @@ class RRD(object):
 
 			# Legend
 			sn_pad = sn_len - len(sn)
+			defs.append('COMMENT:{}{}'.format(' '*sn_pad, units))
+
 			for label, cf in [
 					('last', 'LAST'), ('avg', 'AVERAGE'),
 					('min', 'MINIMUM'), ('max', 'MAXIMUM') ]:
-				fmt = ''
-				if sn_pad: fmt, sn_pad = ' '*(sn_pad), None
 				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add(sn, cf, '{pad}{label}: %04.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
-			for pd, p in it.product(perc_direction, perc or list()):
+				defs_add(sn, cf, '<small>{label}:</small> %04.1lf'.format(label=label.title()))
+			for p in perc or list():
 				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
 				else: pn = '{}%'.format(p)
-				pn += pd
-				if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '{}: %04.1lf{}'.format(pn, u))
+				if len(perc_direction) == 1:
+					pd = perc_direction[0]
+					pn += pd
+					if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '<small>{}:</small> %04.1lf'.format(pn))
+					else: defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %05.1lf'.format(pn))
 				else:
-					defs_add( sn,
-						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
-						'{}: %05.1lf{}'.format(pn, u) )
+					defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %05.1lf'.format(pn))
+					defs_add(sn, '{},PERCENTNAN'.format(p), '%04.1lf')
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
@@ -725,8 +725,9 @@ def rrd_conf_graph( conf, rrdb,
 		hrules.append(dict( v=v, dashes=True,
 			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
 
-	image_path = rrdb.graph( metric, ss, image_path=path,
-		hrules=hrules, units=units, perc=['1σ', '2σ'], **graph_opts )
+	image_path = rrdb.graph( metric, ss,
+		image_path=path, hrules=hrules, units=units,
+		perc=['1σ', '2σ'], **graph_opts )
 	return image_path
 
 
