@@ -18,23 +18,48 @@ def Adafruit_DHT_read_func(st, pin):
 		return read_err, rh, t
 	return read_func
 
-if __name__ == '__main__' and '--dht-read' in sys.argv[1:]:
-	# Special case for Adafruit_DHT module,
-	#  which fails in the main pid for some reason.
-	assert sys.argv[1] == '--dht-read', sys.argv
-	st, pin = sys.argv[2:]
-	import Adafruit_DHT, json
-	st = getattr(Adafruit_DHT, st or 'DHT22')
-	data = Adafruit_DHT_read_func(st, int(pin))()
-	json.dump(data, sys.stdout)
-	sys.exit(0)
+def Adafruit_DHT_read_proc(args):
+	import Adafruit_DHT, json, select
+	poller_timeout, = args
+	poller_timeout = float(poller_timeout)
+	poller = select.epoll()
+	poller.register(sys.stdin, select.EPOLLIN)
+	sys.stdout.write('!')
+	sys.stdout.flush()
+
+	read_funcs = dict()
+	while True:
+		try:
+			if not poller.poll(poller_timeout): msg = ''
+			else:
+				msg = sys.stdin.read(3)
+				if msg: msg = json.loads(sys.stdin.read(int(msg)))
+				if not msg: raise IOError()
+		except KeyboardInterrupt: continue
+		except (OSError, IOError): return
+		res = None
+		if msg['cmd'] == 'read':
+			st, pin = k = msg['st'], msg['pin']
+			if k not in read_funcs:
+				st = getattr(Adafruit_DHT, st or 'DHT22')
+				read_funcs[k] = Adafruit_DHT_read_func(st, pin)
+			res = read_funcs[k]()
+		else: raise ValueError(msg)
+		msg = json.dumps(res)
+		sys.stdout.write('{:03d}{}'.format(len(msg), msg))
+		sys.stdout.flush()
+
+# Special case for Adafruit_DHT module,
+#  which fails in the main pid for some reason.
+if __name__ == '__main__' and sys.argv[1] == '--dht-read-subproc':
+	sys.exit(Adafruit_DHT_read_proc(sys.argv[2:]))
 
 
 import itertools as it, operator as op, functools as ft
-from collections import deque, defaultdict, OrderedDict
+from collections import deque, namedtuple, defaultdict, OrderedDict
 from os.path import join, exists, realpath, abspath, expanduser
 from datetime import datetime, timedelta
-import io, re, types, string, base64, time, math
+import io, re, types, string, base64, time, math, json
 import stat, errno, tempfile, glob, subprocess, signal
 import struct, contextlib, hashlib, logging
 
@@ -912,28 +937,56 @@ class SensorAdafruitDHT(Sensor):
 		t=dict(min=-40, max=80, t='gauge'),
 		rh=dict(min=0, max=100, t='gauge') )
 
+	dht_proc = dht_log = None
+
+	@classmethod
+	def _read_proc_start(cls, poll_timeout=-1, restart=False):
+		if not cls.dht_log:
+			log = cls.__name__
+			if log.startswith('Sensor'): log = log[6:]
+			cls.dht_log = logging.getLogger('sensor.{}.dht_log'.format(log))
+		if cls.dht_proc:
+			if cls.dht_proc.poll() is None:
+				if not restart: return
+				cls.dht_proc.kill()
+			err = cls.dht_proc.wait()
+			cls.log.debug('Sensor-poll subprocess exit code: %s', err)
+		cls.dht_proc = subprocess.Popen(
+			self_exec_cmd('--dht-read-subproc', repr(poll_timeout)),
+			stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True )
+		assert cls.dht_proc.stdout.read(1) == '!'
+
+	def _read_proc(self, restart=False):
+		self._read_proc_start(self.read_timeout, restart=restart)
+		msg = json.dumps(dict(cmd='read', st=self.st, pin=self.pin))
+		self.dht_proc.stdin.write('{:03d}{}'.format(len(msg), msg))
+		self.dht_proc.stdin.flush()
+		msg = self.dht_proc.stdout.read(3)
+		if not msg.isdigit(): msg = ''
+		if msg: msg = self.dht_proc.stdout.read(int(msg))
+		if msg: return json.loads(msg)
+		if restart: raise RuntimeError('DHT22 sensor-poll subprocess failed')
+		return self._read_proc(restart=True)
+
 	def __init__(self, conf, log=None):
 		super(SensorAdafruitDHT, self).__init__(conf, log=log)
-		import Adafruit_DHT
 		self.st = self.conf.get('sensor_type') or 'DHT22'
-		read_st = getattr(Adafruit_DHT, self.st)
 		self.pin = int(self.conf.brcm_gpio_pin)
-		self.read_func = Adafruit_DHT_read_func(read_st, self.pin)\
-			if not self.conf.get('subprocess', True) else None
 		self.read_n, self.read_delay, self.read_delay_k =\
 			self.conf.get('retry') or [15, 0.2, 1.5]
+		if not self.conf.get('subprocess', True):
+			import Adafruit_DHT
+			read_st = getattr(Adafruit_DHT, self.st)
+			self.read_func = Adafruit_DHT_read_func(read_st, self.pin)
+		else:
+			self.read_timeout = self.conf.interval * 5
+			self._read_proc_start(self.read_timeout)
+			self.read_func = self._read_proc
 
 	def read_raw(self):
 		delay = self.read_delay
 		for n in xrange(1, self.read_n + 1):
-			if self.read_func: read_err, rh, t = self.read_func()
-			else:
-				proc = subprocess.Popen(
-					self_exec_cmd('--dht-read', bytes(self.st), bytes(self.pin)),
-					stdout=subprocess.PIPE, close_fds=True )
-				data = proc.stdout.read()
-				proc.wait()
-				read_err, rh, t = yaml.load(data)
+			read_err, rh, t = self.read_func()
 			if rh is None or t is None or rh > 100:
 				self.log.debug( 'Sensor (pin: %s, type: %s) read retry (n: %s)'
 					' in %.1fs, error: %s', self.pin, self.st, n, delay, read_err or 'unknown' )
@@ -1132,6 +1185,7 @@ def main(args=None):
 	ss_interval, ss = ts_diff_parse(conf.meas.interval), lya.AttrDict()
 	for k, spec in (conf.meas.sensors or dict()).viewitems():
 		if not spec.get('type'): continue
+		spec.interval = ss_interval
 		ss[k] = sensors.get_sensor(spec.type, spec)
 	rrdb = init_rrd(ss_interval, ss, conf.rrd)
 
