@@ -654,18 +654,18 @@ class RRD(object):
 					('last', 'LAST'), ('avg', 'AVERAGE'),
 					('min', 'MINIMUM'), ('max', 'MAXIMUM') ]:
 				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add(sn, cf, '<small>{label}:</small> %04.1lf'.format(label=label.title()))
+				defs_add(sn, cf, '<small>{label}:</small> %4.1lf'.format(label=label.title()))
 			for p in perc or list():
 				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
 				else: pn = '{}%'.format(p)
 				if len(perc_direction) == 1:
 					pd = perc_direction[0]
 					pn += pd
-					if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '<small>{}:</small> %04.1lf'.format(pn))
-					else: defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %05.1lf'.format(pn))
+					if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '<small>{}:</small> %4.1lf'.format(pn))
+					else: defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
 				else:
-					defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %05.1lf'.format(pn))
-					defs_add(sn, '{},PERCENTNAN'.format(p), '%04.1lf')
+					defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
+					defs_add(sn, '{},PERCENTNAN'.format(p), '%4.1lf')
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
