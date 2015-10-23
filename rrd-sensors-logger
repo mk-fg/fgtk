@@ -152,10 +152,15 @@ meas:
 		#   # only one feature here, so no need for other specs
 		# dht22_indoors:
 		#   type: adafruit_dht # requires github.com/adafruit/Adafruit_Python_DHT
-		#   brcm_gpio_pin: 9 # must be specified
+		#   sysfs_gpio_pin: 9 # must be specified
 		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
 		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
 		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
+		# sht75_outside:
+		#   type: sht # requires github.com/mk-fg/sht-sensor
+		#   sysfs_gpio_pin_sck: 30 # must be specified
+		#   sysfs_gpio_pin_data: 60 # must be specified
+		#   # sensor_voltage_spec: 3.5V # either 3.5V or 5V, 3.5V (recommended) is the default
 
 graph:
 	opts:
@@ -971,7 +976,7 @@ class SensorAdafruitDHT(Sensor):
 	def __init__(self, conf, log=None):
 		super(SensorAdafruitDHT, self).__init__(conf, log=log)
 		self.st = self.conf.get('sensor_type') or 'DHT22'
-		self.pin = int(self.conf.brcm_gpio_pin)
+		self.pin = int(self.conf.sysfs_gpio_pin)
 		self.read_n, self.read_delay, self.read_delay_k =\
 			self.conf.get('retry') or [15, 0.2, 1.5]
 		if not self.conf.get('subprocess', True):
@@ -995,14 +1000,35 @@ class SensorAdafruitDHT(Sensor):
 				continue
 			return dict(t=t, rh=rh)
 
+class SensorSHT(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(
+		t=dict(min=-40, max=100, t='gauge'),
+		rh=dict(min=0, max=100, t='gauge') )
+
+	def __init__(self, conf, log=None):
+		super(SensorSHT, self).__init__(conf, log=log)
+		from sht_sensor import Sht
+		pin_sck, pin_data = map( int,
+			[self.conf.sysfs_gpio_pin_sck, self.conf.sysfs_gpio_pin_data] )
+		voltage = self.conf.get('sensor_voltage_spec') or '3.5V'
+		self.sht = Sht(pin_sck, pin_data, voltage=voltage)
+
+	def read_raw(self):
+		t = self.sht.read_t()
+		rh = self.sht.read_rh(t)
+		return dict(t=t, rh=rh)
+
 
 class SensorMeta(object):
 
 	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
 	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
 	formats = dict(t='.1f', rh='.1f', v='.2f', rpm='.0f')
-	types = dict( rpi_soc=SensorRPiSoC,
-		lm=SensorLM, adafruit_dht=SensorAdafruitDHT )
+	types = dict(
+		rpi_soc=SensorRPiSoC, lm=SensorLM,
+		adafruit_dht=SensorAdafruitDHT, sht=SensorSHT )
 	metric_default = 't'
 
 	def value_repr(self, n, metric, units=True, decode=False):
