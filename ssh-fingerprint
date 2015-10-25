@@ -1,24 +1,32 @@
 #!/bin/bash
 
 usage() {
-	echo >&2 "Usage: $0 [ --debug ] [ ssh-keyscan-args ]"
+	echo >&2 "Usage: $0 [ --debug ] [ -c | --check ] [ ssh-keyscan-args ]"
+	echo >&2
+	echo >&2 "--check option will grep remote host keys in ~/.ssh/known_hosts"
 	exit 1
 }
 
+check=
 [[ "$1" = --debug ]] && { set -x; shift; }
+[[ "$1" = -c || "$1" = --check ]] && { check=t; shift; }
 [[ "$#" -eq 0 || "$1" = -h || "$1" = --help ]] && usage
 
 ip=
 while read line; do
 	[[ "$line" =~ ^# ]] && continue # comment from stderr
-	echo
-
-	echo "$line"
-	key=$(mktemp /tmp/.ssh_keyscan.key.XXXXXXX)
-	cut -d' ' -f2- >"$key" <<< "$line"
-	for h in md5 sha256; do ssh-keygen -l -E $h -f "$key"; done
-	for fmt in RFC4716 PKCS8 PEM; do ssh-keygen -e -m "$fmt" -f "$key"; done
-	rm -f "$key"
-
-	echo
+	if [[ -z "$check" ]]
+	then
+		echo
+		echo "$line"
+		key=$(mktemp /tmp/.ssh_keyscan.key.XXXXXXX)
+		cut -d' ' -f2- >"$key" <<< "$line"
+		for h in md5 sha256; do ssh-keygen -l -E $h -f "$key"; done
+		for fmt in RFC4716 PKCS8 PEM; do ssh-keygen -e -m "$fmt" -f "$key"; done
+		rm -f "$key"
+		echo
+	else
+		read h t k <<< "$line"
+		grep -F " $t $k" ~/.ssh/known_hosts
+	fi
 done < <(ssh-keyscan "$@" 2>&1)
