@@ -9,6 +9,13 @@ from os.path import exists, dirname
 import subprocess, tempfile, time, glob, socket
 import os, sys, re, json, types, base64
 
+if sys.platform == 'win32':
+	p = ft.partial(print, file=sys.stderr)
+	p('This version of the script does not support Windows OS.')
+	p('Windows-compatible version can be found here:')
+	p('  https://github.com/Choonster/twitch_vod_fetch/')
+	sys.exit(1)
+
 import requests
 
 
@@ -67,6 +74,8 @@ class VodFileCache(object):
 		self.update_lock = True
 
 
+req_debug = os.environ.get('TVF_REQ_DEBUG')
+
 @contextmanager
 def req(method, *args, **kws):
 	if not getattr(req, 's', None):
@@ -76,8 +85,9 @@ def req(method, *args, **kws):
 		req.s.mount( 'http://',
 			requests.adapters.HTTPAdapter(
 				max_retries=Retry(total=4, backoff_factor=1) ) )
+	s = kws.pop('session', req.s) or requests
 
-	with closing(req.s.request(method, *args, **kws)) as r:
+	with closing(s.request(method, *args, **kws)) as r:
 		try: r.raise_for_status()
 		except Exception as err:
 			log_lines(log.error, [
@@ -90,12 +100,17 @@ def req(method, *args, **kws):
 req_jrpc_uid = lambda _ns=get_uid(),\
 	_seq=iter(xrange(1, 2**30)): '{}.{}'.format(_ns, next(_seq))
 
-def req_jrpc(url, method, *params):
+def req_jrpc(url, method, *params, **req_kws):
+	req_uid = req_jrpc_uid()
 	data_req = dict(
-		jsonrpc='2.0', id=req_jrpc_uid(),
+		jsonrpc='2.0', id=req_uid,
 		method=method, params=params )
-	with req('post', url, json=data_req) as r: data_res = r.json()
+	if req_debug:
+		log.debug( 'aria2c rpc request [%s]: %s', req_uid,
+			json.dumps(dict(url=url, method=method, data=data_req)) )
+	with req('post', url, json=data_req, **req_kws) as r: data_res = r.json()
 	assert data_res.get('result') is not None, [data_req, data_res]
+	if req_debug: log.debug( 'rpc response [%s]: %s', req_uid, json.dumps(data_res))
 	return data_res['result']
 
 
@@ -181,7 +196,7 @@ def vod_fetch(url, file_prefix,
 			'--rpc-listen-port={}'.format(port),
 			'--rpc-secret={}'.format(key),
 
-			'--no-netrc', '--no-proxy',
+			'--no-netrc',
 			'--always-resume=false',
 			'--max-concurrent-downloads=5',
 			'--max-connection-per-server=5',
@@ -198,10 +213,26 @@ def vod_fetch(url, file_prefix,
 	aria2c = subprocess.Popen(cmd, close_fds=True)
 	aria2c_exit_clean = False
 	aria2c_jrpc = ft.partial(req_jrpc, 'http://localhost:{}/jsonrpc'.format(port))
+	key = 'token:{}'.format(key)
+
+	### Make sure that aria2c was started and rpc is working
+	for n in xrange(4):
+		try: aria2c_jrpc('aria2.getVersion', key, session=None)
+		except requests.exceptions.ConnectionError as err:
+			if aria2c.poll() != None:
+				err = ( 'aria2c exited with error code {}'
+					' (see also stderr output above)' ).format(aria2c.wait())
+				break
+			time.sleep(1)
+		else:
+			err = None
+			break
+	if err:
+		log.error('Failed to connect to aria2c rpc socket - %s', err)
+		return 1
 
 	log.debug('Starting downloads (rpc port: %s)...', port)
 	try:
-		key = 'token:{}'.format(key)
 		line_buff, line_buff_max = list(), 50
 		wait_last_gids, poll_delay = 100, 5
 		chunk_err_retries, chunk_err_retry_delay = 10, 2
@@ -433,7 +464,7 @@ def main(args=None):
 			prefix, url = url, prefix
 			log.warn( 'Looks like url/prefix args got'
 				' mixed-up, correcting that to prefix=%s url=%s', prefix, url )
-		if not re.search('^https?://[^/]+/[^/]+/v/', url):
+		if not re.search(r'^https?://[^/]+/[^/]+/v/', url):
 			parser.error( 'Provided URL appears to be for the'
 				' unsupported VoD format (only /v/ VoDs are supported): {}'.format(url) )
 		vod_queue.append((url, prefix))

@@ -3,8 +3,9 @@
 
 ### Management
 
+name=debian
 root=/mnt/volatiles/vms
-dst="$root"/debian/live.dump
+dst="$root"/"$name"/live.dump
 telnet_port=8201
 vde_mac=52:54:00:12:34:63
 vde_path=~/tmp/vde
@@ -66,6 +67,7 @@ modprobe kvm-amd
 
 
 ### VDE
+# ip addr flush vde && ip addr add 10.0.0.1/24 dev vde && ip link set vde up && busybox udhcpd -f /etc/udhcpd.vm.conf
 
 mkdir -p "$vde_path"
 
@@ -111,13 +113,25 @@ qemu_opts=(
 	-smp 2
 	-vga std
 
-	-cdrom debian/netinst.iso
-	-drive file=debian/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
+	-cdrom "$name"/netinst.iso
+	-drive file="$name"/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
 )
 
-ulimit -c 0
-export QEMU_AUDIO_DRV=none
+[[ -z "$restore" ]] || qemu_opts+=( -incoming "exec:excat $dst" )
 
-[[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
+[[ -z "$VM_TMP" ]] || qemu_opts+=( -snapshot )
+
+# See: ( qemu-system-x86_64 -soundhw help ; echo -------- ; qemu-system-x86_64 -audio-help ) | less
+if [[ -z "$VM_SOUND" ]]
+then export QEMU_AUDIO_DRV=none
+else
+	qemu_opts+=( -soundhw hda,ac97 )
+	if [[ "$VM_SOUND" =~ \.wav$ ]]
+	then export QEMU_AUDIO_DRV=wav QEMU_WAV_PATH="$VM_SOUND"
+	else export QEMU_AUDIO_DRV=pa #QEMU_PA_SINK= QEMU_PA_SOURCE=
+	fi
+fi
+
+ulimit -c 0
 
 exec cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"

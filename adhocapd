@@ -5,7 +5,6 @@ dev= ssid= pass= ip_base=
 
 ssid_list=(
 	'Police Surveillance Van 2'
-	'Abraham LinkSys'
 	'Series of Tubes'
 	'404NetworkUnavailable'
 	'PlzBringVodkaToApt131'
@@ -22,6 +21,52 @@ ssid_list=(
 	'Hide your kids, Hide your Wi-Fi'
 	'lookmanowires'
 	'AllYourBandWidthRbelongToUS'
+	'Hidden Network'
+	'No Internet Access'
+	'Bongo hotspot'
+	'I read your email'
+	'STOP_STEALING_MY_INTERNET'
+	'Hacked AP'
+	'Honeypot'
+	'8 Hz WAN IP'
+	'Untrusted Network'
+	'Virus Detected! Do Not Join'
+	'Thats what she SSID'
+	'Me-Fi'
+	'The Promised LAN'
+	'Viruses Are Us'
+	'NotTheDroidsYourLookingFor'
+	'The LAN Before Time'
+	'Access Denied'
+	'Unavailable'
+	'Connecting...'
+	'Loading...'
+	'Searching...'
+	'Unicycle Bear'
+	'Bathroom Cam #3'
+	'Linksys Park'
+	'Why not Zoidberg'
+	'iNowPronounceYouHusband&Wifi'
+	'The Temple Of The Great Jaguar'
+	'Ermahgerd Wer Fer'
+	'LANDownUnder'
+	'LAN of teh Free'
+	'( . )( . )'
+	'Linsanity'
+	'Password is Password'
+	'Warezburg'
+	'Data Collection Point #2761'
+	'Virus.exe'
+	'Log in here!'
+	'SSID=OFF'
+	'THE MATRIX'
+	'GoAway'
+	'Silence of the LANs'
+	'GTFO'
+	'Download.Meth.Virus2'
+	'Internet'
+	'H1N1'
+	'FAIL'
 )
 
 
@@ -50,9 +95,13 @@ run() {
 	echo "iptables -I INPUT -s ${ip_net} -i ${dev} -m udp --dport bootps -j ACCEPT"
 	echo '--------------------'
 
+	exec > >(awk '{print strftime("[%Y-%m-%dT%H:%M:%S]"), $0; fflush()}') 2>&1
+
 	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
 	trap "pkill -g 0; sleep 0.3; rm -rf '$conf'" EXIT
 	set -e
+
+	echo 'Starting...'
 
 #################### udhcpd.conf
 	udhcpd_conf="$conf"/udhcpd.conf

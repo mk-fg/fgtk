@@ -180,10 +180,11 @@ def main(args=None):
 			try: iface = net.Connect(opts.uuid)
 			except dbus.exceptions.DBusException as err:
 				if err.get_dbus_name() != 'org.bluez.Error.Failed': raise
-				connected, iface = prop_get(net, 'Connected'), prop_get(net, 'Interface')
+				connected = prop_get(net, 'Connected')
 				if not connected: raise
 				if opts.reconnect:
-					log.debug('Detected pre-established connection (iface: %s), reconnecting', iface)
+					log.debug( 'Detected pre-established connection'
+						' (iface: %s), reconnecting', prop_get(net, 'Interface') )
 					net.Disconnect()
 					continue
 				if not opts.if_not_connected: raise

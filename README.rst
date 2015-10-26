@@ -5,10 +5,17 @@ A set of a misc tools to work with files and processes.
 
 Various oldish helper binaries I wrote to help myself with day-to-day tasks.
 
+License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`__
+(public domain-ish), feel free to just copy and use these in whatever way you like.
+
 
 .. contents::
   :backlinks: none
 
+
+
+Scripts
+-------
 
 
 Files
@@ -1164,15 +1171,16 @@ Command-line usage::
   % feh $(rrd-sensors-logger graph t -o 'start: -3h')
 
 See top of the script for yaml config (also available via "print-conf-example")
-and systemd unit file example.
+and systemd unit file example ("print-systemd-unit" command).
 
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 
 nsh
 ^^^
 
-Bash script to "nsenter" into specified machine's (as can be seen in
-``ps -eo machine``) container namespaces and run login shell there.
+Bash script to "nsenter" into specified machine's (as can be seen in ``ps -eo
+machine`` or ``nsh`` when run without args) container namespaces and run login
+shell there.
 
 Machine in question must run systemd as pid-1 (e.g. systemd-nspawn container),
 as it gets picked as --target pid for nsenter.
@@ -1188,6 +1196,8 @@ If running ``tty`` there says ``not a tty`` and e.g. ``screen`` bails out with
 ``Must be connected to a terminal.``, just run extra ``getty tty`` there - will
 ask to login (be mindful of /etc/securetty if login fails), and everything
 tty-related should work fine afterwards.
+
+If run without argument or with -l/--list option, will list running machines.
 
 
 
@@ -1319,6 +1329,9 @@ twitch\_vod\_fetch
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
+This is a unix-ish OS version, github user Choonster has Windows version in
+`Choonster/twitch_vod_fetch repo`_.
+
 youtube-dl - the usual tool for the job - `doesn't support neither seeking to
 time nor length limits`_, but does a good job of getting a VoD m3u8 playlist
 with chunks of the video (--get-url option).
@@ -1349,10 +1362,10 @@ easier to pick timespan to download properly).
 General usage examples (wrapped)::
 
   % twitch_vod_fetch \
-    http://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8.mp4 \
-    http://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4.mp4 \
-    http://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals.mp4 \
-    http://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv.mp4
+    http://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8 \
+    http://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4 \
+    http://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals \
+    http://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv
 
   % twitch_vod_fetch -x 120/15:00 \
     http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_preview
@@ -1363,6 +1376,7 @@ General usage examples (wrapped)::
 | Needs youtube-dl, requests and aria2.
 | A bit more info on it can be found in `this twitchtv-vods-... blog post`_.
 
+.. _Choonster/twitch_vod_fetch repo: https://github.com/Choonster/twitch_vod_fetch/
 .. _doesn't support neither seeking to time nor length limits: https://github.com/rg3/youtube-dl/issues/622
 .. _aria2: http://aria2.sourceforge.net/
 .. _this twitchtv-vods-... blog post: http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
@@ -1909,3 +1923,24 @@ check-df
 
 Standard template for a trivial bash + coreutils "df" checker to put into
 crontab on any random linux box, just in case.
+
+
+
+License (WTFPL)
+---------------
+
+::
+
+            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+                    Version 2, December 2004
+
+  Copyright (C) 2010-2038 Mike Kazantsev
+
+  Everyone is permitted to copy and distribute verbatim or modified
+  copies of this license document, and changing it is allowed as long
+  as the name is changed.
+
+             DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+    TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+
+   0. You just DO WHAT THE FUCK YOU WANT TO.

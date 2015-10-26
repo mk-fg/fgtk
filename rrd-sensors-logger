@@ -2,11 +2,64 @@
 #-*- coding: utf-8 -*-
 from __future__ import print_function
 
+
+import os, sys
+
+def Adafruit_DHT_read_func(st, pin):
+	import Adafruit_DHT.common as c
+	driver = c.get_platform().driver
+	dht_err_names = dict((v,k[4:]) for k,v in vars(c).viewitems() if k.startswith('DHT_'))
+	def read_func():
+		res, rh, t = driver.read(st, pin)
+		if res == c.DHT_SUCCESS: read_err = None
+		else:
+			read_err = dht_err_names.get(res) or 'Unknown [{}]'.format(res)
+			rh = t = None
+		return read_err, rh, t
+	return read_func
+
+def Adafruit_DHT_read_proc(args):
+	import Adafruit_DHT, json, select
+	poller_timeout, = args
+	poller_timeout = float(poller_timeout)
+	poller = select.epoll()
+	poller.register(sys.stdin, select.EPOLLIN)
+	sys.stdout.write('!')
+	sys.stdout.flush()
+
+	read_funcs = dict()
+	while True:
+		try:
+			if not poller.poll(poller_timeout): msg = ''
+			else:
+				msg = sys.stdin.read(3)
+				if msg: msg = json.loads(sys.stdin.read(int(msg)))
+				if not msg: raise IOError()
+		except KeyboardInterrupt: continue
+		except (OSError, IOError): return
+		res = None
+		if msg['cmd'] == 'read':
+			st, pin = k = msg['st'], msg['pin']
+			if k not in read_funcs:
+				st = getattr(Adafruit_DHT, st or 'DHT22')
+				read_funcs[k] = Adafruit_DHT_read_func(st, pin)
+			res = read_funcs[k]()
+		else: raise ValueError(msg)
+		msg = json.dumps(res)
+		sys.stdout.write('{:03d}{}'.format(len(msg), msg))
+		sys.stdout.flush()
+
+# Special case for Adafruit_DHT module,
+#  which fails in the main pid for some reason.
+if __name__ == '__main__' and sys.argv[1] == '--dht-read-subproc':
+	sys.exit(Adafruit_DHT_read_proc(sys.argv[2:]))
+
+
 import itertools as it, operator as op, functools as ft
-from collections import deque, defaultdict, OrderedDict
+from collections import deque, namedtuple, defaultdict, OrderedDict
 from os.path import join, exists, realpath, abspath, expanduser
 from datetime import datetime, timedelta
-import os, sys, io, re, types, string, base64, time, math
+import io, re, types, string, base64, time, math, json
 import stat, errno, tempfile, glob, subprocess, signal
 import struct, contextlib, hashlib, logging
 
@@ -97,6 +150,17 @@ meas:
 		#   type: lm
 		#   chip: k10temp-pci-00c3
 		#   # only one feature here, so no need for other specs
+		# dht22_indoors:
+		#   type: adafruit_dht # requires github.com/adafruit/Adafruit_Python_DHT
+		#   sysfs_gpio_pin: 9 # must be specified
+		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
+		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
+		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
+		# sht75_outside:
+		#   type: sht # requires github.com/mk-fg/sht-sensor
+		#   sysfs_gpio_pin_sck: 30 # must be specified
+		#   sysfs_gpio_pin_data: 60 # must be specified
+		#   # sensor_voltage_spec: 3.5V # either 3.5V or 5V, 3.5V (recommended) is the default
 
 graph:
 	opts:
@@ -530,7 +594,7 @@ class RRD(object):
 	def graph( self, k, sensors, image_path=None,
 			legend_style='stats-table',
 			hrules=None, colors=None, units=None,
-			perc=None, perc_direction='+-',
+			perc=None, perc_direction='+-', defs_table_len=100,
 			**cli_opts ):
 		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS
@@ -552,8 +616,6 @@ class RRD(object):
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
-		defs_table_len = 90 if len(perc_direction) == 1 else 115
-		perc_direction = sorted(perc_direction)
 		assert not set(perc_direction).difference('+-'), perc_direction
 
 		defs = ['TEXTALIGN:left']
@@ -586,20 +648,24 @@ class RRD(object):
 
 			# Legend
 			sn_pad = sn_len - len(sn)
-			for label, cf in ('min', 'MINIMUM'), ('max', 'MAXIMUM'), ('avg', 'AVERAGE'):
-				fmt = ''
-				if sn_pad: fmt, sn_pad = ' '*(sn_pad), None
+			defs.append('COMMENT:{}{}'.format(' '*sn_pad, units))
+
+			for label, cf in [
+					('last', 'LAST'), ('avg', 'AVERAGE'),
+					('min', 'MINIMUM'), ('max', 'MAXIMUM') ]:
 				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add(sn, cf, '{pad}{label}: %02.1lf{u}'.format(pad=fmt, label=label.title(), u=u))
-			for pd, p in it.product(perc_direction, perc or list()):
+				defs_add(sn, cf, '<small>{label}:</small> %4.1lf'.format(label=label.title()))
+			for p in perc or list():
 				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
 				else: pn = '{}%'.format(p)
-				pn += pd
-				if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '{}: %02.1lf{}'.format(pn, u))
+				if len(perc_direction) == 1:
+					pd = perc_direction[0]
+					pn += pd
+					if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '<small>{}:</small> %4.1lf'.format(pn))
+					else: defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
 				else:
-					defs_add( sn,
-						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
-						'{}: %02.1lf{}'.format(pn, u) )
+					defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
+					defs_add(sn, '{},PERCENTNAN'.format(p), '%4.1lf')
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
@@ -618,8 +684,12 @@ class RRD(object):
 		args = [bytes(image_path)]
 		for k, v in opts.viewitems():
 			if v in [None, False]: continue
-			args.append(''.join([ '-'*(1 if len(k)==1 else 2),
-				k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+			if len(k) != 1:
+				args.append(''.join([
+					'--', k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+			else:
+				args.append('-{}'.format(k))
+				if v is not True: args.append(bytes(v))
 		rrdtool.graph(*map(bytes, args + defs))
 
 		return image_path
@@ -664,10 +734,13 @@ def init_rrd(sensors_interval, sensors, conf):
 def rrd_conf_graph( conf, rrdb,
 		metric=None, ss=None, opts=None, threshold=None, path=None ):
 	if not metric: metric = sensors.metric_default
-	if not ss: ss = list(conf.meas.sensors)
+	if not ss:
+		ss = list(
+			sn for sn,sd in conf.meas.sensors.viewitems()
+			if metric in sensors.types[sd.type].values )
 	units = sensors.units[metric]
 
-	graph_opts = conf.graph.opts
+	graph_opts = conf.graph.opts.copy()
 	graph_opts.update(
 		vertical_label='{}, {}'.format(metric, units),
 		title='{} history'.format(sensors.metrics[metric].title()) )
@@ -682,8 +755,9 @@ def rrd_conf_graph( conf, rrdb,
 		hrules.append(dict( v=v, dashes=True,
 			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
 
-	image_path = rrdb.graph( metric, ss, image_path=path,
-		hrules=hrules, units=units, perc=['1σ', '2σ'], **graph_opts )
+	image_path = rrdb.graph( metric, ss,
+		image_path=path, hrules=hrules, units=units,
+		perc=['1σ', '2σ'], **graph_opts )
 	return image_path
 
 
@@ -752,8 +826,9 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 				req, addr = httpd.get_request()
 				httpd.verify_request(req, addr)
 				try: httpd.process_request(req, addr)
-				except:
-					httpd.handle_error(req, addr)
+				except Exception as err:
+					httpd_log.exception( 'Error when processing request'
+						' from %s: [%s] %s', addr, err.__class__.__name__, err )
 					httpd.shutdown_request(req)
 			ts = time.time()
 
@@ -762,7 +837,7 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 
 class Sensor(object):
 
-	values = tuple() # must be overidden
+	values = lya.AttrDict() # must be overidden
 	disabled = True
 
 	def __init__(self, conf, log=None):
@@ -860,13 +935,100 @@ class SensorLM(Sensor):
 				' sensor: %s): %s %s', self.st, self.conf.chip, self.s.name, type(err), err )
 		else: return {self.st: val}
 
+class SensorAdafruitDHT(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(
+		t=dict(min=-40, max=80, t='gauge'),
+		rh=dict(min=0, max=100, t='gauge') )
+
+	dht_proc = dht_log = None
+
+	@classmethod
+	def _read_proc_start(cls, poll_timeout=-1, restart=False):
+		if not cls.dht_log:
+			log = cls.__name__
+			if log.startswith('Sensor'): log = log[6:]
+			cls.dht_log = logging.getLogger('sensor.{}.dht_log'.format(log))
+		if cls.dht_proc:
+			if cls.dht_proc.poll() is None:
+				if not restart: return
+				cls.dht_proc.kill()
+			err = cls.dht_proc.wait()
+			cls.log.debug('Sensor-poll subprocess exit code: %s', err)
+		cls.dht_proc = subprocess.Popen(
+			self_exec_cmd('--dht-read-subproc', repr(poll_timeout)),
+			stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True )
+		assert cls.dht_proc.stdout.read(1) == '!'
+
+	def _read_proc(self, restart=False):
+		self._read_proc_start(self.read_timeout, restart=restart)
+		msg = json.dumps(dict(cmd='read', st=self.st, pin=self.pin))
+		self.dht_proc.stdin.write('{:03d}{}'.format(len(msg), msg))
+		self.dht_proc.stdin.flush()
+		msg = self.dht_proc.stdout.read(3)
+		if not msg.isdigit(): msg = ''
+		if msg: msg = self.dht_proc.stdout.read(int(msg))
+		if msg: return json.loads(msg)
+		if restart: raise RuntimeError('DHT22 sensor-poll subprocess failed')
+		return self._read_proc(restart=True)
+
+	def __init__(self, conf, log=None):
+		super(SensorAdafruitDHT, self).__init__(conf, log=log)
+		self.st = self.conf.get('sensor_type') or 'DHT22'
+		self.pin = int(self.conf.sysfs_gpio_pin)
+		self.read_n, self.read_delay, self.read_delay_k =\
+			self.conf.get('retry') or [15, 0.2, 1.5]
+		if not self.conf.get('subprocess', True):
+			import Adafruit_DHT
+			read_st = getattr(Adafruit_DHT, self.st)
+			self.read_func = Adafruit_DHT_read_func(read_st, self.pin)
+		else:
+			self.read_timeout = self.conf.interval * 5
+			self._read_proc_start(self.read_timeout)
+			self.read_func = self._read_proc
+
+	def read_raw(self):
+		delay = self.read_delay
+		for n in xrange(1, self.read_n + 1):
+			read_err, rh, t = self.read_func()
+			if rh is None or t is None or rh > 100:
+				self.log.debug( 'Sensor (pin: %s, type: %s) read retry (n: %s)'
+					' in %.1fs, error: %s', self.pin, self.st, n, delay, read_err or 'unknown' )
+				time.sleep(delay)
+				delay *= self.read_delay_k
+				continue
+			return dict(t=t, rh=rh)
+
+class SensorSHT(Sensor):
+
+	disabled = False
+	values = lya.AttrDict(
+		t=dict(min=-40, max=100, t='gauge'),
+		rh=dict(min=0, max=100, t='gauge') )
+
+	def __init__(self, conf, log=None):
+		super(SensorSHT, self).__init__(conf, log=log)
+		from sht_sensor import Sht
+		pin_sck, pin_data = map( int,
+			[self.conf.sysfs_gpio_pin_sck, self.conf.sysfs_gpio_pin_data] )
+		voltage = self.conf.get('sensor_voltage_spec') or '3.5V'
+		self.sht = Sht(pin_sck, pin_data, voltage=voltage)
+
+	def read_raw(self):
+		t = self.sht.read_t()
+		rh = self.sht.read_rh(t)
+		return dict(t=t, rh=rh)
+
 
 class SensorMeta(object):
 
 	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
 	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
 	formats = dict(t='.1f', rh='.1f', v='.2f', rpm='.0f')
-	types = dict(rpi_soc=SensorRPiSoC, lm=SensorLM)
+	types = dict(
+		rpi_soc=SensorRPiSoC, lm=SensorLM,
+		adafruit_dht=SensorAdafruitDHT, sht=SensorSHT )
 	metric_default = 't'
 
 	def value_repr(self, n, metric, units=True, decode=False):
@@ -881,6 +1043,12 @@ class SensorMeta(object):
 
 sensors = SensorMeta()
 
+
+
+def self_exec_cmd(*args):
+	args = [__file__] + list(args)
+	if os.access(__file__, os.X_OK): return args
+	return [sys.executable or 'python2'] + args
 
 def main(args=None):
 	import argparse
@@ -920,6 +1088,8 @@ def main(args=None):
 
 	cmd = cmds.add_parser('print-conf-example',
 		help='Print example config to stdout and exit.')
+	cmd = cmds.add_parser('print-systemd-unit',
+		help='Print example systemd unit file to stdout and exit.')
 
 
 	cmd = cmds.add_parser('daemon',
@@ -929,7 +1099,7 @@ def main(args=None):
 		metavar='[address:]port', const='localhost:8123',
 		help='Run http server that would render charts, same as "graph" option.'
 			' Optional argument is the address:port'
-				' or just port to run server on (default: %(default)s).')
+				' or just port to run server on (default: localhost:8123).')
 	cmd.add_argument('-o', '--http-opts',
 		action='append', metavar='yaml-data', default=list(),
 		help='Same as --opts for "graph" command, see description there.')
@@ -981,7 +1151,17 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if opts.cmd == 'print-conf-example': return print(conf_base_str)
+	if opts.cmd == 'print-conf-example':
+		return print(conf_base_str)
+	if opts.cmd == 'print-systemd-unit':
+		with open(__file__) as src:
+			echo = False
+			for line in iter(src.readline, ''):
+				if echo: print(re.sub(r'^#+\s*', '', line.strip()))
+				if re.search('^### systemd unit file:', line):
+					echo = True
+					continue
+				elif echo and not line.strip(): return
 
 	global log
 	import logging
@@ -1031,6 +1211,7 @@ def main(args=None):
 	ss_interval, ss = ts_diff_parse(conf.meas.interval), lya.AttrDict()
 	for k, spec in (conf.meas.sensors or dict()).viewitems():
 		if not spec.get('type'): continue
+		spec.interval = ss_interval
 		ss[k] = sensors.get_sensor(spec.type, spec)
 	rrdb = init_rrd(ss_interval, ss, conf.rrd)
 

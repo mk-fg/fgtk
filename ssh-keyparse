@@ -246,6 +246,9 @@ def b32encode( v, chunk=4,
 
 
 def main(args=None):
+	path_default = '~/.ssh/id_ed25519'
+	path_sys = '/etc/ssh/ssh_host_ed25519_key'
+
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='OpenSSH ed25519 key processing tool.'
@@ -253,13 +256,23 @@ def main(args=None):
 				' secret ed25519 key without any extra wrapping.')
 
 	group = parser.add_argument_group('Key specification and operation mode')
-	group.add_argument('path', nargs='?', default='~/.ssh/id_ed25519',
-		help='Path to ssh private key to process. Default: %(default)s')
+
+	group.add_argument('path', nargs='?',
+		help='Path to ssh private key to process. Default: {}'.format(path_default))
+
 	group.add_argument('-s', '--expand-seed',
 		metavar='32-byte-ed25519-key-seed',
 		help='Derive expanded 64-byte key from'
 				' specified base64-encoded 32-byte ed25519 seed value.'
 			' "path" argument will be ignored if this option is specified.')
+
+	group.add_argument('-y', '--system', action='store_true',
+		help='Dont use "path" argument and parse sshd key from /etc/ssh.'
+			' Basically a shorthand for specifying {} as path arg.'.format(path_sys))
+	group.add_argument('-u', '--public', action='store_true',
+		help='Read and print public key from .pub file alongside private one.'
+			' This is purely a convenience option to get both backup'
+				' of private key and public key for it to paste somewhere.')
 
 	group = parser.add_argument_group('Processing options')
 	group.add_argument('-p', '--pbkdf2',
@@ -297,13 +310,18 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if not opts.expand_seed:
-		path = expanduser(opts.path)
+		if opts.system:
+			if opts.path: parser.error('--system option cannot be used together with path.')
+			opts.path = path_sys
+		path = expanduser(opts.path or path_default)
 		if not exists(path): parser.error('Key path does not exists: {!r}'.format(path))
 		res = ssh_key_parse(path)
 		# assert res == res[:32] + ed25519_pubkey_from_seed(res[:32])
 		res = res[:32]
 
 	else:
+		if opts.public:
+			parser.error('--public option cannot be used together with --expand-seed.')
 		res = opts.expand_seed.decode('base64')
 		res = res + ed25519_pubkey_from_seed(res)
 
@@ -323,7 +341,10 @@ def main(args=None):
 	elif opts.base32: res = b32encode(res)
 	elif opts.base32_nodashes: res = b32encode(res).replace('-', '')
 
-	if opts.raw: sys.stdout.write(res)
+	if opts.raw:
+		if opts.public: parser.error('--public option cannot be used together with --raw.')
+		sys.stdout.write(res)
 	else: print(res)
+	if opts.public: print(open(path + '.pub').read().strip())
 
 if __name__ == '__main__': sys.exit(main())
