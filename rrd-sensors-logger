@@ -591,7 +591,7 @@ class RRD(object):
 	color_scale_c10 = ( '#1f77b4 #ff7f0e #2ca02c' # d3.scale.category10
 		' #d62728 #9467bd #8c564b #e377c2 #7f7f7f #bcbd22 #17becf' ).split()
 
-	def graph( self, k, sensors, image_path=None,
+	def graph( self, metric, sensors, image_path=None,
 			legend_style='stats-table',
 			hrules=None, colors=None, units=None,
 			perc=None, perc_direction='+-', defs_table_len=100,
@@ -638,12 +638,12 @@ class RRD(object):
 			if gprint: defs.append(gprint)
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
-		sns = list('{}_{}'.format(s, k) for s in sensors)
+		sns = list('{}_{}'.format(s, metric) for s in sensors)
 		sn_len, u = max(map(len, sns)), ' {}'.format(units.replace('%', '%%'))
 		for s, sn in it.izip(sensors, sns):
 
 			# Line
-			defs.append('DEF:{sn}={p}:{s}__{k}:AVERAGE'.format(sn=sn, s=s, k=k, p=self.path))
+			defs.append('DEF:{sn}={p}:{s}__{m}:AVERAGE'.format(sn=sn, s=s, m=metric, p=self.path))
 			defs.append('LINE1:{sn}{c}:{sn}'.format(sn=sn, c=next(colors)))
 
 			# Legend
@@ -661,10 +661,18 @@ class RRD(object):
 				if len(perc_direction) == 1:
 					pd = perc_direction[0]
 					pn += pd
-					if pd == '+': defs_add(sn, '{},PERCENTNAN'.format(p), '<small>{}:</small> %4.1lf'.format(pn))
-					else: defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
+					if pd == '+':
+						defs_add( sn,
+							'{},PERCENTNAN'.format(p),
+							'<small>{}:</small> %4.1lf'.format(pn) )
+					else:
+						defs_add( sn,
+							['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
+							'<small>{}:</small> %5.1lf'.format(pn) )
 				else:
-					defs_add(sn, ['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]], '<small>{}:</small> %5.1lf'.format(pn))
+					defs_add( sn,
+						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
+						'<small>{}:</small> %5.1lf'.format(pn) )
 					defs_add(sn, '{},PERCENTNAN'.format(p), '%4.1lf')
 			defs.append(r'COMMENT:\n')
 
