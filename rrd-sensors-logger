@@ -67,6 +67,7 @@ import yaml, lya, rrdtool
 
 
 p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
+types_str = types.StringTypes
 
 yaml_load = yaml.load
 yaml_dump = lambda data, dst:\
@@ -377,7 +378,7 @@ def get_uptime():
 
 @contextlib.contextmanager
 def safe_replacement(path):
-	if not isinstance(path, types.StringTypes): path = path.path # twisted.python.filepath.FilePath
+	if not isinstance(path, types_str): path = path.path # twisted.python.filepath.FilePath
 	kws = dict( delete=False,
 		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
 	with tempfile.NamedTemporaryFile(**kws) as tmp:
@@ -591,9 +592,9 @@ class RRD(object):
 	color_scale_c10 = ( '#1f77b4 #ff7f0e #2ca02c' # d3.scale.category10
 		' #d62728 #9467bd #8c564b #e377c2 #7f7f7f #bcbd22 #17becf' ).split()
 
-	def graph( self, metric, sensors, image_path=None,
+	def graph( self, metrics, sensors, image_path=None,
 			legend_style='stats-table',
-			hrules=None, colors=None, units=None,
+			hrules=None, colors=None, units=None, alt_axis=None,
 			perc=None, perc_direction='+-', defs_table_len=100,
 			**cli_opts ):
 		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
@@ -603,6 +604,7 @@ class RRD(object):
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_rpn.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_examples.en.html
 
+		if isinstance(metrics, types_str): metrics = [metrics]
 		if image_path is None:
 			image_path = tempfile.NamedTemporaryFile(
 				prefix='rrd.chart.', suffix='.png', delete=False ).name
@@ -613,6 +615,13 @@ class RRD(object):
 			start='-24h', end=None, imgformat='PNG',
 			pango_markup=True, font='LEGEND:7:monospace',
 		)
+		if alt_axis:
+			m = alt_axis['metric']
+			opts.update(
+				right_axis_label='{}, {}'.format(m, sensors[m][0]),
+				right_axis_format=alt_axis.get('format'),
+				right_axis_formatter=alt_axis.get('formatter'),
+				right_axis='{}:{}'.format(alt_axis.get('scale', 1), alt_axis.get('shift', 0)) )
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
@@ -625,11 +634,11 @@ class RRD(object):
 			for n in xrange(length): u, un = us[un % ul] + u, un / ul
 			return '{}_{}_{}'.format(sn, cf or '', u)
 		def defs_add(sn, cfs, fmt=None, def_t=None):
-			if isinstance(cfs, types.StringTypes): cfs = [cfs]
+			if isinstance(cfs, types_str): cfs = [cfs]
 			if not def_t: def_t = 'cdef' if len(cfs) > 1 else 'vdef'
 			gprint, sn_base = None, sn
 			for cf in cfs:
-				if isinstance(cf, types.StringTypes): cf = [def_t, cf]
+				if isinstance(cf, types_str): cf = [def_t, cf]
 				(cf_t, cf), k = cf, def_label(sn_base)
 				if '{sn}' not in cf: cf = '{{sn}},{}'.format(cf.replace('{', '{{').replace('}', '}}'))
 				defs.append('{t}:{k}={cf}'.format(t=cf_t.upper(), k=k, cf=cf).format(sn=sn))
@@ -638,17 +647,24 @@ class RRD(object):
 			if gprint: defs.append(gprint)
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
-		sns = list('{}_{}'.format(s, metric) for s in sensors)
-		sn_len, u = max(map(len, sns)), ' {}'.format(units.replace('%', '%%'))
-		for s, sn in it.izip(sensors, sns):
 
+		msusn = list()
+		for m in metrics:
+			units, ss = sensors[m]
+			if 'vertical_label' not in opts:
+				opts['vertical_label'] = '{}, {}'.format(m, units)
+			sns = list('{}_{}'.format(s, m) for s in ss)
+			for s, sn in it.izip(ss, sns): msusn.append((m, s, units, sn))
+		sn_len, u_len = (max(len(v[n]) for v in msusn) for n in [3, 2])
+
+		for m, s, units, sn in msusn:
 			# Line
-			defs.append('DEF:{sn}={p}:{s}__{m}:AVERAGE'.format(sn=sn, s=s, m=metric, p=self.path))
+			defs.append('DEF:{sn}={p}:{s}__{m}:AVERAGE'.format(sn=sn, s=s, m=m, p=self.path))
 			defs.append('LINE1:{sn}{c}:{sn}'.format(sn=sn, c=next(colors)))
 
 			# Legend
-			sn_pad = sn_len - len(sn)
-			defs.append('COMMENT:{}{}'.format(' '*sn_pad, units))
+			sn_pad, u_pad = sn_len - len(sn), u_len - len(units.decode('utf-8', 'replace'))
+			defs.append('COMMENT:{}{}{}'.format(' '*sn_pad, units, ' '*u_pad))
 
 			for label, cf in [
 					('last', 'LAST'), ('avg', 'AVERAGE'),
@@ -740,18 +756,18 @@ def init_rrd(sensors_interval, sensors, conf):
 
 
 def rrd_conf_graph( conf, rrdb,
-		metric=None, ss=None, opts=None, threshold=None, path=None ):
-	if not metric: metric = sensors.metric_default
-	if not ss:
-		ss = list(
-			sn for sn,sd in conf.meas.sensors.viewitems()
-			if metric in sensors.types[sd.type].values )
-	units = sensors.units[metric]
+		metrics=None, ss=None, opts=None, threshold=None, path=None ):
+	if not metrics: metrics = sensors.metric_default
+	if isinstance(metrics, types_str): metrics = [metrics]
+	ss = dict( (m, (sensors.units[m], ss)) for m, ss in
+		sensors.filter_by_metrics(metrics, ss or conf.meas.sensors).viewitems() )
+	alt_axis = dict(metric=metrics[1], scale=1, shift=1)\
+		if len(metrics) > 1 and metrics[1] in ss else None
 
 	graph_opts = conf.graph.opts.copy()
 	graph_opts.update(
-		vertical_label='{}, {}'.format(metric, units),
-		title='{} history'.format(sensors.metrics[metric].title()) )
+		perc=['1σ', '2σ'],
+		title='{} history'.format(' / '.join(sensors.metrics[m].title() for m in metrics)) )
 	for d in opts or list():
 		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
 		graph_opts.update_dict(yaml_load(d))
@@ -761,11 +777,10 @@ def rrd_conf_graph( conf, rrdb,
 		desc, v = spec.split(':', 1)
 		v = float(v)
 		hrules.append(dict( v=v, dashes=True,
-			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metric)) ))
+			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metrics[0])) ))
 
-	image_path = rrdb.graph( metric, ss,
-		image_path=path, hrules=hrules, units=units,
-		perc=['1σ', '2σ'], **graph_opts )
+	image_path = rrdb.graph( metrics, ss,
+		image_path=path, hrules=hrules, alt_axis=alt_axis, **graph_opts )
 	return image_path
 
 
@@ -797,17 +812,19 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 
 		def do_GET(self):
 			params = self.path.split('/', 3)[1:3]
-			try: metric, opts_ext = map(urllib.unquote_plus, params)
+			try: metrics, opts_ext = map(urllib.unquote_plus, params)
 			except ValueError:
-				try: (metric,), opts_ext = params, None
-				except ValueError: metric = opts_ext = None
+				try: (metrics,), opts_ext = params, None
+				except ValueError: metrics = opts_ext = None
 			opts = list(http_opts or list())
 			if http_opts_allow and opts_ext: opts.append(opts_ext)
-			if metric and not re.search(r'^[a-zA-Z0-9_]+$', metric):
-				return self.send_error( 400,
-					'Bad request - invalid metric name spec: {!r}'.format(metric) )
+			if metrics:
+				if not re.search(r'^[-a-zA-Z0-9_ ]+$', metrics):
+					return self.send_error( 400,
+						'Bad request - invalid metric name spec: {!r}'.format(metrics) )
+				metrics = metrics.replace('-', ' ').split(' ')
 
-			with rrd_graph(metric=metric, opts=opts) as image_path:
+			with rrd_graph(metrics=metrics, opts=opts) as image_path:
 				ct, enc = mimetypes.guess_type(image_path)
 				if not ct: ct = 'image/png'
 				with open(image_path, 'rb') as src:
@@ -1037,7 +1054,7 @@ class SensorMeta(object):
 	types = dict(
 		rpi_soc=SensorRPiSoC, lm=SensorLM,
 		adafruit_dht=SensorAdafruitDHT, sht=SensorSHT )
-	metric_default = 't'
+	metric_default = 't', 'rh'
 
 	def value_repr(self, n, metric, units=True, decode=False):
 		if isinstance(n, (int, long)): n = bytes(n)
@@ -1048,6 +1065,15 @@ class SensorMeta(object):
 
 	def get_sensor(self, t, conf, log=None, **kws):
 		return self.types[t](conf, log=log, **kws)
+
+	def filter_by_metrics(self, metrics, sensors):
+		ss = dict()
+		for m in metrics:
+			for sn, sd in sensors.viewitems():
+				if m in self.types[sd.type].values:
+					if m not in ss: ss[m] = list()
+					ss[m].append(sn)
+		return ss
 
 sensors = SensorMeta()
 
@@ -1137,8 +1163,9 @@ def main(args=None):
 		help='Build and store graph of last measurements.',
 		epilog='Prints path to resulting image to stdout.')
 	cmd.add_argument('metric',
-		nargs='?', default=sensors.metric_default,
-		help='Name of a metric to graph (default: %(default)s).')
+		nargs='*', default=sensors.metric_default,
+		help='Name of a metric to graph (default: %(default)s).'
+			' Can be specified multiple times to graph more than one of these.')
 	cmd.add_argument('-s', '--sensor',
 		action='append', metavar='sensor-name', default=list(),
 		help='Name of a sensor to graph metric for'
