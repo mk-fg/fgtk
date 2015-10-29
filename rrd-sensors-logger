@@ -155,7 +155,7 @@ meas:
 		#   type: adafruit_dht # requires github.com/adafruit/Adafruit_Python_DHT
 		#   sysfs_gpio_pin: 9 # must be specified
 		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
-		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
+		#   # retry: [6, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
 		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
 		# sht75_outside:
 		#   type: sht # requires github.com/mk-fg/sht-sensor
@@ -1003,7 +1003,7 @@ class SensorAdafruitDHT(Sensor):
 		self.st = self.conf.get('sensor_type') or 'DHT22'
 		self.pin = int(self.conf.sysfs_gpio_pin)
 		self.read_n, self.read_delay, self.read_delay_k =\
-			self.conf.get('retry') or [15, 0.2, 1.5]
+			self.conf.get('retry') or [6, 0.2, 1.5]
 		if not self.conf.get('subprocess', True):
 			import Adafruit_DHT
 			read_st = getattr(Adafruit_DHT, self.st)
