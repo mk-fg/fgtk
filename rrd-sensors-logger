@@ -139,8 +139,13 @@ rrd:
 meas:
 	interval: 20
 	sensors:
+		## Common keys for all sensors:
+		##  type: type_name # used to pick the code to query the sensor, mandatory
+		##  disabled: false # do no actually read stuff from sensor (only return errors), optional
+		## Below are examples for implemented sensors.
+
 		# rpi_soc: # sensor name (will correspond to rrd DS name)
-		#   type: rpi_soc # used to pick the code to query the sensor
+		#   type: rpi_soc
 		#   # path: /sys/class/thermal/thermal_zoneX/temp
 		# mb:
 		#   type: lm
@@ -156,7 +161,7 @@ meas:
 		#   sysfs_gpio_pin: 9 # must be specified
 		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
 		#   # gpio_init: false # null/false, { in | high | low }[-{ up | down | off }]
-		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
+		#   # retry: [6, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
 		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
 		# sht75_outside:
 		#   type: sht # requires github.com/mk-fg/sht-sensor
@@ -956,6 +961,7 @@ def gpio_init(sysfs_gpio_n, state, path_gpio='/sys/class/gpio'):
 	with open(d_path, 'wb') as dst: dst.write(d)
 	if pull: rpi_set_internal_resistor_state(sysfs_gpio_n, pull)
 
+class SensorDisabled(Exception): pass
 
 class Sensor(object):
 
@@ -964,11 +970,12 @@ class Sensor(object):
 
 	def __init__(self, conf, log=None):
 		self.conf, self.log = conf, log
-		if 'disabled' in self.conf: self.disabled = self.conf.disabled
 		if not self.log:
 			log = self.__class__.__name__
 			if log.startswith('Sensor'): log = log[6:]
 			self.log = logging.getLogger('sensor.{}.{:x}'.format(log, id(self)))
+		disabled = self.conf.get('disabled')
+		if disabled is not None: self.disabled = bool(disabled)
 
 	def __repr__(self):
 		return ( '<{1.__class__.__name__} {0:x},'
@@ -978,7 +985,7 @@ class Sensor(object):
 		return op.itemgetter(ks)(self.read())
 
 	def read(self):
-		if self.disabled: return dict()
+		if self.disabled: raise SensorDisabled()
 		data = self.read_raw() or dict()
 		# self.log.debug('Raw data: %r', data)
 		for k, v in data.items():
@@ -1101,7 +1108,7 @@ class SensorAdafruitDHT(Sensor):
 		self.st = self.conf.get('sensor_type') or 'DHT22'
 		self.pin = int(self.conf.sysfs_gpio_pin)
 		self.read_n, self.read_delay, self.read_delay_k =\
-			self.conf.get('retry') or [15, 0.2, 1.5]
+			self.conf.get('retry') or [6, 0.2, 1.5]
 		gpio_init(self.pin, self.conf.get('gpio_init'))
 		if not self.conf.get('subprocess', True):
 			import Adafruit_DHT
@@ -1377,6 +1384,9 @@ def main(args=None):
 				try:
 					data = s.read()
 					if not data: raise ValueError('No data returned')
+				except SensorDisabled:
+					log.debug('Skipping disabled sensor: %r', k)
+					continue
 				except Exception as err:
 					log.debug('Failed to read data from sensor %r: %s', k, err)
 					continue

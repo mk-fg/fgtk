@@ -116,12 +116,23 @@ def req_jrpc(url, method, *params, **req_kws):
 
 def vod_fetch(url, file_prefix,
 		start_delay=None, max_length=None, scatter=None,
-		ytdl_opts=None, aria2c_opts=None,
+		ytdl_list_formats=False, ytdl_opts=None, aria2c_opts=None,
 		verbose=False, keep_tempfiles=False, dl_info_suffix=None ):
+
+	if ytdl_list_formats:
+		log.info('--- Listing formats available for VoD %s (url: %s)', file_prefix, url)
+		cmd = ['youtube-dl']
+		if verbose: cmd.append('--verbose')
+		cmd = cmd + ['--list-formats'] + (ytdl_opts or list()) + [url]
+		log.debug('Running "youtube-dl --list-formats" command: %s', ' '.join(cmd))
+		subprocess.check_call(cmd, close_fds=True)
+		return
+
 	dst_file = '{}.mp4'.format(file_prefix)
 	if exists(dst_file):
 		log.info('--- Skipping download for existing file: %s (rename/remove it to force)', dst_file)
 		return
+
 	log.info('--- Downloading VoD %s (url: %s)%s', file_prefix, url, dl_info_suffix or '')
 
 	start_delay = start_delay or 0
@@ -390,6 +401,9 @@ def main(args=None):
 	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
 		help='Any number of extra "url file_prefix" arguments can be specified.')
 
+	parser.add_argument('-F', '--ytdl-list-formats',
+		action='store_true', help='Do not download anything,'
+			' just list formats available for each specified URL and exit.')
 	parser.add_argument('-y', '--ytdl-opts',
 		action='append', metavar='opts',
 		help='Extra opts for youtube-dl --get-url command.'
@@ -435,9 +449,9 @@ def main(args=None):
 	logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.ERROR)
 
 	ytdl_opts = opts.ytdl_opts or list()
-	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].split()
+	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
 	aria2c_opts = opts.aria2c_opts or list()
-	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].split()
+	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].strip().split()
 
 	scatter = opts.scatter
 	if scatter:
@@ -447,7 +461,8 @@ def main(args=None):
 	dl_kws = dict(
 		start_delay=parse_pos_spec(opts.start_pos) if opts.start_pos else 0,
 		max_length=opts.length and parse_pos_spec(opts.length),
-		scatter=scatter, ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
+		scatter=scatter, ytdl_list_formats=opts.ytdl_list_formats,
+		ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
 		verbose=opts.debug, keep_tempfiles=opts.keep_tempfiles )
 
 	it_adjacent = lambda seq, n: zip(*([iter(seq)] * n))

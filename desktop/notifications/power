@@ -3,21 +3,20 @@
 PW_FLAG=/tmp/i_dont_give_a_fuck
 
 cleanup() {
- [[ -f "$PW_FLAG" ]] || return 0
- rm -f "$PW_FLAG"
- return 0
+	[[ -f "$PW_FLAG" ]] || return 0
+	rm -f "$PW_FLAG"
+	return 0
 }
 
-
-## Shows either "Unknwon" or "Discharging" on coercion
+## Shows either "Unknwon" or "Discharging"
 grep -e Charging -e Full\
-  /sys/class/power_supply/BAT0/status >/dev/null && \
- cleanup && exit
+		/sys/class/power_supply/BAT0/status >/dev/null\
+	&& cleanup && exit
 
 ## Now thats seem reliable enough
-PW_LEFT=`cat /sys/class/power_supply/BAT0/charge_now`
-PW=`cat /sys/class/power_supply/BAT0/charge_full`
-PW=`echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc`
+PW_LEFT=$(cat /sys/class/power_supply/BAT0/charge_now)
+PW=$(cat /sys/class/power_supply/BAT0/charge_full)
+PW=$(echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc)
 PW=${PW#*.}
 PW=${PW#0}
 [[ $PW -eq 0 ]] && PW=100
@@ -26,37 +25,40 @@ PW=${PW#0}
 ## Phase 1: Sound
 if [[ $PW -lt 12 ]]; then aplay -q ~/media/appz/batt_down.wav
 else if [[ $PW -lt 17 ]]; then aplay -q ~/media/appz/batt_warn.wav
- else if [[ $PW -lt 25 ]]; then aplay -q ~/media/appz/batt_low.wav
-  else if [[ -O "$PW_FLAG" ]]; then cleanup && exit; fi
-  fi
- fi
-fi
+else if [[ $PW -lt 25 ]]; then aplay -q ~/media/appz/batt_low.wav
+else if [[ -O "$PW_FLAG" ]]; then cleanup && exit
+fi; fi; fi; fi
 
 
 ## Phase 2: Visuals
-pgrep -x X >/dev/null || exit 0 # no X - no visual notifications
+pgrep -x Xorg >/dev/null\
+	|| pgrep -x X >/dev/null\
+	|| exit 0 # no X - no visual notifications
 
 if [[ ! -O "$PW_FLAG" && $PW -lt 10 ]]; then
- # Force-enable the display
- xset dpms force on 2>/dev/null
+	# Force-enable the display
+	xset dpms force on 2>/dev/null
 
- if [[ -z "$DBUS_SESSION_BUS_ADDRESS" ]]; then
-  # Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
-  WC=$(pgrep notification-)
-  [[ -z "$WC" ]] && WC='*'
-  export DBUS_SESSION_BUS_ADDRESS="$(
-   grep --color=never -ao -m1 -h -P\
-    '(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
-    /proc/$WC/environ 2>/dev/null | head -1 )"
- fi
+	if [[ -z "$DBUS_SESSION_BUS_ADDRESS" ]]; then
+		# Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
+		WC=( $(pgrep notification-) )
+		[[ "${#WC[@]}" -eq 0 ]] && WC=('*')
+		for pid in "${WC[@]}"; do
+			export DBUS_SESSION_BUS_ADDRESS="$(
+			 grep --color=never -ao -m1 -h -P\
+				'(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
+				/proc/$pid/environ 2>/dev/null | head -1 )"
+			[[ -z "$DBUS_SESSION_BUS_ADDRESS" ]] || break
+		done
+	 fi
 
- # Format message and send it
- MSG=$(cat << EOF
+	# Format message and send it
+	MSG=$(cat << EOF
 Battery charge level critical (${PW}%)!
 Do something about it NOW or touch $PW_FLAG
 EOF
 )
- notify-send -u critical -i nwn "Low power alert" "$MSG"
+	notify-send -u critical -i nwn "Low power alert" "$MSG"
 fi
 
 

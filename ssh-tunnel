@@ -36,8 +36,8 @@ exec 3>"$pid_file"
 			-oServerAliveInterval=3\
 			-oServerAliveCountMax=5\
 			-oConnectTimeout=5\
-			-o PasswordAuthentication=no\
-			-o NumberOfPasswordPrompts=0\
+			-oPasswordAuthentication=no\
+			-oNumberOfPasswordPrompts=0\
 			-qyTnN $3 -L "$1" "$2"
 		sleep 5
 	done ) &
