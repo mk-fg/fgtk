@@ -155,6 +155,7 @@ meas:
 		#   type: adafruit_dht # requires github.com/adafruit/Adafruit_Python_DHT
 		#   sysfs_gpio_pin: 9 # must be specified
 		#   # sensor_type: DHT22 # as defined in Adafruit_DHT module, DHT22 is the default
+		#   # gpio_init: false # null/false, { in | high | low }[-{ up | down | off }]
 		#   # retry: [15, 0.2, 1.5] # [attempts, initial_delay, delay_factor], optional
 		#   # subprocess: true # query each sensor in its own subprocess, seem to be Adafruit_DHT issue
 		# sht75_outside:
@@ -860,6 +861,102 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 	return httpd_poller
 
 
+class RawMemSlice(object):
+
+	# Read/write always normalize-to/expect LE bytes
+	# All units are bytes too, not words or pages
+
+	wf = 'I'
+	w = struct.calcsize(wf) # size of a word that will be used for reading/writing
+	wm = ~(w - 1)
+
+	def __init__(self, addr, n):
+		import mmap
+		self.addr_base = addr & ~(mmap.PAGESIZE - 1)
+		self.addr_offset = addr - self.addr_base
+		self.mem_len = mmap.PAGESIZE * int(math.ceil(
+			float(n + self.addr_offset) / mmap.PAGESIZE ))
+		self.fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
+		self.mem = mmap.mmap( self.fd, self.mem_len,
+			mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=self.addr_base )
+
+	def __del__(self):
+		try: os.close(self.fd)
+		except: pass
+
+	def read(self, n=None, offset=0, unpack=False):
+		if n is None: n = self.w
+		seek = self.addr_offset & self.wm
+		offset += self.addr_offset - seek
+		self.mem.seek(seek)
+		buff = list()
+		for i in xrange(int(math.ceil(float(offset + n) / self.w))):
+			word, = struct.unpack(self.wf, self.mem.read(self.w))
+			buff.append(struct.pack('<I', word))
+		buff = ''.join(buff)[offset:offset+n+1]
+		if unpack:
+			assert n == self.w, [n, self.w]
+			buff, = struct.unpack(self.wf, buff)
+		return buff
+
+	def write(self, buff, offset=0):
+		if isinstance(buff, (int, long)): buff = struct.pack(self.wf, buff)
+		self.mem.seek(self.addr_offset + offset)
+		self.mem.write(buff)
+
+class InvalidPlatform(Exception): pass
+
+def detect_rpi():
+	if not hasattr(detect_rpi, 'cache'):
+		import re
+		with open('/proc/cpuinfo', 'r') as src: cpuinfo = src.read()
+		m = re.search(r'^Hardware\s+:\s+(\w+)$', cpuinfo, re.MULTILINE | re.I)
+		hw = m and m.group(1)
+		detect_rpi.cache = dict(BCM2708='rpi', BCM2709='rpi2').get(hw) or hw
+	return detect_rpi.cache
+
+def rpi_set_internal_resistor_state(bcm_gpio_n, state, platform=False):
+	'Resistor state can be "up", "down" or "off".'
+	state_val = dict(off=0, down=1, up=2)[state]
+	addr_bcm_peri_base = dict(rpi=0x20000000, rpi2=0x3f000000)
+	if not platform: platform = detect_rpi()
+	if not platform or platform not in addr_bcm_peri_base:
+		raise InvalidPlatform( 'Internal pull-up control for anything'
+			' but RPi/RPi2 is not supported, platform: {!r}'.format(platform) )
+	addr_gpio_base = addr_bcm_peri_base[platform] + 0x200000
+	addr_gpio_pull = addr_gpio_base + 37 * RawMemSlice.w
+	# addr_gpio_pull_clk = addr_gpio_pull + 1 * RawMemSlice.w
+
+	mem = RawMemSlice(addr_gpio_pull, RawMemSlice.w * 2)
+	# print(mem.read(unpack=True))
+	# print(' '.join(hex(ord(c)) for c in mem.read(4)))
+
+	if not isinstance(bcm_gpio_n, (tuple, list)):
+		bcm_gpio_n = [bcm_gpio_n]
+	pin_bitmask = ft.reduce( op.or_,
+		map(lambda n: 1<<n, bcm_gpio_n), 0 )
+
+	mem.write(state_val)
+	time.sleep(2e-6)
+	mem.write(pin_bitmask, RawMemSlice.w)
+	time.sleep(2e-6)
+	mem.write(0)
+	mem.write(0, RawMemSlice.w)
+
+def gpio_init(sysfs_gpio_n, state, path_gpio='/sys/class/gpio'):
+	if not state: return
+	pin_str = bytes(int(sysfs_gpio_n))
+	m = re.search(r'^(in|high|low)(?:-(up|down|off))?$', state)
+	assert m, state
+	d, pull = m.groups()
+	log.debug('Initializing gpio pin %s into state: %s (pull: %s)', pin_str, d, pull)
+	d_path = join(path_gpio, 'gpio{}/direction'.format(pin_str))
+	if not exists(d_path):
+		with open(join(path_gpio, 'export'), 'wb') as dst: dst.write(pin_str)
+	with open(d_path, 'wb') as dst: dst.write(d)
+	if pull: rpi_set_internal_resistor_state(sysfs_gpio_n, pull)
+
+
 class Sensor(object):
 
 	values = lya.AttrDict() # must be overidden
@@ -867,6 +964,7 @@ class Sensor(object):
 
 	def __init__(self, conf, log=None):
 		self.conf, self.log = conf, log
+		if 'disabled' in self.conf: self.disabled = self.conf.disabled
 		if not self.log:
 			log = self.__class__.__name__
 			if log.startswith('Sensor'): log = log[6:]
@@ -995,7 +1093,7 @@ class SensorAdafruitDHT(Sensor):
 		if not msg.isdigit(): msg = ''
 		if msg: msg = self.dht_proc.stdout.read(int(msg))
 		if msg: return json.loads(msg)
-		if restart: raise RuntimeError('DHT22 sensor-poll subprocess failed')
+		if restart: raise RuntimeError('DHT sensor-poll subprocess failed')
 		return self._read_proc(restart=True)
 
 	def __init__(self, conf, log=None):
@@ -1004,6 +1102,7 @@ class SensorAdafruitDHT(Sensor):
 		self.pin = int(self.conf.sysfs_gpio_pin)
 		self.read_n, self.read_delay, self.read_delay_k =\
 			self.conf.get('retry') or [15, 0.2, 1.5]
+		gpio_init(self.pin, self.conf.get('gpio_init'))
 		if not self.conf.get('subprocess', True):
 			import Adafruit_DHT
 			read_st = getattr(Adafruit_DHT, self.st)
