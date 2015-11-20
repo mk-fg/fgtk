@@ -19,6 +19,8 @@ if sys.platform == 'win32':
 import requests
 
 
+it_adjacent = lambda seq, n: it.izip_longest(*([iter(seq)] * n))
+
 def get_uid(n=3):
 	assert n * 8 % 6 == 0, n
 	return base64.urlsafe_b64encode(os.urandom(n))
@@ -115,7 +117,7 @@ def req_jrpc(url, method, *params, **req_kws):
 
 
 def vod_fetch(url, file_prefix,
-		start_delay=None, max_length=None, scatter=None,
+		start_delay=None, max_length=None, scatter=None, part_file=False,
 		ytdl_list_formats=False, ytdl_opts=None, aria2c_opts=None,
 		verbose=False, keep_tempfiles=False, dl_info_suffix=None ):
 
@@ -132,6 +134,7 @@ def vod_fetch(url, file_prefix,
 	if exists(dst_file):
 		log.info('--- Skipping download for existing file: %s (rename/remove it to force)', dst_file)
 		return
+	dst_file_part = '{}.part.mp4'.format(file_prefix)
 
 	log.info('--- Downloading VoD %s (url: %s)%s', file_prefix, url, dl_info_suffix or '')
 
@@ -243,18 +246,23 @@ def vod_fetch(url, file_prefix,
 		return 1
 
 	log.debug('Starting downloads (rpc port: %s)...', port)
-	try:
-		line_buff, line_buff_max = list(), 50
-		wait_last_gids, poll_delay = 100, 5
-		chunk_err_retries, chunk_err_retry_delay = 10, 2
 
-		def queue_gid_downloads(gid_files):
+	line_buff, queue_batch = list(), 50
+	wait_last_gids, poll_delay = 100, 5
+	chunk_err_retries, chunk_err_retry_delay = 10, 2
+	dst_file_tmp = dst_file_cat = None
+
+	try:
+		def queue_gid_downloads(gid_files, pos=None):
 			# system.multicall(methods)
 			# aria2.addUri([secret], uris[, options[, position]])
+			if pos is not None: pos = xrange(pos, 2**30)
 			res = aria2c_jrpc('system.multicall', list(
-				dict( methodName='aria2.addUri',
+				dict(
+					methodName='aria2.addUri',
 					params=[ key, ['{}/{}'.format(url_base, path)],
-						dict(gid=gid_str, out='{}.{}.mp4.chunk.tmp'.format(file_prefix, gid_str)) ] )
+						dict(gid=gid_str, out='{}.{}.mp4.chunk.tmp'.format(file_prefix, gid_str)) ]
+						+ ([] if not pos else [next(pos)]) )
 				for gid_str, path in gid_files ))
 			res_chk = list([gid] for gid, path in gid_files)
 			if res != res_chk:
@@ -267,7 +275,7 @@ def vod_fetch(url, file_prefix,
 
 		def line_buff_flush():
 			gid_files = list((next(gid_seq), path) for path in line_buff)
-			gids_needed.extend(map(op.itemgetter(0), gid_files))
+			gids_needed.extend(gid_files)
 			gid_files = list((gid, path) for gid, path in gid_files if gid not in gids_done)
 			gids_started.update(gid_files)
 			gid_files = list((gid_format(gid), path) for gid, path in gid_files)
@@ -296,8 +304,13 @@ def vod_fetch(url, file_prefix,
 			if max_length and max_length + start_delay < 0: break
 			if scatter_chk and not scatter_chk.send(td): continue
 			line_buff.append(line)
-			if len(line_buff) >= line_buff_max: line_buff_flush()
+			if len(line_buff) >= queue_batch: line_buff_flush()
 		if line_buff: line_buff_flush()
+
+		### Init/queue stuff to assemble part-file
+		chunks_needed = list( (gid_str, '{}.{}.mp4.chunk'.format(file_prefix, gid_str), path)
+			for gid_str, path in ((gid_format(gid), path) for gid, path in sorted(gids_needed)) )
+		if part_file: dst_file_pos, dst_file_tmp = 0, open(dst_file_part, 'wb')
 
 		### Wait-to-complete - check missing - retry loop
 		gid_retries, gids_started_count = None, len(gids_started)
@@ -307,20 +320,56 @@ def vod_fetch(url, file_prefix,
 		for n in xrange(1, chunk_err_retries+1):
 			if gid_retries:
 				aria2c_jrpc('aria2.purgeDownloadResult', key)
-				queue_gid_downloads(gid_retries)
+				for chunk in it_adjacent(gid_retries, queue_batch):
+					queue_gid_downloads(chunk)
 
 			while True:
+				dst_file_qe, dst_file_queue, dst_file_retries = False, list(), list()
+				if dst_file_tmp:
+					## Append new chunks to dst_file_tmp
+					if dst_file_cat and dst_file_cat.poll() is not None:
+						if dst_file_cat.wait():
+							log.error('"cat" subprocess failed, dst file: %r', dst_file_tmp.name)
+							return 1
+						dst_file_cat = None
+					if not dst_file_cat:
+						for gid_str, chunk, path in it.islice(chunks_needed, dst_file_pos, None):
+							if exists(chunk) and not dst_file_qe:
+								dst_file_queue.append(chunk)
+								continue
+							s = aria2c_jrpc('aria2.tellStatus', key, gid_str, ['status']).get('status')
+							if s == 'active': break
+							elif s == 'waiting': aria2c_jrpc('aria2.changePosition', key, gid_str, 0, 'POS_SET')
+							elif s == 'error': dst_file_retries.append((gid_str, path))
+							dst_file_qe = True
+						if dst_file_retries: # XXX: redundant with gid_retries around it
+							for chunk in it_adjacent(dst_file_retries, queue_batch):
+								aria2c_jrpc('system.multicall', list(
+									dict(methodName='aria2.removeDownloadResult', params=[key, gid_str])
+									for gid_str, path in chunk ))
+								queue_gid_downloads(chunk, 0)
+						if dst_file_queue:
+							dst_file_pos += len(dst_file_queue)
+							dst_file_cat = subprocess.Popen(
+								['cat'] + dst_file_queue, stdout=dst_file_tmp, close_fds=True )
+
+				## Wait until all downloads are attempted by aria2c
 				gids_wait = len(aria2c_jrpc('aria2.tellActive', key, ['status']))
 				res = aria2c_jrpc('aria2.tellWaiting', key, 0, wait_last_gids, ['status'])
 				if len(res) == wait_last_gids: gids_wait = '>{}'.format(wait_last_gids)
 				else: gids_wait += len(res)
 				if not gids_wait: break
+				log_parts = '' if not dst_file_tmp else\
+					', part-retries/appends: {}'.format(
+						'append-in-progress' if dst_file_cat and not dst_file_queue
+						else '{} / {}'.format(len(dst_file_retries), len(dst_file_queue)) )
 				log.debug( # helps to see the overall progress
-					'\n\n  ------ waiting for downloads (count: %s'
-						' / %s, last gid: %06d, err-retry-pass: %s / %s) ------  \n',
-					gids_wait, gids_started_count, gid_last, n, chunk_err_retries )
+					'\n\n  ------ waiting for downloads (count: %s / %s,'
+						' last gid: %06d, err-retry-pass: %s / %s%s) ------  \n',
+					gids_wait, gids_started_count, gid_last, n, chunk_err_retries, log_parts )
 				time.sleep(poll_delay)
 
+			## Generic "gid_retries" retry-loop, XXX: redundant with dst_file_retries
 			with vod_cache('gids') as vc:
 				for gid in it.imap(gid_parse, vc.cached.splitlines()): gids_started.pop(gid, None)
 			gid_retries = list((gid_format(gid), path) for gid, path in gids_started.viewitems())
@@ -328,6 +377,7 @@ def vod_fetch(url, file_prefix,
 			gid_last = list(gids_started)[-1]
 			log.debug('Chunk retry delay (failed: %s): %ss', len(gid_retries), chunk_err_retry_delay)
 			time.sleep(chunk_err_retry_delay)
+
 		else:
 			log.error('Failed to download %s chunks (after %s retries)', len(gid_retries), n)
 
@@ -339,7 +389,11 @@ def vod_fetch(url, file_prefix,
 			gids_started_count - len(gid_retries), len(gid_retries), len(gids_done) )
 
 	finally:
-		if not aria2c_exit_clean: aria2c.terminate()
+		if not aria2c_exit_clean:
+			if dst_file_cat: dst_file_cat.terminate()
+			aria2c.terminate()
+		if dst_file_tmp: dst_file_tmp.close()
+		if dst_file_cat: dst_file_cat.wait()
 		aria2c.wait()
 		os.unlink(hook_done)
 
@@ -347,9 +401,7 @@ def vod_fetch(url, file_prefix,
 		log.error('Unresolved download errors detected, aborting')
 		return 1
 
-	chunks_needed = list(
-		'{}.{}.mp4.chunk'.format(file_prefix, gid_format(gid))
-		for gid in gids_needed )
+	chunks_needed = map(op.itemgetter(1), chunks_needed)
 	chunks = filter(exists, chunks_needed)
 	chunks_missing = set(chunks_needed).difference(chunks)
 	if chunks_missing:
@@ -360,27 +412,15 @@ def vod_fetch(url, file_prefix,
 		log_lines( log.debug, ['Missing chunks:']
 			+ list(('  %s', chunk) for chunk in sorted(chunks_missing)) )
 		return 1
-	assert sorted(chunks) == chunks
 
-	log.info('Concatenating %s chunk files...', len(chunks))
-	dst_file = '{}.mp4'.format(file_prefix)
-
-	## Simple "cat" works for players like vlc and mpv, with minor seek inprecision
-	if not exists(dst_file):
-		dst_file_tmp = '{}.tmp'.format(dst_file)
-		with open(dst_file_tmp, 'wb') as dst:
+	if dst_file_tmp:
+		log.info('Renaming part-file (%s chunks) to destination: %r', len(chunks), dst_file)
+		os.rename(dst_file_tmp.name, dst_file)
+	else:
+		log.info('Concatenating %s chunk files to: %r', len(chunks), dst_file)
+		with open(dst_file_part, 'wb') as dst:
 			subprocess.check_call(['cat'] + chunks, stdout=dst, close_fds=True)
-		os.rename(dst_file_tmp, dst_file)
-
-	## ffmpeg otoh makes file unplayable on the second pass, well done!
-	# with vod_cache('chunk.ffmpeg_concat') as vc:
-	# 	pls_chunks_path = vc.path
-	# 	if not vc.cached: vc.update(''.join(map('file \'{}\'\n'.format, chunks)))
-	# if not exists(dst_file):
-	# 	subprocess.check_call([ 'ffmpeg',
-	# 		'-y', '-f', 'concat', '-i', pls_chunks_path,
-	# 		'-movflags', 'empty_moov', # makes file playable right away
-	# 		'-c', 'copy', '-bsf:a', 'aac_adtstoasc', dst_file ])
+		os.rename(dst_file_part, dst_file)
 
 	if not keep_tempfiles:
 		tmp_files = list(it.chain(( vod_cache(ext).path for ext in
@@ -429,6 +469,12 @@ def main(args=None):
 			' Idea here is to produce something like preview of the video to allow'
 				' to easily narrow down which part of it is interesting and worth downloading in full.')
 
+	parser.add_argument('-p', '--create-part-file',
+		action='store_true', help='Create partial-download *.part.mp4 file'
+				' and append chunks (in a strict order) to it as they get'
+				' downloaded instead of assembling it at the very end.'
+			' Allows to start playback before all chunks arrive,'
+				' but part-file has to be re-assembled from pieces on every script restart.')
 	parser.add_argument('-k', '--keep-tempfiles',
 		action='store_true', help='Do not remove all the'
 				' temporary files after successfully assembling resulting mp4.'
@@ -461,11 +507,11 @@ def main(args=None):
 	dl_kws = dict(
 		start_delay=parse_pos_spec(opts.start_pos) if opts.start_pos else 0,
 		max_length=opts.length and parse_pos_spec(opts.length),
-		scatter=scatter, ytdl_list_formats=opts.ytdl_list_formats,
+		scatter=scatter, part_file=opts.create_part_file,
+		ytdl_list_formats=opts.ytdl_list_formats,
 		ytdl_opts=ytdl_opts, aria2c_opts=aria2c_opts,
 		verbose=opts.debug, keep_tempfiles=opts.keep_tempfiles )
 
-	it_adjacent = lambda seq, n: zip(*([iter(seq)] * n))
 	vod_queue, args = list(),\
 		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
 	if len(args) % 2:

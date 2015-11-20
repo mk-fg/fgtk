@@ -1332,7 +1332,7 @@ Script to download any time slice of a twitch.tv VoD (video-on-demand).
 This is a unix-ish OS version, github user Choonster has Windows version in
 `Choonster/twitch_vod_fetch repo`_.
 
-youtube-dl - the usual tool for the job - `doesn't support neither seeking to
+youtube-dl_ - the usual tool for the job - `doesn't support neither seeking to
 time nor length limits`_, but does a good job of getting a VoD m3u8 playlist
 with chunks of the video (--get-url option).
 
@@ -1354,10 +1354,14 @@ Process is designed to tolerate Ctrl+C and resume from any point, and allows
 whatever tweaks (e.g. update url, change playlist, skip some chunks, etc), as it
 keeps all the state between these in plaintext files, plus all the actual pieces.
 
-Includes "--scatter" mode to download every-X-out-of-Y timespans instead of full
-video, and has source timestamps on seeking in concatenated result (e.g. for
-``-x 2:00/15:00``, minute 3 in the video will display as "16:00", making it
-easier to pick timespan to download properly).
+Includes "--scatter" ("-x") mode to download every-X-out-of-Y timespans instead
+of full video, and has source timestamps on seeking in concatenated result
+(e.g. for ``-x 2:00/15:00``, minute 3 in the video should display as "16:00",
+making it easier to pick timespan to download properly).
+
+"--create-part-file" ("-p") option allows to start playback before all chunks
+get downloaded, but can be less efficient when restarting whole process, as
+it'll be assembling new part-file from downloaded pieces each time.
 
 General usage examples (wrapped)::
 
@@ -1370,13 +1374,19 @@ General usage examples (wrapped)::
   % twitch_vod_fetch -x 120/15:00 \
     http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_preview
 
-  % twitch_vod_fetch -s 4:22 -l 2:00 \
+  % twitch_vod_fetch -s 4:22:00 -l 2:00:00 \
     http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_picked_2h_chunk
 
-| Needs youtube-dl, requests and aria2.
+  % twitch_vod_fetch -p \
+    http://www.twitch.tv/starcraft/v/24523048 sc2_blizzcon_finals \
+    &>sc2_blizzcon_finals.log &
+  % mpv sc2_blizzcon_finals.part.mp4
+
+| Needs youtube-dl_, `requests <http://python-requests.org/>`_ and aria2_.
 | A bit more info on it can be found in `this twitchtv-vods-... blog post`_.
 
 .. _Choonster/twitch_vod_fetch repo: https://github.com/Choonster/twitch_vod_fetch/
+.. _youtube-dl: https://rg3.github.io/youtube-dl/
 .. _doesn't support neither seeking to time nor length limits: https://github.com/rg3/youtube-dl/issues/622
 .. _aria2: http://aria2.sourceforge.net/
 .. _this twitchtv-vods-... blog post: http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
