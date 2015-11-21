@@ -45,8 +45,12 @@ optz.smessage = ' '.join(optz.smessage)
 
 
 import itertools as it, operator as op, functools as ft
-from gi.repository import Gtk, Notify
 import os, sys, re
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Notify', '0.7')
+from gi.repository import Gtk, Notify
 
 garbled_mark = '⚏garbled-{}⚏'
 for k, v in optz._get_kwargs():

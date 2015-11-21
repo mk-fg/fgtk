@@ -123,6 +123,8 @@ _notify_init = False
 def try_notification(title, body, critical=False, timeout=None):
 	global _notify_init
 	try:
+		import gi
+		gi.require_version('Notify', '0.7')
 		from gi.repository import Notify
 		if not _notify_init:
 			Notify.init('leech_torrent')

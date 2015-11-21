@@ -119,6 +119,8 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 	global _notify_init
 	if fork and os.fork(): return
 	try:
+		import gi
+		gi.require_version('Notify', '0.7')
 		from gi.repository import Notify
 		if not _notify_init:
 			Notify.init('alarm')
