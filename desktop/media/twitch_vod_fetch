@@ -19,7 +19,10 @@ if sys.platform == 'win32':
 import requests
 
 
-it_adjacent = lambda seq, n: it.izip_longest(*([iter(seq)] * n))
+it_adjacent = lambda seq, n, fill=None: it.izip_longest(fillvalue=fill, *([iter(seq)] * n))
+it_adjacent_nofill = lambda seq, n:\
+	( filter(lambda v: v is not it_adjacent, chunk)
+		for chunk in it_adjacent(seq, n, fill=it_adjacent) )
 
 def get_uid(n=3):
 	assert n * 8 % 6 == 0, n
@@ -174,13 +177,22 @@ def vod_fetch(url, file_prefix,
 
 	# aria2c requires 16-char gid, gid_format fits number in
 	#  first 6 chars because it looks nice in (tuncated) aria2c output
-	gid_seq = iter(xrange(1, 2**30))
-	gid_format, gid_parse = '{:06d}0000000000'.format, lambda gid_str: int(gid_str[:6])
+	gid_seq = it.imap('{:06d}0000000000'.format, iter(xrange(1, 999999)))
+	gid_format = lambda gid: gid[:6]
 	with vod_cache('gids') as vc:
 		gids_done, gids_done_path = vc.cached, vc.path
 		if not gids_done: gids_done = vc.update('')
-		gids_done = set(it.imap(gid_parse, gids_done.splitlines()))
-	gids_started, gids_needed = OrderedDict(), list()
+		gids_done = set(gids_done.splitlines())
+	gid_urls_started, gid_urls_needed = OrderedDict(), list()
+
+	# Make sure to re-download recorded-but-missing chunks
+	chunk_path = lambda gid: '{}.{}.mp4.chunk'.format(file_prefix, gid)
+	for gid in list(gids_done):
+		chunk = chunk_path(gid)
+		if not exists(chunk):
+			log.debug( 'Chunk recorded as downloaded, but is missing'
+				' (gid: %s), re-queueing it: %s', gid_format(gid), chunk )
+			gids_done.remove(gid)
 
 	# Try to pick leaner shell than bash, since hook is dead-simple
 	# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
@@ -253,18 +265,18 @@ def vod_fetch(url, file_prefix,
 	dst_file_tmp = dst_file_cat = None
 
 	try:
-		def queue_gid_downloads(gid_files, pos=None):
+		def queue_gid_downloads(gid_urls, pos=None):
 			# system.multicall(methods)
 			# aria2.addUri([secret], uris[, options[, position]])
-			if pos is not None: pos = xrange(pos, 2**30)
+			if pos is not None: pos = iter(xrange(pos, 2**30))
 			res = aria2c_jrpc('system.multicall', list(
 				dict(
 					methodName='aria2.addUri',
-					params=[ key, ['{}/{}'.format(url_base, path)],
-						dict(gid=gid_str, out='{}.{}.mp4.chunk.tmp'.format(file_prefix, gid_str)) ]
+					params=[ key, ['{}/{}'.format(url_base, url)],
+						dict(gid=gid, out='{}.{}.mp4.chunk.tmp'.format(file_prefix, gid)) ]
 						+ ([] if not pos else [next(pos)]) )
-				for gid_str, path in gid_files ))
-			res_chk = list([gid] for gid, path in gid_files)
+				for gid, url in gid_urls ))
+			res_chk = list([gid] for gid, url in gid_urls)
 			if res != res_chk:
 				log_lines(log.error, [
 					'Result gid match check failed for submitted urls.',
@@ -274,12 +286,11 @@ def vod_fetch(url, file_prefix,
 				raise RuntimeError('Result gid match check failed')
 
 		def line_buff_flush():
-			gid_files = list((next(gid_seq), path) for path in line_buff)
-			gids_needed.extend(gid_files)
-			gid_files = list((gid, path) for gid, path in gid_files if gid not in gids_done)
-			gids_started.update(gid_files)
-			gid_files = list((gid_format(gid), path) for gid, path in gid_files)
-			if gid_files: queue_gid_downloads(gid_files)
+			gid_urls = list((next(gid_seq), url) for url in line_buff)
+			gid_urls_needed.extend(gid_urls)
+			gid_urls = list((gid, url) for gid, url in gid_urls if gid not in gids_done)
+			gid_urls_started.update(gid_urls)
+			if gid_urls: queue_gid_downloads(gid_urls)
 			del line_buff[:]
 
 		def scatter_iter():
@@ -307,20 +318,21 @@ def vod_fetch(url, file_prefix,
 			if len(line_buff) >= queue_batch: line_buff_flush()
 		if line_buff: line_buff_flush()
 
-		### Init/queue stuff to assemble part-file
-		chunks_needed = list( (gid_str, '{}.{}.mp4.chunk'.format(file_prefix, gid_str), path)
-			for gid_str, path in ((gid_format(gid), path) for gid, path in sorted(gids_needed)) )
+		### Init/queue stuff to assemble file
+		chunks_needed = list(
+			(gid, chunk_path(gid), url)
+			for gid, url in sorted(gid_urls_needed) )
 		if part_file: dst_file_pos, dst_file_tmp = 0, open(dst_file_part, 'wb')
 
 		### Wait-to-complete - check missing - retry loop
-		gid_retries, gids_started_count = None, len(gids_started)
-		gid_last = list(gids_started)[-1] if gids_started else 0
+		gid_urls_retry, gids_started_count = None, len(gid_urls_started)
+		gid_last = list(gid_urls_started)[-1] if gid_urls_started else 0
 		log.info( '\n\n  ------ Started %s downloads,'
-			' last gid: %06d ------  \n', gids_started_count, gid_last )
+			' last gid: %s ------  \n', gids_started_count, gid_format(gid_last) )
 		for n in xrange(1, chunk_err_retries+1):
-			if gid_retries:
+			if gid_urls_retry:
 				aria2c_jrpc('aria2.purgeDownloadResult', key)
-				for chunk in it_adjacent(gid_retries, queue_batch):
+				for chunk in it_adjacent_nofill(gid_urls_retry, queue_batch):
 					queue_gid_downloads(chunk)
 
 			while True:
@@ -333,20 +345,20 @@ def vod_fetch(url, file_prefix,
 							return 1
 						dst_file_cat = None
 					if not dst_file_cat:
-						for gid_str, chunk, path in it.islice(chunks_needed, dst_file_pos, None):
+						for gid, chunk, url in it.islice(chunks_needed, dst_file_pos, None):
 							if exists(chunk) and not dst_file_qe:
 								dst_file_queue.append(chunk)
 								continue
-							s = aria2c_jrpc('aria2.tellStatus', key, gid_str, ['status']).get('status')
+							s = aria2c_jrpc('aria2.tellStatus', key, gid, ['status']).get('status')
 							if s == 'active': break
-							elif s == 'waiting': aria2c_jrpc('aria2.changePosition', key, gid_str, 0, 'POS_SET')
-							elif s == 'error': dst_file_retries.append((gid_str, path))
+							elif s == 'waiting': aria2c_jrpc('aria2.changePosition', key, gid, 0, 'POS_SET')
+							elif s == 'error': dst_file_retries.append((gid, url))
 							dst_file_qe = True
-						if dst_file_retries: # XXX: redundant with gid_retries around it
-							for chunk in it_adjacent(dst_file_retries, queue_batch):
+						if dst_file_retries: # XXX: redundant with gid_urls_retry around it
+							for chunk in it_adjacent_nofill(dst_file_retries, queue_batch):
 								aria2c_jrpc('system.multicall', list(
-									dict(methodName='aria2.removeDownloadResult', params=[key, gid_str])
-									for gid_str, path in chunk ))
+									dict(methodName='aria2.removeDownloadResult', params=[key, gid])
+									for gid, url in chunk ))
 								queue_gid_downloads(chunk, 0)
 						if dst_file_queue:
 							dst_file_pos += len(dst_file_queue)
@@ -354,39 +366,40 @@ def vod_fetch(url, file_prefix,
 								['cat'] + dst_file_queue, stdout=dst_file_tmp, close_fds=True )
 
 				## Wait until all downloads are attempted by aria2c
-				gids_wait = len(aria2c_jrpc('aria2.tellActive', key, ['status']))
+				gids_wait_count = len(aria2c_jrpc('aria2.tellActive', key, ['status']))
 				res = aria2c_jrpc('aria2.tellWaiting', key, 0, wait_last_gids, ['status'])
-				if len(res) == wait_last_gids: gids_wait = '>{}'.format(wait_last_gids)
-				else: gids_wait += len(res)
-				if not gids_wait: break
+				if len(res) == wait_last_gids: gids_wait_count = '>{}'.format(wait_last_gids)
+				else: gids_wait_count += len(res)
+				if not gids_wait_count: break
 				log_parts = '' if not dst_file_tmp else\
 					', part-retries/appends: {}'.format(
 						'append-in-progress' if dst_file_cat and not dst_file_queue
 						else '{} / {}'.format(len(dst_file_retries), len(dst_file_queue)) )
 				log.debug( # helps to see the overall progress
 					'\n\n  ------ waiting for downloads (count: %s / %s,'
-						' last gid: %06d, err-retry-pass: %s / %s%s) ------  \n',
-					gids_wait, gids_started_count, gid_last, n, chunk_err_retries, log_parts )
+						' last gid: %s, err-retry-pass: %s / %s%s) ------  \n',
+					gids_wait_count, gids_started_count,
+					gid_format(gid_last), n, chunk_err_retries, log_parts )
 				time.sleep(poll_delay)
 
 			## Generic "gid_retries" retry-loop, XXX: redundant with dst_file_retries
 			with vod_cache('gids') as vc:
-				for gid in it.imap(gid_parse, vc.cached.splitlines()): gids_started.pop(gid, None)
-			gid_retries = list((gid_format(gid), path) for gid, path in gids_started.viewitems())
-			if not gid_retries: break
-			gid_last = list(gids_started)[-1]
-			log.debug('Chunk retry delay (failed: %s): %ss', len(gid_retries), chunk_err_retry_delay)
+				for gid in vc.cached.splitlines(): gid_urls_started.pop(gid, None)
+			gid_urls_retry = gid_urls_started.items()
+			if not gid_urls_retry: break
+			gid_last = list(gid_urls_started)[-1]
+			log.debug('Chunk retry delay (failed: %s): %ss', len(gid_urls_retry), chunk_err_retry_delay)
 			time.sleep(chunk_err_retry_delay)
 
 		else:
-			log.error('Failed to download %s chunks (after %s retries)', len(gid_retries), n)
+			log.error('Failed to download %s chunks (after %s retries)', len(gid_urls_retry), n)
 
 		### Proper shutdown
 		aria2c_jrpc('aria2.shutdown', key)
-		aria2c_exit_clean = not gid_retries
+		aria2c_exit_clean = not gid_urls_retry
 		log.debug(
 			'Finished with downloads (%s chunks downloaded, %s failed, %s existing)',
-			gids_started_count - len(gid_retries), len(gid_retries), len(gids_done) )
+			gids_started_count - len(gid_urls_retry), len(gid_urls_retry), len(gids_done) )
 
 	finally:
 		if not aria2c_exit_clean:
