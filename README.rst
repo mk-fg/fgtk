@@ -1360,8 +1360,9 @@ of full video, and has source timestamps on seeking in concatenated result
 making it easier to pick timespan to download properly).
 
 "--create-part-file" ("-p") option allows to start playback before all chunks
-get downloaded, but can be less efficient when restarting whole process, as
-it'll be assembling new part-file from downloaded pieces each time.
+get downloaded, but can be less efficient wrt fs fragmentation and when
+restarting whole process (as it'll be assembling new part-file from downloaded
+pieces each time).
 
 General usage examples (wrapped)::
 
