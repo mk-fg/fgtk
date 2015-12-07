@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from os.path import expanduser, basename, dirname, exists
-import os, sys, io, re, struct, tempfile, logging, subprocess
+import os, sys, io, re, struct, tempfile, subprocess
 import hashlib, base64, string
 
 
