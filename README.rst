@@ -1935,6 +1935,16 @@ check-df
 Standard template for a trivial bash + coreutils "df" checker to put into
 crontab on any random linux box, just in case.
 
+resize-rpi-fat32-for-card
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Script to resize RPi's boot FAT32 partition and filesystem to conver as much of
+the SD card as possible.
+
+More info can be found in the `resizing-first-fat32-partition-...`_ blog post.
+
+.. _resizing-first-fat32-partition-...: http://blog.fraggod.net/2015/12/07/resizing-first-fat32-partition-to-microsd-card-size-on-boot-from-raspberry-pi.html
+
 
 
 License (WTFPL)
