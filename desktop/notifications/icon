@@ -1,0 +1,183 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, types, urllib
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
+
+class NotificationWindow(Gtk.ApplicationWindow):
+
+	icon_size = 128
+	icon_width = icon_height = None
+
+	def _get_icon(self, icon):
+		widget_icon = None
+
+		if icon is not None:
+			if isinstance(icon, types.StringTypes):
+				icon_path = os.path.expanduser(urllib.url2pathname(icon))
+				if icon_path.startswith('file://'): icon_path = icon_path[7:]
+				if os.path.isfile(icon_path):
+					widget_icon = GdkPixbuf.Pixbuf.new_from_file(icon_path)
+				else:
+					# Available names: Gtk.IconTheme.get_default().list_icons(None)
+					theme = Gtk.IconTheme.get_default()
+					icon_size = self.icon_width or self.icon_height or self.icon_size
+					widget_icon = theme.lookup_icon(
+						icon, icon_size, Gtk.IconLookupFlags.USE_BUILTIN )
+					if widget_icon: widget_icon = widget_icon.load_icon()
+					else:
+						log.warn( '"%s" seems to be neither a valid icon file nor'
+							' a name in a freedesktop.org-compliant icon theme (or your theme'
+							' doesnt have that name). Ignoring.', icon )
+			else:
+				widget_icon = GdkPixbuf.Pixbuf.new_from_data(
+					bytearray(icon[6]), GdkPixbuf.Colorspace.RGB, icon[3], icon[4],
+					icon[0], icon[1], icon[2], lambda x, y: None, None )
+
+		if widget_icon:
+			if self.icon_width or self.icon_height: # scale icon
+				w, h = widget_icon.get_width(), widget_icon.get_height()
+				# Use max (among w/h) factor on scale-up and min on scale-down,
+				#  so resulting icon will always fit in a specified box,
+				#  and will match it by (at least) w or h (ideally - both)
+				scale = (self.icon_width and w < self.icon_width)\
+					or (self.icon_height and h < self.icon_height) # True if it's a scale-up
+				scale = (min if bool(scale) ^ bool(
+						self.icon_width and self.icon_height ) else max)\
+					(float(self.icon_width or w) / w, float(self.icon_height or h) / h)
+				log.debug('Icon scale: %s', scale)
+				widget_icon = widget_icon.scale_simple(
+					w * scale, h * scale, GdkPixbuf.InterpType.BILINEAR )
+			widget_icon, pixbuf = Gtk.Image(), widget_icon
+			widget_icon.set_from_pixbuf(pixbuf)
+
+		return widget_icon
+
+	def _set_visual(self, w, *ev_data):
+		visual = w.get_screen().get_rgba_visual()
+		if visual: w.set_visual(visual)
+
+	def _place_window(self, w, *ev_data):
+		if not self.pos_offset or self.pos_offset == 'none': return
+		ox, oy = self.pos_offset.split(':', 1)
+		(gx, ox), (gy, oy) = (
+			(vals.split()[int(o.startswith('-'))], o.lstrip('-'))
+			for vals, o in [('north south', ox), ('west east', oy)] )
+		s = w.get_screen()
+		sw, sh = s.width(), s.height()
+		ww, wh = w.get_size()
+		ox, oy = (
+			int((0.01 * float(o.rstrip('%')) * s) if o.endswith('%') else o)
+			for o, s in [(ox, sw), (oy, sh)] )
+		wx, wy = (
+			ox if gx == 'north' else (sw - ox - ww),
+			oy if gy == 'west' else (sh - oy - wh) )
+		log.debug( 'Spec - gravity - offset - pos:'
+			' %s - %s-%s - %s:%s - %s:%s', self.pos_offset, gx, gy, ox, oy, wx, wy )
+		w.set_gravity(getattr(Gdk.Gravity, '_'.join([gx, gy]).upper()))
+		w.move(wx, wy)
+
+	def __init__(self, app, icon, text=None, icon_size=None, pos_offset=None):
+		Gtk.Window.__init__( self, name='notification',
+			type=Gtk.WindowType.POPUP, application=app )
+
+		self.pos_offset = pos_offset
+		if icon_size:
+			if ':' in icon_size:
+				self.icon_width, self.icon_height = (
+					(int(n) if n else None) for n in icon_size.split(':', 1) )
+			else:
+				self.icon_size = self.icon_width = self.icon_height = int(icon_size)
+
+		css = Gtk.CssProvider()
+		css.load_from_data('\n'.join([
+			'#notification { background: transparent; }'
+			'#icon-text {'
+				'background: rgba(0,0,0,0.5);'
+				'color: red; font-size: 200%; padding: 1em; }' ]))
+		Gtk.StyleContext.add_provider_for_screen(
+			Gdk.Screen.get_default(), css,
+			Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION )
+
+		self.connect('composited-changed', self._set_visual)
+		self.connect('screen-changed', self._set_visual)
+		self._set_visual(self)
+
+		widget_icon = None
+		try: widget_icon = self._get_icon(icon)
+		except Exception: # Gdk may raise errors for some images/formats
+			log.exception('Failed to set notification icon')
+		if not widget_icon:
+			widget_icon = Gtk.Label(name='icon-text')
+			widget_icon.set_text(text or 'Error: {}'.format(icon.rsplit('.', 1)[0]))
+		self.add(widget_icon)
+
+		self.connect('show', self._place_window)
+		self.connect('configure-event', self._place_window)
+
+
+class NotificationApp(Gtk.Application):
+
+	def __init__(self, *win_args, **win_kws):
+		self.win_opts = win_args, win_kws
+		super(NotificationApp, self).__init__()
+
+	def do_activate(self):
+		win = NotificationWindow(self, *self.win_opts[0], **self.win_opts[1])
+		win.connect('delete-event', lambda w,*data: self.quit())
+		win.show_all()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Display transparent notification baloon popup.')
+	parser.add_argument('icon',
+		help='Icon image to display.'
+			' Can be a name of an xdg theme icon (incl. file:// spec)'
+				' or just a path to some semi-transparent png file.')
+	parser.add_argument('text', nargs='?', help='Replacement text if icon display fails.')
+
+	parser.add_argument('-s', '--size',
+		metavar='{ s | [w]:[h] }', default='128',
+		help='Size of icon to pick (for xdg icon specs) or a "w:h" limit spec.'
+			' With "w:h" spec, icon is always scaled proportionally,'
+				' w and/or h can be omitted to not limit that dimension.'
+			' Examples: -s=:50 (scale to 50px high),'
+				' -s=128 (use size-128 icon or fit into 128px box).'
+			' Default: %(default)s')
+	parser.add_argument('-o', '--pos-offset',
+		metavar='x:y', default='-5%:-5%',
+		help='Offset from the upper-left corner of the screen,'
+				' either in pixels (numbers) or percents (with "%" at the end), using "x:y" format.'
+			' Negative values can be used to specify offset from the other side (right/bottom).'
+			' Empty string or "none" will leave placement to WM.'
+			' Examples: -o=-30:50 (30px from the right, 50px from the top),'
+				' -o=10%:5% (% of screen size from top-left), -o=-0:-0 (bottom-right).'
+			' Default: %(default)s')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(
+		format='%(asctime)s :: %(levelname)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = logging.getLogger()
+
+	log.debug('Starting application...')
+	NotificationApp( opts.icon, opts.text,
+		icon_size=opts.size, pos_offset=opts.pos_offset ).run()
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())

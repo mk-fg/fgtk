@@ -1497,6 +1497,28 @@ folders yet, and this simple hack doesn't even require running a mail client.
 
 .. _as implemented in notification-thing daemon: https://github.com/mk-fg/notification-thing/#network-broadcasting
 
+icon
+''''
+
+Script to display specified xdg icon or image in a transparent popup window,
+with specified size (proportional scaling) and offset.
+
+Supposed to be used with compositing WMs to display an icon (e.g. png with
+transparency) on top of everything else as a very crude and "in your face"
+means of notification.
+
+For example, ``icon -o=-10%:-10% -s=300 ~/battery-critical.png``
+will display specified png scaled proportionately to 300x300 px box
+with 10% (of screen width/height) offset from bottom-right screen corner.
+
+``icon call-start`` will dislay "call-start" icon from the theme
+(with -s/--size specifying icon size to pick, e.g. 32, 64, 128).
+
+If file/icon cannot be found, ``Error: {icon-name}`` replacement text
+will be displayed in a semi-transparent box instead.
+
+Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
+
 
 others
 ^^^^^^
