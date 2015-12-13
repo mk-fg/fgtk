@@ -1,9 +1,9 @@
 #!/usr/bin/env python2
 from __future__ import absolute_import, print_function
 
-import os, sys, time, types, subprocess
+import os, sys, time, types, subprocess, signal
 
-import dbus, signal
+import dbus
 
 
 ### ~bluezutils.py
@@ -119,9 +119,10 @@ def main(args=None):
 		if opts.call != 'server':
 			parser.error('--device-all option is only valid with "server" mode.')
 		devs = list(find_adapter())
-	for dev in devs:
+	devs = dict((prop_get(dev, 'Address'), dev) for dev in devs)
+	for dev_addr, dev in devs.viewitems():
 		prop_set(dev, 'Powered', True)
-		log.debug('Using local device (addr: %s): %s', prop_get(dev, 'Address'), dev.object_path)
+		log.debug('Using local device (addr: %s): %s', dev_addr, dev.object_path)
 
 	wait_iter_noop = 3600
 	if opts.systemd:
@@ -166,20 +167,23 @@ def main(args=None):
 
 		servers = list()
 		try:
-			for dev in devs:
+			for dev_addr, dev in devs.viewitems():
 				server = dbus.Interface(dev, 'org.bluez.NetworkServer1')
+				server.Unregister(opts.uuid) # in case already registered
 				server.Register(opts.uuid, opts.iface_name)
 				servers.append(server)
-				log.debug('Registered uuid %r with bridge: %s', opts.uuid, opts.iface_name)
+				log.debug( 'Registered uuid %r with'
+					' bridge/dev: %s / %s', opts.uuid, opts.iface_name, dev_addr )
 			while True: wait_iter()
 		except KeyboardInterrupt: pass
 		finally:
-			for server in servers: server.Unregister(opts.uuid)
-			log.debug('Unregistered server uuids')
+			if servers:
+				for server in servers: server.Unregister(opts.uuid)
+				log.debug('Unregistered server uuids')
 
 
 	elif opts.call == 'client':
-		dev_remote = find_device(opts.remote_addr, devs[0])
+		dev_remote = find_device(opts.remote_addr, devs.values()[0])
 		log.debug( 'Using remote device (addr: %s): %s',
 			prop_get(dev_remote, 'Address'), dev_remote.object_path )
 		try: dev_remote.ConnectProfile(opts.uuid)
