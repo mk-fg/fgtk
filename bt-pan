@@ -39,14 +39,15 @@ def find_adapter(pattern=None):
 	return find_adapter_in_objects(get_manager().GetManagedObjects(), pattern)
 
 def find_adapter_in_objects(objects, pattern=None):
-	bus = get_bus()
+	bus, obj = get_bus(), None
 	for path, ifaces in objects.iteritems():
 		adapter = ifaces.get(iface_adapter)
 		if adapter is None: continue
 		if not pattern or pattern == adapter['Address'] or path.endswith(pattern):
 			obj = bus.get_object(iface_base, path)
-			return dbus.Interface(obj, iface_adapter)
-	raise BTError('Bluetooth adapter not found')
+			yield dbus.Interface(obj, iface_adapter)
+	if obj is None:
+		raise BTError('Bluetooth adapter not found')
 
 def find_device(device_address, adapter_pattern=None):
 	return find_device_in_objects(get_manager().GetManagedObjects(), device_address, adapter_pattern)
@@ -76,6 +77,9 @@ def main(args=None):
 
 	parser.add_argument('-i', '--device', metavar='local-addr/pattern',
 		help='Local device address/pattern to use (if not default).')
+	parser.add_argument('-a', '--device-all', action='store_true',
+		help='Use all local hci devices, not just default one.'
+			' Only valid with "server" mode, mutually exclusive with --device option.')
 	parser.add_argument('-u', '--uuid',
 		metavar='uuid_or_shortcut', default='nap',
 		help='Service UUID to use. Can be either full UUID'
@@ -110,10 +114,14 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
-	dev_local = find_adapter(opts.device)
-	prop_set(dev_local, 'Powered', True)
-	log.debug( 'Using local device (addr: %s): %s',
-		prop_get(dev_local, 'Address'), dev_local.object_path )
+	if not opts.device_all: devs = [next(iter(find_adapter(opts.device)))]
+	else:
+		if opts.call != 'server':
+			parser.error('--device-all option is only valid with "server" mode.')
+		devs = list(find_adapter())
+	for dev in devs:
+		prop_set(dev, 'Powered', True)
+		log.debug('Using local device (addr: %s): %s', prop_get(dev, 'Address'), dev.object_path)
 
 	wait_iter_noop = 3600
 	if opts.systemd:
@@ -156,20 +164,22 @@ def main(args=None):
 			p('  ip link set bnep-bridge up')
 			return 1
 
-		server = dbus.Interface(dev_local, 'org.bluez.NetworkServer1')
-		server.Register(opts.uuid, opts.iface_name)
-		log.debug('Registered uuid %r with bridge: %s', opts.uuid, opts.iface_name)
-
+		servers = list()
 		try:
+			for dev in devs:
+				server = dbus.Interface(dev, 'org.bluez.NetworkServer1')
+				server.Register(opts.uuid, opts.iface_name)
+				servers.append(server)
+				log.debug('Registered uuid %r with bridge: %s', opts.uuid, opts.iface_name)
 			while True: wait_iter()
 		except KeyboardInterrupt: pass
 		finally:
-			server.Unregister(opts.uuid)
+			for server in servers: server.Unregister(opts.uuid)
 			log.debug('Unregistered server uuids')
 
 
 	elif opts.call == 'client':
-		dev_remote = find_device(opts.remote_addr, dev_local)
+		dev_remote = find_device(opts.remote_addr, devs[0])
 		log.debug( 'Using remote device (addr: %s): %s',
 			prop_get(dev_remote, 'Address'), dev_remote.object_path )
 		try: dev_remote.ConnectProfile(opts.uuid)
