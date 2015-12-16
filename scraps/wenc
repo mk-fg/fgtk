@@ -1,0 +1,93 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, io, types, base64, string
+
+import libnacl
+from libnacl.public import SecretKey, PublicKey, Box
+
+from libraptorq import RQEncoder
+
+
+p = lambda fmt,*a,**k:\
+	print(*( [fmt.format(*a,**k)]\
+		if isinstance(fmt, types.StringTypes) and (a or k)
+		else [[fmt] + list(a), k] ), file=sys.stderr)
+
+b64_encode = base64.urlsafe_b64encode
+b64_decode = lambda s:\
+	base64.urlsafe_b64decode(bytes(s))\
+		if '-' in s or '_' in s else bytes(s).decode('base64')
+
+_b32_abcs = (
+	u'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+	u'абвгдежзиклмнопрстуфхцчшыьэОяZ,.' )
+
+def b32_encode(v, chunk=4, _trans=dict(
+		(ord(a), ord(b)) for a,b in it.izip(*_b32_abcs) )):
+	return base64.b32encode(v).strip()\
+		.decode('utf-8').translate(_trans).encode('utf-8')
+
+num_fmt = lambda n: '{:,}'.format(n)
+
+
+def main(args=None, error_func=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Encrypt/fountain-code/b32 data from stdin to stdout.')
+
+	parser.add_argument('-k', '--keyfile', metavar='path',
+		help='Path with base64-encoded Curve25519'
+			' sk on the first line and pk to encode data to on the second.')
+
+	parser.add_argument('-s', '--sym-size',
+		type=int, metavar='bytes', default=8,
+		help='RaptorQ fountain-coding symbol size. Default: %(default)s')
+	parser.add_argument('-r', '--sym-repair-rate',
+		type=float, metavar='float', default=0,
+		help='Amount of repair symbols to generate,'
+			' as a fraction of data size. Default: %(default)s')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(
+		format='%(asctime)s :: %(levelname)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = logging.getLogger()
+
+	data = sys.stdin.read()
+	log.debug('Input data: %sB', num_fmt(len(data)))
+
+	with open(opts.keyfile, 'rb') as src:
+		sk, pk = map(b64_decode, src.read().splitlines())
+	box = Box(SecretKey(sk), PublicKey(pk))
+	data_ct = box.encrypt(data)
+	log.debug('Ciphertext: %sB', num_fmt(len(data_ct)))
+
+	with RQEncoder( data_ct, min_subsymbol_size=4,
+			symbol_size=opts.sym_size, max_memory=4000 ) as enc:
+		oti_scheme, oti_common = enc.oti_scheme, enc.oti_common
+
+		blocks = list(enc)
+		assert len(blocks) == 1, len(blocks)
+		block, = blocks
+
+		data_syms = map( op.itemgetter(1),
+			block.encode_iter(repair_rate=opts.sym_repair_rate) )
+
+	log.debug( 'Produced %s symbols (%sB total)',
+		len(data_syms), num_fmt(len(''.join(data_syms))) )
+
+	n_abc = _b32_abcs[1]
+	for n, sym in enumerate(data_syms):
+		print('{:02d} {} {}'.format(
+			n, n_abc[n % len(n_abc)].encode('utf-8'), b32_encode(sym).rstrip('=') ))
+
+
+if __name__ == '__main__': sys.exit(main())
