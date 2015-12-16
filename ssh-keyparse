@@ -231,17 +231,18 @@ def ed25519_pubkey_from_seed(sk):
 
 
 it_adjacent = lambda seq, n: it.izip_longest(*([iter(seq)] * n))
-_b32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+_b32_abcs = (
+	# Python base32 - "Table 3: The Base 32 Alphabet" from RFC3548
+	'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+	# Crockford's base32 - http://www.crockford.com/wrmg/base32.html
+	'0123456789ABCDEFGHJKMNPQRSTVWXYZ' )
 
 def b32encode( v, chunk=4,
-		_trans=string.maketrans(
-			'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567', _b32 ),
-		_check=_b32 + '*~$=U' ):
+		_trans=string.maketrans(*_b32_abcs), _check=_b32_abcs[1] + '*~$=U' ):
 	chksum = 0
 	for c in bytearray(v): chksum = chksum << 8 | c
 	res = '-'.join(''.join(it.ifilter(None, s)) for s in
 		it_adjacent(base64.b32encode(v).strip().translate(_trans, '='), chunk) )
-	# res = base64.b32encode(v).strip().translate(_trans, '=')
 	return '{}-{}'.format(res, _check[chksum % 37].lower())
 
 
