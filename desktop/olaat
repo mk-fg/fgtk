@@ -1,0 +1,227 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+import os, sys, types, re
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
+import yaml
+
+
+it_adjacent = lambda seq, n: it.izip_longest(*([iter(seq)] * n))
+
+def force_bytes(s):
+	if isinstance(s, unicode): return s.encode('utf-8')
+	return s
+
+def force_unicode(s, encoding='utf-8', errors='replace'):
+	if isinstance(s, unicode): return s
+	return s.decode(encoding, errors)
+
+
+class DisplayRow(Gtk.Label):
+
+	def __init__(self, line, c=0):
+		super(DisplayRow, self).__init__()
+		self.line = force_unicode(line)
+		self.c = c
+
+	_select = None
+	def select(self): return self._select and self._select()
+
+	_c = 0
+	@property
+	def c(self): return self._c
+	@c.setter
+	def c(self, v):
+		c = self._c = min(max(0, v), len(self.line)-1)
+		m = u'' if not self.line else self.line
+		if m: m = u'{} <b><big>{}</big></b> {}'.format(m[:c], m[c], m[c+1:])
+		return self.set_markup(m)
+
+
+class DisplayWindow(Gtk.ApplicationWindow):
+
+	dev_match = dev_display = dev_list = None
+
+	def _color_rgba(self, c):
+		cs = c.strip().lstrip('#')
+		if len(cs) == 6: cs += 'ff'
+		elif len(cs) != 8: raise ValueError(c)
+		r,g,b,a = (int(''.join(v), 16) for v in it_adjacent(cs, 2))
+		return 'rgba({},{},{},{})'.format(r,g,b,a / 255.0)
+
+	def _set_visual(self, w, *ev_data):
+		visual = w.get_screen().get_rgba_visual()
+		if visual: w.set_visual(visual)
+
+	def _hook_inputs(self, w):
+		dm = w.get_display().get_device_manager()
+		dm_display = dm.get_display().get_name()
+		if dm_display == self.dev_display: return
+		for dev in self.dev_list or list():
+			try: Gtk.device_grab_remove(dev)
+			except Exception as err:
+				log.warn('Error on device (name: %r) grab_remove - %s', dev.get_name(), err)
+		dev_list = list()
+		for dev in it.chain(
+				dm.list_devices(Gdk.DeviceType.MASTER),
+				dm.list_devices(Gdk.DeviceType.SLAVE) ):
+			name = dev.get_name()
+			if dev.get_property('type') == Gdk.DeviceType.MASTER: vid = pid = None
+			else: vid, pid = dev.get_vendor_id(), dev.get_product_id()
+			m_name, m_vid, m_pid = map(
+				(self.dev_match or dict()).get,['name', 'vid', 'pid'] )
+			m = map(bool, [
+				m_name is None or re.search(m_name, name),
+				m_vid is None or vid != m_vid, m_pid is None or pid != m_pid ])
+			m_chk = all(m)
+			log.debug(
+				'Device name=%r vid=%r pid=%r, match: %s (name/vid/pid: %s/%s/%s)',
+				name, vid, pid, m_chk, m[0], m[1], m[2] )
+			if m_chk: dev_list.append(dev)
+		if len(dev_list) != 1:
+			log.error('Failed to uniquely match input device, there will be no input!')
+			dev_list = None
+		else:
+			for dev in dev_list:
+				dev.grab(
+					window=w.get_window(),
+					grab_ownership=Gdk.GrabOwnership.WINDOW,
+					owner_events=False,
+					event_mask=Gdk.EventMask.KEY_PRESS_MASK,
+					cursor=None,
+					time_=Gdk.CURRENT_TIME )
+				log.debug('New grab on device: %r', dev.get_name())
+		self.dev_display, self.dev_list = dm_display, dev_list
+
+	def _place_window(self, w=None, *ev_data):
+		if not w: w = self
+		ww, wh = w.get_size()
+		w.set_gravity(Gdk.Gravity.NORTH_WEST)
+		w.resize(w.get_screen().width(), wh)
+		self._hook_inputs(w)
+		self._set_row()
+
+	def _set_row(self):
+		if not self.rows: return
+		self.row_current = max(0, min(self.row_current, len(self.rows)-1))
+		row = self.rows[self.row_current]
+		x, y = row.translate_coordinates(self, 0, 0)
+		self.move(0, self.get_screen().height() / 2 - y)
+		row.select()
+
+	def _key_press(self, w, ev):
+		chk, keyval = ev.get_keyval()
+		if not chk: return
+		key = Gdk.keyval_name(keyval)
+		log.debug('key-press-event: %r', key)
+		if not self.rows or key in ['Escape', 'q']:
+			return self.app.quit()
+		if key in ['Up', 'Page_Up']:
+			self.row_current -= 1
+			return self._set_row()
+		elif key in ['Return', 'Down', 'Page_Down']:
+			self.row_current += 1
+			return self._set_row()
+		row = self.rows[self.row_current]
+		if key in ['Left', 'Backspace', 'Delete']: row.c -= 1
+		else: row.c += 1
+
+	def __init__(self, app, text, dev_match=None, cursor_pos=0):
+		self.app, self.dev_match = app, dev_match
+
+		Gtk.Window.__init__( self, name='olaat',
+			type=Gtk.WindowType.POPUP, application=app )
+
+		css = Gtk.CssProvider()
+		c_fg, c_bg = map(self._color_rgba, ['6ad468ff', '101c10aa'])
+		css.load_from_data('\n'.join([
+			'#olaat {{ background: transparent; }}'
+			'#olaat #list {{ background: transparent; }}'
+			'#olaat GtkLabel {{'
+				'background: {c_bg}; color: {c_fg};'
+				' border: 0; font-size: 200%; padding: 1em; }}' ])\
+			.format(c_fg=c_fg, c_bg=c_bg))
+		Gtk.StyleContext.add_provider_for_screen(
+			Gdk.Screen.get_default(), css,
+			Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION )
+
+		self.connect('composited-changed', self._set_visual)
+		self.connect('screen-changed', self._set_visual)
+		self._set_visual(self)
+
+		list_box = Gtk.ListBox(name='list')
+		list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+		self.rows, self.row_current = list(), 0
+		for n, line in enumerate(text.splitlines()):
+			row = DisplayRow(line, c=cursor_pos)
+			list_box.add(row)
+			row._select = ft.partial(list_box.select_row, list_box.get_row_at_index(n))
+			self.rows.append(row)
+		self.add(list_box)
+		list_box.connect('key-press-event', self._key_press)
+
+		self.connect('show', self._place_window)
+		self.connect('configure-event', self._place_window)
+
+
+class DisplayApp(Gtk.Application):
+
+	def __init__(self, *win_args, **win_kws):
+		self.win_opts = win_args, win_kws
+		super(DisplayApp, self).__init__()
+
+	def do_activate(self):
+		win = DisplayWindow(self, *self.win_opts[0], **self.win_opts[1])
+		win.connect('delete-event', lambda w,*data: self.quit())
+		win.show_all()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [opts]',
+		description='Display semi-transparent popup with text from stdin.'
+			' Text/rows get scrolled by keypresses, q/Esc to exit.')
+
+	parser.add_argument('dev_match',
+		nargs='?', default='name: "Virtual core keyboard"',
+		help='YAML-encoded mapping with following'
+				' optional keys: name, vid, pid.'
+			' Keys will be matched against gtk master/slave input device info'
+				' ("name" as a regexp, others - exact match),'
+				' all specified values must match one device uniquely.'
+			' Default is to match "Virtual core keyboard" master device.'
+			' Example: "name: my-keyboard, vid: 1234"')
+
+	parser.add_argument('-c', '--cursor-pos',
+		type=int, metavar='pos', default=0,
+		help='Initial cursor position in each row. Default: %(default)s')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	import logging
+	logging.basicConfig(
+		format='%(asctime)s :: %(levelname)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = logging.getLogger()
+
+	dev_match = yaml.safe_load(opts.dev_match or '')
+
+	log.debug('Starting application...')
+	DisplayApp(
+		text=sys.stdin.read(), dev_match=dev_match,
+		cursor_pos=opts.cursor_pos ).run()
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())

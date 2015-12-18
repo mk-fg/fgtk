@@ -1733,6 +1733,18 @@ when one wants to set it to a specific value.
 Also has special ``+all`` and ``-all`` switches to enable/disable all events and
 prints the whole wakeup-table if ran without arguments.
 
+olaat
+'''''
+
+"one-letter-at-a-time" script to display (via gtk3/gi) a semi-transparent
+overlay with lines from stdin, which one can navigate up/down and left/right wrt
+highlighted characters.
+
+Useful to do any kind of letter-by-letter checks and stuff manually.
+
+Can also be an example code / stub for composited screen overlays with input
+grab.
+
 
 
 VM
