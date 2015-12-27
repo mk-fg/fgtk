@@ -1,0 +1,186 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import itertools as it, operator as op, functools as ft
+from collections import namedtuple
+from contextlib import contextmanager
+import os, sys, random
+
+
+class Colors(object):
+
+	def __metaclass__(cn, cp, ca):
+		colors = dict((k, '\033[{}m'.format(c)) for k,c in ca.viewitems() if isinstance(c, int))
+		ca.update(colors)
+		ca['colors'] = colors
+		return type(cn, cp, ca)
+
+	none = 39
+
+	black= 30
+	red = 31
+	green = 32
+	yellow = 33
+	blue = 34
+	magenta = 35
+	cyan = 36
+	white = 37
+
+	light_black = 90
+	light_red = 91
+	light_green = 92
+	light_yellow = 93
+	light_blue = 94
+	light_magenta = 95
+	light_cyan = 96
+	light_white = 97
+
+	def __init__(self, use_colors=None):
+		if use_colors is None: use_colors = self.stdout.istty()
+		if not use_colors:
+			for k in self.colors:
+				self.colors[k] = ''
+				setattr(self, k, '')
+
+	def __iter__(self): return iter(self.colors_iter())
+
+	def colors_iter(self, seed=None, exclude=['black']):
+		state = seed_state = None
+		color_pool = set(self.colors.keys()).difference(exclude or list())
+		while True:
+			colors = list(color_pool)
+			if seed:
+				state = random.getstate()
+				if seed_state: random.setstate(seed_state)
+				else: random.seed(seed)
+			try:
+				random.shuffle(colors)
+				if seed: seed_state = random.getstate()
+			finally:
+				if state: random.setstate(state)
+			for c in colors: yield c
+
+	def wrap(self, line, c, reset=True):
+		line = getattr(self, c, c) + line
+		if reset: line += self.none
+		return line
+
+
+Line = namedtuple('Line', 'raw split ts prefix color consume')
+
+class SrcFile(object):
+
+	_src = _buff = None
+	class _buff_used(Exception): pass
+
+	@classmethod
+	@contextmanager
+	def multiple(cls, paths, colors_iter=None, **kws):
+		if 'prefix' not in kws:
+			pre = len(os.path.commonprefix(paths))
+			post = len(os.path.commonprefix(list(
+				''.join(reversed(p[pre:])) for p in paths )))
+		else: pre = post = None
+		files = list()
+		for p in paths:
+			p_kws = kws.copy()
+			if colors_iter and 'color' not in p_kws: p_kws['color'] = next(colors_iter)
+			if pre: p_kws['prefix'] = p[pre:-post]
+			files.append(cls(p, **p_kws))
+		try: yield list(f.__enter__() for f in files)
+		finally: list(f.__exit__(None, None, None) for f in files)
+
+	def __init__(self, path, ts_field=1, prefix=None, color=None):
+		if ts_field <= 0: ts_field = 1
+		self.n, self.path, self.ts_field = 0, path, ts_field-1
+		self.prefix, self.color = prefix, color
+
+	def close(self):
+		if self._src:
+			self._src.close()
+			self._src = None
+
+	def __enter__(self):
+		self._src = open(self.path, 'rb')
+		return self
+	def __exit__(self, err_t, err, err_tb): self.close()
+	def __del__(self): self.close()
+
+	@contextmanager
+	def readline(self):
+		if not self._buff and self._src:
+			line = self._src.readline() or None
+			self.n += 1
+			if line:
+				ls = line.strip().split()
+				line = Line( line, ls,
+					ls[self.ts_field] if len(ls) > self.ts_field else None,
+					self.prefix, self.color, ft.partial(self.consume, self.n) )
+			else: self.close()
+			self._buff = line
+		try: yield self._buff
+		except self._buff_used: self._buff = None
+
+	def consume(self, n=None):
+		if n is not None and n != self.n: return
+		self._buff = None
+
+	def get_line(self, consume=False):
+		with self.readline() as line:
+			if consume: raise self._buff_used
+			return line
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to interleave and colorize timestamped lines from several files.'
+			' Contents of files must be pre-sorted by the timestamp filed (see --ts-field).')
+	parser.add_argument('file', nargs='+', metavar='path', help='Paths to files to process.')
+
+	parser.add_argument('-k', '--ts-field',
+		type=int, metavar='number-from-1-to-N', default=1,
+		help='Field (separated by whitespace) to sort'
+				' resulting output by, i.e. one that contains the timestamp.'
+			' "1" or "0" is the first field, "2" is the second one, etc.'
+			' Lines with that field missing printed as soon as they are encountered.'
+			' Default: %(default)s')
+
+	parser.add_argument('-f', '--add-file-prefix', action='store_true',
+		help='Add shortest-unique file prefix to before each printed line.')
+
+	parser.add_argument('-c', '--use-colors', action='store_true',
+		help='Use colors in the output. Default is to use depending on isatty().')
+	parser.add_argument('-n', '--no-colors', action='store_true',
+		help='Do not use colors in the output. Default is to use depending on isatty().')
+	parser.add_argument('-s', '--color-seed',
+		help='Random seed to use for picking colors instead of input file paths.')
+	parser.add_argument('-l', '--line-buffering', action='store_true',
+		help='Force line-buffered output. Should be default for ttys.')
+
+	opts = parser.parse_args(args)
+
+	if opts.use_colors and opts.no_colors:
+		parser.error('Both --use-colors and --no-colors cannot be specified at the same time.')
+	if opts.line_buffering: sys.stdout = os.fdopen(sys.stdout.fileno(), 1)
+
+	cs = Colors(opts.use_colors if not opts.no_colors else False)
+	cs_iter = cs.colors_iter(opts.color_seed or frozenset(opts.file))
+
+	with SrcFile.multiple(opts.file, colors_iter=cs_iter, ts_field=opts.ts_field) as srcs:
+		ts = None
+		while True:
+			lines = sorted(filter(None, map(
+				op.methodcaller('get_line'), srcs )), key=op.attrgetter('ts'))
+			if not lines: break
+			line = lines[0]
+			out = '{}\n'.format(line.raw.rstrip())
+			if opts.add_file_prefix and line.prefix:
+				out = '{}: {}'.format(line.prefix, out)
+			try: sys.stdout.write(cs.wrap(out, line.color))
+			except (IOError, KeyboardInterrupt): break
+			if line.ts: ts = line.ts
+			line.consume()
+
+if __name__ == '__main__': sys.exit(main())

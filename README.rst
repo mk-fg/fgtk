@@ -430,6 +430,27 @@ option) would be aliased neatly to "hz", hence the script name.
 Defaults to reading ALL lines, not just arbitrary number (like 10, which is
 default for regular "head")!
 
+liac
+''''
+
+"Log Interleaver And Colorizer" python script.
+
+Reads lines from multiple files, ordering them by the specified field in the
+output (default - first field, e.g. ISO8601 timestamp) and outputs each with
+(optional) unique-filename-part prefix and unique (ansi-terminal, per-file)
+color.
+
+Most useful for figuring out sequence of events from multiple timestamped logs.
+
+To have safely-rotated logs with nice timestamps from any arbitrary command's
+output, something like ``stdbuf -oL <command-and-args> | svlogd -r _ -ttt
+<log-dir>`` can be used.
+Note "stdbuf" coreutils tool, used there to tweak output buffering, which
+usually breaks such timestamps, and "svlogd" from runit_ suite (no deps, can be
+built separately).
+
+.. _runit: http://smarden.org/runit/
+
 
 
 dev
