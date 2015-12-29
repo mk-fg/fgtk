@@ -435,6 +435,9 @@ liac
 
 "Log Interleaver And Colorizer" python script.
 
+.. figure:: http://blog.fraggod.net/images/liac_interleaved_colorized_output.jpg
+   :alt: interleaved_and_colorized_output_image
+
 Reads lines from multiple files, ordering them by the specified field in the
 output (default - first field, e.g. ISO8601 timestamp) and outputs each with
 (optional) unique-filename-part prefix and unique (ansi-terminal, per-file)
@@ -449,7 +452,10 @@ Note "stdbuf" coreutils tool, used there to tweak output buffering, which
 usually breaks such timestamps, and "svlogd" from runit_ suite (no deps, can be
 built separately).
 
+See `blog post about liac tool`_ for more info.
+
 .. _runit: http://smarden.org/runit/
+.. _blog post about liac tool: http://blog.fraggod.net/2015/12/29/tool-to-interleave-and-colorize-lines-from-multiple-log-or-any-other-files.html
 
 
 
