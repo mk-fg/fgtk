@@ -1,9 +1,22 @@
 #!/bin/bash
 
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin image_path_or_url [path_or_url...]"
+	echo >&2 "Usage: TOTTY_X=n $bin ..."
+	echo >&2
+	echo >&2 "Display image or url in a terminal using img2xterm."
+	echo >&2 "Optional TOTTY_X env var allows to"
+	echo >&2 " specify terminal width, instead of using stty to get it."
+	exit ${1:-0}
+}
+[[ "$1" = -h || "$1" = --help ]] && usage
+
+
 dst=/tmp/media.img2tty.png
-if [[ -z "$TOTTY_X" || -z "$TOTTY_Y" ]]
+if [[ -z "$TOTTY_X" ]]
 then read tty_rows tty_cols < <(stty size)
-else tty_cols=$TOTTY_X tty_rows=$TOTTY_Y
+else tty_cols=$TOTTY_X
 fi
 err=0
 
@@ -18,7 +31,7 @@ for p in "$@"; do
 	[[ "$ct" =~ ^image/ ]]\
 		|| { echo >&2 "Unknown content type ($ct): $p"; err=1; continue; }
 	[[ "$#" -gt 1 ]] && echo "--- $p"
-	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm -p "$dst" || err=1
+	convert "$p" -resize "${tty_cols}"x "$dst" && img2xterm "$dst" || err=1
 done
 
 rm -f "$dst"
