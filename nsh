@@ -3,7 +3,7 @@
 usage() {
 	bin=$(basename $0)
 	echo >&2 "Usage: $bin [ -l | --list | --ls ]"
-	echo >&2 "Usage: $bin machine"
+	echo >&2 "Usage: $bin [ -p | --pid ] machine"
 	exit ${1:-0}
 }
 [[ "$1" = -h || "$1" = --help ]] && usage
@@ -12,6 +12,11 @@ usage() {
 	ps -eo machine= | grep -v '^-$' | sort -u
 	exit $?
 }
+
+pid_only=
+[[ "$1" = -p || "$1" = --pid ]] && { pid_only=t; shift; }
+
+[[ "$#" -ne 1 ]] && usage 1
 
 
 set -e -o pipefail
@@ -27,5 +32,7 @@ ns_init_pid=( $( ps -eo pid,machine,comm,args |
 	ps -eo pid,machine,args | awk '$2=="'"$1"'"'
 	exit 1
 }
+
+[[ -z "$pid_only" ]] || { echo "${ns_init_pid[0]}"; exit 0; }
 
 exec nsenter --target "${ns_init_pid[0]}" --mount --uts --ipc --net --pid /bin/su -
