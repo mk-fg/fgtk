@@ -109,8 +109,9 @@ def dump(elm, indent=0):
 	node = [elm.__class__.__name__, elm.name]
 	if isinstance(elm, Group):
 		if elm.key: bol = ' '*indent*4 + elm.key + '\n'
-		if elm.name.strip('"') in [ 'E_Remember',
-			'E_Exehist_Item', 'Comp_Match', 'E_Config_Randr' ]: return ''
+		if elm.name.strip('"') in [
+			'E_Remember', 'E_Exehist_Item', 'Comp_Match',
+			'E_Config_Randr', 'E_Config_Randr2', 'Systray_Config' ]: return ''
 		contents = '{{\n{}{}}}'.format(contents, ' '*indent*4)
 	elif isinstance(elm, Value):
 		if elm.name == '"file"'\
