@@ -9,11 +9,12 @@ import os, sys, re, codecs
 def parse_cli( argv=sys.argv,
 		_flags='a', _actions={'clean', 'smudge', 'mangle', 'unmangle'} ):
 	# Yeah, argparse rocks ;)
-	if not argv[1:]:
+	if not argv[1:] or argv[1] in ['-h', '--help']:
 		print(( 'Usage: {} [ space_num [ flags ] ]'
-			' ( clean | smudge | mangle | unmangle ) path' ).format(argv[0]), file=sys.stderr)
+			' {{ clean | smudge | mangle | unmangle }} path' ).format(argv[0]), file=sys.stderr)
 		print('Flags:\n'
-			'  a - remove or replace alignment spaces (non-divisable by indent).',
+			'  a - remove or replace (if there are more than half-indent\n'
+			'      of these) alignment spaces (non-divisible by indent).',
 			file=sys.stderr )
 		sys.exit(1)
 	convert, flags = 4, ''
