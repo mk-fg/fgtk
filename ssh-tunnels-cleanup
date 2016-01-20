@@ -1,0 +1,41 @@
+#!/bin/bash
+
+prefix=tun- kill=
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [ -l | --list | --ls ]  [ prefix ]"
+	echo >&2 "Usage: $bin { -k | --kill } [ prefix ]"
+	echo >&2
+	echo >&2 "Detects/kills all user sshd pids created for 'ssh -R'"
+	echo >&2 " tunnels, that have no listening socket associated with them."
+	echo >&2 "Default prefix for user of these pids is"
+	echo >&2 " '${prefix}', so e.g. '${prefix}user' pids will be detected/killed."
+	echo >&2 "'kill' is used without any extra args, i.e. just SIGTERM."
+	exit ${1:-0}
+}
+[[ "$1" = -h || "$1" = --help ]] && usage
+[[ "$1" = -l || "$1" = --list || "$1" = --ls ]] && shift
+[[ "$1" = -k || "$1" = --kill ]] && { kill=t; shift; }
+[[ -z "$1" ]] || prefix=$1
+[[ -z "$1" ]] || usage 1
+
+
+set -e -o pipefail
+
+diff() {
+	# Usage: diff a1 a2
+	# Prints elemements in a1 that are not in a2, assuming no duplicate values in each
+	comm -23 <(printf '%s\n' "${!1}" | sort -u) <(printf '%s\n' "${!2}" | sort -u)
+}
+
+user_pids=( $(ps ax -o pid=,cmd= | awk '/sshd: '"$prefix"'/&&!/( awk |\[priv\]$)/ {print $1}') )
+sshd_socket_pids=( $(ss -tnlp | awk 'match($0,/users:\(\("sshd",pid=([0-9]+),/,a) {print a[1]}') )
+hung_pids=( $(diff user_pids[@] sshd_socket_pids[@]) )
+
+[[ ${#hung_pids[@]} -ne 0 ]] || exit 0
+
+if [[ -z "$kill" ]]
+then echo "${hung_pids[@]}"
+else kill "${hung_pids[@]}"
+fi

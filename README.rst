@@ -1226,6 +1226,24 @@ tty-related should work fine afterwards.
 
 If run without argument or with -l/--list option, will list running machines.
 
+ssh-tunnels-cleanup
+^^^^^^^^^^^^^^^^^^^
+
+Script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
+don't have a listening socket associated with them.
+
+These seem to be happening when ssh client suddenly dies and reconnects to
+create new tunnel too fast - old pid still hogs listening socket and new one
+fails to create one, but does not fail as a client, creating a weird situation
+where e.g. "ssh -R" client connects just fine but does not do what it actually
+should.
+
+Only picks sshd pids for users with specific prefix, e.g. "tun-" by default, to
+be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
+
+Simple "ps" + "ss" + "awk" checks, comparing the output of two and feeding
+resulting list to stdout or "kill" directly.
+
 
 
 desktop
