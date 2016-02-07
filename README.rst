@@ -1344,16 +1344,17 @@ images is kinda amazing, given tty limitations.
 
 .. _img2xterm: https://github.com/rossy2401/img2xterm
 
-audio\_split
-''''''''''''
+split
+'''''
 
-Simple bash script to split media files with any audio into chunks of specified
-length (in minutes), e.g.: ``audio_split some-long-audiobook.mp3 sla 20`` will
-produce 20-min-long sla-001.mp3, sla-002.mp3, sla-003.mp3, etc. Last length arg
-can be omitted, and defaults to 15 min.
+Simple bash script to split media files into chunks of specified length (in
+minutes), e.g.: ``split some-long-audiobook.mp3 sla 20`` will produce
+20-min-long sla-001.mp3, sla-002.mp3, sla-003.mp3, etc.
+Last length arg can be omitted, and defaults to 15 min.
 
-Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn" to grab
-the chunks from source file.
+Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
+(default, changed by passing these after duration arg) to grab only audio chunks
+from the source file.
 
 audio\_split\_m4b
 '''''''''''''''''
