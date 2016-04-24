@@ -20,6 +20,9 @@ mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache']
 #     args_wrapper: ['--mute-regexp=^\[RMN\]', '--recode-from=latin-1']
 #   etnfm:
 #     url_pls: 'http://ch1relay1.etn.fm:8100/listen.pls?sid=1'
+#   soma:
+#     template: true
+#     url_pls: 'http://somafm.com/{}.pls'
 #   difm:
 #     # use as e.g. "difm.vocaltrance" (to template "vocaltrance" into urls)
 #     template: true
