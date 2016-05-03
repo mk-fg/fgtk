@@ -23,7 +23,7 @@ src=$1 prefix=$2
 shift; shift; shift;
 
 
-if [[ ${#opts[@]} -ge 1 ]]
+if [[ $# -ge 1 ]]
 then
 	opts=( "$@" )
 	[[ "${opts[0]}" != - ]] || opts=( "${opts[@]:1}" )

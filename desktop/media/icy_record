@@ -64,7 +64,7 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Follow specified icy (shoutcast/icecast/*cast)'
-				' stream and dump individual tracks from it to a separate files.')
+			' stream and dump individual tracks from it to a separate files.')
 	parser.add_argument('url', help='URL of an http stream to process.')
 	parser.add_argument('-d', '--dir', metavar='path',
 		help='Directory to store tracks in (default: current dir).')
