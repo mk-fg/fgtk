@@ -5,11 +5,12 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from subprocess import check_output, Popen, PIPE
 from contextlib import contextmanager, closing
-import tempfile, stat
-import os, sys, re, logging
+import tempfile, stat, time
+import os, sys, re, logging, glob
 
 from twisted.internet import reactor, protocol, defer, task, error
 from twisted.python import log as twisted_log
+from twisted.python.filepath import FilePath
 from twisted.conch.endpoints import SSHCommandClientEndpoint
 
 
@@ -50,7 +51,9 @@ def main(reactor, *args):
 	import argparse
 	parser = argparse.ArgumentParser(description='Mikrotik router backup app.')
 
-	parser.add_argument('dst_path', help='Path to file to write resulting dump to.')
+	parser.add_argument('dst_path',
+		help='Path to file to write resulting dump to.'
+			' Will be rotated according to specified options, if exists.')
 
 	parser.add_argument('-r', '--router', metavar='host',
 		help='IP or hostname of router device to backup.'
@@ -65,6 +68,9 @@ def main(reactor, *args):
 		nargs='?', default=False,
 		help='Compress resulting file with gzip (default)'
 			' or any other binary specified with this option.')
+	parser.add_argument('-n', '--rotate', type=int, default=9,
+		help='Number of old files to keep around with date-suffix.'
+			'Setting to 0 will disable the feature, i.e. only latest file will be available.')
 
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(args)
@@ -112,5 +118,13 @@ def main(reactor, *args):
 				log.error( 'Compression command (%s)'
 					' exited with non-zero code: %s', opts.compress, err )
 				raise SystemExit(1)
+		if opts.rotate > 0:
+			p = FilePath(opts.dst_path)
+			if p.exists():
+				ts = p.getModificationTime()
+				p.moveTo(FilePath('{}.{}'.format( opts.dst_path,
+					time.strftime('%Y-%m-%d_%H%M%S', time.localtime(ts)) )))
+			ps = map(FilePath, sorted(glob.glob('{}.*'.format(opts.dst_path)), reverse=True))
+			while len(ps) > (opts.rotate + 1): ps.pop().remove() # +1 for tmp file
 
 if __name__ == '__main__': task.react(main, sys.argv[1:])
