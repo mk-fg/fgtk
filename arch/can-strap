@@ -43,10 +43,9 @@ pacstrap "$@" -c -C "$pacman_conf" -d "$can" "${can_sets[@]}"
 cp -a /etc/localtime "$can"/etc/
 
 confs=()
-for conf in /etc/{profile,locale.gen,locale.conf,screenrc,nanorc,gitconfig}
-do [[ ! -e "$conf" ]] || confs+=( "$conf" )
+for conf in /etc/{profile,locale.gen,locale.conf,screenrc,nanorc,gitconfig,pacman.d/mirrorlist}
+do [[ ! -e "$conf" ]] || rsync -aL "$conf" "$can$conf"
 done
-rsync -aL "${confs[@]}" "$can"/etc/
 
 chsh_cmd=true
 [[ "${SHELL##*/}" != zsh ]] || {
