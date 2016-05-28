@@ -1291,6 +1291,26 @@ pa\_mute
 
 Simple script to toggle mute for all pluseaudio streams from a specified pid.
 
+pa\_modtoggle
+'''''''''''''
+
+Script to toggle - load or unload - pulseaudio module.
+
+For example, to enable/disable forwarding sound over network (e.g. to be played
+in vlc as rtp://224.0.0.56:9875)::
+
+  % pa_modtoggle module-rtp-send \
+    source=alsa-speakers.monitor destination=224.0.0.56 port=9875
+  Loaded: [31] module-rtp-send source=alsa-speakers.monitor destination=224.0.0.56 port=9875
+
+Same exact command will unload the module (matching it by module name only), if necessary.
+
+Optional -s/--status flag can be used to print whether module is currently loaded.
+
+Uses/requires `pulsectl module`_, Python-3.
+
+.. _pulsectl module: https://github.com/mk-fg/python-pulse-control/
+
 mpv\_icy\_track\_history
 ''''''''''''''''''''''''
 
