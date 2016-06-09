@@ -1,0 +1,39 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin n_first n_last"
+	echo >&2
+	echo >&2 "Download videos for youtube channel to the current dir"
+	echo >&2 " (from n_first to n_last) in reverse order to how they're listed"
+	echo >&2 " in the metadata cache file (usually latest-to-oldest)."
+	echo >&2 "Run in an empty dir with any numbers to get more info on how"
+	echo >&2 " to get metadata cache file (list of yt json manifests, one per line)."
+	echo >&2 "Numbers (n_first, n_last) are inclusive, 1-indexed."
+	exit ${1:-0}
+}
+[[ -z "$1" || "$#" -ne 2 || "$1" = -h || "$1" = --help ]] && usage
+
+set -o pipefail
+err=
+ytdl_opts=( ) # use ~/.config/youtube-dl/config
+chan_cache=_meta.json
+
+[[ ! -e "$chan_cache" ]] && {
+	echo >&2 "Create '$chan_cache' file with command like this one:"
+	echo >&2 "  youtube-dl -sj 'ytuser:TheGreatWar' >$chan_cache"
+	exit 1
+}
+
+while read n u; do
+	echo " ------ Fetching video $n"
+	youtube-dl\
+			--no-overwrites --restrict-filenames\
+			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u"\
+		|| err="ERROR (last one only): n=$n code=$?"
+done < <(
+	jq -r '.webpage_url' "$chan_cache" |
+		tac | cat -n | sed -n "$1,$2 p" )
+
+err=${err:-done}
+echo " ------ $err"

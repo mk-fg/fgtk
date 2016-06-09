@@ -1458,6 +1458,31 @@ General usage examples (wrapped)::
 .. _aria2: http://aria2.sourceforge.net/
 .. _this twitchtv-vods-... blog post: http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
 
+ytdl-chan
+'''''''''
+
+Bash wrapper script around youtube-dl_ tool to download numbered range of videos
+(from n_first to n_last) for youtube channel in reverse order to how they're
+listed in the metadata cache file (usually latest-to-oldest, hence reverse
+order).
+
+Basically a thing to binge-watch everything from some channel, in order, without
+instantly running out of disk space.
+
+Usage is simply ``ytdl-chan 1 10`` to e.g. download 10 (1st to 10th) oldest
+videos (numbers are inclusive, 1-indexed) on the channel to the current dir,
+numbering them accordingly (``001__sometitle.mp4``, ``002__...``, etc).
+
+Run in an empty dir with any numbers to get more info on how to get metadata
+cache file (list of yt json manifests, one per line).
+
+Be sure to use ``~/.config/youtube-dl/config`` for any ytdl opts, as necessary,
+or override these via env / within a script.
+
+Requires youtube-dl_ and `jq <https://stedolan.github.io/jq/>`_ (to parse URLs
+from json).
+
+
 notifications
 ^^^^^^^^^^^^^
 
