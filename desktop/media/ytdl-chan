@@ -2,7 +2,10 @@
 
 usage() {
 	bin=$(basename $0)
-	echo >&2 "Usage: $bin n_first n_last"
+	echo >&2 "Usage:"
+	echo >&2 "  $bin n_first [ n_last ]"
+	echo >&2 "  $bin { -l | --list }"
+	echo >&2 "  $bin [ -h | --help ]"
 	echo >&2
 	echo >&2 "Download videos for youtube channel to the current dir"
 	echo >&2 " (from n_first to n_last) in reverse order to how they're listed"
@@ -12,7 +15,7 @@ usage() {
 	echo >&2 "Numbers (n_first, n_last) are inclusive, 1-indexed."
 	exit ${1:-0}
 }
-[[ -z "$1" || "$#" -ne 2 || "$1" = -h || "$1" = --help ]] && usage
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
 
 set -o pipefail
 err=
@@ -25,6 +28,13 @@ chan_cache=_meta.json
 	exit 1
 }
 
+[[ "$1" = -l || "$1" = --list ]] && {
+	[[ "$#" -ne 1 ]] && usage 1
+	jq -r '.fulltitle' "$chan_cache" | tac | cat -n
+	exit
+}
+
+a=$1 b=${2:-9999}
 while read n u; do
 	echo " ------ Fetching video $n"
 	youtube-dl\
@@ -33,7 +43,7 @@ while read n u; do
 		|| err="ERROR (last one only): n=$n code=$?"
 done < <(
 	jq -r '.webpage_url' "$chan_cache" |
-		tac | cat -n | sed -n "$1,$2 p" )
+		tac | cat -n | sed -n "$a,$b p" )
 
 err=${err:-done}
 echo " ------ $err"
