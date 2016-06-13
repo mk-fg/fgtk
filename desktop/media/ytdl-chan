@@ -5,6 +5,7 @@ usage() {
 	echo >&2 "Usage:"
 	echo >&2 "  $bin n_first [ n_last ]"
 	echo >&2 "  $bin { -l | --list }"
+	echo >&2 "  $bin { -i | --info | -m | --meta } n"
 	echo >&2 "  $bin [ -h | --help ]"
 	echo >&2
 	echo >&2 "Download videos for youtube channel to the current dir"
@@ -31,6 +32,12 @@ chan_cache=_meta.json
 [[ "$1" = -l || "$1" = --list ]] && {
 	[[ "$#" -ne 1 ]] && usage 1
 	jq -r '.fulltitle' "$chan_cache" | tac | cat -n
+	exit
+}
+
+[[ "$1" = -i || "$1" = --info || "$1" = -m || "$1" = --meta ]] && {
+	[[ "$#" -ne 2 ]] && usage 1
+	tac "$chan_cache" | sed -n "$2 p" | jq -CS .
 	exit
 }
 
