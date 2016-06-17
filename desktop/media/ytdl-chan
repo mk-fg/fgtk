@@ -3,17 +3,27 @@
 usage() {
 	bin=$(basename $0)
 	echo >&2 "Usage:"
-	echo >&2 "  $bin n_first [ n_last ]"
-	echo >&2 "  $bin { -l | --list }"
-	echo >&2 "  $bin { -i | --info | -m | --meta } n"
-	echo >&2 "  $bin [ -h | --help ]"
 	echo >&2
-	echo >&2 "Download videos for youtube channel to the current dir"
-	echo >&2 " (from n_first to n_last) in reverse order to how they're listed"
-	echo >&2 " in the metadata cache file (usually latest-to-oldest)."
-	echo >&2 "Run in an empty dir with any numbers to get more info on how"
-	echo >&2 " to get metadata cache file (list of yt json manifests, one per line)."
-	echo >&2 "Numbers (n_first, n_last) are inclusive, 1-indexed."
+	echo >&2 "  $bin n_first [ n_last ]"
+	echo >&2 "    Download videos for youtube channel to the current dir"
+	echo >&2 "     (from n_first to n_last) in same order to how they're"
+	echo >&2 "     listed in the metadata cache file (e.g. oldest-to-latest)."
+	echo >&2 "    Run in an empty dir with any numbers to get more info on how to"
+	echo >&2 "     get metadata cache file (list of yt json manifests, one per line)."
+	echo >&2 "    Numbers (n_first, n_last) are inclusive, 1-indexed."
+	echo >&2
+	echo >&2 "  $bin { -r | --reverse-sort | --tac }"
+	echo >&2 "    Reverse order of lines in the metadata file."
+	echo >&2 "    Useful for 'ytuser:chan-name' meta dumps,"
+	echo >&2 "     which are usually in latest-to-oldest order."
+	echo >&2
+	echo >&2 "  $bin { -l | --list }"
+	echo >&2 "    List titles from metadata cache file."
+	echo >&2
+	echo >&2 "  $bin { -i | --info | -m | --meta } n"
+	echo >&2 "    Dump metadata for video, specified by its sequence number."
+	echo >&2
+	echo >&2 "  $bin [ -h | --help ]"
 	exit ${1:-0}
 }
 [[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
@@ -31,13 +41,19 @@ chan_cache=_meta.json
 
 [[ "$1" = -l || "$1" = --list ]] && {
 	[[ "$#" -ne 1 ]] && usage 1
-	jq -r '.fulltitle' "$chan_cache" | tac | cat -n
+	jq -r '.fulltitle' "$chan_cache" | cat -n
+	exit
+}
+
+[[ "$1" = -r || "$1" = --reverse-sort || "$1" = --tac ]] && {
+	[[ "$#" -ne 1 ]] && usage 1
+	tac "$chan_cache" >"$chan_cache".new && mv "$chan_cache"{.new,}
 	exit
 }
 
 [[ "$1" = -i || "$1" = --info || "$1" = -m || "$1" = --meta ]] && {
 	[[ "$#" -ne 2 ]] && usage 1
-	tac "$chan_cache" | sed -n "$2 p" | jq -CS .
+	sed -n "$2 p" "$chan_cache" | jq -CS .
 	exit
 }
 
@@ -48,9 +64,7 @@ while read n u; do
 			--no-overwrites --restrict-filenames\
 			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u"\
 		|| err="ERROR (last one only): n=$n code=$?"
-done < <(
-	jq -r '.webpage_url' "$chan_cache" |
-		tac | cat -n | sed -n "$a,$b p" )
+done < <(jq -r '.webpage_url' "$chan_cache" | cat -n | sed -n "$a,$b p")
 
 err=${err:-done}
 echo " ------ $err"
