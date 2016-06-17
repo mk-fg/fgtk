@@ -12,6 +12,9 @@ usage() {
 	echo >&2 "     get metadata cache file (list of yt json manifests, one per line)."
 	echo >&2 "    Numbers (n_first, n_last) are inclusive, 1-indexed."
 	echo >&2
+	echo >&2 "  $bin { -n | --pick } n1 [ n2 ... ]"
+	echo >&2 "    Download specific video(s), specified by their sequence number(s)."
+	echo >&2
 	echo >&2 "  $bin { -r | --reverse-sort | --tac }"
 	echo >&2 "    Reverse order of lines in the metadata file."
 	echo >&2 "    Useful for 'ytuser:chan-name' meta dumps,"
@@ -28,10 +31,12 @@ usage() {
 }
 [[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
 
+
 set -o pipefail
 err=
 ytdl_opts=( ) # use ~/.config/youtube-dl/config
 chan_cache=_meta.json
+
 
 [[ ! -e "$chan_cache" ]] && {
 	echo >&2 "Create '$chan_cache' file with command like this one:"
@@ -57,14 +62,24 @@ chan_cache=_meta.json
 	exit
 }
 
-a=$1 b=${2:-9999}
+
+sed_exp=
+if [[ "$1" = -n || "$1" = --pick ]] ; then
+	[[ "$#" -lt 2 ]] && usage 1
+	shift
+	for n in "$@"; do sed_exp="${sed_exp}${n}p;"; done
+else
+	[[ "$#" -gt 2 ]] && usage 1
+	sed_exp="${1},${2:-9999} p"
+fi
+
 while read n u; do
 	echo " ------ Fetching video $n"
 	youtube-dl\
 			--no-overwrites --restrict-filenames\
 			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u"\
 		|| err="ERROR (last one only): n=$n code=$?"
-done < <(jq -r '.webpage_url' "$chan_cache" | cat -n | sed -n "$a,$b p")
+done < <(jq -r '.webpage_url' "$chan_cache" | cat -n | sed -n "$sed_exp")
 
 err=${err:-done}
 echo " ------ $err"
