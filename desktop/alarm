@@ -289,8 +289,9 @@ def main(args=None):
 			for ts0, ts, pid, msg in sorted(alarms.values()):
 				ts0, ts = (datetime.fromtimestamp(int(ts)) for ts in [ts0, ts])
 				msg = msg.replace('\n', ' // ')
-				if len(msg) > 80: msg = '{} ...[len={}]'.format(msg[:80], len(msg))
-				p('{} :: {} + {} :: {}', pid, ts, naturaltime_diff(ts - ts0), msg)
+				if len(msg) > 80: msg = '{} ...[len={}]'.format(msg[:60], len(msg))
+				p( '{:>7d} :: {} + {} (in {}) :: {}', pid, ts,
+					naturaltime_diff(ts - ts0), naturaltime_diff(ts), msg )
 		if opts.kill:
 			pids = set()
 			for pid in opts.kill:
