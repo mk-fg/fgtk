@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
 from html.parser import HTMLParser
 from os.path import join, dirname, basename
-import os, sys, logging, stat, types, tempfile, math, re, atexit
+import os, sys, errno, logging, stat, types, tempfile, math, re, atexit
 import contextlib, time, subprocess, traceback, signal, fcntl
 
 
@@ -122,8 +122,8 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 @contextlib.contextmanager
 def safe_replacement(path, mode=None):
 	if mode is None:
-		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
-		except OSError: pass
+		with contextlib.suppress(OSError):
+			mode = stat.S_IMODE(os.lstat(path).st_mode)
 	kws = dict(delete=False, dir=dirname(path), prefix=basename(path)+'.')
 	with tempfile.NamedTemporaryFile(**kws) as tmp:
 		try:
@@ -132,8 +132,7 @@ def safe_replacement(path, mode=None):
 			if not tmp.closed: tmp.flush()
 			os.rename(tmp.name, path)
 		finally:
-			try: os.unlink(tmp.name)
-			except OSError: pass
+			with contextlib.suppress(OSError): os.unlink(tmp.name)
 
 @contextlib.contextmanager
 def cleanup_on_err(file_obj):
@@ -220,7 +219,8 @@ def main(args=None):
 	parser.add_argument('-l', '--list', action='store_true',
 		help='List delayed alarms, for which -p/--pid-file option was used, and exit.'
 			' All other options except --kill are ignored with this one.')
-	parser.add_argument('-k', '--kill', const=True, nargs='?', action='append',
+	parser.add_argument('-k', '--kill',
+		const=True, nargs='?', action='append', metavar='pid',
 		help='Kill either specified (by pid) alarm process'
 			' (making sure it is the right pid) or all of the ones that would be printed by --list,'
 			' (i.e. for which --pid-file option was specified), and exit.'
@@ -267,7 +267,11 @@ def main(args=None):
 
 	if opts.list or opts.kill:
 		alarms, pid_dir = dict(), join(tempfile.gettempdir(), pid_file_dir)
-		for fn in os.listdir(pid_dir):
+		try: pids = os.listdir(pid_dir)
+		except OSError as err:
+			if err.errno != errno.ENOENT: raise
+			pids = list()
+		for fn in pids:
 			if not fn.endswith('.pid'): continue
 			pid_file = join(pid_dir, fn)
 			with contextlib.suppress(OSError):
@@ -303,7 +307,7 @@ def main(args=None):
 
 	elif not opts.time: parser.error('"time" argument must be specified.')
 
-	ts_env = os.environ.get('ALARM_AT_TS')
+	pid_files, ts_env = None, os.environ.get('ALARM_AT_TS')
 	if not ts_env:
 		ts0, ts = datetime.now(), parse_timestamp(opts.time)
 		ts_diff = abs(ts - ts0).total_seconds()
@@ -323,8 +327,7 @@ def main(args=None):
 					' process to background (pid: {})'.format(pid or '???'))
 				sys.exit()
 			os.close(r)
-			try: os.setsid()
-			except OSError: pass
+			with contextlib.suppress(OSError): os.setsid()
 			pid = os.fork()
 			if pid:
 				os.write(w, '{}\n'.format(pid).encode())
@@ -346,11 +349,9 @@ def main(args=None):
 				if err: raise RuntimeError('"at" command failed (exit status: {})'.format(err))
 			return
 
-		pid_files = None
 		if opts.pid_file:
 			pid_file = join(tempfile.gettempdir(), pid_file_dir)
-			try: os.makedirs(pid_file)
-			except OSError: pass
+			with contextlib.suppress(OSError): os.makedirs(pid_file)
 			pid_file = join(pid_file, 'alarm-{:08d}'.format(os.getpid()))
 			pid_file, pid_file_msg = ('{}.{}'.format(pid_file, ext) for ext in ['pid', 'msg'])
 			try:
@@ -365,7 +366,7 @@ def main(args=None):
 					pid_file_msg = open(pid_file_msg, 'w')
 					stack.enter_context(cleanup_on_err(pid_file_msg))
 					pid_file_msg.write('{:f} {:f}\n'.format(ts0.timestamp(), ts.timestamp()))
-					pid_file_msg.write(opts.summary or 'notification [{}]'.format(ts0)) # XXX
+					pid_file_msg.write(opts.summary or 'notification [{}]'.format(ts0))
 					pid_file_msg.flush()
 			except OSError as err: log.error('Failed to create/lock pid/msg file(s): {}', err)
 			else: pid_files = [pid_file, pid_file_msg]
@@ -478,7 +479,7 @@ def main(args=None):
 			err = proc.wait()
 			if err: log.error('"wall" subprocess exited with error status: {}', err)
 
-	if pid_file: pid_file_cleanup()
+	if pid_files: pid_file_cleanup()
 
 	return any_fails
 
