@@ -1,12 +1,11 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
-from HTMLParser import HTMLParser
+from html.parser import HTMLParser
 import os, sys, stat, types, tempfile, math, re
 import time, subprocess, traceback, signal
 
@@ -20,14 +19,14 @@ _short_ts_s = dict(
 	s=1, sec=1, second=1 )
 
 def _short_ts_regexp():
-	ts_re = ['^']
-	for k in it.chain(_short_ts_days, _short_ts_s):
-		ts_re.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
+	ts_re = ['^'] + [
+		r'(?P<{0}>\d+{0}\s*)?'.format(k)
+		for k in it.chain(_short_ts_days, _short_ts_s) ]
 	return re.compile(''.join(ts_re), re.I | re.U)
 _short_ts_regexp = _short_ts_regexp()
 
 def parse_timestamp(ts_str):
-	assert isinstance(ts_str, bytes), [type(ts_str), repr(ts_str)]
+	assert isinstance(ts_str, str), [type(ts_str), repr(ts_str)]
 	ts_str = ts_str.replace('_', ' ')
 
 	# Try to parse time offset in short format
@@ -37,7 +36,7 @@ def parse_timestamp(ts_str):
 		parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
 		for units in [_short_ts_days, _short_ts_s]:
 			val = 0
-			for k, v in units.iteritems():
+			for k, v in units.items():
 				try:
 					if not match.group(k): continue
 					n = parse_int(match.group(k))
@@ -64,12 +63,10 @@ def parse_timestamp(ts_str):
 			except ValueError: pass
 	if not ts:
 		# coreutils' "date" parses virtually everything, but is more expensive to use
-		with open(os.devnull, 'w') as devnull:
-			proc = subprocess.Popen(
-				['date', '+%s', '-d', ts_str],
-				stdout=subprocess.PIPE, stderr=devnull, close_fds=True )
-			val = proc.stdout.read()
-			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
+		proc = subprocess.Popen( ['date', '+%s', '-d', ts_str],
+				stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True )
+		val = proc.stdout.read()
+		if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
 
 	if ts: return ts
 	raise ValueError('Unable to parse date/time string: {0}'.format(ts_str))
@@ -83,7 +80,7 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 		if not isinstance(ts, timedelta) else ts )
 
 	res, s = list(), delta.total_seconds()
-	for unit, unit_s in sorted(_units.viewitems(), key=op.itemgetter(1), reverse=True):
+	for unit, unit_s in sorted(_units.items(), key=op.itemgetter(1), reverse=True):
 		val = math.floor(s / float(unit_s))
 		if not val: continue
 		res.append('{:.0f}{}'.format(val, unit))
@@ -135,6 +132,7 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 
 class MLStripper(HTMLParser):
 	def __init__(self):
+		super(MLStripper, self).__init__()
 		self.reset()
 		self.fed = list()
 	def handle_data(self, d): self.fed.append(d)
@@ -195,6 +193,11 @@ def main(args=None):
 	parser.add_argument('-1', '--important', action='store_true',
 		help='If any of the usual notification means fail,'
 			' try email (to current $USER) and wall(1) notifications.')
+	parser.add_argument('-e', '--email', action='store_true',
+		help='Send email as per --important, but always do it,'
+				' regardless of whether other notification means succeed or fail.'
+			' --important still adds e.g. "wall" notification'
+				' fallback if email fails, so not completely with this option.')
 
 	parser.add_argument('-n', '--dry-run', action='store_true',
 		help='Do not queue the actual alarm, stopping after time parsing stage.')
@@ -207,13 +210,13 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
-	p = lambda fmt,*a,**k: print(fmt.format(*a,**k))
+	p = lambda fmt,*a,**k: print(fmt.format(*a,**k), flush=True)
 
 	ts_env = os.environ.get('ALARM_AT_TS')
 	if not ts_env:
 		ts0, ts = datetime.now(), parse_timestamp(opts.time)
 		ts_diff = abs(ts - ts0).total_seconds()
-		if ts_diff < 5: ts, ts_diff = ts0, 0
+		if ts_diff < 2: ts, ts_diff = ts0, 0 # to account for "slightly in the past by now" timestamps
 		if ts0 > ts:
 			parser.error( 'Destination time cannot be in the past'
 				' (parsed {!r} as {}, {})'.format(opts.time, ts, naturaltime_diff(ts, ts0, 'ago')) )
@@ -281,7 +284,7 @@ def main(args=None):
 				'Error while running command:</span>\n' )
 			body_cmd += xml_escape(traceback.format_exc())
 
-	label_len, uname = 14, map(xml_escape, os.uname())
+	label_len, uname = 14, list(map(xml_escape, os.uname()))
 	body = [
 		('Current time', datetime.now()),
 		('Set', '{} (<b>{}</b>)'.format(ts0, naturaltime_diff(ts, ts0, 'ago'))) ]
@@ -322,20 +325,22 @@ def main(args=None):
 		any_fails = True
 		log.exception('Notification delivery failure: %s', err)
 
-	if any_fails and opts.important:
+	if opts.email or (any_fails and opts.important):
 		log.debug('Using fallback notification mechanisms due to --important flag')
-		proc_summary, proc_body = '[Alarm] {} [fallback delivery]'.format(summary), strip_tags(body)
+		proc_summary = ' [fallback delivery]' if not opts.email else ''
+		proc_summary, proc_body = '[Alarm] {}{}'.format(summary, proc_summary), strip_tags(body)
 		proc = subprocess.Popen([ 'mail', '-s', proc_summary,
 			os.environ['USER'] ], stdin=subprocess.PIPE, close_fds=True)
-		proc.stdin.write(proc_body)
+		proc.stdin.write(proc_body.encode())
 		proc.stdin.close()
 		err = proc.wait()
 		if err: log.error('"mail" subprocess exited with error status: %s', err)
-		proc = subprocess.Popen(['wall', '-t', '5'], stdin=subprocess.PIPE, close_fds=True)
-		proc.stdin.write('\n'.join([proc_summary, '', proc_body, '']))
-		proc.stdin.close()
-		err = proc.wait()
-		if err: log.error('"wall" subprocess exited with error status: %s', err)
+		if opts.important:
+			proc = subprocess.Popen(['wall', '-t', '5'], stdin=subprocess.PIPE, close_fds=True)
+			proc.stdin.write('\n'.join([proc_summary, '', proc_body, '']).encode())
+			proc.stdin.close()
+			err = proc.wait()
+			if err: log.error('"wall" subprocess exited with error status: %s', err)
 
 	return any_fails
 
