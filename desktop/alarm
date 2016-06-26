@@ -6,8 +6,34 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
 from html.parser import HTMLParser
-import os, sys, stat, types, tempfile, math, re
-import time, subprocess, traceback, signal
+import os, sys, logging, stat, types, tempfile, math, re
+import time, subprocess, traceback, signal, fcntl
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+class LogPrefixAdapter(LogStyleAdapter):
+	def __init__(self, logger, prefix, extra=None):
+		if isinstance(logger, str): logger = get_logger(logger)
+		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
+		super(LogPrefixAdapter, self).__init__(logger, extra or {})
+		self.prefix = prefix
+	def process(self, msg, kws):
+		super(LogPrefixAdapter, self).process(msg, kws)
+		return '[{}] {}'.format(self.prefix, msg), kws
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
 _short_ts_days = dict(
@@ -97,7 +123,7 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 def safe_replacement(path, mode=None):
 	if mode is None:
 		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
-		except (OSError, IOError): pass
+		except OSError: pass
 	kws = dict( delete=False,
 		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
 	with tempfile.NamedTemporaryFile(**kws) as tmp:
@@ -108,7 +134,7 @@ def safe_replacement(path, mode=None):
 			os.rename(tmp.name, path)
 		finally:
 			try: os.unlink(tmp.name)
-			except (OSError, IOError): pass
+			except OSError: pass
 
 
 _notify_init = False
@@ -144,6 +170,8 @@ def strip_tags(html):
 	return s.get_data()
 
 
+pid_file_dir = '.fg-alarm-pids'
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -172,6 +200,14 @@ def main(args=None):
 		help='Schedule notification as a job via "at" daemon/command.'
 			' This should work with any posix-ish at(1p), and allow for reboot-persistent alarms.'
 			' One issue though is that desktop environment might go stale/away between reboots.')
+
+	parser.add_argument('-p', '--pid-file', action='store_true',
+		help=(
+			'Create pid file for the process in TMPDIR, so that it can be easily tracked.'
+			' All such files will be created in one "{}" directory'
+				' (created under TMPDIR, if does not exists), and have exclusive'
+				' lock held on them while process runs, cleaning-up these files (but not dir) afterwards.'
+			).format(pid_file_dir))
 	# parser.add_argument('-l', '--lock', nargs='?', const=True, metavar='name_or_path',
 	# 	help='Create temporary file on tmpfs upon notification and do not act if it exists already.'
 	# 		' File is not removed, but will probably be cleaned-up eventually'
@@ -206,9 +242,8 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	global log
-	import logging
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
-	log = logging.getLogger()
+	log = get_logger('main')
 
 	p = lambda fmt,*a,**k: print(fmt.format(*a,**k), flush=True)
 
@@ -255,6 +290,23 @@ def main(args=None):
 				if err: raise RuntimeError('"at" command failed (exit status: {})'.format(err))
 			return
 
+		pid_file = None
+		if opts.pid_file:
+			p = os.path.join(tempfile.gettempdir(), pid_file_dir)
+			try: os.makedirs(p)
+			except OSError: pass
+			p = os.path.join(p, 'alarm-{}.pid'.format(os.getpid()))
+			try:
+				pid_file = open(p, 'a+')
+				pid_file.seek(0)
+				pid_file.truncate()
+				pid_file.write('{}\n'.format(os.getpid()))
+				pid_file.flush()
+				fcntl.lockf(pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			except OSError as err:
+				log.error('Failed to create or lock pid-file {!r}: {}', p, err)
+				pid_file = None
+
 		if ts_diff and ts_diff > 0:
 			ts_diff_print = set()
 			signal.signal(signal.SIGQUIT, lambda sig,frm: ts_diff_print.add(True))
@@ -275,7 +327,7 @@ def main(args=None):
 	ts_diff = abs(ts1 - ts).total_seconds()
 	if ts_diff > 60:
 		log.info( 'Detected significant deviation from'
-			' expected wake-up time: %ss (expected: %s, actual: %s)', ts_diff, ts, ts1 )
+			' expected wake-up time: {}s (expected: {}, actual: {})', ts_diff, ts, ts1 )
 	ts = ts1
 
 	summary = ( opts.summary
@@ -317,7 +369,7 @@ def main(args=None):
 		if opts.notification_sound:
 			try: proc = Popen(['canberra-gtk-play', '-i', opts.notification_sound])
 			except Exception as err:
-				log.exception('Failed to start "canberra-gtk-play" subprocess: %s', err)
+				log.exception('Failed to start "canberra-gtk-play" subprocess: {}', err)
 				any_fails = True
 
 		notify(
@@ -329,11 +381,11 @@ def main(args=None):
 		if proc:
 			err = proc.wait()
 			if err:
-				log.error('"canberra-gtk-play" subprocess exited with error status: %s', err)
+				log.error('"canberra-gtk-play" subprocess exited with error status: {}', err)
 				any_fails = True
 	except Exception as err:
 		any_fails = True
-		log.exception('Notification delivery failure: %s', err)
+		log.exception('Notification delivery failure: {}', err)
 
 	if opts.email or (any_fails and opts.important):
 		log.debug('Using fallback notification mechanisms due to --important flag')
@@ -344,13 +396,18 @@ def main(args=None):
 		proc.stdin.write(proc_body.encode())
 		proc.stdin.close()
 		err = proc.wait()
-		if err: log.error('"mail" subprocess exited with error status: %s', err)
+		if err: log.error('"mail" subprocess exited with error status: {}', err)
 		if opts.important:
 			proc = subprocess.Popen(['wall', '-t', '5'], stdin=subprocess.PIPE, close_fds=True)
 			proc.stdin.write('\n'.join([proc_summary, '', proc_body, '']).encode())
 			proc.stdin.close()
 			err = proc.wait()
-			if err: log.error('"wall" subprocess exited with error status: %s', err)
+			if err: log.error('"wall" subprocess exited with error status: {}', err)
+
+	if pid_file:
+		pid_file.close()
+		try: os.unlink(pid_file.name)
+		except OSError as err: log.debug('Failed to remove pid-file {!r}: {}', p, err)
 
 	return any_fails
 
