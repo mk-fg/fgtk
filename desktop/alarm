@@ -225,10 +225,20 @@ def main(args=None):
 		if opts.dry_run: sys.exit()
 
 		if opts.fork:
-			if os.fork(): sys.exit()
+			r, w = os.pipe()
+			if os.fork():
+				pid = os.fdopen(r).readline().strip()
+				print('Forked notification'
+					' process to background (pid: {})'.format(pid or '???'))
+				sys.exit()
+			os.close(r)
 			try: os.setsid()
 			except OSError: pass
-			if os.fork(): sys.exit()
+			pid = os.fork()
+			if pid:
+				os.write(w, '{}\n'.format(pid).encode())
+				sys.exit()
+			os.close(w)
 
 		if opts.at:
 			os.environ['ALARM_AT_TS'] = '{} {}'.format(
