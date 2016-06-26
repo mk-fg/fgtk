@@ -1806,8 +1806,9 @@ Currently only uses desktop notifications, libcanberra sounds (optional),
 mail/wall (optional fallbacks) and/or runs whatever commands (use e.g. "zenity"
 to create modal windows or "wall" for terminal broadcasts).
 
-For persistent notifications (between reboots and such), there's an --at option
-to use at(1p) daemon.
+Can keep track of pending alarms if -p/--pid-file option is used (see also
+-l/-list and -k/--kill opts), for persistent notifications (between reboots and
+such), there's an --at option to use at(1p) daemon.
 
 Python-3, needs python-gobject ("gi" module) for desktop notifications.
 

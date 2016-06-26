@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
 from html.parser import HTMLParser
-import os, sys, logging, stat, types, tempfile, math, re
-import time, subprocess, traceback, signal, fcntl
+from os.path import join, dirname, basename
+import os, sys, logging, stat, types, tempfile, math, re, atexit
+import contextlib, time, subprocess, traceback, signal, fcntl
 
 
 class LogMessage(object):
@@ -119,13 +119,12 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 		return ' '.join(res)
 
 
-@contextmanager
+@contextlib.contextmanager
 def safe_replacement(path, mode=None):
 	if mode is None:
 		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
 		except OSError: pass
-	kws = dict( delete=False,
-		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	kws = dict(delete=False, dir=dirname(path), prefix=basename(path)+'.')
 	with tempfile.NamedTemporaryFile(**kws) as tmp:
 		try:
 			if mode is not None: os.fchmod(tmp.fileno(), mode)
@@ -135,6 +134,14 @@ def safe_replacement(path, mode=None):
 		finally:
 			try: os.unlink(tmp.name)
 			except OSError: pass
+
+@contextlib.contextmanager
+def cleanup_on_err(file_obj):
+	try: yield
+	except:
+		with contextlib.suppress(OSError): os.unlink(file_obj.name)
+		file_obj.close()
+		raise
 
 
 _notify_init = False
@@ -179,7 +186,7 @@ def main(args=None):
 		epilog='Sending SIGQUIT (Ctrl+\ [Ctrl + backslash] from'
 			' terminal) to the process will print time left until notification to stdout.')
 
-	parser.add_argument('time',
+	parser.add_argument('time', nargs='?',
 		help='Absolute or relative time spec until notification.')
 	parser.add_argument('summary', nargs='?',
 		help='Optional notification summary (e.g. alarm reason).')
@@ -204,11 +211,22 @@ def main(args=None):
 	parser.add_argument('-p', '--pid-file', action='store_true',
 		help=(
 			'Create pid file for the process in TMPDIR, so that it can be easily tracked.'
+			' Also creates .msg file alongside .pid with'
+				' the alarm message summary (to e.g. identify it).'
 			' All such files will be created in one "{}" directory'
 				' (created under TMPDIR, if does not exists), and have exclusive'
 				' lock held on them while process runs, cleaning-up these files (but not dir) afterwards.'
 			).format(pid_file_dir))
-	# parser.add_argument('-l', '--lock', nargs='?', const=True, metavar='name_or_path',
+	parser.add_argument('-l', '--list', action='store_true',
+		help='List delayed alarms, for which -p/--pid-file option was used, and exit.'
+			' All other options except --kill are ignored with this one.')
+	parser.add_argument('-k', '--kill', const=True, nargs='?', action='append',
+		help='Kill either specified (by pid) alarm process'
+			' (making sure it is the right pid) or all of the ones that would be printed by --list,'
+			' (i.e. for which --pid-file option was specified), and exit.'
+			' Can be used multiple times. All other options except --list are ignored with this one.')
+
+	# parser.add_argument('-?', '--lock', nargs='?', const=True, metavar='name_or_path',
 	# 	help='Create temporary file on tmpfs upon notification and do not act if it exists already.'
 	# 		' File is not removed, but will probably be cleaned-up eventually'
 	# 			' by systemd-tmpfiles or reboot, unless some persistent path is specified.')
@@ -246,6 +264,44 @@ def main(args=None):
 	log = get_logger('main')
 
 	p = lambda fmt,*a,**k: print(fmt.format(*a,**k), flush=True)
+
+	if opts.list or opts.kill:
+		alarms, pid_dir = dict(), join(tempfile.gettempdir(), pid_file_dir)
+		for fn in os.listdir(pid_dir):
+			if not fn.endswith('.pid'): continue
+			pid_file = join(pid_dir, fn)
+			with contextlib.suppress(OSError):
+				with open(pid_file, 'a+') as src:
+					try: fcntl.lockf(src.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+					except OSError: pass
+					else: continue
+					src.seek(0)
+					pid = int(src.read().strip())
+				with open('{}.msg'.format(pid_file[:-4])) as src:
+					ts0, ts = map(float, src.readline().strip().split())
+					msg = src.read().strip()
+				alarms[pid] = ts0, ts, pid, msg
+		if opts.list:
+			for ts0, ts, pid, msg in sorted(alarms.values()):
+				ts0, ts = (datetime.fromtimestamp(int(ts)) for ts in [ts0, ts])
+				msg = msg.replace('\n', ' // ')
+				if len(msg) > 80: msg = '{} ...[len={}]'.format(msg[:80], len(msg))
+				p('{} :: {} + {} :: {}', pid, ts, naturaltime_diff(ts - ts0), msg)
+		if opts.kill:
+			pids = set()
+			for pid in opts.kill:
+				if pid is True: pids.update(alarms)
+				else: pids.add(int(pid))
+			for pid in pids:
+				if pid not in alarms:
+					log.warning('Alarm process with specified pid does is not running: {}', pid)
+					continue
+				try: os.kill(pid, signal.SIGTERM)
+				except OSError as err:
+					log.warning('Failed to signal alarm-pid {}, skipping it: {}', pid, err)
+		return
+
+	elif not opts.time: parser.error('"time" argument must be specified.')
 
 	ts_env = os.environ.get('ALARM_AT_TS')
 	if not ts_env:
@@ -290,22 +346,40 @@ def main(args=None):
 				if err: raise RuntimeError('"at" command failed (exit status: {})'.format(err))
 			return
 
-		pid_file = None
+		pid_files = None
 		if opts.pid_file:
-			p = os.path.join(tempfile.gettempdir(), pid_file_dir)
-			try: os.makedirs(p)
+			pid_file = join(tempfile.gettempdir(), pid_file_dir)
+			try: os.makedirs(pid_file)
 			except OSError: pass
-			p = os.path.join(p, 'alarm-{}.pid'.format(os.getpid()))
+			pid_file = join(pid_file, 'alarm-{:08d}'.format(os.getpid()))
+			pid_file, pid_file_msg = ('{}.{}'.format(pid_file, ext) for ext in ['pid', 'msg'])
 			try:
-				pid_file = open(p, 'a+')
-				pid_file.seek(0)
-				pid_file.truncate()
-				pid_file.write('{}\n'.format(os.getpid()))
-				pid_file.flush()
-				fcntl.lockf(pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-			except OSError as err:
-				log.error('Failed to create or lock pid-file {!r}: {}', p, err)
-				pid_file = None
+				with contextlib.ExitStack() as stack:
+					pid_file = open(pid_file, 'a+')
+					stack.enter_context(cleanup_on_err(pid_file))
+					pid_file.seek(0)
+					pid_file.truncate()
+					pid_file.write('{}\n'.format(os.getpid()))
+					pid_file.flush()
+					fcntl.lockf(pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+					pid_file_msg = open(pid_file_msg, 'w')
+					stack.enter_context(cleanup_on_err(pid_file_msg))
+					pid_file_msg.write('{:f} {:f}\n'.format(ts0.timestamp(), ts.timestamp()))
+					pid_file_msg.write(opts.summary or 'notification [{}]'.format(ts0)) # XXX
+					pid_file_msg.flush()
+			except OSError as err: log.error('Failed to create/lock pid/msg file(s): {}', err)
+			else: pid_files = [pid_file, pid_file_msg]
+			del pid_file, pid_file_msg
+			def pid_file_cleanup():
+				if pid_files:
+					for pid_file in pid_files:
+						pid_file.close()
+						try: os.unlink(pid_file.name)
+						except OSError as err: log.debug('Failed to remove pid/msg file: {}', err)
+					pid_files.clear()
+			for sig in 'INT', 'TERM':
+				signal.signal(getattr(signal, 'SIG{}'.format(sig)), lambda sig,frm: sys.exit(0))
+			atexit.register(pid_file_cleanup)
 
 		if ts_diff and ts_diff > 0:
 			ts_diff_print = set()
@@ -404,10 +478,7 @@ def main(args=None):
 			err = proc.wait()
 			if err: log.error('"wall" subprocess exited with error status: {}', err)
 
-	if pid_file:
-		pid_file.close()
-		try: os.unlink(pid_file.name)
-		except OSError as err: log.debug('Failed to remove pid-file {!r}: {}', p, err)
+	if pid_file: pid_file_cleanup()
 
 	return any_fails
 
