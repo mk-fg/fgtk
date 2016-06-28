@@ -63,8 +63,12 @@ def token_bucket(spec, negative_tokens=False):
 			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
 		val = (yield val) or 1
 
-def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
-	if fork and os.fork(): return
+def notify(title, body, critical=False, timeout=None, icon=None, fork=False):
+	if fork:
+		pid = os.fork()
+		if pid:
+			os.waitpid(pid, 0)
+			return
 	try:
 		import gi
 		gi.require_version('Notify', '0.7')
@@ -481,6 +485,9 @@ def main():
 		help='Start reading file from last-recorded position, not from the end.')
 	parser.add_argument('-x', '--xattr-db', metavar='path',
 		help='Path to shelve-db to use instead of xattrs to record file position.')
+	parser.add_argument('--fork-notifications', action='store_true',
+		help='Fork notification subprocess, so that it would connect to dbus on each msg.'
+			' Can be useful for some highly unreliable dbus/notification-daemon setup.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args()
 
@@ -490,6 +497,7 @@ def main():
 
 	notify_kws = dict()
 	if opts.icon: notify_kws['icon'] = opts.icon
+	if opts.fork_notifications: notify_kws['fork'] = opts.fork_notifications
 	with Logtail(
 			opts.patterns, ft.partial(notify_logtail_cb, **notify_kws),
 			keep_pos=opts.keep_pos, exclude=opts.exclude, xattr_db=opts.xattr_db,
