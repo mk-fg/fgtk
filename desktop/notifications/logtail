@@ -37,7 +37,7 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
-			Examples: 20 (once in 20s), 3/5 (3 in 5s), 20:30 (30 events in 20s).
+			Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
 		Expects a number of tokens (can be float, default: 1)
 			and *always* subtracts these.
 		Yields either None if there's enough
@@ -49,7 +49,7 @@ def token_bucket(spec, negative_tokens=False):
 		if isinstance(interval, str):
 			try: a, b = interval.split('/', 1)
 			except ValueError: interval = float(interval)
-			else: interval = float(b) / float(a)
+			else: interval = float(a) / float(b)
 		if min(interval, burst) < 0: raise ValueError()
 	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
 	log.debug('tbf parameters: interval={:.1f}, burst={:.1f}', interval, burst)
@@ -83,7 +83,9 @@ def notify_logtail_cb(path=None, line='', skipped=None, **notify_kws):
 	if skipped:
 		notify('logtail', 'Rate-limiting discarded {} events'.format(skipped), **notify_kws)
 	if path:
-		line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
+		# Try to strip iso8601 timestamp, use simplier format
+		# For things like "2016-06-28T20:53:03.550642+05:00 user.notice proc[5973]: stuff"
+		line = re.sub( r'\d{4}-\d{2}-\d{2}[T ](\d{2}:){2}\d{2}(\.\d+)'
 				r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
 			r'\g<channel> \g<msg>', line )
 		if 'logtail_notify' in line: return # to avoid exception loops
@@ -357,26 +359,26 @@ class Logtail(object):
 
 
 	def run(self):
-		skipped, delay = 0, None
+		skipped, delay, discard_msg_ts = 0, None, None
 		while True:
 			events = self.notifier.read(timeout=delay)
-			delay = next(self.tbf)
-			if skipped and not delay:
+			if skipped and discard_msg_ts and time.monotonic() >= discard_msg_ts:
 				self.callback(skipped=skipped)
-				skipped, delay = 0, next(self.tbf)
+				skipped = 0
 			for ev in events:
 				if not ev.name:
 					log.debug('Ignoring inotify ev without name: {}', ev)
 					continue
 				lines = self.handle_change(ev.path / ev.name, ev.flags) or list()
 				for path, line in lines:
+					delay = next(self.tbf)
 					if delay:
 						log.debug('Rate-limited line (delay: {:.1f}) [{}]: {!r}', delay, path, line)
 						skipped += 1
 					else:
 						log.debug('New line [{}]: {!r}', path, line)
 						self.callback(path, line)
-						delay = next(self.tbf)
+				if skipped: discard_msg_ts = time.monotonic() + delay
 
 	def discard_changes(self, path):
 		self.handle_change(path, discard=True)
@@ -473,11 +475,11 @@ def main():
 			' If specified, rate-limited events will be reported'
 				' as one extra message, with only number of skipped ones.'
 			' Format: { interval_seconds: float | float_a/float_b }[:burst_float].'
-			' Examples: 1/20 (once in 20s), 20:30 (30 events in 20s).')
+			' Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.')
 	parser.add_argument('-i', '--icon', metavar='name', help='Icon to use for notifications.')
 	parser.add_argument('--keep-pos', action='store_true',
 		help='Start reading file from last-recorded position, not from the end.')
-	parser.add_argument('-x', '--xattr-db',
+	parser.add_argument('-x', '--xattr-db', metavar='path',
 		help='Path to shelve-db to use instead of xattrs to record file position.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args()
