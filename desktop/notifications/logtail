@@ -1,146 +1,283 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from glob import glob
+from collections import namedtuple, OrderedDict
+from pathlib import Path
 from fnmatch import fnmatch
-from hashlib import sha1
-from time import sleep
-import os, sys, re, pickle, types, unicodedata
-
-from twisted.python.filepath import FilePath
-from twisted.internet import inotify, reactor, defer, error
-from twisted.python import log
-
-import dbus # gi.Notify seem to break when daemon instance exits
+import json, binascii, unicodedata, base64
+import enum, struct, select, termios, glob, re
+import os, sys, errno, ctypes, fcntl, time, logging
 
 
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
 
-_notifier = None
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
-def notify( path, line,
-		icon='', actions=list(), hints=dict(),
-		timeout=-1, retries=4, delay=0.3 ):
+class LogPrefixAdapter(LogStyleAdapter):
+	def __init__(self, logger, prefix, extra=None):
+		if isinstance(logger, str): logger = get_logger(logger)
+		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
+		super(LogPrefixAdapter, self).__init__(logger, extra or {})
+		self.prefix = prefix
+	def process(self, msg, kws):
+		super(LogPrefixAdapter, self).process(msg, kws)
+		return '[{}] {}'.format(self.prefix, msg), kws
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
+	if fork and os.fork(): return
+	try:
+		import gi
+		gi.require_version('Notify', '0.7')
+		from gi.repository import Notify
+		if not getattr(notify, '_init', False):
+			Notify.init('logtail')
+			notify._init = True
+		note = Notify.Notification.new(summary=title, body=body, icon=icon)
+		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
+		if timeout is not None: note.set_timeout(timeout)
+		note.show()
+	except: pass
+	if fork: os._exit(0)
+
+def notify_logtail_line(path, line, **notify_kws):
 	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
 			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
 		r'\g<channel> \g<msg>', line )
 	if 'logtail_notify' in line: return # to avoid exception loops
 	# Slow, can probably be optimized by compiling all these chars into a regexp
-	line = u''.join( c for c in line.decode('utf-8', 'replace')
-		if not unicodedata.category(c).startswith('C') ).encode('utf-8')
-	global _notifier
-	while True:
-		if retries <= 0:
-			try: reactor.stop()
-			except error.ReactorNotRunning: pass
-			else: log.fatal('Unable to use dbus for notifications, exiting')
+	line = ''.join( c for c in line
+		if not unicodedata.category(c).startswith('C') )
+	notify('log: {}'.format(path.name), line, **notify_kws)
+
+
+class INotify:
+	# Based on inotify_simple module
+
+	class flags(enum.IntEnum): # see "man inotify"
+
+		access = 0x00000001
+		modify = 0x00000002
+		attrib = 0x00000004
+		close_write = 0x00000008
+		close_nowrite = 0x00000010
+		open = 0x00000020
+		moved_from = 0x00000040
+		moved_to = 0x00000080
+		create = 0x00000100
+		delete = 0x00000200
+		delete_self = 0x00000400
+		move_self = 0x00000800
+
+		unmount = 0x00002000
+		q_overflow = 0x00004000
+		ignored = 0x00008000
+
+		onlydir = 0x01000000
+		dont_follow = 0x02000000
+		excl_unlink = 0x04000000
+		mask_add = 0x20000000
+		isdir = 0x40000000
+		oneshot = 0x80000000
+
+		close = close_write | close_nowrite
+		move = moved_from | moved_to
+		all_events = (
+			access | modify | attrib | close_write | close_nowrite | open |
+			moved_from | moved_to | delete | create | delete_self | move_self )
+
+		@classmethod
+		def unpack(cls, mask):
+			return set( flag
+				for flag in cls.__members__.values()
+				if flag & mask == flag )
+
+	_INotifyEv_struct = 'iIII'
+	_INotifyEv_struct_len = struct.calcsize(_INotifyEv_struct)
+	INotifyEv = namedtuple( 'INotifyEv',
+		['path', 'path_mask', 'wd', 'flags', 'cookie', 'name'] )
+
+	_lib = _libc = None
+	@classmethod
+	def _get_lib(cls):
+		if cls._libc is None:
+			libc = cls._libc = ctypes.CDLL('libc.so.6', use_errno=True)
+		return cls._libc
+
+	def _call(self, func, *args):
+		if isinstance(func, str): func = getattr(self._lib, func)
+		while True:
+			res = func(*args)
+			if res == -1:
+				err = ctypes.get_errno()
+				if err == errno.EINTR: continue
+				else: raise OSError(err, os.strerror(err))
+			return res
+
+	def __init__(self):
+		self._lib, self._fd = self._get_lib(), None
+		self.wd_paths = OrderedDict()
+
+	def open(self):
+		self._fd = self._call('inotify_init')
+		self._poller = select.epoll()
+		self._poller.register(self._fd)
+
+	def close(self):
+		if self._fd:
+			os.close(self._fd)
+			self._fd = None
+		if self._poller:
+			self._poller.close()
+			self._poller = None
+		if self._lib: self._lib = None
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+	def add_watch(self, path, mask):
+		wd = self._call('inotify_add_watch', self._fd, bytes(path), mask)
+		self.wd_paths[wd] = path, mask
+		return wd
+
+	def rm_watch(self, wd):
+		self._call('inotify_rm_watch', self._fd, wd)
+		self.wd_paths.pop(wd)
+
+	def poll(self, timeout=None):
+		return bool(self._poller.poll(timeout))
+
+	def read(self, poll=True, **poll_kws):
+		if poll:
+			if not self.poll(**poll_kws): return list()
+		bs = ctypes.c_int()
+		fcntl.ioctl(self._fd, termios.FIONREAD, bs)
+		buff = os.read(self._fd, bs.value)
+		n, bs, evs = 0, len(buff), list()
+		while n < bs:
+			wd, mask, cookie, name_len = struct.unpack_from(self._INotifyEv_struct, buff, n)
+			n += self._INotifyEv_struct_len
+			name = ctypes.c_buffer(buff[n:n + name_len], name_len).value.decode()
+			n += name_len
+			evs.append(self.INotifyEv(
+				*self.wd_paths[wd], wd, self.flags.unpack(mask), cookie, name ))
+		return evs
+
+	def __iter__(self):
+		while True:
+			for ev in self.read():
+				if (yield ev) is StopIteration: break
+			else: continue
 			break
-		if not _notifier:
-			try:
-				_notifier = dbus.Interface(
-					dbus.SessionBus().get_object(
-						'org.freedesktop.Notifications',
-						'/org/freedesktop/Notifications' ),
-					dbus_interface='org.freedesktop.Notifications' )
-			except dbus.exceptions.DBusException:
-				retries -= 1
-				sleep(delay)
-				continue
-		try:
-			_notifier.Notify( 'logtail_notify', 0, icon,
-				'log: {}'.format(path.basename()), line, actions, hints, timeout )
-		except dbus.exceptions.DBusException as err:
-			if retries < 0 or err.get_dbus_name() not in\
-				[ 'org.freedesktop.DBus.Error.ServiceUnknown',
-					'org.freedesktop.DBus.Error.Disconnected' ]: raise
-			_notifier = None # force reconnection
-			retries -= 1
-		else: break
 
+	@classmethod
+	def ev_wait(cls, path, mask=None):
+		return next(cls.ev_iter(path, mask))
 
-
-class ReliableInotify(inotify.INotify):
-
-	def __init__( self, paths_watch, callback, errback,
-			mask=inotify.IN_CREATE | inotify.IN_MODIFY ):
-		inotify.INotify.__init__(self)
-
-		# Might as well start it here
-		self.startReading()
-		self.errback = errback
-		for path in paths_watch:
-			log.debug('Adding watcher for path: {}'.format(path))
-			self.watch(path, mask=mask, callbacks=[callback])
-
-	def connectionLost(self, reason):
-		log.warn( 'Detected inotify'
-			' connectionLost event, reason: {}'.format(reason) )
-		self.errback(reason)
-
+	@classmethod
+	def ev_iter(cls, path, mask=None):
+		with cls() as ify:
+			if not isinstance(path, (tuple, list)): path = [path]
+			for p in path: ify.add_watch(p, mask or INotify.flags.all_events)
+			ev_iter, chk = iter(ify), None
+			while True:
+				try: chk = yield ev_iter.send(chk)
+				except StopIteration: break
 
 
 class Logtail(object):
 
-
-	def __init__( self, monitor, callback,
-			exclude=None, keep_pos=False,
-			processing_delay=1.0, xattr_name='user.bordercamp.logtail.pos' ):
-		self.callback, self.processing_delay, self.xattr_name =\
-			callback, processing_delay, xattr_name
+	def __init__( self, paths, callback, exclude=None,
+			keep_pos=False, xattr_name='user.logtail.pos', xattr_db=None ):
+		self.callback, self.keep_pos = callback, keep_pos
+		self.xattr_name, self.xattr_db_path, self.xattr_db = xattr_name, xattr_db, None
+		if not isinstance(paths, (tuple, list)): paths = [paths]
+		self.paths_mask, self.notifier = paths, None
 
 		self.exclude = exclude or list()
-		if isinstance(self.exclude, types.StringTypes): self.exclude = [self.exclude]
-		self.exclude = map(re.compile, self.exclude)
+		if isinstance(self.exclude, str): self.exclude = [self.exclude]
+		self.exclude = list(map(re.compile, self.exclude))
 
-		paths_watch = self.paths_watch = dict()
+
+	def open(self):
+		masks, paths = self.paths_mask, list()
+		paths_to_watch = self.paths_to_watch = dict()
 		self.paths_pos, self.paths_buff = dict(), dict()
 
-		masks, paths = monitor, list()
-		if isinstance(masks, bytes): masks = [masks]
+		if not isinstance(masks, (tuple, list)): masks = [masks]
 		for mask in masks:
-			mask_patterns = self.glob_alter(mask)
-			for mask_raw in mask_patterns:
-				mask = FilePath(mask_raw)
+			for mask in self.glob_alter(mask):
 				# All matched parent dirs - like /x/y/z for /x/*/z/file* - are watched for pattern
 				# Note that watchers won't be auto-added for /x/m/z, if it'll be created later on
-				paths_ext = list( (path.realpath(), mask.basename())
-					for path in it.imap(FilePath, glob(mask.dirname())) )
+				paths_ext = list(
+					(Path(p).resolve(), Path(mask).name)
+					for p in glob.iglob(str(Path(mask).parent)) )
 				paths.extend(paths_ext)
 				# If full pattern already match something, watch it if it's a dir - /x/dir1 for /x/dir*
 				# Note that watchers won't be auto-added for /x/dir2, if it'll be created later on
 				if paths_ext: # no point going deeper if parent dirs don't exist
-					paths.extend( (path.realpath(), '*')
-						for path in it.imap(FilePath, glob(mask_raw))
-						if path.realpath().isdir() )
+					paths_ext = list(Path(p).resolve() for p in glob.iglob(mask))
+					paths.extend((p, '*') for p in paths_ext if p.is_dir())
 		# Aggregate path masks by-realpath
-		for path, mask in paths:
-			if not path.isdir():
-				log.debug('Skipping special path: {}'.format(path))
+		for p, mask in paths:
+			if not p.is_dir():
+				log.debug('Skipping special path: {}', p)
 				continue
-			if path not in paths_watch:
-				paths_watch[path] = {mask}
-			else: paths_watch[path].add(mask)
+			if p not in paths_to_watch:
+				paths_to_watch[p] = {mask}
+			else: paths_to_watch[p].add(mask)
 
-		if not keep_pos:
-			for path_dir, paths in paths_watch.viewitems():
-				for path in paths: self.discard_changes(path_dir.child(path))
+		if self.xattr_db_path:
+			import shelve
+			self.xattr_db = shelve.open(self.xattr_db_path)
 
-		self.notifier_restart()
+		if not self.keep_pos:
+			for path_dir, masks in paths_to_watch.items():
+				for mask in masks: self.discard_changes(path_dir / mask)
 
-	def notifier_restart(self, reason=None):
 		log.debug('Starting inotify watcher')
-		# errback happens if some IOError gets raised in a direct callback
-		self.notifier = ReliableInotify( self.paths_watch,
-			ft.partial( reactor.callLater, self.processing_delay,
-				self.handle_change ), self.notifier_restart )
+		self.notifier = INotify()
+		self.notifier.open()
+		in_flags = self.notifier.flags.create | self.notifier.flags.modify
+		for p in paths_to_watch:
+			log.debug('Adding watcher for path: {}', p)
+			self.notifier.add_watch(p, in_flags)
+
+	def close(self):
+		if self.notifier:
+			self.notifier.close()
+			self.notifier = None
+		if self.xattr_db is not None:
+			self.xattr_db.close()
+			self.xattr_db = None
+		self.callback = None
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
 
 
 	@staticmethod
-	def glob_alter(pattern, _glob_cbex = re.compile(r'\{[^}]+\}')):
+	def glob_alter(pattern, _glob_cbex=re.compile(r'\{[^}]+\}')):
 		'''Shell-like glob with support for curly braces.
-			Usage of these braces in the actual name isn't supported.'''
-		subs = list()
+			Usage of these braces in the actual name is not supported.'''
+		pattern, subs = str(pattern), list()
 		while True:
 			ex = _glob_cbex.search(pattern)
 			if not ex: break
@@ -148,8 +285,11 @@ class Logtail(object):
 			pattern = pattern[:ex.span()[0]] + '{}' + pattern[ex.span()[1]:]
 		return list(it.starmap(pattern.format, it.product(*subs)))
 
-	@staticmethod
-	def file_end_mark(path, size=200, pos=None, data=None):
+	def data_checksum(self, data):
+		return base64.urlsafe_b64encode(struct.pack(
+			'>I', binascii.crc32(data.encode()) )).decode().rstrip('=')
+
+	def file_end_mark(self, path, size=200, pos=None, data=None):
 		if not pos:
 			with path.open() as src:
 				if not data:
@@ -160,71 +300,85 @@ class Logtail(object):
 						data = src.read()
 				else:
 					pos = os.fstat(src).st_size
-		size, data = len(data), sha1(data).hexdigest()
-		return pos, size, data
+		return pos, len(data), self.data_checksum(data)
 
-	@staticmethod
-	def file_end_check(path, pos, size=None, data_hash=None):
-		if pos != path.getsize(): return False
+	def file_end_check(self, path, pos, size=None, data_hash=None):
+		if pos != path.stat().st_size: return False
 		elif size and data_hash:
 			with path.open() as src: # lots of races ahead, but whatever
 				src.seek(-size, os.SEEK_END)
 				data = src.read(size)
 				if len(data) != size: return False # not the end
-				if sha1(data).hexdigest() != data_hash: return False # not the *same* end
+				if self.data_checksum(data) != data_hash: return False # not the *same* end
 		return True
 
+	def xattr_get(self, path):
+		if self.xattr_db is None:
+			return json.loads(os.getxattr(str(path), self.xattr_name))
+		try: return self.xattr_db['{}\0{}'.format(path, self.xattr_name)]
+		except KeyError:
+			raise OSError(errno.ENODATA, os.strerror(errno.ENODATA))
 
-	def discard_changes(self, path): self.handle_change(None, path)
+	def xattr_set(self, path, data):
+		if self.xattr_db is None:
+			return os.setxattr(str(path), self.xattr_name, json.dumps(data).encode())
+		self.xattr_db['{}\0{}'.format(path, self.xattr_name)] = data
 
-	def handle_change(self, stuff, path, mask=None):
-		if mask:
-			mask_str = inotify.humanReadableMask(mask)
-			log.debug('Event: {} ({})'.format(path, mask_str))
+
+	def run(self):
+		for ev in self.notifier:
+			if not ev.name:
+				log.debug('Ignoring inotify ev without name: {}', ev)
+				continue
+			self.handle_change(ev.path / ev.name, ev.flags)
+
+	def discard_changes(self, path):
+		self.handle_change(path, discard=True)
+
+	def handle_change(self, path, flags=None, discard=False):
+		if flags: log.debug('Event: {} ({})', path, flags)
 
 		## Filtering
-		path_real = path.realpath()
-		if not path_real.isfile():
+		path_real = path.resolve()
+		if not path_real.is_file():
 			log.debug( 'Ignoring event for'
-				' non-regular file: {} (realpath: {})'.format(path, path_real) )
+				' non-regular file: {} (realpath: {})', path, path_real )
 			return
-		dir_key = path_real.parent().realpath()
-		if dir_key not in self.paths_watch:
-			log.warn( 'Ignoring event for file outside of watched'
-				' set of paths: {} (realpath: {})'.format(path, path_real) )
+		dir_key = path_real.resolve().parent
+		if dir_key not in self.paths_to_watch:
+			log.warn( 'Ignoring event for file outside of'
+				' watched set of paths: {} (realpath: {})', path, path_real )
 			return
-		for pat in self.paths_watch[dir_key]:
-			if fnmatch(bytes(path.basename()), pat): break
+		for pat in self.paths_to_watch[dir_key]:
+			if fnmatch(path.name, pat): break
 		else:
 			log.debug( 'Non-matched path in one of'
-				' the watched dirs: {} (realpath: {})'.format(path, path_real) )
+				' the watched dirs: {} (realpath: {})', path, path_real )
 			return
 		for pat in self.exclude:
-			if pat.search(path.path):
-				log.debug( 'Matched path by exclude-pattern'
-					' ({}): {} (realpath: {})'.format(pat, path, path_real) )
+			if pat.search(str(path)):
+				log.debug( 'Matched path by exclude'
+					'-pattern ({}): {} (realpath: {})', pat, path, path_real )
 				return
 
 		## Get last position
 		pos = self.paths_pos.get(path_real)
 		if not pos: # try restoring it from xattr
-			try: pos = pickle.loads(xattr(path_real.path)[self.xattr_name])
-			except KeyError:
-				log.debug('Failed to restore last log position from xattr for path: {}'.format(path))
+			try: pos = self.xattr_get(path_real)
+			except OSError as err:
+				if err.errno != errno.ENODATA: raise
+				log.debug('Failed to restore last log position from xattr for path: {}', path)
 			else:
-				log.debug(
-					'Restored pos from xattr ({}) for path {}: {!r}'\
-					.format(self.xattr_name, path_real, pos) )
+				log.debug( 'Restored pos from xattr ({})'
+					' for path {}: {!r}', self.xattr_name, path_real, pos )
 		if pos:
 			pos, size, data_hash = pos
 			if self.file_end_check(path_real, pos, size=size, data_hash=data_hash):
-				if mask:
-					log.debug(( 'Event (mask: {}) for unchanged'
-						' path, ignoring: {}' ).format(mask_str, path))
+				if not discard:
+					log.debug('Event (flags: {}) for unchanged path, ignoring: {}', flags, path)
 				return
-			if path_real.getsize() < pos:
-				log.debug( 'Detected truncation'
-					' of a path, rewinding: {}'.format(path) )
+			if path_real.stat().st_size < pos:
+				log.debug('Detected truncation of a path, rewinding: {}', path)
 				pos = None
 
 		## Actual processing
@@ -244,27 +398,26 @@ class Logtail(object):
 					if not buff_agg: # clean eof at the end of the chunk - mark it
 						pos = self.file_end_mark(path_real, pos=pos, data=buff_agg)
 						self.paths_pos[path_real] = pos
-						xattr(path_real.path)[self.xattr_name] = pickle.dumps(pos)
-						log.debug( 'Updated xattr ({}) for path {} to: {!r}'\
-							.format(self.xattr_name, path_real, pos) )
+						self.xattr_set(path_real, pos)
+						log.debug( 'Updated xattr ({}) for path'
+							' {} to: {!r}', self.xattr_name, path_real, pos )
 					break
 				buff_agg = self.paths_buff[path_real] = self.process(
-					buff_agg + buff, path, supress_callback=mask is None )
+					buff_agg + buff, path, suppress_callback=discard )
 
 	def read(self, src):
-		'Read however much is necessary for process() method'
+		'Read as much as necessary for process() method'
 		return src.readline()
 
-	def process(self, buff, path, supress_callback=False):
+	def process(self, buff, path, suppress_callback=False):
 		'Process buffered/read data, returning leftover buffer'
 		if buff.endswith('\n'):
 			line = buff.strip()
-			log.debug('New line: {!r}'.format(line))
-			if not supress_callback: self.callback(path, line)
+			log.debug('New line: {!r}', line)
+			if not suppress_callback: self.callback(path, line)
 			return ''
 		else:
 			return buff
-
 
 
 def main():
@@ -272,50 +425,30 @@ def main():
 	parser = argparse.ArgumentParser(
 		description='Monitor given log paths for changes,'
 			' creating desktop notifications for new lines.')
-	parser.add_argument('monitor', nargs='+', help='Glob patterns for paths to monitor.')
-	parser.add_argument('--exclude', action='append',
-		default=list(), help='Regexps to match against paths to exclude from monitoring.')
-	parser.add_argument('-i', '--icon', help='Icon to use for notifications.')
+	parser.add_argument('patterns', nargs='+', help='Glob patterns for paths to monitor.')
+	parser.add_argument('--exclude',
+		action='append', metavar='regexp',
+		help='Regexps to match against paths to exclude from monitoring.')
+	parser.add_argument('-i', '--icon', metavar='name', help='Icon to use for notifications.')
+	parser.add_argument('--keep-pos', action='store_true',
+		help='Start reading file from last-recorded position, not from the end.')
 	parser.add_argument('-x', '--xattr-db',
 		help='Path to shelve-db to use instead of xattrs to record file position.')
-	parser.add_argument('--keep-pos',
-		help='Start reading file from last-recorded position, not from the end.')
-	parser.add_argument('--debug',
-		action='store_true', help='Verbose operation mode.')
-	optz = parser.parse_args()
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args()
 
-	import logging
-	logging.basicConfig(
-		level=logging.DEBUG if optz.debug else logging.WARNING )
-	log.PythonLoggingObserver().start()
-	for lvl in 'debug', 'info', ('warning', 'warn'), 'error', ('critical', 'fatal'):
-		lvl, func = lvl if isinstance(lvl, tuple) else (lvl, lvl)
-		assert not getattr(log, lvl, False)
-		setattr(log, func, ft.partial( log.msg,
-			logLevel=logging.getLevelName(lvl.upper()) ))
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
 
-	global xattr
-	if not optz.xattr_db:
-		from xattr import xattr
-	else:
-		import shelve
-		xattr_db = shelve.open(optz.xattr_db, 'c')
-		class xattr(object):
-			def __init__(self, base):
-				assert isinstance(base, str)
-				self.base = base
-			def key(self, k): return '{}\0{}'.format(self.base, k)
-			def __setitem__(self, k, v): xattr_db[self.key(k)] = v
-			def __getitem__(self, k): return xattr_db[self.key(k)]
-			def __del__(self): xattr_db.sync()
+	notify_kws = dict()
+	if opts.icon: notify_kws['icon'] = opts.icon
 
-	note_attrs = dict()
-	if optz.icon: note_attrs['icon'] = optz.icon
-	tailer = Logtail( optz.monitor, ft.partial(notify, **note_attrs),
-		keep_pos=optz.keep_pos, exclude=optz.exclude )
-
-	log.debug('Starting event loop...')
-	reactor.run()
-	log.debug('Event loop finished')
+	with Logtail( opts.patterns,
+			ft.partial(notify_logtail_line, **notify_kws), keep_pos=opts.keep_pos,
+			exclude=opts.exclude, xattr_db=opts.xattr_db ) as tailer:
+		log.debug('Starting event loop...')
+		tailer.run()
+		log.debug('Event loop finished')
 
 if __name__ == '__main__': main()

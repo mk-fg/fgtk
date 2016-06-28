@@ -142,17 +142,15 @@ def cleanup_on_err(file_obj):
 		raise
 
 
-_notify_init = False
 def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
-	global _notify_init
 	if fork and os.fork(): return
 	try:
 		import gi
 		gi.require_version('Notify', '0.7')
 		from gi.repository import Notify
-		if not _notify_init:
-			Notify.init('alarm')
-			_notify_init = True
+		if not getattr(notify, '_init', False):
+			Notify.init('logtail')
+			notify._init = True
 		note = Notify.Notification.new(summary=title, body=body, icon=icon)
 		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
 		if timeout is not None: note.set_timeout(timeout)

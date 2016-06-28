@@ -1544,20 +1544,24 @@ logtail
 '''''''
 
 Script to watch log files (as many as necessary) for changes with inotify and
-report any new lines appearing there via desktop notifications.
+report any new lines appearing there via desktop notifications, handling file
+rotation (via truncation or rename/unlink) and such.
 
 Can remember last position in file either by recording it in file's xattrs or in
-a shelve db (specified via -x option).
+a shelve db (specified via -x/--xattr-db option).
 
 Doesn't do much with it by default though, starting to read files from the end,
 but that can be fixed by passing --keep-pos.
 
 Somewhat advanced usage example::
 
-  % notify.logtail\
-    -i ~/media/appz/icons/biohazard_48x.png\
-    -x "$XDG_RUNTIME_DIR"/notify.logtail.db\
-    /var/log/messages
+  % logtail \
+    --icon ~/media/appz/icons/biohazard_48x.png \
+    --xattr-db "$XDG_RUNTIME_DIR"/logtail.db \
+    /var/log/messages /var/log/important/*
+
+Python-3, needs python-gobject ("gi" module, for notifications), uses inotify
+via ctypes.
 
 mail
 ''''
