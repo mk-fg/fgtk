@@ -35,6 +35,34 @@ class LogPrefixAdapter(LogStyleAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
+def token_bucket(spec, negative_tokens=False):
+	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
+			Examples: 20 (once in 20s), 3/5 (3 in 5s), 20:30 (30 events in 20s).
+		Expects a number of tokens (can be float, default: 1)
+			and *always* subtracts these.
+		Yields either None if there's enough
+			tokens or delay (in seconds, float) until when there will be.'''
+	try:
+		try: interval, burst = spec.rsplit(':', 1)
+		except (ValueError, AttributeError): interval, burst = spec, 1.0
+		else: burst = float(burst)
+		if isinstance(interval, str):
+			try: a, b = interval.split('/', 1)
+			except ValueError: interval = float(interval)
+			else: interval = float(b) / float(a)
+		if min(interval, burst) < 0: raise ValueError()
+	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
+	log.debug('tbf parameters: interval={:.1f}, burst={:.1f}', interval, burst)
+
+	tokens, rate, ts_sync = burst, interval**-1, time.monotonic()
+	val = (yield) or 1
+	while True:
+		ts = time.monotonic()
+		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
+		val, tokens = (None, tokens - val) if tokens >= val else\
+			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
+		val = (yield val) or 1
+
 def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 	if fork and os.fork(): return
 	try:
@@ -51,15 +79,18 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 	except: pass
 	if fork: os._exit(0)
 
-def notify_logtail_line(path, line, **notify_kws):
-	line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
-			r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
-		r'\g<channel> \g<msg>', line )
-	if 'logtail_notify' in line: return # to avoid exception loops
-	# Slow, can probably be optimized by compiling all these chars into a regexp
-	line = ''.join( c for c in line
-		if not unicodedata.category(c).startswith('C') )
-	notify('log: {}'.format(path.name), line, **notify_kws)
+def notify_logtail_cb(path=None, line='', skipped=None, **notify_kws):
+	if skipped:
+		notify('logtail', 'Rate-limiting discarded {} events'.format(skipped), **notify_kws)
+	if path:
+		line = re.sub( r'\d{4}-\d{2}-\d{2}T(\d{2}:){2}\d{2}(\.\d+)'
+				r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
+			r'\g<channel> \g<msg>', line )
+		if 'logtail_notify' in line: return # to avoid exception loops
+		# Slow, can probably be optimized by compiling all these chars into a regexp
+		line = ''.join( c for c in line
+			if not unicodedata.category(c).startswith('C') )
+		notify('log: {}'.format(path.name), line, **notify_kws)
 
 
 class INotify:
@@ -162,12 +193,14 @@ class INotify:
 		return bool(self._poller.poll(timeout))
 
 	def read(self, poll=True, **poll_kws):
+		evs = list()
 		if poll:
-			if not self.poll(**poll_kws): return list()
+			if not self.poll(**poll_kws): return evs
 		bs = ctypes.c_int()
 		fcntl.ioctl(self._fd, termios.FIONREAD, bs)
+		if bs.value <= 0: return evs
 		buff = os.read(self._fd, bs.value)
-		n, bs, evs = 0, len(buff), list()
+		n, bs = 0, len(buff)
 		while n < bs:
 			wd, mask, cookie, name_len = struct.unpack_from(self._INotifyEv_struct, buff, n)
 			n += self._INotifyEv_struct_len
@@ -201,17 +234,15 @@ class INotify:
 
 class Logtail(object):
 
+	notifier = xattr_db = callback = None
+
 	def __init__( self, paths, callback, exclude=None,
-			keep_pos=False, xattr_name='user.logtail.pos', xattr_db=None ):
-		self.callback, self.keep_pos = callback, keep_pos
-		self.xattr_name, self.xattr_db_path, self.xattr_db = xattr_name, xattr_db, None
+			keep_pos=False, xattr_name='user.logtail.pos', xattr_db=None, tbf=None ):
 		if not isinstance(paths, (tuple, list)): paths = [paths]
-		self.paths_mask, self.notifier = paths, None
-
-		self.exclude = exclude or list()
-		if isinstance(self.exclude, str): self.exclude = [self.exclude]
-		self.exclude = list(map(re.compile, self.exclude))
-
+		if exclude and not isinstance(exclude, (tuple, list)): exclude = [exclude]
+		self.callback, self.keep_pos, self.tbf = callback, keep_pos, tbf or iter(it.repeat(None))
+		self.paths_mask, self.xattr_name, self.xattr_db_path = paths, xattr_name, xattr_db
+		self.exclude = list(map(re.compile, exclude or list()))
 
 	def open(self):
 		masks, paths = self.paths_mask, list()
@@ -326,11 +357,26 @@ class Logtail(object):
 
 
 	def run(self):
-		for ev in self.notifier:
-			if not ev.name:
-				log.debug('Ignoring inotify ev without name: {}', ev)
-				continue
-			self.handle_change(ev.path / ev.name, ev.flags)
+		skipped, delay = 0, None
+		while True:
+			events = self.notifier.read(timeout=delay)
+			delay = next(self.tbf)
+			if skipped and not delay:
+				self.callback(skipped=skipped)
+				skipped, delay = 0, next(self.tbf)
+			for ev in events:
+				if not ev.name:
+					log.debug('Ignoring inotify ev without name: {}', ev)
+					continue
+				lines = self.handle_change(ev.path / ev.name, ev.flags) or list()
+				for path, line in lines:
+					if delay:
+						log.debug('Rate-limited line (delay: {:.1f}) [{}]: {!r}', delay, path, line)
+						skipped += 1
+					else:
+						log.debug('New line [{}]: {!r}', path, line)
+						self.callback(path, line)
+						delay = next(self.tbf)
 
 	def discard_changes(self, path):
 		self.handle_change(path, discard=True)
@@ -382,6 +428,7 @@ class Logtail(object):
 				pos = None
 
 		## Actual processing
+		lines = list()
 		buff_agg = self.paths_buff.setdefault(path_real, '')
 		with path_real.open() as src:
 			if pos:
@@ -389,11 +436,11 @@ class Logtail(object):
 				pos = None
 			while True:
 				pos = src.tell()
-				try: buff, pos = self.read(src), src.tell()
+				try: buff, pos = src.readline(), src.tell()
 				except StopIteration:
 					buff_agg = ''
 					src.seek(pos) # revert back to starting position
-					buff, pos = self.read(src), src.tell()
+					buff, pos = src.readline(), src.tell()
 				if not buff: # eof, try to mark the position
 					if not buff_agg: # clean eof at the end of the chunk - mark it
 						pos = self.file_end_mark(path_real, pos=pos, data=buff_agg)
@@ -402,22 +449,13 @@ class Logtail(object):
 						log.debug( 'Updated xattr ({}) for path'
 							' {} to: {!r}', self.xattr_name, path_real, pos )
 					break
-				buff_agg = self.paths_buff[path_real] = self.process(
-					buff_agg + buff, path, suppress_callback=discard )
+				buff_agg += buff
+				if buff_agg.endswith('\n'): # ok due to src.readline()
+					line = buff_agg.strip()
+					buff_agg = self.paths_buff[path_real] = ''
+					lines.append((path, line))
 
-	def read(self, src):
-		'Read as much as necessary for process() method'
-		return src.readline()
-
-	def process(self, buff, path, suppress_callback=False):
-		'Process buffered/read data, returning leftover buffer'
-		if buff.endswith('\n'):
-			line = buff.strip()
-			log.debug('New line: {!r}', line)
-			if not suppress_callback: self.callback(path, line)
-			return ''
-		else:
-			return buff
+		return lines
 
 
 def main():
@@ -429,6 +467,13 @@ def main():
 	parser.add_argument('--exclude',
 		action='append', metavar='regexp',
 		help='Regexps to match against paths to exclude from monitoring.')
+	parser.add_argument('-f', '--tb-rate-filter',
+		metavar='{ interval_seconds: float | float_a/float_b }[:burst_float]',
+		help='Token-bucket rate-limiting filter specification.'
+			' If specified, rate-limited events will be reported'
+				' as one extra message, with only number of skipped ones.'
+			' Format: { interval_seconds: float | float_a/float_b }[:burst_float].'
+			' Examples: 1/20 (once in 20s), 20:30 (30 events in 20s).')
 	parser.add_argument('-i', '--icon', metavar='name', help='Icon to use for notifications.')
 	parser.add_argument('--keep-pos', action='store_true',
 		help='Start reading file from last-recorded position, not from the end.')
@@ -443,10 +488,10 @@ def main():
 
 	notify_kws = dict()
 	if opts.icon: notify_kws['icon'] = opts.icon
-
-	with Logtail( opts.patterns,
-			ft.partial(notify_logtail_line, **notify_kws), keep_pos=opts.keep_pos,
-			exclude=opts.exclude, xattr_db=opts.xattr_db ) as tailer:
+	with Logtail(
+			opts.patterns, ft.partial(notify_logtail_cb, **notify_kws),
+			keep_pos=opts.keep_pos, exclude=opts.exclude, xattr_db=opts.xattr_db,
+			tbf=opts.tb_rate_filter and token_bucket(opts.tb_rate_filter) ) as tailer:
 		log.debug('Starting event loop...')
 		tailer.run()
 		log.debug('Event loop finished')

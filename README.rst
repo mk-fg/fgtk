@@ -1549,13 +1549,17 @@ rotation (via truncation or rename/unlink) and such.
 
 Can remember last position in file either by recording it in file's xattrs or in
 a shelve db (specified via -x/--xattr-db option).
-
 Doesn't do much with it by default though, starting to read files from the end,
 but that can be fixed by passing --keep-pos.
+
+Has --tb-rate-filter option to rate-limit occasional log-spam (reporting only
+"skipped N msgs" as soon as filter allows) via simple token-bucket filter, see
+-h/--help output for more info.
 
 Somewhat advanced usage example::
 
   % logtail \
+    --keep-pos --tb-rate-filter 1:5 \
     --icon ~/media/appz/icons/biohazard_48x.png \
     --xattr-db "$XDG_RUNTIME_DIR"/logtail.db \
     /var/log/messages /var/log/important/*
