@@ -145,7 +145,7 @@ class INotify:
 	INotifyEv = namedtuple( 'INotifyEv',
 		['path', 'path_mask', 'wd', 'flags', 'cookie', 'name'] )
 
-	_lib = _libc = None
+	_libc = None
 	@classmethod
 	def _get_lib(cls):
 		if cls._libc is None:
@@ -162,8 +162,10 @@ class INotify:
 				else: raise OSError(err, os.strerror(err))
 			return res
 
+	_fd = _poller = _lib = None
+
 	def __init__(self):
-		self._lib, self._fd = self._get_lib(), None
+		self._lib = self._get_lib()
 		self.wd_paths = OrderedDict()
 
 	def open(self):
