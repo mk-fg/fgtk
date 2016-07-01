@@ -52,13 +52,6 @@ import py_compile
 for src in ( line.strip() for line in
 		Popen(['find', '-name', '*.py', '-print'], stdout=PIPE).stdout ):
 	if src.endswith('.tpl.py'): continue # templates are, by definition, incomplete
-	try: py_compile.compile(src, cfile=os.devnull, doraise=True)
-	except py_compile.PyCompileError, err:
-		print(
-			'{} (file: {}):\n\t{}'.format(
-				err.exc_type_name, err.file, err.exc_value ),
-			file=sys.stderr )
-		sys.exit(1)
 
 if regen_setup:
 	## Update version in setup.py
