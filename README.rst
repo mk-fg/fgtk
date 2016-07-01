@@ -1244,6 +1244,40 @@ be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
 Simple "ps" + "ss" + "awk" checks, comparing the output of two and feeding
 resulting list to stdout or "kill" directly.
 
+pam-run
+^^^^^^^
+
+Wrapper that opens specified PAM session (as per one of the configs in
+``/etc/pam.d``, e.g. "system-login"), switches to specified uid/gid and runs
+some command there.
+
+My use-case is to emulate proper "login" session for systemd-logind, which
+neither "su" nor "sudo" can do (nor should do!) in default pam configurations
+for them, as they don't (and shouldn't) load pam_systemd.so.
+
+This script can load any pam stack however, so e.g. running it as::
+
+  # pam-run -s system-login -u myuser -t :1 \
+    -- bash -c 'systemctl --user import-environment \
+      && systemctl --user start xorg.target && sleep infinity'
+
+Should initiate proper systemd-logind session (and close it afterwards) and
+start "xorg.target" in "myuser"-specific "systemd --user" instance (started by
+logind with the session).
+
+Can be used as a GDM-less way to start/keep such sessions (with proper
+display/tty and class/type from env) without much hassle or other weirdness like
+"agetty --autologin" or "login" in some pty (see also `mk-fg/de-setup
+<https://github.com/mk-fg/de-setup>`_ repo), or for whatever other pam-session
+wrapping, as script has nothing specific (or even related) to desktops.
+
+Self-contained python-3 script, using libpam via ctypes.
+
+Warning: this script is no replacement for su/sudo wrt uid/gid-switching, and
+doesn't implement all the checks and sanitization these tools do, so only
+intended to be run from static, clean or trusted environment (e.g. started by
+systemd or manually).
+
 
 
 desktop

@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+
+import os, sys, errno, ctypes as c, enum, logging, signal, contextlib, pwd, grp
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+class LogPrefixAdapter(LogStyleAdapter):
+	def __init__(self, logger, prefix, extra=None):
+		if isinstance(logger, str): logger = get_logger(logger)
+		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
+		super(LogPrefixAdapter, self).__init__(logger, extra or {})
+		self.prefix = prefix
+	def process(self, msg, kws):
+		super(LogPrefixAdapter, self).process(msg, kws)
+		return '[{}] {}'.format(self.prefix, msg), kws
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class pam_handle_t(c.Structure):
+	_fields_ = [('handle', c.c_void_p)]
+
+class pam_message_t(c.Structure): pass
+class pam_response_t(c.Structure): pass
+
+pam_conv_func_t = c.CFUNCTYPE(
+	c.c_int, c.c_int, c.POINTER(c.POINTER(pam_message_t)),
+	c.POINTER(c.POINTER(pam_response_t)), c.c_void_p )
+
+class pam_conv_t(c.Structure):
+	_fields_ = [
+		('conv', pam_conv_func_t),
+		('appdata_ptr', c.c_void_p) ]
+
+class pam_t(enum.IntEnum):
+
+	service = 1
+	user = 2
+	tty = 3
+	rhost = 4
+	conv = 5
+	authtok = 6
+	oldauthtok = 7
+	ruser = 8
+	user_prompt = 9
+	fail_delay = 10
+	xdisplay = 11
+	xauthdata = 12
+	authtok_type = 13
+
+	success = 0
+	conv_err = 19
+
+
+@pam_conv_func_t
+def pam_conv_null(num_msg, msg, resp, appdata_ptr):
+	return pam_t.conv_err
+
+
+def force_str(s): return s.decode() if isinstance(s, bytes) else s
+def force_bytes(s): return s.encode() if isinstance(s, str) else s
+
+class c_str_p_type(object):
+	c_type = c.c_char_p
+	def __call__(self, val): return force_str(val)
+	def from_param(self, val): return force_bytes(val)
+c_str_p = c_str_p_type()
+
+
+class PAMError(Exception): pass
+
+class PAMSession:
+
+	# func_def ::= arg_types_list | (arg_types_list, res_spec) | (res_spec, arg_types_list)
+	# res_spec ::= ctypes_restype
+	#  | res_proc_func | (ctypes_restype, res_proc_func)
+	#  | res_spec_name_str | (ctypes_restype, res_spec_name_str)
+	# res_spec_name_str ::= 'int_check_ge0' | ...
+	func_defs = dict(
+		strerror=([pam_handle_t, c.c_int], c_str_p),
+		start=([ c_str_p, c_str_p,
+			c.POINTER(pam_conv_t), c.POINTER(pam_handle_t) ]),
+		end=([pam_handle_t, c.c_int]),
+		set_item=([pam_handle_t, c.c_int, c_str_p]),
+		acct_mgmt=([pam_handle_t, c.c_int]),
+		open_session=([pam_handle_t, c.c_int]),
+		close_session=([pam_handle_t, c.c_int]),
+		get_item=([pam_handle_t, c.c_int, c.POINTER(c.c_char_p)]),
+		getenvlist=([pam_handle_t], c.POINTER(c.c_char_p)) )
+
+	service = user = tty = session = None
+	_lib = _pam_h = _pam_err = None
+
+	@classmethod
+	def _func_wrapper(cls, func_name, func, args=list(), res_proc=None):
+		func.restype, func.argtypes = None, args
+		if isinstance(res_proc, tuple): func.restype, res_proc = res_proc
+		if isinstance(res_proc, str): raise NotImplementedError
+		elif not func.restype:
+			if res_proc:
+				if hasattr(res_proc, 'c_type'): func.restype = res_proc.c_type
+				else: func.restype, res_proc = res_proc, None
+			else: func.restype = c.c_int
+		def _wrapper(*args):
+			res = func(*args)
+			if res_proc: res = res_proc(res)
+			return res
+		_wrapper.__name__ = 'libpam.{}'.format(func_name)
+		return _wrapper
+
+	_lib_pam = _libc = None
+	@classmethod
+	def _get_lib(cls):
+		if cls._lib_pam is None:
+			lib_pam = cls._lib_pam = c.CDLL('libpam.so.0')
+			for k, spec in cls.func_defs.items():
+				k = 'pam_{}'.format(k)
+				func, args, res_proc = getattr(lib_pam, k), None, None
+				if spec:
+					if not isinstance(spec, tuple): spec = (spec,)
+					for v in spec:
+						assert v, [k, spec, v]
+						if isinstance(v, list): args = v
+						else: res_proc = v
+				setattr(lib_pam, k, cls._func_wrapper(k, func, args, res_proc))
+		if cls._libc is None: cls._libc = c.CDLL('libc.so.6')
+		return cls._lib_pam
+
+	def _pam(self, func, *args, no_handle=False, raw=False):
+		if not no_handle: args = (self._pam_h,) + args
+		if not func.startswith('pam_'): func = 'pam_{}'.format(func)
+		log.debug('libpam call: {} {}', func, args)
+		res = getattr(self._lib, func)(*args)
+		if raw: return res
+		if res != pam_t.success:
+			self._pam_err = res
+			raise PAMError(res, self._lib.pam_strerror(self._pam_h, res))
+
+	def __init__(self, service, user, tty=None):
+		self.service, self.user, self.tty = service, user, tty
+		self._lib = self._get_lib()
+
+	def open(self):
+		self._pam_h = pam_handle_t()
+		self._conv = pam_conv_t(pam_conv_null, None)
+		self._pam( 'start', self.service,
+			self.user, c.pointer(self._conv), c.pointer(self._pam_h), no_handle=True )
+
+		if self.tty: self._pam('set_item', pam_t.tty, self.tty)
+
+		self._pam('acct_mgmt', 0)
+		self._pam('open_session', 0)
+		self.session = True
+
+		# Get mapped user name - can be updated by one of the modules
+		user = c.c_char_p()
+		self._pam('get_item', pam_t.user, c.pointer(user))
+		self.user = user.value.decode()
+
+		envlist, n = self._pam('getenvlist', raw=True), 0
+		while envlist[n]:
+			k, v = envlist[n].decode().split('=', 1)
+			log.debug('Exporting env: {} = {!r}'.format(k, v))
+			os.environ[k] = v
+			n += 1
+		self._libc.free(envlist)
+
+	def close(self):
+		if self.session:
+			self._pam('close_session', 0)
+			self.session = None
+		if self._pam_h:
+			self._pam('end', self._pam_err or pam_t.success)
+			self._pam_h = self._pam_err = None
+		if self._lib: self._lib = None
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+
+def parse_user_spec(spec):
+	try: uname, gid = spec.split(':', 1)
+	except ValueError: uname, gid = spec, None
+	try: uid = int(uname)
+	except ValueError: uent = pwd.getpwnam(uname)
+	else: uent = pwd.getpwuid(uid)
+	uname, uid, home, shell = (
+		getattr(uent, 'pw_{}'.format(k)) for k in ['name', 'uid', 'dir', 'shell'] )
+	if not gid: gid = uent.pw_gid
+	else:
+		try: gid = int(spec)
+		except ValueError: gid = grp.getgrnam(spec).gr_gid
+	return uname, uid, gid, home, shell
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Wrap specified command into PAM session.')
+
+	parser.add_argument('command', nargs='?', help='Binary (command) to run.')
+	parser.add_argument('args', nargs='*', help='Command arguments.')
+
+	parser.add_argument('-s', '--session',
+		default='system-login', metavar='pam-session-name',
+		help='PAM session name (matching'
+			' configuration file in /etc/pam.d) to use. Default: %(default)s')
+	parser.add_argument('-u', '--user', metavar='{uname|uid}[:{gname|gid}]',
+		help='Username to pass to PAM and switch to before running command.'
+			' Can be specified as uid. Group/gid to switch to can also be specified.'
+			' Default is to use current user/uid.')
+	parser.add_argument('-t', '--tty', metavar='dev-path-or-X-display',
+		help='PAM_TTY value to set for session. Should be something like'
+			' /dev/ttyX or :0 for console or X session, respectively. Not set by default.')
+	parser.add_argument('-n', '--no-env', action='store_true',
+		help='Do not set/update USER, HOME, PATH and such login env vars for --user.')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	if not opts.user: opts.user = os.getuid()
+	uname, uid, gid, home, shell = parse_user_spec(opts.user)
+
+	child_pid = None
+	sig_trap = ( getattr(signal, 'SIG{}'.format(sig))
+		for sig in ['TERM', 'INT', 'HUP', 'USR1', 'USR2'] )
+	def sig_pass(sig, frm):
+		if not child_pid: return
+		with contextlib.suppress(OSError): os.kill(child_pid, sig)
+	for sig in sig_trap: signal.signal(sig, sig_pass)
+
+	with PAMSession(opts.session, uname) as s:
+		if s.user != uname:
+			log.debug('Updated uname from PAM: {!r} -> {!r}', uname, s.user)
+			uname, uid, gid, home, shell = parse_user_spec(s.user)
+
+		if not opts.no_env: # same basic env stuff that login(1) sets
+			os.environ.update(USER=uname, LOGNAME=uname, HOME=home, SHELL=shell)
+			os.environ['PATH'] = '/usr/local/bin:/opt/bin:/usr/bin'
+
+		child_pid = os.fork()
+		if not child_pid:
+			os.setresgid(gid, gid, gid)
+			os.setresuid(uid, uid, uid)
+			cmd = os.path.expanduser(opts.command)
+			os.execlp(cmd, opts.command, *(opts.args or list()))
+		pid, code = os.waitpid(child_pid, 0)
+
+	sig = code & 0xff
+	if sig: # emulate exit-on-signal, same as child_pid
+		if sig in sig_trap: signal.signal(sig, signal.SIG_DFL)
+		os.kill(os.getpid(), sig)
+
+	return code >> 8
+
+if __name__ == '__main__': sys.exit(main())
