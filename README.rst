@@ -2109,11 +2109,18 @@ resize-rpi-fat32-for-card
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Script to resize RPi's boot FAT32 partition and filesystem to conver as much of
-the SD card as possible.
+the SD card as possible, from RPi itself, while booted from the same card.
 
-More info can be found in the `resizing-first-fat32-partition-...`_ blog post.
+Needs python-2.7, modern util-linux_ tools (lsblk and sfdisk with -J option for
+json output), sleuthkit_ (to query size of FAT fs), and parted_.
+
+More info on this script can be found in the `resizing-first-fat32-partition-...`_
+blog post.
 
 .. _resizing-first-fat32-partition-...: http://blog.fraggod.net/2015/12/07/resizing-first-fat32-partition-to-microsd-card-size-on-boot-from-raspberry-pi.html
+.. _sleuthkit: http://www.sleuthkit.org/sleuthkit
+.. _util-linux: https://www.kernel.org/pub/linux/utils/util-linux/
+.. _parted: http://www.gnu.org/software/parted/parted.html
 
 
 
