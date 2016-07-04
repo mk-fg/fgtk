@@ -1244,6 +1244,10 @@ be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
 Simple "ps" + "ss" + "awk" checks, comparing the output of two and feeding
 resulting list to stdout or "kill" directly.
 
+See also: `autossh <http://www.harding.motd.ca/autossh/>`_.
+
+TODO: add/fix cleanup for logind sessions
+
 pam-run
 ^^^^^^^
 
