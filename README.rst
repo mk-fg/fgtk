@@ -2017,8 +2017,8 @@ pacman-extra-files
 Lists files that don't belong to any of the packages in either in default
 ``/etc /opt /usr`` dirs or whichever ones are specified.
 
-pacman-merge-confs
-^^^^^^^^^^^^^^^^^^
+pacman-pacnew
+^^^^^^^^^^^^^
 
 My version of utility to merge .pacnew files with originals, using convenient
 and familiar (at least to me) ``git add -p`` interface and git diffs in general.

@@ -59,7 +59,7 @@ esac
 
 
 tmp=$(mktemp -d /tmp/.pacman-merge-confs.XXXXX)
-# trap "rm -rf --one-file-system '$tmp'" EXIT
+trap "rm -rf --one-file-system '$tmp'" EXIT
 cd "$tmp"
 
 
