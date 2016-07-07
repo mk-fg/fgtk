@@ -2017,6 +2017,31 @@ pacman-extra-files
 Lists files that don't belong to any of the packages in either in default
 ``/etc /opt /usr`` dirs or whichever ones are specified.
 
+pacman-merge-confs
+^^^^^^^^^^^^^^^^^^
+
+My version of utility to merge .pacnew files with originals, using convenient
+and familiar (at least to me) ``git add -p`` interface and git diffs in general.
+
+Can build list of files to process from last update in pacman.log (-a/--auto
+option), locate (e.g. mlocate, -l/--locate opt) or these can be specified
+manually as args.
+
+Copies all original and associated pacnew files to tmp dir, and runs ``git add
+-p`` to apply/rebase original files on top of pacnew ones, showing resulting
+``git diff original merged`` and prompting for whether to apply all the changes
+there.
+
+Has misc options to skip parts of that process (-y/--yes, -o/--old, -n/--new),
+should be relatively safe against whatever accidents, breaks and typos - only
+changes stuff at the very end, if all commands worked, all checks pass and
+confirmation received.
+
+Bash script, requires git and perl (as "git-add--interactive" is a perl script).
+Shorter and simplier than most scripts for same purpose, as git does most of the
+work in this case, less wheels re-invented, less interfaces to learn/remember.
+
+
 tar-strap
 ^^^^^^^^^
 

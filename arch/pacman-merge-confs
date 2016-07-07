@@ -1,0 +1,161 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage:"
+	echo >&2 "  $bin [ opts ] { -a | --auto }"
+	echo >&2 "  $bin [ opts ] [ -s | --no-updatedb ] { -l | --locate }"
+	echo >&2 "  $bin [ opts ] file [ file ... ]"
+	echo >&2 "Where [ opts ] can be: [-x] [ -y | --yes ] [ -o | --old | -n | --new ]"
+	echo >&2
+	echo >&2 "Tool to merge Arch Linux' pacman .pacnew config file replacements with existing ones."
+	echo >&2
+	echo >&2 "Without -o/--old or -n/--new options will use 'git add -p' for interactive merging."
+	echo >&2 "List of files can either be specified explicitly,"
+	echo >&2 " grepped from pacman.log (-a/--auto option), or found by locate (-l/--locate option)."
+	echo >&2 "Order of options is important."
+	echo >&2
+	echo >&2 "Regardless of --old/--new options, displays produced diff and prompts for applying it."
+	echo >&2 "-y/--yes option can be used to skip 'apply diff?'"
+	echo >&2 " prompt, but not the 'git add -p' part (use -o/-n opts for that)."
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+[[ "$1" = -x ]] && { set -x; shift; }
+
+
+set -e -o pipefail
+export LC_ALL=C
+
+ask=
+[[ "$1" = -y || "$1" = --yes ]] || ask=t
+
+use_old= use_new= updatedb=
+case "$1" in
+	-o|--old) use_old=t; shift;;
+	-n|--new) use_new=t; shift;;
+esac
+[[ "$1" = -s || "$1" = --no-updatedb ]] || updatedb=t
+
+mode= files=()
+case "$1" in
+
+	-l|--locate) mode=locate
+		[[ -z "$updatedb" ]] || updatedb
+		files=( $(locate -e --regex '\.pacnew$' | sed 's:\.pacnew$::' | sort -u) ) ;;
+
+	-a|--auto) mode=auto
+		n=$( awk '
+			/^\[.+?\] \[PACMAN\] starting full system upgrade$/ {n=NR}
+			END {print n ? n : 1}' /var/log/pacman.log )
+		files=( $(sed -nr "$n"',$ s/^\[.+?\] \[ALPM\] warning:'`
+			`' (.+) installed as \1.pacnew$/\1/ p' /var/log/pacman.log | sort -u) ) ;;
+
+	*) mode=list
+		[[ "${1:0:1}" != - ]] || usage 1
+		files=( "$@" ) ;;
+
+esac
+
+
+tmp=$(mktemp -d /tmp/.pacman-merge-confs.XXXXX)
+# trap "rm -rf --one-file-system '$tmp'" EXIT
+cd "$tmp"
+
+
+git init -q
+export GIT_DIR=.git
+
+first_file_warn=t
+declare -A pbs
+
+for p in "${files[@]}"; do
+	pb=${p#/}
+	pb=${pb//\//-} # should not conflict, but if it does, can be resolved manually
+	[[ -z "${pbs[$pb]}" ]] || { echo >&2 "Conflicting path-filename: $pb"; exit 1; }
+	[[ -e "$p".pacnew ]] || {
+		if [[ "$mode" == auto ]]
+		then
+			[[ -z "$first_file_warn" ]] || { echo >&2; echo >&2 '  ----------'; first_file_warn=; }
+			echo >&2 "WARNING: pacnew file is missing, assuming already merged: ${p}.pacnew"
+			continue
+		else:
+			echo >&2 "ERROR: pacnew file is missing, aborting: ${p}.pacnew"
+			exit 1
+		fi
+	}
+	cp "$p".pacnew ./"$pb"
+	pbs+=( [$pb]="$p" )
+done
+[[ -n "$first_file_warn" ]] || { echo >&2 '  ----------'; echo >&2; }
+
+[[ ${#pbs[@]} -gt 0 ]] || {
+	echo >&2 "ERROR: no files to merge specified or detected, exiting"
+	exit 1
+}
+
+git add -- "${!pbs[@]}"
+git commit -q -a -m 'pacnew files'
+git tag pacnew
+
+for pb in "${!pbs[@]}"; do p=${pbs[$pb]}; cp "$p" ./"$pb"; done
+[[ -z "$(git clean -nd)" ]] || {
+	echo >&2 "ERROR: Failed to produce clean git repo, git-clean output:"
+	git clean -nd >&2
+	exit 1
+}
+
+
+[[ -n "$use_old" || -n "$use_new" ]] || {
+	echo "Running 'git add -p' for rebasing original version on top of pacnew files."
+	echo "Useful commands:"
+	echo "  y - apply/keep original hunk, n - use pacnew version here, s - split hunk"
+	echo "  d - use pacnew for the rest of the file, a - use original for the rest of the file"
+	echo
+
+	git add -p # main interactive operation
+}
+
+
+[[ -n "$use_old" ]] && commit_opts=-a || commit_opts=
+git commit -q --allow-empty $commit_opts -m 'migrated changes'
+git tag merged
+
+git commit -q --allow-empty -a -m 'updates and leftovers'
+git tag original
+
+[[ -z "$ask" ]] || {
+	echo "Generating git-diff between original and final (merged) version:"
+	echo
+
+	git diff original merged
+
+	echo
+	read -e -p "Apply produced diff to all files [y/N]? " y
+	echo
+
+	[[ "$y" = y || "$y" == yes ]] || {
+		echo >&2 "ERROR: Aborting as per user request (need: 'y' or 'yes', read: '$y')"
+		exit 1
+	}
+}
+
+
+git reset -q --hard merged
+
+for pb in "${!pbs[@]}"; do
+	p=${pbs[$pb]}
+	if cmp --silent ./"$pb" "$p"
+	then t=original
+	else
+		if cmp --silent ./"$pb" "$p".pacnew
+		then t=' pacnew '
+		else t=' merged '
+		fi
+	fi
+	echo "[ $t ] $p"
+	rm -f "$p".pacnew
+	[[ "$t" = original ]] || cat ./"$pb" >"$p"
+done
+
+:
