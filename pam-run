@@ -16,16 +16,6 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		msg, kws = self.process(msg, kws)
 		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
-class LogPrefixAdapter(LogStyleAdapter):
-	def __init__(self, logger, prefix, extra=None):
-		if isinstance(logger, str): logger = get_logger(logger)
-		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
-		super(LogPrefixAdapter, self).__init__(logger, extra or {})
-		self.prefix = prefix
-	def process(self, msg, kws):
-		super(LogPrefixAdapter, self).process(msg, kws)
-		return '[{}] {}'.format(self.prefix, msg), kws
-
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
