@@ -139,14 +139,15 @@ class DisplayWindow(Gtk.ApplicationWindow):
 			type=Gtk.WindowType.POPUP, application=app )
 
 		css = Gtk.CssProvider()
-		c_fg, c_bg = map(self._color_rgba, ['6ad468ff', '101c10aa'])
+		c_fg, c_bg, c_fg_sel, c_bg_sel = map(
+			self._color_rgba, ['6ad468ff', '101c10aa', 'a7eda5ff', '104010aa'] )
 		css.load_from_data('\n'.join([
-			'#olaat {{ background: transparent; }}'
-			'#olaat #list {{ background: transparent; }}'
-			'#olaat GtkLabel {{'
-				'background: {c_bg}; color: {c_fg};'
-				' border: 0; font-size: 200%; padding: 1em; }}' ])\
-			.format(c_fg=c_fg, c_bg=c_bg))
+			'#olaat, #olaat #list {{ background: transparent; }}',
+			'#olaat #list row * {{ color: {c_fg}; }}',
+			'#olaat #list row:selected * {{ color: {c_fg_sel}; }}',
+			'#olaat #list row {{ background: {c_bg}; border: 0; font-size: 200%; padding: 1em; }}',
+			'#olaat #list row:selected {{ background: {c_bg_sel}; }}' ])\
+			.format(c_fg=c_fg, c_bg=c_bg, c_fg_sel=c_fg_sel, c_bg_sel=c_bg_sel))
 		Gtk.StyleContext.add_provider_for_screen(
 			Gdk.Screen.get_default(), css,
 			Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION )
