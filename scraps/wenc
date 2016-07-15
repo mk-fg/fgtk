@@ -8,7 +8,7 @@ import os, sys, io, types, base64, string
 import libnacl
 from libnacl.public import SecretKey, PublicKey, Box
 
-from libraptorq import RQEncoder
+from libraptorq import RQEncoder, RQDecoder, RQError
 
 
 p = lambda fmt,*a,**k:\
@@ -25,10 +25,15 @@ _b32_abcs = (
 	u'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
 	u'абвгдежзиклмнопрстуфхцчшыьэОяZ,.' ) # Z=num/hyph/colon
 
-def b32_encode(v, chunk=4, _trans=dict(
+def b32_encode(v, _trans=dict(
 		(ord(a), ord(b)) for a,b in it.izip(*_b32_abcs) )):
 	return base64.b32encode(v).strip()\
 		.decode('utf-8').translate(_trans).encode('utf-8')
+
+def b32_decode(v, _trans=dict(
+		(ord(b), ord(a)) for a,b in it.izip(*_b32_abcs) )):
+	v += u'=' * (4 - len(v) % 4)
+	return base64.b32decode(v.strip().translate(_trans).encode('utf-8'))
 
 num_fmt = lambda n: '{:,}'.format(n)
 
@@ -50,6 +55,12 @@ def main(args=None, error_func=None):
 		help='Amount of repair symbols to generate,'
 			' as a fraction of data size. Default: %(default)s')
 
+	parser.add_argument('-d', '--decode', nargs='?',
+		metavar='oti_schema_hex || "-" || oti_common_hex', const='20000008-1000104',
+		help='Decode/decrypt stdin instead of encoding.'
+			' Should be supplied with RaptorQ encoding'
+				' parameters to use for decoding. Default: %(const)s')
+
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -68,27 +79,49 @@ def main(args=None, error_func=None):
 		with open(opts.keyfile, 'rb') as src:
 			sk, pk = map(b64_decode, src.read().splitlines())
 		box = Box(SecretKey(sk), PublicKey(pk))
-		data = box.encrypt(data)
-		log.debug('Ciphertext: %sB', num_fmt(len(data)))
 
-	with RQEncoder( data, min_subsymbol_size=4,
-			symbol_size=opts.sym_size, max_memory=4000 ) as enc:
-		oti_scheme, oti_common = enc.oti_scheme, enc.oti_common
 
-		blocks = list(enc)
-		assert len(blocks) == 1, len(blocks)
-		block, = blocks
+	if not opts.decode:
+		if opts.keyfile:
+			data = box.encrypt(data)
+			log.debug('Ciphertext: %sB', num_fmt(len(data)))
 
-		data_syms = map( op.itemgetter(1),
-			block.encode_iter(repair_rate=opts.sym_repair_rate) )
+		with RQEncoder( data, min_subsymbol_size=4,
+				symbol_size=opts.sym_size, max_memory=4000 ) as enc:
+			oti_scheme, oti_common = enc.oti_scheme, enc.oti_common
+			print('oti_params: {:x}-{:x}'.format(oti_common, oti_scheme))
 
-	log.debug( 'Produced %s symbols (%sB total)',
-		len(data_syms), num_fmt(len(''.join(data_syms))) )
+			blocks = list(enc)
+			assert len(blocks) == 1, len(blocks)
+			block, = blocks
 
-	n_abc = _b32_abcs[1]
-	for n, sym in enumerate(data_syms):
-		print('{:02d} {} {}'.format(
-			n, n_abc[n % len(n_abc)].encode('utf-8'), b32_encode(sym).rstrip('=') ))
+			data_syms = map( op.itemgetter(1),
+				block.encode_iter(repair_rate=opts.sym_repair_rate) )
+
+		log.debug( 'Produced %s symbols (%sB total)',
+			len(data_syms), num_fmt(len(''.join(data_syms))) )
+
+		n_abc = _b32_abcs[1]
+		for n, sym in enumerate(data_syms):
+			print('{:02d} {} {}'.format(
+				n, n_abc[n % len(n_abc)].encode('utf-8'), b32_encode(sym).rstrip('=') ))
+
+
+	else:
+		oti_common, oti_scheme = (int(n, 16) for n in opts.decode.split('-'))
+		n_abc = _b32_abcs[1]
+
+		with RQDecoder(oti_common, oti_scheme) as dec:
+			for line in data.splitlines():
+				if not line or line.startswith('#'): continue
+				line = u''.join(line.decode('utf-8').split())
+				n, sym = n_abc.find(line[0]), b32_decode(line[1:])
+				try: dec.add_symbol(sym, esi=n, sbn=0)
+				except RQError as err: pass
+			data = dec.decode()
+
+		if opts.keyfile: data = box.decrypt(data)
+		sys.stdout.write(data)
 
 
 if __name__ == '__main__': sys.exit(main())
