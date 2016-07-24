@@ -23,9 +23,9 @@ usage() {
 	echo >&2 "  $bin { -l | --list }"
 	echo >&2 "    List titles from metadata cache file."
 	echo >&2
-	echo >&2 "  $bin { -i | --info | -m | --meta } n"
+	echo >&2 "  $bin { -i | --info | -m | --meta | -u | --url } n"
 	echo >&2 "    Dump metadata for video, specified by its sequence number."
-	echo >&2 "    --info dumps pretty version, and --meta is for pure json."
+	echo >&2 "    --info dumps pretty version, --meta - pure json, --url - just video URL."
 	echo >&2
 	echo >&2 "  $bin [ -h | --help ]"
 	exit ${1:-0}
@@ -57,9 +57,14 @@ chan_cache=_meta.json
 	exit
 }
 
-[[ "$1" = -i || "$1" = --info || "$1" = -m || "$1" = --meta ]] && {
+[[ "$1" = -i || "$1" = --info || "$1" = -m ||
+		"$1" = --meta || "$1" = -u || "$1" = --url ]] && {
 	[[ "$#" -ne 2 ]] && usage 1
-	[[ "$1" = -i || "$1" = --info ]] && filter=( jq -CS . ) || filter=( cat )
+	case "$1" in
+		-i|--info) filter=( jq -CS . ) ;;
+		-u|--url) filter=( jq -r .webpage_url ) ;;
+		*) filter=( cat ) ;;
+	esac
 	sed -n "$2 p" "$chan_cache" | "${filter[@]}"
 	exit
 }
