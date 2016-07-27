@@ -53,7 +53,8 @@ case "$1" in
 
 	*) mode=list
 		[[ "${1:0:1}" != - ]] || usage 1
-		files=( "$@" ) ;;
+		files=()
+		for p in "$@"; do files+=( "${p%.pacnew}" ); done ;;
 
 esac
 
