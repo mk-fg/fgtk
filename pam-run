@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import itertools as it, operator as op, functools as ft
 import os, sys, errno, ctypes as c, enum, logging, signal, contextlib, pwd, grp
 
 
@@ -220,40 +221,56 @@ def main(args=None):
 	parser.add_argument('-n', '--no-env', action='store_true',
 		help='Do not set/update USER, HOME, PATH and such login env vars for --user.')
 
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('--debug', action='store_true', help='Same as --verbose, but even more info.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	global log
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	if opts.debug: log = logging.DEBUG
+	elif opts.verbose: log = logging.INFO
+	else: log = logging.WARNING
+	logging.basicConfig(level=log)
 	log = get_logger('main')
 
+	sname = opts.session
 	if not opts.user: opts.user = os.getuid()
 	uname, uid, gid, home, shell = parse_user_spec(opts.user)
 
 	child_pid = None
-	sig_trap = ( getattr(signal, 'SIG{}'.format(sig))
+	sig_trap = dict(
+		(getattr(signal, 'SIG{}'.format(sig)), sig)
 		for sig in ['TERM', 'INT', 'HUP', 'USR1', 'USR2'] )
-	def sig_pass(sig, frm):
+	def sig_pass(sig_name, sig, frm):
 		if not child_pid: return
-		with contextlib.suppress(OSError): os.kill(child_pid, sig)
-	for sig in sig_trap: signal.signal(sig, sig_pass)
+		for sig in sig_trap: signal.signal(sig, lambda sig,frm: sys.exit(31)) # propagate once
+		with contextlib.suppress(OSError):
+			log.debug('Propagating SIG{} ({}) to subprocess (pid: {})', sig_name, sig, child_pid)
+			os.kill(child_pid, sig)
+	for sig, sig_name in sig_trap.items(): signal.signal(sig, ft.partial(sig_pass, sig_name))
 
-	with PAMSession(opts.session, uname) as s:
+	log.info( 'Starting PAM session'
+		' {!r} for user {!r} (uid={}, gid={})...', sname, uname, uid, gid )
+	with PAMSession(sname, uname) as s:
 		if s.user != uname:
-			log.debug('Updated uname from PAM: {!r} -> {!r}', uname, s.user)
+			log.info('Updated uname from PAM: {!r} -> {!r}', uname, s.user)
 			uname, uid, gid, home, shell = parse_user_spec(s.user)
 
 		if not opts.no_env: # same basic env stuff that login(1) sets
 			os.environ.update(USER=uname, LOGNAME=uname, HOME=home, SHELL=shell)
 			os.environ['PATH'] = '/usr/local/bin:/opt/bin:/usr/bin'
 
+		cmd, args = os.path.expanduser(opts.command), list(opts.args or list())
 		child_pid = os.fork()
 		if not child_pid:
 			os.setresgid(gid, gid, gid)
 			os.setresuid(uid, uid, uid)
-			cmd = os.path.expanduser(opts.command)
-			os.execlp(cmd, opts.command, *(opts.args or list()))
+			os.execlp(cmd, opts.command, *args)
+		log.debug( 'Started session subprocess'
+			' (pid: {}): {}', child_pid, ' '.join([opts.command] + args) )
 		pid, code = os.waitpid(child_pid, 0)
+
+	log.info( 'PAM session {!r} for user {!r} (uid={}, gid={})'
+		' was closed cleanly, command exit code: {}', sname, uname, uid, gid, code )
 
 	sig = code & 0xff
 	if sig: # emulate exit-on-signal, same as child_pid
