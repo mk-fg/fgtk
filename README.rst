@@ -1798,6 +1798,16 @@ resets config sometimes.
 Can/should be extended to all sorts of other ff/ext settings in the future - and
 probably is already, see its yaml config for details.
 
+ff\_mozlz4
+''''''''''
+
+Simple py3 script to decompress .mozlz4 files, which can be found in FF profile
+directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-data``,
+which lz4 cli tool can't handle due to that mozLz40 header.
+
+Same cli interface as with gzip/xz/lz4 and such, uses `lz4
+<https://github.com/python-lz4/python-lz4/>`_ module.
+
 bt\_agent
 '''''''''
 
