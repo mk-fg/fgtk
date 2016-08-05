@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+from urllib.parse import unquote as url_unquote
+from html.parser import HTMLParser
+import os, sys, contextlib, pathlib, collections, logging
+import tempfile, stat, html, mimetypes, base64
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+@contextlib.contextmanager
+def safe_replacement(path, *open_args, mode=None, **open_kws):
+	if mode is None:
+		with contextlib.suppress(OSError):
+			mode = stat.S_IMODE(os.lstat(path).st_mode)
+	open_kws.update( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			yield tmp
+			if not tmp.closed: tmp.flush()
+			os.rename(tmp.name, path)
+		finally:
+			with contextlib.suppress(OSError): os.unlink(tmp.name)
+
+@contextlib.contextmanager
+def cleanup_on_err(file_obj):
+	try: yield
+	except:
+		with contextlib.suppress(OSError): os.unlink(file_obj.name)
+		file_obj.close()
+		raise
+
+
+class EmbedTagFinder(HTMLParser):
+
+	def __init__(self):
+		super(EmbedTagFinder, self).__init__()
+		self.store_pos = None
+		self.subst_open, self.subst_list = dict(), list()
+
+	def decode_path(self, path):
+		return url_unquote(html.unescape(path))
+
+	def updatepos(self, i, k):
+		# Assumption here is that html/parser.py
+		#  calls "self.updatepos(i, k)" right after parsing start/end tag
+		res = super(EmbedTagFinder, self).updatepos(i, k)
+		if self.store_pos:
+			(dst, k), self.store_pos = self.store_pos, None
+			dst[k] = list(self.getpos())
+			dst[k][1] += 1 # closing '>'
+			self.store_pos = None
+		return res
+
+	def handle_starttag(self, tag, attrs):
+		subst, attrs = None, dict(attrs)
+		if tag == 'script' and attrs.get('src'): subst, path = tag, attrs.pop('src')
+		if tag == 'link' and attrs.get('rel') == 'stylesheet' and attrs.get('href'):
+			subst, path = tag, attrs.pop('href')
+		if tag == 'img' and attrs.get('src'): subst, path = tag, attrs.pop('src')
+		if not subst: return
+		if subst in self.subst_open: # standalone tags like "<link ...>"
+			self.handle_endtag(subst, end=self.subst_open[subst]['next'])
+		self.subst_open[subst] = dict(
+			path=self.decode_path(path), pos=self.getpos(), attrs=attrs )
+		self.store_pos = self.subst_open[subst], 'next'
+
+	def handle_endtag(self, tag, end=None):
+		subst_info = self.subst_open.pop(tag, None)
+		if not subst_info: return
+		subst = dict( tag=tag,
+			start=subst_info['pos'], end=end,
+			path=subst_info['path'], attrs=subst_info['attrs'] )
+		self.subst_list.append(subst)
+		if not end: self.store_pos = subst, 'end'
+
+	def close(self):
+		super(EmbedTagFinder, self).close()
+		for tag, s in list(self.subst_open.items()):
+			self.handle_endtag(tag, end=s['next'])
+
+
+def dump_fat_html(src_path, dst):
+	src_path = pathlib.Path(src_path)
+	if src_path.is_dir():
+		src_path, src_dir = src_path / 'index.html', src_path
+	else: src_dir = src_path.parent
+
+	# Parsing html with regexps \o/
+	with open(bytes(src_path), 'r') as src:
+		log.debug('Parsing html file...')
+		proc = EmbedTagFinder()
+		for buff in iter(ft.partial(src.read, 2**20), ''): proc.feed(buff)
+		proc.close()
+
+		# Resolve all start/end pos to offset int, get sorted (by pos) list of replacements
+		subst_list, subst_lines = proc.subst_list, collections.defaultdict(list)
+		for s in sorted(subst_list, key=op.itemgetter('start')): subst_lines[s['start'][0]].append(s)
+		subst_lines = dict(subst_lines)
+		src.seek(0)
+		for n, line in enumerate(iter(src.readline, ''), 1):
+			if n not in subst_lines: continue
+			pos = src.tell() - len(line)
+			for s in subst_lines.pop(n):
+				a, b = map(op.itemgetter(1), op.itemgetter('start', 'end')(s))
+				s.update(a=pos+a, b=pos+b)
+		assert not subst_lines, subst_lines
+		subst_list = sorted(subst_list, key=op.itemgetter('a'))
+
+		# Check for overlaps - can't handle that case, and shouldn't be necessary here
+		b0 = None
+		for s in subst_list:
+			if b0 is not None:
+				assert b0 <= s['a'], [s['a'], b0]
+			b0 = s['b']
+
+		# Cache all the substitute data
+		# XXX: can be kinda large, easy to optimize
+		log.debug('Gathering replacement data...')
+		for s in subst_list:
+			tag = s['tag']
+			p = (src_dir / s['path'].lstrip('/')).resolve()
+			log.debug('Embedding file (tag: {}): {}', tag, p)
+
+			src.seek(s['a'])
+			str_len = s['b'] - s['a']
+			s_src = src.read(str_len)
+			assert len(s_src) == str_len, [s['a'], s['b'], len(s_src), str_len]
+			s['src'] = s_src.rstrip()
+			s['b'] -= len(s_src) - len(s['src'])
+
+			if tag in ['script', 'link']:
+				if tag == 'link': tag = 'style'
+				with open(bytes(p), 'r') as inc: text = inc.read()
+				if not text.endswith('\n'): text += '\n'
+				s['subst'] = '<{}>\n{}\n</{}>'.format(tag, text, tag)
+
+			elif tag == 'img':
+				attr_str = ' '.join(
+					(k if v is None else '{}="{}"'.format(k, html.escape(v, quote=True)))
+					for k, v in s['attrs'].items() )
+				if attr_str: attr_str = ' ' + attr_str
+				mime, enc = mimetypes.guess_type(str(p))
+				with open(bytes(p), 'rb') as inc: img = inc.read()
+				img = 'data:{};base64,{}'.format(
+					mime, base64.standard_b64encode(img).decode() )
+				s['subst'] = '<img{} src="{}">'.format(attr_str, img)
+
+			else: raise ValueError(tag)
+
+			log.debug(
+				'Embedded file (tag: {}, name: {}), replacing {} chars with {}',
+				tag, p.name, len(s['src']), len(s['subst']) )
+
+		# Copy contents, inserting substitutions
+		log.debug('Assembling new html...')
+		src.seek(0)
+		for s in subst_list:
+			dst.write(src.read(s['a'] - src.tell()))
+			dst.write(s['subst'])
+			src.seek(s['b'])
+		dst.write(src.read())
+
+		log.debug('Finished')
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Create "fat" html file with all the linked stuff embedded from a regular one.')
+
+	parser.add_argument('path',
+		help='HTML file to operate on. Paths to lined files are assumed to be relative to it ')
+	parser.add_argument('dst_path', nargs='?',
+		help='Path to output resulting file to. If not specified, stdout will be used.')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	if opts.dst_path:
+		with safe_replacement(opts.dst_path, 'a+') as tmp: dump_fat_html(opts.path, tmp)
+	else: dump_fat_html(opts.path, sys.stdout)
+
+if __name__ == '__main__': sys.exit(main())

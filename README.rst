@@ -457,6 +457,27 @@ See `blog post about liac tool`_ for more info.
 .. _runit: http://smarden.org/runit/
 .. _blog post about liac tool: http://blog.fraggod.net/2015/12/29/tool-to-interleave-and-colorize-lines-from-multiple-log-or-any-other-files.html
 
+html-embed
+''''''''''
+
+Script to create "fat" HTML files, embedding all linked images
+(as base64-encoded data-urls), stylesheets and js into them.
+
+All src= and href= paths must be local (e.g. "js/script.js" or "/css/main.css"),
+and will simply be treated as path components (stripping slashes on the left)
+from html dir, nothing external (e.g. "//site.com/stuff.js") will be fetched.
+
+Doesn't need anything but Python-3, based on stdlib html.parser module.
+
+Not optimized for huge amounts of embedded data, storing all the substitutions
+in memory while it runs, and is unsafe to run on random html files, as it can
+embed something sensitive (e.g. ``<img src="../.ssh/id_rsa">``) - no extra
+checks there.
+
+Use-case is to easily produce single-file webapps or pages to pass around (or
+share somewhere), e.g. some d3-based interactive chart page or an html report
+with a few embedded images.
+
 
 
 dev
