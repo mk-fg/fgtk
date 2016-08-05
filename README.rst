@@ -2182,6 +2182,29 @@ blog post.
 .. _util-linux: https://www.kernel.org/pub/linux/utils/util-linux/
 .. _parted: http://www.gnu.org/software/parted/parted.html
 
+d3-temp-rh-sensor-tsv-series-chart
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`D3`_-based ES6 graphing app for time-series data from rather common
+temperature (t) and relative humidity (rh) sensors (DHT22, sht1x, etc) in tsv
+(tab-separated-values) files with [iso8601-ts, t, rh] fields.
+
+Can be used directly via rawgit.com link: `d3-temp-rh-sensor-tsv-series-chart.html`_
+
+Bunch of real-world sample tsv files for it can be found alongside the html in
+`d3-temp-rh-sensor-tsv-series-chart.zip`_.
+
+Assembled (from simple html, d3.v4.js and main js) via html-embed script from
+this repo, doesn't have any external links, can be easily used as a local file.
+
+More info can be found in the `d3-chart-for-common-temperaturerh-time-series-data`_
+blog post.
+
+.. _D3: http://d3js.org/
+.. _d3-temp-rh-sensor-tsv-series-chart.html: https://rawgit.com/mk-fg/fgtk/master/scraps/d3-temp-rh-sensor-tsv-series-chart.html
+.. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
+.. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
+
 
 
 License (WTFPL)
