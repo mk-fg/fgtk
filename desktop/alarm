@@ -152,7 +152,6 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=True):
 class MLStripper(HTMLParser):
 	def __init__(self):
 		super(MLStripper, self).__init__()
-		self.reset()
 		self.fed = list()
 	def handle_data(self, d): self.fed.append(d)
 	def get_data(self): return ''.join(self.fed)
@@ -160,6 +159,7 @@ class MLStripper(HTMLParser):
 def strip_tags(html):
 	s = MLStripper()
 	s.feed(html)
+	s.close()
 	return s.get_data()
 
 
