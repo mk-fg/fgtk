@@ -59,8 +59,9 @@ class EmbedTagFinder(HTMLParser):
 		return url_unquote(html.unescape(path))
 
 	def updatepos(self, i, k):
-		# Assumption here is that html/parser.py
-		#  calls "self.updatepos(i, k)" right after parsing start/end tag
+		# Assumption here is that html.parser.HTMLParser calls
+		#  "self.updatepos(i, k)" right after parsing end tag and handle_endtag
+		#  call, as it is in current Python-3.5.2 stdlib module
 		res = super(EmbedTagFinder, self).updatepos(i, k)
 		if self.store_pos:
 			(dst, k), self.store_pos = self.store_pos, None
@@ -99,11 +100,9 @@ class EmbedTagFinder(HTMLParser):
 
 def dump_fat_html(src_path, dst):
 	src_path = pathlib.Path(src_path)
-	if src_path.is_dir():
-		src_path, src_dir = src_path / 'index.html', src_path
+	if src_path.is_dir(): src_path, src_dir = src_path / 'index.html', src_path
 	else: src_dir = src_path.parent
 
-	# Parsing html with regexps \o/
 	with open(bytes(src_path), 'r') as src:
 		log.debug('Parsing html file...')
 		proc = EmbedTagFinder()
@@ -177,14 +176,15 @@ def dump_fat_html(src_path, dst):
 			dst.write(s['subst'])
 			src.seek(s['b'])
 		dst.write(src.read())
+		dst.flush()
 
-		log.debug('Finished')
+	log.debug('Finished')
 
 
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Create "fat" html file with all the linked stuff embedded from a regular one.')
+		description='Create "fat" html file with all the linked stuff (js, css, img) embedded in it.')
 
 	parser.add_argument('path',
 		help='HTML file to operate on. Paths to lined files are assumed to be relative to it ')
