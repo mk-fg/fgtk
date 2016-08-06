@@ -149,7 +149,7 @@ def dump_fat_html(src_path, dst):
 				if tag == 'link': tag = 'style'
 				with open(bytes(p), 'r') as inc: text = inc.read()
 				if not text.endswith('\n'): text += '\n'
-				s['subst'] = '<{}>\n{}\n</{}>'.format(tag, text, tag)
+				s['subst'] = '<{}>\n{}</{}>'.format(tag, text, tag)
 
 			elif tag == 'img':
 				attr_str = ' '.join(
