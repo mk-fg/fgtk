@@ -60,6 +60,8 @@ svg .grid line { stroke: #ccc; }
 
 
 <script>
+'use strict'
+
 window.onload = () => {
 
 let to_arr = obj => [].map.call(obj, v => v)
@@ -199,7 +201,7 @@ let chart_init = (ds) => {
 		let [x, y] = d3.mouse(focus.node()), ds = vis.datum()
 		let ts = scale.focus.x.invert(x),
 			idx = d3.bisector(d => d.ts).left(ds, ts),
-			d0 = ds[idx-1], d1 = ds[idx]
+			d0 = ds[idx-1], d1 = ds[idx],
 			d = (!d0 || ts - d0.ts > d1.ts - ts) ? d1 : d0,
 			dx = scale.focus.x(d.ts),
 			side = dx < pos.w / 2 ? 1 : -1 // 1=right, -1=left
