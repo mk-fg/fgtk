@@ -1,7 +1,11 @@
 <!DOCTYPE html>
-<meta charset='utf-8'>
-<style>
 
+<head>
+
+<meta charset="utf-8">
+<title>t/rh time-series tsv chart</title>
+
+<style>
 body {
 	margin: 0 auto;
 	padding: 1em;
@@ -35,8 +39,9 @@ body {
 svg { font: 10px sans-serif; }
 svg line { shape-rendering: crispEdges; }
 svg .grid line { stroke: #ccc; }
-
 </style>
+
+</head>
 
 <body>
 
@@ -110,6 +115,7 @@ pos.h_hist_svg = pos.h_hist + pos.top + pos.bottom
 pos.top_context = pos.top + pos.h_focus + pos.gap
 
 let opts = {
+	title_base: document.title,
 	y_margin_t: 3, y_margin_rh: 5, time_gap_s: 4*60*60,
 	hist_margin_t: 0.5, hist_margin_rh: 5, hist_delay: 300,
 	ts_fmt: d3.timeFormat('%Y-%m-%dT%H:%M:%S%Z'),
@@ -454,6 +460,8 @@ let handle_uploads = ev => {
 
 		status.innerHTML = 'Status: done!'
 		chart_rebuild_with_uploaded_data(ds)
+		let [ts0, ts1] = d3.extent(ds, d => d.ts)
+		document.title = `${opts.title_base} [${opts.ts_fmt(ts0)} - ${opts.ts_fmt(ts1)}]`
 	})
 }
 
