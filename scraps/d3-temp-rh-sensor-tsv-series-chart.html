@@ -67,6 +67,17 @@ svg .grid line { stroke: #ccc; }
 <script>
 'use strict'
 
+//// ServiceWorker API refuses to load data: urls as "insecure"... oh well
+// if ('serviceWorker' in navigator) {
+// 	let sw = document.getElementById('sw-js').dataset.script
+// 	navigator.serviceWorker.register(sw, {scope: '/sw-test/'})
+// 		.then(reg => {
+// 			if (reg.installing) console.log('ServiceWorker: installing...')
+// 			else if (reg.waiting) console.log('ServiceWorker: installed')
+// 			else if (reg.active) console.log('ServiceWorker: active') })
+// 		.catch(err => console.log(`ServiceWorker registration failed: ${err}`))
+// }
+
 window.onload = () => {
 
 let to_arr = obj => [].map.call(obj, v => v)
@@ -477,6 +488,29 @@ src_zone.addEventListener('dragover', ev => {
 
 }
 </script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 <script>
