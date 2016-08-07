@@ -17,10 +17,10 @@ opts=( -acodec copy -vn )
 }
 
 set -e -o pipefail
-[[ -z "$3" ]] || step=$3
 step=$(( $step * 60 ))
 src=$1 prefix=$2
-shift; shift; shift;
+shift; shift
+[[ -z "$1" ]] || { step=$1; shift; }
 
 
 if [[ $# -ge 1 ]]
