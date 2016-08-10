@@ -360,6 +360,7 @@ let chart_init = (ds) => {
 			focus.select('.line.t').attr('d', line.focus.t)
 			focus.select('.line.rh').attr('d', line.focus.rh)
 			focus.select('.x.axis').call(axis.focus.x)
+			focus.select('.x.grid').call(axis.focus.grid_x)
 			stats_update() })
 
 	let stats_histogram = (hist, hist_data, ext, color) => {
@@ -482,7 +483,7 @@ let chart_rebuild_with_uploaded_data = (ds) => {
 	focus.select('.x.grid').call(axis.focus.grid_x)
 	focus.select('.y.grid.rh').call(axis.focus.grid_yrh)
 
-	focus.selectAll('.hover').attr('visibility', 'hidden')
+	focus.select('.hover').attr('visibility', 'hidden')
 
 	context.selectAll('.line').remove()
 	context.append('path')
