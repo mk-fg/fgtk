@@ -310,13 +310,12 @@ let chart_init = (ds) => {
 	focus.append('g').attr('class', 'x grid')
 	focus.append('g').attr('class', 'y grid rh')
 
-	let hover_box = focus.append('g').attr('class', 'hover'),
+	let hover_box = focus.append('g').attr('class', 'hover').attr('opacity', 0),
 		hover_line = hover_box.append('line')
 			.attr('x1', 0).attr('y1', 0)
 			.attr('x2', 0).attr('y2', pos.h_focus)
-			.style('fill', 'none')
-			.attr('visibility', 'hidden'),
-		hover_text = hover_box.append('text').attr('visibility', 'hidden')
+			.style('fill', 'none'),
+		hover_text = hover_box.append('text')
 	let hover_func = () => {
 		let [x, y] = d3.mouse(focus.node()), ds = vis.datum()
 		let ts = scale.focus.x.invert(x),
@@ -330,11 +329,11 @@ let chart_init = (ds) => {
 		lines
 			.enter().append('tspan').attr('dy', '1.2em')
 			.merge(lines).attr('x', side * 5).text(d => d)
+		hover_box.attr('opacity', 1)
 		hover_text
-			.attr('visibility', 'visible')
 			.attr('transform', `translate(${dx},0)`)
 			.attr('text-anchor', side > 0 ? 'start' : 'end')
-		hover_line.attr('x1', dx).attr('x2', dx).attr('visibility', 'visible') }
+		hover_line.attr('x1', dx).attr('x2', dx) }
 	focus.append('rect')
 		.attr('class', 'overlay')
 		.attr('width', pos.w)
@@ -356,7 +355,7 @@ let chart_init = (ds) => {
 			scale.focus.x.domain( d3.event.selection ?
 				d3.event.selection.map(scale.context.x.invert) :
 				scale.context.x.domain() )
-			focus.selectAll('.hover').attr('visibility', 'hidden')
+			focus.select('.hover').attr('opacity', 0)
 			focus.select('.line.t').attr('d', line.focus.t)
 			focus.select('.line.rh').attr('d', line.focus.rh)
 			focus.select('.x.axis').call(axis.focus.x)
@@ -483,7 +482,7 @@ let chart_rebuild_with_uploaded_data = (ds) => {
 	focus.select('.x.grid').call(axis.focus.grid_x)
 	focus.select('.y.grid.rh').call(axis.focus.grid_yrh)
 
-	focus.select('.hover').attr('visibility', 'hidden')
+	focus.select('.hover').attr('opacity', 1)
 
 	context.selectAll('.line').remove()
 	context.append('path')
