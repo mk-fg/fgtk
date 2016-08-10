@@ -4,9 +4,9 @@
 <head>
 
 <meta charset="utf-8">
-<title>t/rh time-series tsv chart</title>
+<title>disk splace usage layout</title>
 
-<style>
+<style type="text/css">
 
 body {
 	margin: 0 auto;
@@ -27,99 +27,22 @@ body {
 #src-list dt { float: left; clear: left; }
 #src-list dd { float: left; margin-left: 1em; }
 
-#stats { padding: 1em 3em; }
 
 svg { font: 10px sans-serif; }
-svg line { shape-rendering: crispEdges; }
-svg .hover line { stroke: #000; }
-svg .axis text { fill: #528474; }
-svg .axis line, svg .axis path { stroke: #528474; }
-svg .grid line { stroke: #a8bfab; }
-svg .grid .domain { stroke: none; }
-svg .brush .selection { stroke: #528474; }
 
-
-/* Brightness and Gamma Switch
-	by Joseph Shenton @TeamiHackify -- https://codepen.io/TeamiHackify/pen/YqVoJB */
-
-body { background: #f8fdff; color: #000; transition: background-color 150ms ease-out !important; }
-body.bg-night { background: #002a36; color: #65b46f; }
-
-body.bg-night svg { fill: #2e4b39; }
-body.bg-night svg .hover line { stroke: #65b46f; }
-body.bg-night svg .hover text { fill: #65b46f; }
-body.bg-night svg .grid line { stroke: #304a43; }
-body.bg-night svg .brush .selection { stroke: #65b46f; }
-
-.btn-light {
-	cursor: default;
-	position: fixed;
-	top: 20px;
-	right: 2px;
-	z-index: 10;
-	font-size: 15px;
+svg .node rect {
+	stroke: #eee;
+	fill: #aaa;
+	fill-opacity: .8;
 }
 
-.btn-light .icon.day {
-	position: relative;
-	width: 26px;
-	height: 26px;
-	top: -3px;
-	margin: 0 7px;
-	fill: #9caec0;
-}
-
-.btn-light .icon.night {
-	position: relative;
-	width: 26px;
-	height: 26px;
-	top: -3px;
-	margin: 0 7px;
-	fill: #9caec0;
-}
-
-.btn-light .icon { cursor: pointer; }
-.btn-light .toggle { display: none; }
-
-.btn-light .toggle, .btn-light .toggle:after, .btn-light .toggle:before, .btn-light .toggle *, .btn-light .toggle *:after,
-.btn-light .toggle *:before, .btn-light .toggle + .toggle-button { box-sizing: border-box; }
-
-.btn-light .toggle + .toggle-button {
-	outline: 0;
-	display: inline-block;
-	width: 4em;
-	height: 2em;
-	position: relative;
+svg .node.parent rect {
 	cursor: pointer;
-	border: 2px solid #333;
+	fill: steelblue;
 }
 
-.btn-light .toggle + .toggle-button:after,
-.btn-light .toggle + .toggle-button:before {
-	position: relative;
-	display: block;
-	content: "";
-	width: 50%;
-	height: 100%;
-}
-
-.btn-light .toggle + .toggle-button:after { left: 0; }
-.btn-light .toggle + .toggle-button:before { display: none; }
-.btn-light .toggle:checked + .toggle-button:after { left: 50%; }
-.btn-light .toggle:checked + .toggle-button:after { left: 50%; }
-
-.btn-light .toggle + .toggle-button {
-	padding: 2px;
-	transition: all .2s ease;
-	border: 2px solid rgba(156, 174, 192, 0.27);
-	border-radius: 2em;
-}
-
-.btn-light .toggle + .toggle-button:after {
-	transition: all .2s ease;
-	background: rgba(156, 174, 192, 0.27);
-	content: "";
-	border-radius: 1em;
+text {
+	pointer-events: none;
 }
 
 </style>
@@ -128,32 +51,7 @@ body.bg-night svg .brush .selection { stroke: #65b46f; }
 
 <body>
 
-
-<!-- Brightness and Gamma Switch
-	by Joseph Shenton @TeamiHackify -- https://codepen.io/TeamiHackify/pen/YqVoJB -->
-<div class="btn-light">
-	<label for="btn-light-cb">
-		<svg class="icon night" viewBox="0 0 100 100">
-			<path d="M96.76,66.458c-0.853-0.852-2.15-1.064-3.23-0.534c-6.063,2.991-12.858,4.571-19.655,4.571	C62.022,70.495,50.88,65.88,42.5,57.5C29.043,44.043,25.658,23.536,34.076,6.47c0.532-1.08,0.318-2.379-0.534-3.23	c-0.851-0.852-2.15-1.064-3.23-0.534c-4.918,2.427-9.375,5.619-13.246,9.491c-9.447,9.447-14.65,22.008-14.65,35.369	c0,13.36,5.203,25.921,14.65,35.368s22.008,14.65,35.368,14.65c13.361,0,25.921-5.203,35.369-14.65	c3.872-3.871,7.064-8.328,9.491-13.246C97.826,68.608,97.611,67.309,96.76,66.458z" />
-		</svg>
-	</label>
-	<input class="toggle" id="btn-light-cb" type="checkbox">
-	<label class="toggle-button" for="btn-light-cb"></label>
-	<label for="btn-light-cb">
-		<svg class="icon day" viewBox="0 0 35 35">
-			<path style="fill-rule:evenodd;clip-rule:evenodd;" d="M6,17.5C6,16.672,5.328,16,4.5,16h-3C0.672,16,0,16.672,0,17.5		S0.672,19,1.5,19h3C5.328,19,6,18.328,6,17.5z M7.5,26c-0.414,0-0.789,0.168-1.061,0.439l-2,2C4.168,28.711,4,29.086,4,29.5		C4,30.328,4.671,31,5.5,31c0.414,0,0.789-0.168,1.06-0.44l2-2C8.832,28.289,9,27.914,9,27.5C9,26.672,8.329,26,7.5,26z M17.5,6		C18.329,6,19,5.328,19,4.5v-3C19,0.672,18.329,0,17.5,0S16,0.672,16,1.5v3C16,5.328,16.671,6,17.5,6z M27.5,9		c0.414,0,0.789-0.168,1.06-0.439l2-2C30.832,6.289,31,5.914,31,5.5C31,4.672,30.329,4,29.5,4c-0.414,0-0.789,0.168-1.061,0.44		l-2,2C26.168,6.711,26,7.086,26,7.5C26,8.328,26.671,9,27.5,9z M6.439,8.561C6.711,8.832,7.086,9,7.5,9C8.328,9,9,8.328,9,7.5		c0-0.414-0.168-0.789-0.439-1.061l-2-2C6.289,4.168,5.914,4,5.5,4C4.672,4,4,4.672,4,5.5c0,0.414,0.168,0.789,0.439,1.06		L6.439,8.561z M33.5,16h-3c-0.828,0-1.5,0.672-1.5,1.5s0.672,1.5,1.5,1.5h3c0.828,0,1.5-0.672,1.5-1.5S34.328,16,33.5,16z		 M28.561,26.439C28.289,26.168,27.914,26,27.5,26c-0.828,0-1.5,0.672-1.5,1.5c0,0.414,0.168,0.789,0.439,1.06l2,2		C28.711,30.832,29.086,31,29.5,31c0.828,0,1.5-0.672,1.5-1.5c0-0.414-0.168-0.789-0.439-1.061L28.561,26.439z M17.5,29		c-0.829,0-1.5,0.672-1.5,1.5v3c0,0.828,0.671,1.5,1.5,1.5s1.5-0.672,1.5-1.5v-3C19,29.672,18.329,29,17.5,29z M17.5,7		C11.71,7,7,11.71,7,17.5S11.71,28,17.5,28S28,23.29,28,17.5S23.29,7,17.5,7z M17.5,25c-4.136,0-7.5-3.364-7.5-7.5		c0-4.136,3.364-7.5,7.5-7.5c4.136,0,7.5,3.364,7.5,7.5C25,21.636,21.636,25,17.5,25z" />
-		</svg>
-	</label>
-</div>
-
-
-<div id="chart" style="height: 0;">
-	<svg class="chart"></svg>
-	<ul id="stats"></ul>
-	<svg height="0" class="hist">
-		<g class="t"></g><g class="rh"></g>
-	</svg>
-</div>
+<svg width="960" height="0"></svg>
 
 <fieldset id="src-zone">
 	<p><span>Drop files here or</span>
@@ -168,17 +66,6 @@ body.bg-night svg .brush .selection { stroke: #65b46f; }
 
 <script>
 'use strict'
-
-//// ServiceWorker API refuses to load data: urls as "insecure"... oh well
-// if ('serviceWorker' in navigator) {
-// 	let sw = document.getElementById('sw-js').dataset.script
-// 	navigator.serviceWorker.register(sw, {scope: '/sw-test/'})
-// 		.then(reg => {
-// 			if (reg.installing) console.log('ServiceWorker: installing...')
-// 			else if (reg.waiting) console.log('ServiceWorker: installed')
-// 			else if (reg.active) console.log('ServiceWorker: active') })
-// 		.catch(err => console.log(`ServiceWorker registration failed: ${err}`))
-// }
 
 window.onload = () => {
 
@@ -210,303 +97,134 @@ let repr_num = (bytes, opts) => {
 let repr_num_raw = n => repr_num(n, {b:'', bs:'', sep: ''})
 
 
-
-// ---------- Chart
-
-// Chart elements: [svg -> [focus, gap, context], stats]
-// Histogram elements: svg -> [g.t, gap, g.rh]
-let pos = {
-	left: 40, right: 40, top: 10, bottom: 20, gap: 20,
-	w_svg: document.getElementById('chart').offsetWidth,
-	h_focus: 400, h_context: 100, h_hist: 200,
-	ax_label_top: 15, ax_label_horiz: 10 }
-pos.w = pos.w_svg - pos.left - pos.right
-pos.w_hist = (pos.w - pos.gap) / 2
-pos.h = pos.h_focus + pos.h_context + pos.gap
-pos.h_svg = pos.h + pos.top + pos.bottom
-pos.h_hist_svg = pos.h_hist + pos.top + pos.bottom
-pos.top_context = pos.top + pos.h_focus + pos.gap
-
 let opts = {
-	title_base: document.title,
-	y_margin_t: 3, y_margin_rh: 5, time_gap_s: 4*60*60,
-	hist_margin_t: 0.5, hist_margin_rh: 5, hist_delay: 300,
-	ts_fmt: d3.timeFormat('%Y-%m-%dT%H:%M:%S%Z'),
-	ts_suffix: d3.timeFormat('%Z')(new Date()) }
-
-let scale = {
-	focus: {
-		x: d3.scaleTime().range([0, pos.w]),
-		yt: d3.scaleLinear().range([pos.h_focus, 0]),
-		yrh: d3.scaleLinear().range([pos.h_focus, 0]) },
-	context: {
-		x: d3.scaleTime().range([0, pos.w]),
-		yt: d3.scaleLinear().range([pos.h_context, 0]),
-		yrh: d3.scaleLinear().range([pos.h_context, 0]) },
-	color: d3.scaleOrdinal(d3.schemeCategory20) }
-
-let axis = {
-	focus: {
-		x: d3.axisBottom(scale.focus.x),
-		yt: d3.axisLeft(scale.focus.yt),
-		yrh: d3.axisRight(scale.focus.yrh),
-		grid_rh:
-			d3.axisLeft(scale.focus.yrh)
-				.ticks(4).tickSize(-pos.w, 0, 0).tickFormat('') },
-	context: {x: d3.axisBottom(scale.context.x)} }
-
-let color = {t: scale.color(0), rh: scale.color(1)}
-
-let line_for = (k, x, y) => d3.line()
-	.defined(d => d[k] !== undefined)
-	.x(d => x(d.ts)).y(d => y(d[k]))
-	.curve(d3.curveMonotoneX)
-
-let line = {
-	focus: {
-		t: line_for('t', scale.focus.x, scale.focus.yt),
-		rh: line_for('rh', scale.focus.x, scale.focus.yrh)},
-	context: {
-		t: line_for('t', scale.context.x, scale.context.yt),
-		rh: line_for('rh', scale.context.x, scale.context.yrh)} }
+	title_base: 'du parser',
+	ts_fmt: d3.timeFormat('%Y-%m-%dT%H:%M:%S%Z') }
 
 
-let chart // cache for major chart parts, re-used only on new data uploads
-
-let chart_init = (ds) => {
-	if (chart) {
-		chart[0].datum(ds)
-		return chart }
-
-	let vis = d3.select('#chart').style('height', 'auto'),
-		svg = vis.select('svg.chart').attr('width', pos.w_svg).attr('height', pos.h_svg)
-	vis.datum(ds)
-
-	let focus = svg.append('g')
-		.attr('class', 'focus')
-		.attr('transform', `translate(${pos.left},${pos.top})`)
-	focus.append('g')
-		.attr('class', 'x axis')
-		.attr('transform', `translate(0,${pos.h_focus})`)
-	focus.append('g').attr('class', 'y axis t')
-	focus.append('text')
-		.attr('transform',
-			`translate(${0 - pos.ax_label_horiz},${pos.h_focus + pos.ax_label_top})` )
-		.attr('text-anchor', 'end')
-		.style('fill', color.t).text('t, °C')
-	focus.append('g')
-		.attr('class', 'y axis rh')
-		.attr('transform', `translate(${pos.w},0)`)
-	focus.append('text')
-		.attr('transform',
-			`translate(${pos.w + pos.ax_label_horiz},${pos.h_focus + pos.ax_label_top})` )
-		.attr('text-anchor', 'start')
-		.style('fill', color.rh).text('%RH')
-	focus.append('g').attr('class', 'y grid rh')
-
-	let hover_box = focus.append('g').attr('class', 'hover'),
-		hover_line = hover_box.append('line')
-			.attr('x1', 0).attr('y1', 0)
-			.attr('x2', 0).attr('y2', pos.h_focus)
-			.style('fill', 'none')
-			.attr('visibility', 'hidden'),
-		hover_text = hover_box.append('text').attr('visibility', 'hidden')
-	let hover_func = () => {
-		let [x, y] = d3.mouse(focus.node()), ds = vis.datum()
-		let ts = scale.focus.x.invert(x),
-			idx = d3.bisector(d => d.ts).left(ds, ts),
-			d0 = ds[idx-1], d1 = ds[idx],
-			d = (!d0 || ts - d0.ts > d1.ts - ts) ? d1 : d0,
-			dx = scale.focus.x(d.ts),
-			side = dx < pos.w / 2 ? 1 : -1, // 1=right, -1=left
-			lines = [`${opts.ts_fmt(d.ts)}`, `${d.t} °C, ${d.rh} %RH`]
-		lines = hover_text.selectAll('tspan').data(lines)
-		lines
-			.enter().append('tspan').attr('dy', '1.2em')
-			.merge(lines).attr('x', side * 5).text(d => d)
-		hover_text
-			.attr('visibility', 'visible')
-			.attr('transform', `translate(${dx},0)`)
-			.attr('text-anchor', side > 0 ? 'start' : 'end')
-		hover_line.attr('x1', dx).attr('x2', dx).attr('visibility', 'visible') }
-	focus.append('rect')
-		.attr('class', 'overlay')
-		.attr('width', pos.w)
-		.attr('height', pos.h_focus)
-		.attr('fill', 'transparent')
-		.on('mousemove', hover_func).on('mouseover', hover_func)
-
-	let context = svg.append('g')
-		.attr('class', 'context')
-		.attr('transform', `translate(${pos.left},${pos.top_context})`)
-	context.append('g')
-		.attr('class', 'x axis')
-		.attr('transform', `translate(0,${pos.h_context})`)
-		.call(axis.context.x)
-
-	let brush = d3.brushX(scale.context.x)
-		.extent([[0,0], [pos.w, pos.h_context]])
-		.on( 'brush', () => {
-			scale.focus.x.domain( d3.event.selection ?
-				d3.event.selection.map(scale.context.x.invert) :
-				scale.context.x.domain() )
-			focus.selectAll('.hover').attr('visibility', 'hidden')
-			focus.select('.line.t').attr('d', line.focus.t)
-			focus.select('.line.rh').attr('d', line.focus.rh)
-			focus.select('.x.axis').call(axis.focus.x)
-			stats_update() })
-
-	let stats_histogram = (hist, hist_data, ext, color) => {
-		hist.selectAll('*').remove()
-		let w = hist.attr('width'), h = hist.attr('height')
-		let count_fmt = d3.format(",.0f")
-		let x = d3.scaleLinear()
-			.rangeRound([0, w - 1])
-			.domain(ext)
-		let bins = d3.histogram()
-			.domain(x.domain())
-			.thresholds(x.ticks(10))(hist_data)
-		let y = d3.scaleLinear()
-			.range([h, 0])
-			.domain([0, d3.max(bins, d => d.length)])
-		hist.append('g')
-			.attr('class', 'axis x')
-			.attr('transform', `translate(0, ${h})`)
-			.call(d3.axisBottom(x))
-
-		bins.forEach(d => {
-			if (!x(d.x0)) return
-			let bar = hist.append('g')
-				.attr('class', 'bar')
-				.attr('transform', `translate(${x(d.x0)}, ${y(d.length)})`)
-			bar.append('rect')
-				.attr('x', 1)
-				.attr('width', x(d.x1) - x(d.x0) - 1)
-				.attr('height', h - y(d.length))
-				.style('fill', color || '#ddd')
-			bar.append('text')
-				.attr('dy', '.75em')
-				.attr('y', 6)
-				.attr('x', (x(d.x1) - x(d.x0)) / 2)
-				.attr('text-anchor', 'middle')
-				.text(count_fmt(d.length)) })
+let tree_from_du_outputs = (chunks) => {
+	let n = 0, n_fmt = d3.format('>02d'), data = []
+	for (let chunk of chunks) {
+		if (!chunk) continue
+		n += 1
+		let data_chunk = []
+		chunk.text.split('\n').forEach(line => {
+			line = line.trim().split(/\s+/, 2)
+			if (line.length != 2)  return
+			data_chunk.push({path: line[1], size: line[0]}) })
+		if (!data_chunk.length) continue
+		let path_sample = data_chunk[data_chunk.length-1].path
+		if (!path_sample.startsWith('/')) {
+			let prefix = (chunk.name || `root-${n_fmt(n)}`) + '/'
+			data_chunk.forEach(d => {
+				if (d.path.startsWith('./')) d.path = d.path.slice(2)
+				else if (d.path == '.') d.path = ''
+				d.path = prefix + d.path })
+		}
+		data.push.apply(data, data_chunk)
 	}
 
-	let stats_update = () => {
-		let stats_box = vis.select('#stats'),
-			ds = vis.datum(),
-			[ts0, ts1] = scale.focus.x.domain(),
-			idx0 = d3.bisector(d => d.ts).left(ds, ts0),
-			idx1 = d3.bisector(d => d.ts).right(ds, ts1, idx0),
-			dss = ds.slice(idx0, idx1),
-			stats = [], ext, hist_data, hist_func
-		ext = d3.extent(dss, d => d.ts)
-		ts0 = ext[0], ts1 = ext[1]
-		stats.push(`measurements: ${repr_num_raw(dss.length)}`)
-		stats.push(`timespan: ${opts.ts_fmt(ts0)} - ${opts.ts_fmt(ts1)}`)
-		ext = d3.extent(dss, d => d.t)
-		stats.push(`t <sub>min/max</sub> = ${html_enc(ext[0])} / ${html_enc(ext[1])} °C`)
-		ext = d3.extent(dss, d => d.rh)
-		stats.push(`rh <sub>min/max</sub> = ${html_enc(ext[0])} / ${html_enc(ext[1])} %RH`)
-		stats = stats_box.selectAll('li').data(stats)
-		stats.enter().append('li').merge(stats).html(d => d)
-
-		let hist = vis.select('svg.hist')
-			.attr('width', pos.w_svg).attr('height', pos.h_hist_svg)
-		let [timer_t, timer_rh] = hist.datum() || [null, null]
-
-		if (timer_t) clearTimeout(timer_t)
-		hist_data = dss.map(d => d.t)
-		ext = d3.extent(hist_data)
-		ext = [ext[0] - opts.hist_margin_t, ext[1] + opts.hist_margin_t]
-		hist_func = (...args) => hist.select('.t')
-			.attr('width', pos.w_hist).attr('height', pos.h_hist)
-			.attr('transform', `translate(${pos.left}, ${pos.top})`)
-			.call(stats_histogram, ...args)
-		timer_t = setTimeout(hist_func, opts.hist_delay, hist_data, ext, color.t)
-
-		if (timer_rh) clearTimeout(timer_rh)
-		hist_data = dss.map(d => d.rh)
-		ext = d3.extent(hist_data)
-		ext = [ext[0] - opts.hist_margin_rh, ext[1] + opts.hist_margin_rh]
-		hist_func = (...args) => hist.select('.rh')
-			.attr('width', pos.w_hist).attr('height', pos.h_hist)
-			.attr('transform', `translate(${pos.left + pos.w_hist + pos.gap}, ${pos.top})`)
-			.call(stats_histogram, ...args)
-		timer_rh = setTimeout(hist_func, opts.hist_delay, hist_data, ext, color.rh)
-
-		hist.datum([timer_t, timer_rh])
+	let prefix
+	if (data.length) {
+		data.sort((a, b) => d3.ascending(a.path, b.path))
+		let p1 = data[0].path, p2 = data[data.length-1].path, k = 0
+		while (k < p2.length && p1.charAt(k) === p2.charAt(k)) k++
+		prefix = p1.slice(0, k)
+		k = prefix.lastIndexOf('/')
+		prefix = prefix.slice(0, k)
+		if (k > 0) data.forEach(d => { d.path = d.path.slice(k+1) })
+		while (!data[0].path) data.shift() // roots
 	}
+	data.unshift({path: '/', repr: ''})
 
-	chart = [vis, focus, context, brush, stats_update]
-	return chart
+	let stratify = d3.stratify()
+			.id(d => d.path)
+			.parentId(d => {
+				if (d.path === '/') return
+				let k = d.path.lastIndexOf('/')
+				return k >= 0 ? d.path.substring(0, k) : '/' }),
+		tree = stratify(data)
+			.sum(d => d.children ? 0 : (d.size || 0))
+			.sort((a, b) => b.height - a.height || b.value - a.value)
+
+	return [prefix, tree]
 }
 
 
-let chart_rebuild_with_uploaded_data = (ds) => {
-	let ts0 = new Date().getTime()
-	let [vis, focus, context, brush, stats_update] = chart_init(ds)
+let chart_init = root => {
 
-	let y_ext
-	y_ext = d3.extent(ds, d => d.t)
-	scale.focus.yt.domain([y_ext[0] - opts.y_margin_t, y_ext[1] + opts.y_margin_t])
-	scale.context.yt.domain(scale.focus.yt.domain())
-	y_ext = d3.extent(ds, d => d.rh)
-	scale.focus.yrh.domain([y_ext[0] - opts.y_margin_rh, y_ext[1] + opts.y_margin_rh])
-	scale.context.yrh.domain(scale.focus.yrh.domain())
-	scale.focus.x.domain(d3.extent(ds, d => d.ts))
-	scale.context.x.domain(scale.focus.x.domain())
+	let svg = d3.select('svg')
+	svg.attr('height', window.innerHeight - document.documentElement.offsetHeight)
 
-	focus.selectAll('.line').remove()
-	focus.append('path')
-		.datum(ds)
-		.attr('class', 'line t')
-		.attr('d', line.focus.t)
-		.style('fill', 'none')
-		.style('stroke', color.t)
-	focus.append('path')
-		.datum(ds)
-		.attr('class', 'line rh')
-		.attr('d', line.focus.rh)
-		.style('fill', 'none')
-		.style('stroke', color.rh)
-	focus.select('.x.axis').call(axis.focus.x)
-	focus.select('.y.axis.t').call(axis.focus.yt)
-	focus.select('.y.axis.rh').call(axis.focus.yrh)
-	focus.select('.y.grid.rh').call(axis.focus.grid_rh)
+	let text_transform = d => `translate(8, ${d.dx * ky / 2})`,
+		text_repr_path = p => {
+			let k = p.lastIndexOf('/')
+			return (k >= 0 ? p.slice(k+1) : p) + ' ' },
+		w = svg.node().width.baseVal.value,
+		h = svg.node().height.baseVal.value,
+		x = d3.scaleLinear().range([0, w]),
+		y = d3.scaleLinear().range([0, h])
 
-	focus.selectAll('.hover').attr('visibility', 'hidden')
+	d3.partition()(root)
+	root.descendants().forEach(d => {
+		d.x = d.x0; d.dx = d.x1 - d.x0;
+		d.y = d.y0; d.dy = d.y1 - d.y0; })
 
-	context.selectAll('.line').remove()
-	context.append('path')
-		.datum(ds)
-		.attr('class', 'line t')
-		.attr('d', line.context.t)
-		.style('fill', 'none')
-		.style('stroke', color.t)
-	context.append('path')
-		.datum(ds)
-		.attr('class', 'line rh')
-		.attr('d', line.context.rh)
-		.style('fill', 'none')
-		.style('stroke', color.rh)
-	context.select('.x.axis').call(axis.context.x)
+	let kx = w / root.dx, ky = h / 1
 
-	context.select('.brush').remove()
-	context
-		.append('g')
-			.attr('class', 'x brush')
-			.call(brush)
+	let cell = svg
+		.selectAll('.node').data(root.descendants())
+			.enter().append('g')
+				.attr('class', d => `node ${d.children ? ' parent' : ' leaf'}`)
+				.attr('transform', d => `translate(${x(d.y)}, ${y(d.x)})`)
 
-	stats_update()
+	cell.append('rect')
+			.attr('width', d => d.dy * kx)
+			.attr('height', d => d.dx * ky)
 
-	let ts1 = new Date().getTime()
-	console.log(`Updated chart data (${repr_num_raw(ts1 - ts0)} ms)`)
+	cell.append('text')
+		.attr('transform', text_transform)
+		.attr('dy', '.3em')
+		.style('opacity', d => d.dx * ky > 12 ? 1 : 0)
+		.text(d => ( d.data.repr === undefined ?
+			text_repr_path(d.data.path) : d.data.repr ) + repr_num(d.value))
+
+	cell.append('title').text(d => `${d.id}\n${repr_num(d.value)}`)
+
+	let click_handler = d => {
+		if (!d.children) return
+
+		kx = (d.y ? w - 40 : w) / (1 - d.y), ky = h / d.dx
+		x.domain([d.y, 1]).range([d.y ? 40 : 0, w])
+		y.domain([d.x, d.x + d.dx])
+
+		let t = cell.transition()
+			.duration(d3.event.altKey ? 7500 : 750)
+			.attr('transform', d => `translate(${x(d.y)},${y(d.x)})`)
+
+		t.select('rect')
+			.attr('width', d.dy * kx)
+			.attr('height', d => d.dx * ky)
+
+		t.select('text')
+			.attr('transform', text_transform)
+			.style('opacity', d => d.dx * ky > 12 ? 1 : 0)
+
+		d3.event.stopPropagation() }
+
+	cell.on('click', click_handler)
+  d3.select(window).on('click', d => click_handler(root))
 }
 
 
 
 // ---------- File upload handling
+
+// d3.text('du.out', (error, text) => {
+// 	if (error) throw error
+// 	let [prefix, tree] = tree_from_du_outputs([{text: text}])
+// 	chart_init(tree)
+// })
 
 if (!(window.File && window.FileReader && window.FileList && window.Blob))
 	alert('Browser lacks File APIs support, nothing will work x_x')
@@ -528,23 +246,11 @@ let handle_uploads = ev => {
 			` ${file.lastModifiedDate ? opts.ts_fmt(file.lastModifiedDate) : 'n/a'} ...</dt>` )
 		output.insertAdjacentHTML('beforeend', '<dd></dd>')
 		let output_status = output.lastChild
-
 		return new Promise((resolve, reject) => {
 			let reader = new FileReader()
 			reader.onload = ev => {
-				let res = 'error', rows = 0
-				if (file.size === 0) res = 'empty file'
-				else d3.tsvParseRows(
-					ev.target.result,
-					d => {
-						let [ts, t, rh] = d
-						if (!ts.match(/([-+]\d{2}:\d{2}|Z)$/)) ts += opts.ts_suffix
-						let row = {ts: d3.isoParse(ts), t: parseFloat(t), rh: parseFloat(rh)}
-						rows += 1
-						data.set(row.ts.getTime(), row) })
-				if (rows > 0) res = `done (${repr_num_raw(rows)} rows)`
-				output_status.innerHTML = html_enc(res)
-				resolve()
+				output_status.innerHTML = html_enc(file.size !== 0 ? 'done' : 'empty file')
+				resolve({name: file.name, text: ev.target.result})
 			}
 			reader.readAsText(file)
 		})
@@ -552,22 +258,11 @@ let handle_uploads = ev => {
 
 	Promise.all(uploads).then((results) => {
 		status.innerHTML = 'Status: processing data...'
-
-		// Convert "data" map to array of sorted datapoints, inserting gaps
-		let d0, ds = Array.from(data.keys())
-		ds.sort()
-		for (let d of ds) {
-			if (d0 && (d - d0) / 1000 > opts.time_gap_s) {
-				let d_gap = parseInt((d + d0) / 2)
-				if (!data.get(d_gap)) ds.push(d_gap) }
-			d0 = d }
-		ds.sort()
-		ds = ds.map(ts => data.get(ts) || {ts: new Date(ts)})
-
+		let [prefix, tree] = tree_from_du_outputs(results)
 		status.innerHTML = 'Status: done!'
-		chart_rebuild_with_uploaded_data(ds)
-		let [ts0, ts1] = d3.extent(ds, d => d.ts)
-		document.title = `${opts.title_base} [${opts.ts_fmt(ts0)} - ${opts.ts_fmt(ts1)}]`
+		chart_init(tree)
+		document.title = opts.title_base
+		if (prefix) document.title += ` [${prefix}]`
 	})
 }
 
@@ -583,18 +278,12 @@ src_zone.addEventListener('dragover', ev => {
 
 }
 
-
-
-// -------------------- Fancy day/night button
-// by Joseph Shenton @TeamiHackify -- https://codepen.io/TeamiHackify/pen/YqVoJB
-
-let daytime = new Date()
-daytime = daytime.getHours() + daytime.getMinutes() / 60.0
-if (daytime > 20 || daytime < 8) document.body.classList.add('bg-night')
-document.getElementById('btn-light-cb')
-	.addEventListener('click', ev => document.body.classList.toggle('bg-night'))
-
 </script>
+
+
+
+
+
 
 
 

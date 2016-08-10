@@ -2205,6 +2205,22 @@ blog post.
 .. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
 .. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
 
+d3-du-disk-space-usage-layout
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`D3`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
+display directory hierarchy as d3 "partition" layout, with node size
+proportional to directory size from du output.
+
+Can be used directly via rawgit.com link (`d3-du-disk-space-usage-layout.html`_)
+or as a local file, doesn't have any external links.
+
+Allows uploading multiple files to display in the same hierarchy, if paths in
+them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
+
+.. _xdiskusage: http://xdiskusage.sourceforge.net/
+.. _d3-du-disk-space-usage-layout.html: https://rawgit.com/mk-fg/fgtk/master/scraps/d3-du-disk-space-usage-layout.html
+
 
 
 License (WTFPL)
