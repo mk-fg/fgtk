@@ -478,6 +478,21 @@ Use-case is to easily produce single-file webapps or pages to pass around (or
 share somewhere), e.g. some d3-based interactive chart page or an html report
 with a few embedded images.
 
+entropy
+'''''''
+
+Python (2 or 3) script to feed /dev/random linux entropy pool, to e.g. stop dumb
+tools like gpg blocking forever on ``pacman --init`` in a throwaway chroot.
+
+Basically haveged or rngd replacement for bare-bones chroots that don't have
+either, but do have python.
+
+Probably a bad idea to use it for anything other than very brief workarounds for
+such tools on an isolated systems that don't run anything else crypto-related.
+
+Shouldn't compromise deterministic stuff though, e.g. dm-crypt operation (except
+new key generation in cryptsetup or such).
+
 
 
 dev
