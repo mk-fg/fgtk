@@ -10,10 +10,10 @@ usage() {
 set -e -o pipefail
 export LC_ALL=C
 
-pacman -Qe | cut -d\  -f1 > /var/lib/pacman/db.explicit
-pacman -Qt | cut -d\  -f1 > /var/lib/pacman/db.leaf
-pacman -Qm | cut -d\  -f1 > /var/lib/pacman/db.extras
-pacman -Q > /var/lib/pacman/db.all
+pacman -Qe | cut -d\  -f1 > /var/lib/pacman/db.explicit ||:
+pacman -Qt | cut -d\  -f1 > /var/lib/pacman/db.leaf ||:
+pacman -Qm | cut -d\  -f1 > /var/lib/pacman/db.extras ||:
+pacman -Q > /var/lib/pacman/db.all ||:
 
 updatedb
 locate -e --regex '\.pac(new|orig|save)$' >/var/lib/pacman/db.diffs ||:
