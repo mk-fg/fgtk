@@ -1313,6 +1313,11 @@ wrapping, as script has nothing specific (or even related) to desktops.
 
 Self-contained python-3 script, using libpam via ctypes.
 
+``machinectl shell myuser@ some-command`` seem to do very similar if not same
+exact thing, so maybe a good idea to use that instead, if possible.
+Didn't think it'd work for root container like that at the time of writing this
+script.
+
 Warning: this script is no replacement for su/sudo wrt uid/gid-switching, and
 doesn't implement all the checks and sanitization these tools do, so only
 intended to be run from static, clean or trusted environment (e.g. started by
