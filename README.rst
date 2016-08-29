@@ -1855,16 +1855,22 @@ bt\_agent
 BlueZ bluetooth authorization agent script/daemon.
 
 Usually included into DE-specific bluetooth applet or can be used from
-"bluetoothctl" shell (``agent on``), but I don't have former (plus just don't
+"bluetoothctl" client (``agent on``), but I don't have former (plus just don't
 want to rely on any DE much) and latter isn't suitable to run daemonized.
 
-When run interactively (default), will ask permission (y/n) to authorize new
-pairings and PINs for these.
+When run interactively (``-i/--interactive`` option), will ask permission (y/n)
+to authorize new pairings and enter PINs for these.
 
-With ``--authorize-services`` option (and optional list of bdaddrs), will allow
-any paired device to (re-)connect without asking, and ``--non-interactive`` flag
-will turn off any possible prompts, allowing to run it in the background to only
-authorize paired (and/or whitelisted) devices.
+With ``-a/--authorize-services [whitelist-file]`` option (and optional list of
+bdaddrs), will allow any paired device to (re-)connect without asking, allowing
+to run it in the background to only authorize trusted (and/or whitelisted)
+devices.
+
+Does device power-on by default, has ``-p/--pairable [seconds]``,
+``-d/--discoverable [seconds]`` and ``-t/--set-trusted`` options to cover usual
+initialization routines.
+
+Python-3.x, needs dbus-python module with glib loop support.
 
 alarm
 '''''
