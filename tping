@@ -10,12 +10,17 @@ async def conn_discard(conn):
 	with contextlib.suppress(asyncio.CancelledError, socket.error): await conn
 
 async def run_tping(loop, *args, **kws):
-	conns = OrderedDict()
+	conns, exit_code = OrderedDict(), 0
 	pinger = loop.create_task(_run_tping(loop, conns, *args, **kws))
-	for sig in 'SIGINT', 'SIGTERM':
-		loop.add_signal_handler(getattr(signal, sig), pinger.cancel)
+	def sig_handler(code):
+		nonlocal exit_code
+		exit_code = code
+		pinger.cancel()
+	for sig, code in ('SIGINT', 1), ('SIGTERM', 0):
+		loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
 	with contextlib.suppress(asyncio.CancelledError): await pinger
 	for conn in conns.values(): await conn_discard(conn)
+	return exit_code
 
 async def _run_tping(loop, conns, sock_addr, sock_af, delay_retry, timeout):
 	ts_retry = loop.time() + delay_retry
@@ -107,7 +112,7 @@ def main(args=None):
 	sock_af, sock_t, _, _, sock_addr = addrinfo[0]
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		loop.run_until_complete(run_tping(
+		return loop.run_until_complete(run_tping(
 			loop, sock_addr, sock_af, opts.retry_delay, opts.timeout ))
 
 if __name__ == '__main__': sys.exit(main())
