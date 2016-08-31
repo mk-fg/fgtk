@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+from collections import OrderedDict
+import os, sys, asyncio, socket, signal, contextlib
+
+
+async def conn_discard(conn):
+	conn.cancel()
+	with contextlib.suppress(asyncio.CancelledError, socket.error): await conn
+
+async def run_tping(loop, *args, **kws):
+	conns = OrderedDict()
+	pinger = loop.create_task(_run_tping(loop, conns, *args, **kws))
+	for sig in 'SIGINT', 'SIGTERM':
+		loop.add_signal_handler(getattr(signal, sig), pinger.cancel)
+	with contextlib.suppress(asyncio.CancelledError): await pinger
+	for conn in conns.values(): await conn_discard(conn)
+
+async def _run_tping(loop, conns, sock_addr, sock_af, delay_retry, timeout):
+	ts_retry = loop.time() + delay_retry
+	while True:
+		ts = loop.time()
+		conns[ts] = t = loop.create_task(asyncio.open_connection(
+			*sock_addr, family=sock_af, proto=socket.IPPROTO_TCP ))
+		t.ts_conn = ts
+
+		ts_abort = ts - timeout
+		for ts_conn in list(conns):
+			if ts_conn <= ts_abort:
+				await conn_discard(conns[ts_conn])
+				del conns[ts_conn]
+			else: break
+
+		while ts <= ts_retry:
+			delay, done = max(0, ts_retry - ts), None
+			if conns:
+				done, pending = await asyncio.wait( conns.values(),
+					timeout=delay, return_when=asyncio.FIRST_COMPLETED )
+			else: await asyncio.sleep(delay)
+			if done:
+				reader = writer = None
+				for res in done:
+					with contextlib.suppress(socket.error):
+						reader, writer = await res
+						writer.transport.abort()
+					del conns[res.ts_conn]
+				if reader or writer: break
+				done = None
+			ts = loop.time()
+
+		if done: break
+		ts_retry += delay_retry
+
+
+port_default = 22
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to "ping" tcp port until connection can be established.'
+			' Main use is waiting for something to come online,'
+				' e.g. waiting for when ssh port is accessible after remote host reboots.'
+			' Unlike common icmp ping tools, does not need elevated privileges.')
+
+	parser.add_argument('host',
+		help='Host or address (to be resolve via gai) or host:port spec.')
+	parser.add_argument('port_arg', nargs='?',
+		help='TCP service/port name/number to connect to.'
+			' Can also be specified as part of the host or -p/--port option.'
+			' Default: {}'.format(port_default))
+	parser.add_argument('-p', '--port', metavar='tcp-port',
+		help='TCP service/port name/number to connect to.'
+			' Can also be specified as part of the host or a second positional argument.'
+			' Default: {}'.format(port_default))
+
+	parser.add_argument('-r', '--retry-delay',
+		type=float, metavar='seconds', default=1.0,
+		help='Delay between trying to establish new connections.'
+			' Does not take any other started connections/handshakes into account.'
+			' Default: %(default)ss')
+	parser.add_argument('-t', '--timeout',
+		type=float, metavar='seconds', default=3.0,
+		help='Delay after which to consider establishing'
+			' connection as timed-out and cancel it. Default: %(default)ss')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	host = opts.host.rsplit(':', 1)
+	host, port = (host[0], None) if len(host) == 1 else host
+
+	ports = set(filter(None, [opts.port_arg, opts.port, port]))
+	if ports:
+		if len(ports) > 1:
+			parser.error( 'Conflicting (different) port'
+				' specs: {}'.format(', '.join(str(p) for p in ports)) )
+		port = ports.pop()
+	else: port = port_default
+
+	try:
+		addrinfo = socket.getaddrinfo(
+			host, str(port), type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
+		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
+	except (socket.gaierror, socket.error) as err:
+		parser.error( 'Failed to resolve socket parameters (address, family)'
+			' via getaddrinfo: {!r} - [{}] {}'.format((host, port), err.__class__.__name__, err) )
+	sock_af, sock_t, _, _, sock_addr = addrinfo[0]
+
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		loop.run_until_complete(run_tping(
+			loop, sock_addr, sock_af, opts.retry_delay, opts.timeout ))
+
+if __name__ == '__main__': sys.exit(main())

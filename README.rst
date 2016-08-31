@@ -1323,6 +1323,34 @@ doesn't implement all the checks and sanitization these tools do, so only
 intended to be run from static, clean or trusted environment (e.g. started by
 systemd or manually).
 
+tping
+^^^^^
+
+Python-3 (asyncio) tool to try connecting to specified TCP port until connection
+can be established, then just exit, i.e. to wait until some remote port is accessible.
+
+Can be used to wait for host to reboot before trying to ssh into it, e.g.::
+
+  % tping myhost && ssh root@myhost
+
+(default -p/--port is 22 - ssh)
+
+Tries establishing new connection (forcing new SYN, IPv4/IPv6 should both work)
+every -r/--retry-delay seconds (default: 1), only discarding (closing) "in
+progress" connections after -t/--timeout seconds (default: 3), essentially
+keeping rotating pool of establishing connections until one of them succeeds.
+
+This means that with e.g. ``-r1 -t5`` there will be 5 establishing connections
+(to account for slow-to-respond remote hosts) rotating every second, so ratio of
+these delays shouldn't be too high to avoid spawning too many connections.
+
+Host/port names specified on the command line are resolved synchronously on
+script startup (same as with e.g. "ping" tool), so it can't be used to wait
+until hostname resolves, only for connection itself.
+
+Uses Python-3.5+ stdlib stuff, namely asyncio, to juggle multiple connections in
+an efficient manner.
+
 
 
 desktop
