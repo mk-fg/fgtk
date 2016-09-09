@@ -2243,7 +2243,7 @@ d3-temp-rh-sensor-tsv-series-chart
 temperature (t) and relative humidity (rh) sensors (DHT22, sht1x, etc) in tsv
 (tab-separated-values) files with [iso8601-ts, t, rh] fields.
 
-Can be used directly via rawgit.com link: `d3-temp-rh-sensor-tsv-series-chart.html`_
+Can be used directly via gh-pages: `d3-temp-rh-sensor-tsv-series-chart.html`_
 
 Bunch of real-world sample tsv files for it can be found alongside the html in
 `d3-temp-rh-sensor-tsv-series-chart.zip`_.
@@ -2255,7 +2255,7 @@ More info can be found in the `d3-chart-for-common-temperaturerh-time-series-dat
 blog post.
 
 .. _D3: http://d3js.org/
-.. _d3-temp-rh-sensor-tsv-series-chart.html: https://rawgit.com/mk-fg/fgtk/master/scraps/d3-temp-rh-sensor-tsv-series-chart.html
+.. _d3-temp-rh-sensor-tsv-series-chart.html: https://mk-fg.github.io/fgtk/scraps/d3-temp-rh-sensor-tsv-series-chart.html
 .. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
 .. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
 
@@ -2266,14 +2266,14 @@ d3-du-disk-space-usage-layout
 display directory hierarchy as d3 "partition" layout, with node size
 proportional to directory size from du output.
 
-Can be used directly via rawgit.com link (`d3-du-disk-space-usage-layout.html`_)
+Can be used directly via gh-pages (`d3-du-disk-space-usage-layout.html`_)
 or as a local file, doesn't have any external links.
 
 Allows uploading multiple files to display in the same hierarchy, if paths in
 them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
 
 .. _xdiskusage: http://xdiskusage.sourceforge.net/
-.. _d3-du-disk-space-usage-layout.html: https://rawgit.com/mk-fg/fgtk/master/scraps/d3-du-disk-space-usage-layout.html
+.. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/scraps/d3-du-disk-space-usage-layout.html
 
 
 
