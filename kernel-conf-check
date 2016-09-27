@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, re, subprocess
+
+p = lambda fmt,*a,**k: print(fmt.format(*a,**k), flush=True)
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Check if specific linux kernel config'
+				' options are set to same value as in provided snippet, reporting mismatches.'
+			' "Snippet" in this case is any text file that has any number of'
+				' "CONFIG_...=..." or "# CONFIG_... is not set" lines in it,'
+				' all of which will be matched against .config or /proc/config.gz or such.')
+	parser.add_argument('snippet', help='Config snippet to check stuff against.')
+	parser.add_argument('kconfig', nargs='?', default='.config',
+		help='Kernel config to check. Default is .config in current dir.'
+			' Stuff like /proc/config.gz can be specified, will be decompressed via "bsdcat".')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	kconf_re = re.compile(r'^\s*(?P<off>#\s*)?(?P<k>CONFIG_[_\w\d]+)(?:=(?P<v>\S+))?')
+	kconf_lines = dict()
+
+	proc = subprocess.Popen(['bsdcat', opts.kconfig], stdout=subprocess.PIPE)
+	for line in proc.stdout:
+		line = line.decode()
+		m = kconf_re.search(line)
+		if not m: continue
+		kconf_lines[m.group('k')] = m.group('off'), m.group('v'), line
+
+	with open(opts.snippet) as src:
+		for line in src:
+			m = kconf_re.search(line)
+			if not m: continue
+			mk, mv, m_off = m.group('k'), m.group('v'), m.group('off')
+
+			if mk not in kconf_lines:
+				p('Failed to find option in kconfig: {}\n  snippet: {}', mk, line.strip())
+				continue
+
+			kconf_off, kconf_v, kconf_line = kconf_lines[mk]
+			if m_off != kconf_off or mv != kconf_v:
+				p('Value mismatch:\n  snippet: {}\n  kconfig: {}', line.strip(), kconf_line.strip())
+			else: p('Matched: {}', mk)
+
+if __name__ == '__main__': sys.exit(main())

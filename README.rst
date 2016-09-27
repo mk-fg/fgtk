@@ -1016,6 +1016,15 @@ stuff back.
 In short, allows to run e.g. ``kernel-patch 3.14.22`` to get 3.14.22 in
 ``/usr/src/linux`` from any other clean 3.14.\* version there.
 
+kernel-conf-check
+^^^^^^^^^^^^^^^^^
+
+Ad-hoc python3 script to check any random snippet with linux kernel
+``CONFIG_...`` values (e.g. "this is stuff you want to set" block on some wiki)
+against kernel config file, current config in /proc/config.gz or such.
+
+Reports what matches and what doesn't to stdout, trivial regexp matching.
+
 blinky
 ^^^^^^
 
