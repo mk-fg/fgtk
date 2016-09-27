@@ -1457,8 +1457,16 @@ what's being played, with a mute button (on SIGQUIT button from terminal).
 toogg
 '''''
 
-Straightforward "ffmpeg -f wav \| oggenc" script to convert any media that has
-sound to an ogg file.
+Any-media-to-ogg convertor, using ffmpeg and its `loudnorm filter`_ (EBU R128
+loudness normalization) in double-pass mode.
+
+Can process several source files in parallel, python3/asyncio.
+
+loudnorm filter and libebur128 are fairly recent additions to ffmpeg
+(3.1 release, 2016-06-27), and might not be enabled/available in distros by
+default (e.g. not enabled on Arch as of 2016-09-27).
+
+.. _loudnorm filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm
 
 totty
 '''''

@@ -1,27 +1,210 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-usage() {
-	bin=$(basename "$0")
-	echo >&2 "Usage: $bin [ --debug ] [ -x ] [ -t dir ] files..."
-	exit 1
-}
+import itertools as it, operator as op, functools as ft
+from collections import OrderedDict
+from asyncio import subprocess
+import os, sys, re, logging, contextlib, asyncio, signal, json
 
-src_remove= dst_dir=.
-[[ "$1" = '-x' ]] && { src_remove=t; shift; }
-[[ "$1" = '--debug' ]] && { set -x; shift; }
-[[ "$1" = '-t' ]] && { shift; dst_dir=$1; shift; }
-[[ $# -eq 0 || "$1" = -h || "$1" == --help ]] && usage
-srcs=( "$@" )
 
-set -e -o pipefail
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
 
-for src in "${srcs[@]}"; do
-	# Recode the thing
-	dst=${src##*/}
-	dst=${dst%.*}.ogg
-	ffmpeg -i "$src" -f wav - 2>/dev/null | oggenc -o "${dst_dir}/${dst}" -
-	[[ $? -ne 0 ]] && exit 1
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
-	# Remove source, if requested
-	[[ -n "$src_remove" ]] && { rm -v "$src" || exit 1; }
-done
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class AudioConverterError(Exception): pass
+
+class AudioConverter(object):
+
+	@classmethod
+	async def run_async(cls, *args, **kws):
+		async with cls(*args, **kws) as self: return await self.run()
+
+	def __init__(self, loop, src_list, loudnorm_opts=None, max_parallel=None):
+		self.loop, self.src_list = loop, src_list
+		self.loudnorm_opts, self.max_parallel = loudnorm_opts or '', max_parallel or os.cpu_count()
+
+
+	async def __aenter__(self):
+		self.conv_jobs = OrderedDict()
+		self.success, self.src_done, self.exit_code = False, OrderedDict(), 0
+		return self
+
+	async def __aexit__(self, *err):
+		if self.conv_jobs:
+			await self.conv_cleanup()
+
+
+	async def run(self):
+		self.conv = self.loop.create_task(self.convert_list())
+		def sig_handler(code):
+			self.exit_code = code
+			self.conv.cancel()
+		for sig, code in ('SIGINT', 1), ('SIGTERM', 0):
+			self.loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
+		with contextlib.suppress(asyncio.CancelledError): await self.conv
+		return self.exit_code
+
+
+	async def conv_cleanup(self, *src, raise_errors=False):
+		if not src: src = list(self.conv_jobs.keys())
+		for src in src:
+			conv = self.conv_jobs.pop(src)
+			conv.cancel()
+			try: await conv
+			except asyncio.CancelledError: pass
+			except Exception as err:
+				log.exception('conv-job crashed during cleanup: [{}] {}', err.__class__.__name__, err)
+				if raise_errors: raise
+
+	async def convert_list(self):
+		src_iter = iter(self.src_list)
+		while True:
+			while src_iter and len(self.conv_jobs) < self.max_parallel:
+				try: src = next(src_iter)
+				except StopIteration:
+					src_iter = None
+					break
+				log.debug('Scheduling new conv-job for src: {!r}', src)
+				conv = self.conv_jobs[src] = self.loop.create_task(self.convert_src(src))
+				conv.src = src
+			if not self.conv_jobs: break
+
+			done, pending = await asyncio.wait(
+				self.conv_jobs.values(), return_when=asyncio.FIRST_COMPLETED )
+			if done:
+				for res in done:
+					dst_path = await res
+					log.debug('conv-job done (dst file: {!r}) for src: {!r}', dst_path, src)
+					await self.conv_cleanup(res.src, raise_errors=True)
+					self.src_done[res.src] = dst_path
+
+		assert len(self.src_done) == len(self.src_list)
+		self.success = True
+
+	async def convert_src(self, src):
+		src_base = os.path.basename(src)
+		dst_path = src_base.rsplit('.', 1)[0] + '.ogg'
+		paths, procs = {dst_path}, list()
+
+		def tmp_file(ext):
+			p = '{}.{}'.format(dst_path, ext)
+			paths.add(p)
+			return p
+
+		async def proc_run(cmd, wait=True, **kws):
+			cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
+			log.debug( '[{!r}] running: {}', src_base, cmd_repr)
+			proc = await asyncio.create_subprocess_exec(*cmd, **kws)
+			procs.append(proc)
+			if not wait: return proc
+			await proc_wait(proc, cmd_repr)
+			return proc
+
+		async def proc_wait(proc, cmd_repr=None):
+			await proc.wait()
+			if proc.returncode != 0:
+				cmd_repr = '' if not cmd_repr else ': {}'.format(cmd_repr)
+				raise AudioConverterError(( 'Command for src {!r}'
+					' exited with non-zero status ({}){}' ).format(src, proc.returncode, cmd_repr))
+
+		try:
+			ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y']
+			await proc_run(ffmpeg_cmd + ['-i', src, '-f', 'wav', tmp_file('src.wav')])
+
+			ffmpeg_env = os.environ.copy()
+			ffmpeg_env['NO_COLOR'] = '1'
+			opts = self.loudnorm_opts.strip(':')
+			if opts: opts += ':'
+			proc = await proc_run(
+				ffmpeg_cmd + [ '-v', 'info', '-i', tmp_file('src.wav'),
+					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '-' ],
+				wait=False, env=ffmpeg_env, stderr=subprocess.PIPE )
+			norm_info, ffmpeg_stderr = list(), list()
+			while True:
+				line = await proc.stderr.readline()
+				ffmpeg_stderr.append(line.decode().rstrip())
+				if not line: break
+				line = line.decode().strip()
+				if norm_info:
+					norm_info.append(line)
+					if line == '}': break
+				if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
+			norm_info = ''.join(norm_info)
+			try: await proc_wait(proc, 'loudnorm-pass-1')
+			except:
+				log.error(
+					'ffmpeg stderr:\n--------------------\n{}\n--------------------',
+					'\n'.join(ffmpeg_stderr).rstrip() )
+				raise
+			log.debug('[{!r}] detected audio normalization info: {!r}', src_base, norm_info)
+			if not norm_info:
+				raise AudioConverterError('ffmpeg failed to produce normalization info json')
+			norm_info = json.loads(norm_info)
+
+			opts_ext = (
+					'measured_I={}:measured_TP={}:'
+					'measured_LRA={}:measured_thresh={}:offset={}'
+				).format(*op.itemgetter(
+					'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
+			await proc_run(
+				ffmpeg_cmd + [ '-i', tmp_file('src.wav'),
+					'-af', 'loudnorm={}{}:linear=true'.format(opts, opts_ext),
+					'-ar', '48k', '-f', 'ogg', dst_path ] )
+
+			paths.remove(dst_path)
+
+		finally:
+			for p in paths:
+				with contextlib.suppress(OSError): os.unlink(p)
+			for p in procs:
+				if p.returncode is not None: continue
+				p.kill()
+				p.wait()
+
+		return dst_path
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Convert source file(s) to audio, normalize it and encode to ogg/vorbis.'
+			' Uses ffmpeg "loudnorm" filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
+	parser.add_argument('src', nargs='+', help='File(s) to convert.')
+	parser.add_argument('-x', '--remove-src', action='store_true',
+		help='Remove source file(s) on success of the whole operation.')
+	parser.add_argument('-t', '--dst-dir', metavar='path',
+		help='Path to store resulting files in. Defaults to current one.')
+	parser.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts',
+		help='String of options to pass to loudnorm filter,'
+				' same as they would appear on ffmpeg command line.'
+			' Example: I=-16:TP=-1.5:LRA=11')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	src_list = list(map(os.path.realpath, opts.src))
+	if opts.dst_dir: os.chdir(opts.dst_dir)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		err = loop.run_until_complete(
+			AudioConverter.run_async(loop, src_list, loudnorm_opts=opts.loudnorm_opts) )
+	if not err and opts.remove_src:
+		for src in src_list: os.unlink(src)
+
+	return err
+
+if __name__ == '__main__': sys.exit(main())
