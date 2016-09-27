@@ -152,16 +152,16 @@ def PreDataRegion(fsinfo=False, fats=True):
 
 class File(object):
 
-	def __init__(self, dirEntry, fs):
-		self.dirEntry, self.fs = dirEntry, fs
+	def __init__(self, de, fs):
+		self.de, self.fs = de, fs
 
-	def parseDirEntries(self, dirEntries, fs):
+	def parse_des(self, de_list, fs):
 		# LFN logic should be in DirEntry, but not sure how to put it there
 		lfn_csum, lfn_cache = None, list()
 		is_lfn = lambda e, attrs=op.attrgetter(
 			'system', 'hidden', 'readonly' ): all(attrs(e.attributes))
 
-		for entry in dirEntries:
+		for entry in de_list:
 			entry_id = 'DirEntry[{}]'.format(entry.clidx)
 
 			if entry.name[0] == '\xe5': continue # deleted
@@ -215,21 +215,21 @@ class File(object):
 			log.debug('Parsing %s: %r (%s)', entry_id, entry.name_long, 'dir' if is_dir else 'file')
 			yield (Directory if is_dir else File)(entry, fs)
 
-	def toStream(self, stream):
-		self.fs.fileToStream(self.firstCluster, stream)
+	def copy(self, dst_stream):
+		self.fs.copy_chain(self.firstCluster, dst_stream)
 
-	def getClusters(self):
-		return self.fs.getLinkedClusters(self.firstCluster)
+	def get_chain(self):
+		return self.fs.get_chain(self.firstCluster)
 
-	def getOffsets(self):
-		return map(self.fs.getClusterSlice, self.getClusters())
+	def get_slice_map(self):
+		return map(self.fs.get_slice, self.get_chain())
 
 	@property
 	def firstCluster(self):
-		return (self.dirEntry.firstCluster_high << 16) + self.dirEntry.firstCluster_low
+		return (self.de.firstCluster_high << 16) + self.de.firstCluster_low
 
 	@property
-	def name(self): return self.name_tpl.format(self.dirEntry, self)
+	def name(self): return self.name_tpl.format(self.de, self)
 	def __str__(self): return self.name
 
 	name_tpl = u'[{1.firstCluster}] {0.name_long}'
@@ -242,14 +242,14 @@ class DotEntry(File):
 
 class Directory(File):
 
-	def __init__(self, dirEntry, fs):
-		super(Directory, self).__init__(dirEntry, fs)
-		self.children = list(self.parseDirEntries(self.fs.getDirEntries(self.firstCluster), fs))
+	def __init__(self, de, fs):
+		super(Directory, self).__init__(de, fs)
+		self.children = list(self.parse_des(self.fs.get_des(self.firstCluster), fs))
 
 	def shuffled_structs( self,
 			group_dirs='first',
 			order_func=random.shuffle,
-			order_dirs=lambda dirs: sorted(dirs, key=op.attrgetter('dirEntry.name_long')) ):
+			order_dirs=lambda dirs: sorted(dirs, key=op.attrgetter('de.name_long')) ):
 		assert group_dirs in [None, False, 'first', 'last'], group_dirs
 
 		parts = [list(), list(), list(), list()]
@@ -271,12 +271,12 @@ class Directory(File):
 		log.debug('Resulting order:')
 		for obj in it.chain(*parts):
 			log.debug('  %s', obj)
-			for lfn in obj.dirEntry.lfns: yield (LFNEntry, lfn)
-			yield (DirEntry, obj.dirEntry)
+			for lfn in obj.de.lfns: yield (LFNEntry, lfn)
+			yield (DirEntry, obj.de)
 
 	def __getitem__(self, name):
 		for obj in self.children:
-			if obj.dirEntry.name_long == name: return obj
+			if obj.de.name_long == name: return obj
 		raise KeyError(name)
 
 	def __iter__(self):
@@ -287,27 +287,39 @@ class Directory(File):
 
 class FatFs(Directory):
 
+	# Concepts and shorthands:
+	#  chain - list of indexes of linked clusters
+	#  slice - byte range (start + length) on fs
+	#  slice map - list of slices for some object
+	#  de(s) - DirEntry struct(s)
+
 	def __init__(self, stream):
 		self.stream = stream
 		self.pdr = PreDataRegion().parse_stream(stream)
 		super(FatFs, self).__init__(None, self)
 
-	def fileToStream(self, clidx, stream):
-		for clidx in self.getLinkedClusters(clidx):
-			self.clusterToStream(clidx, stream)
+	def get_next_cluster(self, clidx):
+		ress = set([fat[clidx] for fat in self.pdr.fats])
+		if len(ress) == 1: return ress.pop()
+		log.error('Inconsistencie between FATs: %s points to', clidx)
+		for i, fat in enumerate(self.pdr.fats):
+			log.error('    %s according to fat #%s' , fat[clidx], i)
+		res = ress.pop()
+		log.error('  assuming %s', res)
+		return res
 
-	def clusterToStream(self, clidx, stream):
-		start, length = self.getClusterSlice(clidx)
-		self.stream.seek(start)
-		while length > 0:
-			read = self.stream.read(length)
-			if not len(read):
-				log.error('Failed to read %s bytes at %s', length, self.stream.tell())
-				raise EOFError()
-			length -= len(read)
-			stream.write(read)
+	def get_chain(self, clidx):
+		res, clidx_start = [], clidx
+		while clidx < 0xffffff8: # last cluster is 0xffffff8-0xfffffff
+			assert isinstance(clidx, (int, long)), clidx
+			assert 2 <= clidx <= 0xfffffef, 'Non-data cluster: {}'.format(hex(clidx))
+			res.append(clidx)
+			clidx = self.get_next_cluster(clidx)
+			assert clidx not in res, [clidx, res]
+		log.debug('Linked clusters from %s: %s', clidx_start, res)
+		return res
 
-	def getClusterSlice(self, clidx):
+	def get_slice(self, clidx):
 		startSector = (
 			self.pdr.reservedSectorCount
 				+ self.pdr.fatCount * self.pdr.sectorsPerFat_large
@@ -319,36 +331,33 @@ class FatFs(Directory):
 		# 	clidx, start, hex(start), length )
 		return start, length
 
-	def getLinkedClusters(self, clidx):
-		res, clidx_start = [], clidx
-		while clidx < 0xffffff8: # last cluster is 0xffffff8-0xfffffff
-			assert isinstance(clidx, (int, long)), clidx
-			assert 2 <= clidx <= 0xfffffef, 'Non-data cluster: {}'.format(hex(clidx))
-			res.append(clidx)
-			clidx = self.getNextCluster(clidx)
-			assert clidx not in res, [clidx, res]
-		log.debug('Linked clusters from %s: %s', clidx_start, res)
-		return res
+	def copy_slice(self, dst_stream, start, length):
+		self.stream.seek(start)
+		while length > 0:
+			read = self.stream.read(length)
+			if not len(read):
+				log.error('Failed to read %s bytes at %s', length, self.stream.tell())
+				raise EOFError()
+			length -= len(read)
+			dst_stream.write(read)
 
-	def getNextCluster(self, clidx):
-		ress = set([fat[clidx] for fat in self.pdr.fats])
-		if len(ress) == 1: return ress.pop()
-		log.error('Inconsistencie between FATs: %s points to', clidx)
-		for i, fat in enumerate(self.pdr.fats):
-			log.error('    %s according to fat #%s' , fat[clidx], i)
-		res = ress.pop()
-		log.error('  assuming %s', res)
-		return res
+	def copy_chain(self, clidx, stream):
+		clidx_list, slice_map = self.get_chain(clidx), list()
+		for clidx in clidx_list:
+			start, length = self.get_slice(clidx)
+			self.copy_slice(stream, start, length)
+			slice_map.append((start, length))
+		return slice_map
 
-	def getDirEntries(self, clidx):
+	def get_des(self, clidx):
 		try:
-			for de in self._getDirEntries(clidx): yield de
+			for de in self._get_des(clidx): yield de
 		except IOError:
 			log.exception('Failed to read directory entries at %s', clidx)
 
-	def _getDirEntries(self, clidx):
+	def _get_des(self, clidx):
 		with BytesIO() as mem:
-			self.fileToStream(clidx, mem)
+			self.copy_chain(clidx, mem)
 			mem.seek(0)
 			while True:
 				if not mem.read(1): break
@@ -414,13 +423,13 @@ def main(args=None):
 				except FieldError:
 					log.error('Failed to serialize construct: %s', data)
 					raise
-			cluster_offsets = path.getOffsets()
-			len_structs, len_clusters = mem.tell(), sum(it.imap(op.itemgetter(1), cluster_offsets))
+			slice_map = path.get_slice_map()
+			len_structs, len_clusters = mem.tell(), sum(it.imap(op.itemgetter(1), slice_map))
 			assert len_structs <= len_clusters, [len_structs, len_clusters]
 
 			# Actual write operation
 			mem.seek(0)
-			for start, length in cluster_offsets:
+			for start, length in slice_map:
 				src.seek(start)
 				chunk = mem.read(length)
 				log.info(
