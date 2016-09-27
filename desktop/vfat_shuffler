@@ -172,13 +172,14 @@ class File(object):
 				continue
 			assert entry.name[0] != '\0', repr(entry.name)
 
-			stream, pos = entry.pop('_stream') # if only to free the ref
-			log.debug('DirEnty[%s] at %s', entry.clidx, pos)
+			stream = entry.pop('_stream') # if only to free the ref
+			log.debug('DirEnty[%s] at %s', entry.clidx, entry.clidx_offset)
 			if is_lfn(entry): # has to be re-parsed as LFN here
 				if not lfn_cache: log.debug('Detected long-name %s', entry_id)
-				stream.seek(pos)
+				stream.seek(entry.clidx_offset)
 				entry_lfn = LFNEntry.parse_stream(stream)
 				entry_lfn.seq_num = entry_lfn.seq
+				entry_lfn.clidx_offset = entry.clidx_offset
 				if not lfn_cache:
 					if not entry_lfn.seq_num & 0x40:
 						log.error( 'Unset bit-6 of seq in last'
@@ -198,11 +199,12 @@ class File(object):
 					for lfn in sorted(lfn_cache, key=op.attrgetter('seq_num')) )
 				entry.name_long = ''.join(lfn_name).decode('utf-16').split(u'\0')[0]
 				lfn_cache, entry.lfns = list(), lfn_cache
-				## Doesn't match for me, algo is wrong?
-				# csum, name = 0, iter(entry.name + '\0' * (len(entry.name) - 8) + entry.extension)
-				# for i in xrange(11, 0, -1):
-				# 	csum = ((csum & 1) << 7) + (csum >> 1) + ord(next(name))
-				# assert csum == lfn_csum, [csum, lfn_csum]
+				csum, name = 0, iter(entry.name + '\0' * (len(entry.name) - 8) + entry.extension)
+				for n in xrange(11):
+					c = next(name)
+					csum = (((csum & 1) << 7) + (csum >> 1) + ord(c)) & 0xff
+				assert csum == lfn_csum, [csum, lfn_csum]
+
 			else:
 				name = entry.name
 				if name[0] == '\x05': name = '\xe5' + name[1:] # 0x05 - Initial character is actually 0xE5
@@ -354,7 +356,7 @@ class FatFs(Directory):
 				pos = mem.tell()
 				obj = DirEntry.parse_stream(mem)
 				if obj.name[0] == '\0': break # marks last entry
-				obj.clidx, obj._stream = clidx, (mem, pos)
+				obj.clidx, obj.clidx_offset, obj._stream = clidx, pos, mem
 				yield obj
 
 	@property

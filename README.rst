@@ -1829,7 +1829,7 @@ Some crappy cheap mp3 players don't have shuffle functionality and play files
 strictly in the same order as their dentries_ appear on the device blocks.
 
 Naturally, as same order gets boring, one way to "shuffle" them is to re-upload
-same files in random order (as "pick\_tracks" tool does here), but if it's a few
+same files in random order (as "pick_tracks" tool does here), but if it's a few
 gigs of files, such method is slow and wears-out flash drive unnecessarily.
 
 So easy fix is just to swap dentries' places, which unfortunately requires
