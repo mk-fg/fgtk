@@ -1460,6 +1460,9 @@ toogg
 Any-media-to-ogg convertor, using ffmpeg and its `loudnorm filter`_ (EBU R128
 loudness normalization) in double-pass mode.
 
+Main purpose is to turn anything that has audio track in it into podcast for an
+audio player.
+
 Can process several source files in parallel, python3/asyncio.
 
 loudnorm filter and libebur128 are fairly recent additions to ffmpeg

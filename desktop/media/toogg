@@ -34,26 +34,25 @@ class AudioConverter(object):
 		self.loop, self.src_list = loop, src_list
 		self.loudnorm_opts, self.max_parallel = loudnorm_opts or '', max_parallel or os.cpu_count()
 
-
 	async def __aenter__(self):
 		self.conv_jobs = OrderedDict()
-		self.success, self.src_done, self.exit_code = False, OrderedDict(), 0
+		self.success, self.src_done, self.exit_sig = False, OrderedDict(), None
 		return self
 
 	async def __aexit__(self, *err):
 		if self.conv_jobs:
 			await self.conv_cleanup()
 
-
 	async def run(self):
-		self.conv = self.loop.create_task(self.convert_list())
-		def sig_handler(code):
-			self.exit_code = code
+		self.conv = self.loop.create_task(self.conv_list())
+		def sig_handler(sig):
+			self.exit_sig = sig
 			self.conv.cancel()
-		for sig, code in ('SIGINT', 1), ('SIGTERM', 0):
-			self.loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
+		for sig in 'int', 'term':
+			self.loop.add_signal_handler(
+				getattr(signal, 'SIG{}'.format(sig.upper())), ft.partial(sig_handler, sig) )
 		with contextlib.suppress(asyncio.CancelledError): await self.conv
-		return self.exit_code
+		return self.success
 
 
 	async def conv_cleanup(self, *src, raise_errors=False):
@@ -67,7 +66,7 @@ class AudioConverter(object):
 				log.exception('conv-job crashed during cleanup: [{}] {}', err.__class__.__name__, err)
 				if raise_errors: raise
 
-	async def convert_list(self):
+	async def conv_list(self):
 		src_iter = iter(self.src_list)
 		while True:
 			while src_iter and len(self.conv_jobs) < self.max_parallel:
@@ -76,23 +75,22 @@ class AudioConverter(object):
 					src_iter = None
 					break
 				log.debug('Scheduling new conv-job for src: {!r}', src)
-				conv = self.conv_jobs[src] = self.loop.create_task(self.convert_src(src))
+				conv = self.conv_jobs[src] = self.loop.create_task(self.conv_src(src))
 				conv.src = src
 			if not self.conv_jobs: break
 
 			done, pending = await asyncio.wait(
 				self.conv_jobs.values(), return_when=asyncio.FIRST_COMPLETED )
-			if done:
-				for res in done:
-					dst_path = await res
-					log.debug('conv-job done (dst file: {!r}) for src: {!r}', dst_path, src)
-					await self.conv_cleanup(res.src, raise_errors=True)
-					self.src_done[res.src] = dst_path
+			for res in done:
+				dst_path = await res
+				log.debug('conv-job done (dst file: {!r}) for src: {!r}', dst_path, src)
+				await self.conv_cleanup(res.src, raise_errors=True)
+				self.src_done[res.src] = dst_path
 
 		assert len(self.src_done) == len(self.src_list)
 		self.success = True
 
-	async def convert_src(self, src):
+	async def conv_src(self, src):
 		src_base = os.path.basename(src)
 		dst_path = src_base.rsplit('.', 1)[0] + '.ogg'
 		paths, procs = {dst_path}, list()
@@ -200,11 +198,11 @@ def main(args=None):
 	log = get_logger('main')
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		err = loop.run_until_complete(
+		success = loop.run_until_complete(
 			AudioConverter.run_async(loop, src_list, loudnorm_opts=opts.loudnorm_opts) )
-	if not err and opts.remove_src:
+	if success and opts.remove_src:
 		for src in src_list: os.unlink(src)
 
-	return err
+	return int(not success)
 
 if __name__ == '__main__': sys.exit(main())
