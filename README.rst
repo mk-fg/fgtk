@@ -251,9 +251,9 @@ first):
 
 * ``users/<net>/moddata/log/<chan>_<date>.log``
 
-* ``moddata/log/<net>_default_<chan>_<date>.log`` (no "\_" in ``<net>`` allowed)
+* ``moddata/log/<net>_default_<chan>_<date>.log`` (no "_" in ``<net>`` allowed)
 
-* ``moddata/log/<user>_<net>_<chan>_<date>.log`` (no "\_" in ``<user>`` or
+* ``moddata/log/<user>_<net>_<chan>_<date>.log`` (no "_" in ``<user>`` or
   ``<net>`` allowed)
 
 Each line gets processed by regexp to do ``[HH:MM:SS] <nick> some msg`` ->
@@ -498,8 +498,8 @@ new key generation in cryptsetup or such).
 dev
 ~~~
 
-tabs\_filter
-^^^^^^^^^^^^
+tabs_filter
+^^^^^^^^^^^
 
 My secret weapon in tabs-vs-spaces holywar.
 
@@ -522,10 +522,10 @@ hand.
 Not sure why people have such strong opinions on that trivial matter,
 but I find it easier never to mention that I use such script ;)
 
-golang\_filter
-^^^^^^^^^^^^^^
+golang_filter
+^^^^^^^^^^^^^
 
-Same idea as in "tabs\_filter", but on a larger scale - basically does to Go_
+Same idea as in "tabs_filter", but on a larger scale - basically does to Go_
 what coffee-script_ does to the syntax of javascript - drops all the unnecessary
 brace-cancer, with the ability to restore original perfectly ("diff -u reverse
 original" is checked upon transformation to make sure of that), as long as code
@@ -547,8 +547,8 @@ intentation is correct.
 Again, ideally no one should even notice that I actually don't have that crap in
 the editor, while repo and compiler will see the proper (bloated) code.
 
-distribute\_regen
-^^^^^^^^^^^^^^^^^
+distribute_regen
+^^^^^^^^^^^^^^^^
 
 Tool to auto-update python package metadata in setup.py and README files.
 
@@ -564,8 +564,8 @@ README.rst.
 Designed to be used from pre-commit hook, like ``ln -s /path/to/distribute_regen
 .git/hooks/pre-commit``, to update version number before every commit.
 
-darcs\_bundle\_to\_diff
-^^^^^^^^^^^^^^^^^^^^^^^
+darcs_bundle_to_diff
+^^^^^^^^^^^^^^^^^^^^
 
 Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
 hunks. Handles file creations and all sorts of updates, but probably not moves
@@ -591,7 +591,7 @@ e.g.  clone the specified repo using ``~/.ssh/id_rsa__project-x`` key or as
 ``NYM=project-x git nym clone ...``.
 
 Also to just test new keys with git, disregarding ssh-agent and lingering
-control sockets with NYM\_CLEAN flag set.
+control sockets with NYM_CLEAN flag set.
 
 git-meld
 ^^^^^^^^
@@ -608,7 +608,7 @@ For instance, if diffs are in ``server.py`` and ``client.py`` files, running
 
 Point is to have all these diffs in meld tabs (with one window per ``git meld``)
 instead of running separate meld window/tab on each pair of files as setting
-GIT\_EXTERNAL\_DIFF would do.
+GIT_EXTERNAL_DIFF would do.
 
 Should be installed as ``git-meld`` somewhere in PATH *and* symlinked as
 ``meld-git`` (git-meld runs ``GIT_EXTERNAL_DIFF=meld-git git diff "$@"``) to
@@ -636,8 +636,8 @@ context" (can be omitted as 3 is the default value there).
 ``catn -q ...`` outputs line + context verbatim, so it'd be more useful for
 piping to another file/command or terminal copy-paste.
 
-git\_terminate
-^^^^^^^^^^^^^^
+git_terminate
+^^^^^^^^^^^^^
 
 Script to permanently delete files/folders from repository and its history -
 including "dangling" objects where these might still exist.
@@ -650,8 +650,8 @@ parameters on the whole repository, so any other possible history not stashed or
 linked to existing branches/remotes (e.g. stuff in ``git reflog``) will be
 purged.
 
-git\_contains
-^^^^^^^^^^^^^
+git_contains
+^^^^^^^^^^^^
 
 Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
 "SPECIFYING REVISIONS" in git-rev-parse(1)) object(s) exist (e.g.  merged) in a
@@ -930,7 +930,7 @@ peers-remote
 
 Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
 specified by its ipv6, path, pubkey or addr, resolving these via
-SearchRunner\_search as necessary.
+SearchRunner_search as necessary.
 
 ipv6-to-record, key-to-ipv6
 '''''''''''''''''''''''''''
@@ -988,8 +988,8 @@ Can determine address of the router on its own (using "ip route get").
 Can be used more generally to get/store output of any command(s) to the router.
 
 RouterOS allows using DSA (old, disabled on any modern sshds) keys, which should
-be used if accessible at the standard places (e.g.  "~/.ssh/id\_dsa"). That
-might be preferrable to using password auth.
+be used if accessible at the standard places (e.g.  "~/.ssh/id_dsa"). That might
+be preferrable to using password auth.
 
 Python script, uses "twisted.conch" for ssh.
 
@@ -1368,8 +1368,8 @@ desktop
 Helpers for more interactive (client) machine, DE and apps there.
 
 
-uri\_handlers
-^^^^^^^^^^^^^
+uri_handlers
+^^^^^^^^^^^^
 
 Scripts to delegate downloads from firefox to a more sensible download managers.
 
@@ -1385,8 +1385,8 @@ media
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
 process) various media files and streams.
 
-parec\_from\_flash
-''''''''''''''''''
+parec_from_flash
+''''''''''''''''
 
 Creates null-sink in pulseaudio and redirects browser flash plugin audio output
 stream to it, also starting "parec" and oggenc to record/encode whatever happens
@@ -1395,20 +1395,20 @@ there.
 Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
-pa\_track\_history
-''''''''''''''''''
+pa_track_history
+''''''''''''''''
 
 Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
 
-pa\_mute
-''''''''
+pa_mute
+'''''''
 
 Simple script to toggle mute for all pluseaudio streams from a specified pid.
 
-pa\_modtoggle
-'''''''''''''
+pa_modtoggle
+''''''''''''
 
 Script to toggle - load or unload - pulseaudio module.
 
@@ -1427,19 +1427,19 @@ Uses/requires `pulsectl module`_, Python-3.
 
 .. _pulsectl module: https://github.com/mk-fg/python-pulse-control/
 
-mpv\_icy\_track\_history
-''''''''''''''''''''''''
+mpv_icy_track_history
+'''''''''''''''''''''
 
-Same as pa\_track\_history above, but gets tracks when mpv_ dumps icy-\* tags
+Same as pa_track_history above, but gets tracks when mpv_ dumps icy-\* tags
 (passed in shoutcast streams) to stdout, which should be at the start of every
 next track.
 
-More efficient and reliable than pa\_track\_history, but obviously mpv-specific.
+More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
 .. _mpv: http://mpv.io/
 
-icy\_record
-'''''''''''
+icy_record
+''''''''''
 
 Simple script to dump "online radio" kind of streams to a bunch of separate
 files, split when stream title (as passed in icy StreamTitle metadata) changes.
@@ -1459,7 +1459,7 @@ fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
 radio
 '''''
 
-Wrapper around mpv\_icy\_track\_history to pick and play hard-coded radio
+Wrapper around mpv_icy_track_history to pick and play hard-coded radio
 streams with appropriate settings, generally simplified ui, logging and echoing
 what's being played, with a mute button (on SIGQUIT button from terminal).
 
@@ -1503,8 +1503,8 @@ Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
 (default, changed by passing these after duration arg) to grab only audio chunks
 from the source file.
 
-audio\_split\_m4b
-'''''''''''''''''
+audio_split_m4b
+'''''''''''''''
 
 Splits m4b audiobook files on chapters (list of which are encoded into m4b as
 metadata) with ffprobe/ffmpeg.
@@ -1517,8 +1517,8 @@ be controlled with --name-format, default is ``{n:03d}__{title}.aac``).
 Doesn't do any transcoding, which can easily be performed later to e.g.  convert
 resulting aac files to mp3 or ogg, if necessary.
 
-twitch\_vod\_fetch
-''''''''''''''''''
+twitch_vod_fetch
+''''''''''''''''
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
@@ -1698,7 +1698,7 @@ mail
 ''''
 
 Daemon script to monitor dovecot delivery logs (either generic ones, or produced
-via "mail\_log" plugin), efficiently find delivered messages by their message-id
+via "mail_log" plugin), efficiently find delivered messages by their message-id
 and issue desktop notification to a remote host with parsed message details
 (path it was filed under, decoded from and subject headers).
 
@@ -1749,8 +1749,8 @@ Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 others
 ^^^^^^
 
-pick\_tracks
-''''''''''''
+pick_tracks
+'''''''''''
 
 A simple tool to randomly pick and copy files (intended usage is music tracks)
 from source to destination.
@@ -1805,8 +1805,8 @@ crappy shared-hosting servers, where botnets flood ssh with slowloris-like
 attacks on it's authentication, exceeding limit on unauthorized connections in
 sshd.
 
-e\_config\_backup
-'''''''''''''''''
+e_config_backup
+'''''''''''''''
 
 Yapps2_-based (grammar as-is in \*.g file) parser script for Enlightenment (E17)
 config file (doing eet-decoding beforehand) for the purposes of it's backup in
@@ -1820,8 +1820,8 @@ positions or current (`auto-rotated`_) wallpaper path.
 .. _de-setup git repo: https://github.com/mk-fg/de-setup
 .. _auto-rotated: http://desktop-aura.sourceforge.net/
 
-vfat\_shuffler
-''''''''''''''
+vfat_shuffler
+'''''''''''''
 
 Tool to shuffle entries inside a vfat (filesystem) directory.
 
@@ -1853,8 +1853,8 @@ create infinite dir loops, undelete tool, etc.
 
 .. _dentries: https://en.wikipedia.org/wiki/File_Allocation_Table#Directory_entry
 
-fan\_control
-''''''''''''
+fan_control
+'''''''''''
 
 Script to control speed of dying laptop fan on Acer S3 using direct reads/writes
 from/to ``/dev/ports`` to not run it too fast (causing loud screech and
@@ -1863,8 +1863,8 @@ vibrating plastic) yet trying to keep cpu cool enough.
 Or, failing that, use cpupower tool to drop frequency (making it run cooler in
 general) and issue dire warnings to desktop.
 
-emms\_beets\_enqueue
-''''''''''''''''''''
+emms_beets_enqueue
+''''''''''''''''''
 
 Script to query beets_ music database (possibly on a remote host) with specified
 parameters and add found tracks to EMMS_ playlist (via emacsclient).
@@ -1874,8 +1874,8 @@ Also allows to just dump resulting paths or enqueue a list of them from stdin.
 .. _beets: http://beets.readthedocs.org/
 .. _EMMS: https://www.gnu.org/software/emms/
 
-ff\_backup
-''''''''''
+ff_backup
+'''''''''
 
 Script to backup various firefox settings in a diff/scm-friendly manner
 (i.e. decoded from horrible one-liner json into pyaml_, so that they can be
@@ -1887,8 +1887,8 @@ resets config sometimes.
 Can/should be extended to all sorts of other ff/ext settings in the future - and
 probably is already, see its yaml config for details.
 
-ff\_mozlz4
-''''''''''
+ff_mozlz4
+'''''''''
 
 Simple py3 script to decompress .mozlz4 files, which can be found in FF profile
 directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-data``,
@@ -1897,8 +1897,8 @@ which lz4 cli tool can't handle due to that mozLz40 header.
 Same cli interface as with gzip/xz/lz4 and such, uses `lz4
 <https://github.com/python-lz4/python-lz4/>`_ module.
 
-bt\_agent
-'''''''''
+bt_agent
+''''''''
 
 BlueZ bluetooth authorization agent script/daemon.
 
@@ -2031,8 +2031,8 @@ Modified script from aufs2-util.git, but standalone (with stuff from aufs.shlib
 baked-in) and not failing on ro-remounts, which seem to be a common thing for
 some places like /var or /home.
 
-aufs\_sync
-^^^^^^^^^^
+aufs_sync
+^^^^^^^^^
 
 Convenience wrapper around aubrsync for mounts like ``none /var -o
 br:/aufs/rw/var=rw:/aufs/ro/var=ro``.
