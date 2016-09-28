@@ -172,14 +172,14 @@ class File(object):
 				continue
 			assert entry.name[0] != '\0', repr(entry.name)
 
-			stream = entry.pop('_stream') # if only to free the ref
-			log.debug('DirEnty[%s] at %s', entry.clidx, entry.clidx_offset)
+			stream = entry.pop('_chain_stream') # if only to free the ref
+			log.debug('DirEnty[%s] at %s', entry.clidx, entry.slice_map_offset)
 			if is_lfn(entry): # has to be re-parsed as LFN here
 				if not lfn_cache: log.debug('Detected long-name %s', entry_id)
-				stream.seek(entry.clidx_offset)
+				stream.seek(entry.slice_map_offset)
 				entry_lfn = LFNEntry.parse_stream(stream)
 				entry_lfn.seq_num = entry_lfn.seq
-				entry_lfn.clidx_offset = entry.clidx_offset
+				entry_lfn.slice_map, entry_lfn.slice_map_offset = entry.slice_map, entry.slice_map_offset
 				if not lfn_cache:
 					if not entry_lfn.seq_num & 0x40:
 						log.error( 'Unset bit-6 of seq in last'
@@ -289,8 +289,8 @@ class FatFs(Directory):
 
 	# Concepts and shorthands:
 	#  chain - list of indexes of linked clusters
-	#  slice - byte range (start + length) on fs
-	#  slice map - list of slices for some object
+	#  slice - byte range (start + length) in file for cluster
+	#  slice map - list of slices (clusters mapped to file) for some object
 	#  de(s) - DirEntry struct(s)
 
 	def __init__(self, stream):
@@ -357,16 +357,51 @@ class FatFs(Directory):
 
 	def _get_des(self, clidx):
 		with BytesIO() as mem:
-			self.copy_chain(clidx, mem)
+			slice_map = self.copy_chain(clidx, mem)
 			mem.seek(0)
 			while True:
 				if not mem.read(1): break
 				mem.seek(-1, os.SEEK_CUR)
 				pos = mem.tell()
 				obj = DirEntry.parse_stream(mem)
-				if obj.name[0] == '\0': break # marks last entry
-				obj.clidx, obj.clidx_offset, obj._stream = clidx, pos, mem
+				if obj.name[0] == '\0': break # sentinel entry
+				obj.clidx, obj._chain_stream = clidx, mem
+				obj.slice_map, obj.slice_map_offset = slice_map, pos
 				yield obj
+
+	def write_struct(self, struct, data, slice_map=None, slice_map_offset=None, dry_run=False):
+		if slice_map is None: slice_map = data.slice_map
+		if slice_map_offset is None: slice_map_offset = data.slice_map_offset
+
+		pos, sm_iter = slice_map_offset, iter(slice_map)
+		for start, length in sm_iter:
+			if pos < length:
+				start, length = start + pos, length - pos
+				break
+			pos -= length
+		else: raise EOFError(slice_map, slice_map_offset, pos)
+
+		with BytesIO() as buff:
+			struct.build_stream(data, buff)
+			buff_len = buff.tell()
+			buff.seek(0)
+
+			writes = list()
+			while buff_len > 0:
+				write_len = min(buff_len, length)
+				writes.append((start, write_len))
+				buff_len -= write_len
+				if buff_len <= 0: break
+				try: start, length = next(sm_iter)
+				except StopIteration:
+					raise EOFError(slice_map, slice_map_offset, buff_len)
+			log.debug( 'Mapped %s write-slices for %s'
+				' %s\nWrites (start, len): %s', len(writes), struct, data, writes )
+
+			if not dry_run:
+				for start, length in writes:
+					self.stream.seek(start)
+					self.stream.write(buff.read(length))
 
 	@property
 	def firstCluster(self): return self.pdr.clusterOfRoot
@@ -377,25 +412,50 @@ class FatFs(Directory):
 
 def main(args=None):
 	import argparse
-	parser = argparse.ArgumentParser(description='FAT32 tool.')
+	parser = argparse.ArgumentParser(
+		description='Raw FAT32 manipulation tool.'
+			' Simply lists files in specified directory by default.'
+			' Use options like -s/--shuffle and -r/--rename to specify other actions.')
+
 	parser.add_argument('dev', help='Path to FAT32 device.')
 	parser.add_argument('path',
-		help='Directory to shuffle. Must start from /, example: /some/my/dir')
+		help='File/directory to operate on. Must start from /, example: /some/my/dir')
+
+	parser.add_argument('-l', '--list', action='store_true',
+		help='List path without shuffling anything, in entry-order.'
+			' Default action, if no other options are specified.')
+
+	parser.add_argument('-s', '--shuffle', action='store_true',
+		help='Shuffle entries in specified directory.'
+			' This reads all direntries there and writes them back in randomized order.'
+			' Intended for stupid devices (e.g. mp3 players) which rely on that.')
 	parser.add_argument('-g', '--group-dirs', default='first',
 		help='Group and sort directories at the beginning/end of the file entries.'
-			' Possible values: no, first, last. Default: %(default)s')
-	parser.add_argument('-l', '--list', action='store_true',
-		help='List path without shuffling anything, in entry-order.')
+			' Possible values: no, first, last. Only used with -s/--shuffle option.'
+			' Default: %(default)s')
+
+	parser.add_argument('-r', '--rename',
+		help='Rename specified node (file/dir) according to the template.'
+			' Only changes utf-16 name in LFNs, as that is all modern OSes seem to care about.'
+			' Template is for python str.format. Example: {name}.bak')
+	parser.add_argument('--rename-inside', action='store_true',
+		help='Rename all entries in specified directory instead of directory itself.')
+
 	parser.add_argument('-n', '--dry-run',
 		action='store_true', help='Dont write the data out, only print what goes where.')
 	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Even more verbose operation.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.group_dirs == 'no': opts.group_dirs = None
 	if not opts.path.startswith(os.sep):
 		parser.error( 'Path argument must begin with'
 			' slash (for typo-safety reasons): {!r}'.format(opts.path) )
+
+	if not (opts.shuffle or opts.rename): opts.list = True
+	if sum(map(bool, [opts.shuffle, opts.rename, opts.list])) != 1:
+		parser.error('Only one action can be specified at the same time.')
 
 	global log
 	import logging
@@ -414,6 +474,25 @@ def main(args=None):
 
 		if opts.list:
 			for entry in path: print(entry)
+			return 0
+
+		if opts.rename:
+			def rename(path, tpl):
+				name = tpl.decode('utf-8').format(name=path.de.name_long)
+				log.debug('Renaming %s -> %r', path, name)
+				with BytesIO((name + u'\0').encode('utf-16')) as name_raw:
+					name_raw.seek(0)
+					assert name_raw.read(2) == '\xff\xfe' # BOM
+					for lfn in path.de.lfns:
+						for field in LFNEntry.subcons:
+							if field.name in ['name1', 'name2', 'name3']:
+								field_len = field.sizeof()
+								data = name_raw.read(field_len)
+								lfn[field.name] = data + '\xff' * (field_len - len(data))
+						fs.write_struct(LFNEntry, lfn, dry_run=opts.dry_run)
+			if not opts.rename_inside: rename(path, opts.rename)
+			else:
+				for entry in path: rename(entry, opts.rename)
 			return 0
 
 		with BytesIO() as mem:

@@ -1823,28 +1823,25 @@ positions or current (`auto-rotated`_) wallpaper path.
 vfat_shuffler
 '''''''''''''
 
-Tool to shuffle entries inside a vfat (filesystem) directory.
+Tool to shuffle entries inside a vfat (filesystem) directory (and do some other
+things) without actually mounting filesystem.
 
 Some crappy cheap mp3 players don't have shuffle functionality and play files
 strictly in the same order as their dentries_ appear on the device blocks.
 
-Naturally, as same order gets boring, one way to "shuffle" them is to re-upload
-same files in random order (as "pick_tracks" tool does here), but if it's a few
-gigs of files, such method is slow and wears-out flash drive unnecessarily.
+Easy way to "shuffle" stuff for them in quick-and-efficient manner is to swap
+dentries' places, which unfortunately requires re-implementing a bit of vfat
+driver code, which (fortunately) isn't that complex.
 
-So easy fix is just to swap dentries' places, which unfortunately requires
-re-implementing a bit of vfat driver code, which (fortunately) isn't that
-complex.
+Tool takes path to device and directory to operate on as arguments (see --help)
+and has -s/--shuffle (actual shuffle operation), -l/--list (simply list files,
+default), -r/--rename action-flags, and ``--debug --dry-run`` can be useful to
+check what thing will do without making any changes.
 
-Tool takes a device name and directory to shuffle as arguments (see --help) and
-has --list and --dry-run flags to make sure it'll do what one wants it to, and
-not bug-out halfway there on parsing fs.
-
-One limitation is that it works *only* with "vfat" fs type, which can be created
-with "mkfs.vfat" tool, *not* the types that "mkdosfs" tool creates, *not* fat16
-or whatever other variations are there.
-
-Reason is just that I didn't bother to learn the differences between these, just
+One limitation is that it works *only* with FAT32 "vfat" fs type, which can be
+created with "mkfs.vfat" tool, *not* the types that "mkdosfs" tool creates,
+*not* FAT16 or whatever other variations are out there.
+Only reason is that I didn't bother to learn the differences between these, just
 checked and saw parser bug out on mkdosfs-created fs format.
 
 Might be useful baseline to hack some fat32-related tool, as it has everything
