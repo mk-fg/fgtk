@@ -318,8 +318,8 @@ terminal::
 resolve-hostnames
 '''''''''''''''''
 
-Scrpt to find all the specified (either directly, or by regexp) hostnames and
-replace these with corresponding IP addresses (resolved through getaddrinfo).
+Script (py3) to find all specified (either directly, or by regexp) hostnames and
+replace these with corresponding IP addresses, resolved through getaddrinfo(3).
 
 Examples::
 
@@ -328,33 +328,31 @@ Examples::
       "localhost:21987": { ... },
       "fraggod.net:12345": { ... }, ...
 
-  % resolve-hostnames fraggod.net < cjdroute.conf
-  ... "192.168.0.11:21987": { ... },
-      "localhost:21987": { ... },
-      "192.168.0.11:12345": { ... }, ...
-
   % resolve-hostnames fraggod.net localhost < cjdroute.conf
   ... "192.168.0.11:21987": { ... },
       "127.0.0.1:21987": { ... },
       "192.168.0.11:12345": { ... }, ...
 
   % resolve-hostnames -m '"(?P<name>[\w.]+):\d+"' < cjdroute.conf
-  ... "192.168.0.11:21987": { ... },
-      "127.0.0.1:21987": { ... },
-      "192.168.0.11:12345": { ... }, ...
-
   % resolve-hostnames fraggod.net:12345 < cjdroute.conf
-  ... "fraggod.net:21987": { ... },
-      "localhost:21987": { ... },
-      "192.168.0.11:12345": { ... }, ...
-
   % resolve-hostnames -a inet6 fraggod.net localhost < cjdroute.conf
-  ... "2001:470:1f0b:11de::1:21987": { ... },
-      "::1:21987": { ... },
-      "2001:470:1f0b:11de::1:12345": { ... }, ...
+  ...
 
-Useful for tools that cannot or should not handle names or to just convert lists
-of names (in some arbitrary format) to IP addresses.
+  % cat nftables.conf
+  define set.gw.ipv4 = { !ipv4.name1.local, !ipv4.name2.local }
+  define set.gw.ipv6 = { !ipv6.name1.local, !ipv6.name2.local }
+  ...
+  # Will crash nft tool because it treats names in anonymous sets as AF_INET (ipv4 only)
+
+  % resolve-hostnames -rum '!(\S+\.local)\b' -f nftables.conf
+  define set.gw.ipv4 = { 10.12.34.1, 10.12.34.2 }
+  define set.gw.ipv6 = { fd04::1, fd04::2 }
+  ...
+
+Useful a as conf-file pre-processor for tools that cannot handle names properly
+(e.g. introduce ambiguity, can't deal with ipv4/ipv6, use weird resolvers, do it
+dynamically, etc) or should not be allowed to handle these, convert lists of
+names (in some arbitrary format) to IP addresses, and such.
 
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
