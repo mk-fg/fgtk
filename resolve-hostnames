@@ -89,11 +89,12 @@ def main(args=None):
 		help='Hosts to find/resolve in an input file/stream.'
 			' Matched there only when separated by non-hostname char boundary,'
 				' so that "host.tld" will be matched in "name host.tld;", but not in "mail.host.tld".')
-	parser.add_argument('-s', '--skip-unresolved',
-		action='store_true', help='Do not stop on any unresolvable hosts.')
 
 	parser.add_argument('-f', '--file',
 		metavar='path', help='File to resolve stuff in (default: use stdin).')
+	parser.add_argument('-o', '--out',
+		metavar='path', help='Output file or path (default: use stdout).')
+
 	parser.add_argument('-p', '--port', type=int,
 		metavar='number/service_name',
 		help='Append the port to all passed hosts as "<host>:<port>".')
@@ -104,6 +105,12 @@ def main(args=None):
 				' "port" and "protocol" named groups. Example: "(?P<name>.*\.(?:my\.tld1|my.tld2)):\d+":')
 	parser.add_argument('-r', '--replace-group0', action='store_true',
 		help='Replace not only "name" capture group, but whole regexp match (group 0).')
+
+	parser.add_argument('-u', '--force-unique', action='store_true',
+		help='Treat names that resolve to non-unique address as failures.'
+			' This can be important for e.g. firewall configs, to avoid ambiguity.')
+	parser.add_argument('-s', '--skip-unresolved',
+		action='store_true', help='Do not stop on any unresolvable hosts.')
 
 	parser.add_argument('-l', '--protocol', metavar='protocol_name/num', default='tcp',
 		help='Name of a protocol to get address'
@@ -116,9 +123,6 @@ def main(args=None):
 	parser.add_argument('-t', '--sock-type', metavar='socket_type/num', default='stream',
 		help='Socket type (stream, dgram, raw, etc; default: %(default)s).'
 			' Should correspond directly to SOCK_* names or be an integer. Empty or "0" = any.')
-	parser.add_argument('-u', '--force-unique', action='store_true',
-		help='Treat names that resolve to non-unique address as failures.'
-			' This can be important for e.g. firewall configs, to avoid ambiguity.')
 
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -184,7 +188,6 @@ def main(args=None):
 				+ res_port + src[match.end('port') + src_diff:]
 			src_diff += len(res_port) - len(match.group('port'))
 
-	sys.stdout.write(src)
-
+	(sys.stdout if not opts.out else open(opts.out, 'w')).write(src)
 
 if __name__ == '__main__': sys.exit(main())

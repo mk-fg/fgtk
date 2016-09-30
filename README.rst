@@ -342,7 +342,7 @@ Examples::
   define set.gw.ipv4 = { !ipv4.name1.local, !ipv4.name2.local }
   define set.gw.ipv6 = { !ipv6.name1.local, !ipv6.name2.local }
   ...
-  # Will crash nft tool because it treats names in anonymous sets as AF_INET (ipv4 only)
+  # Will crash nft-0.6 because it treats names in anonymous sets as AF_INET (ipv4 only)
 
   % resolve-hostnames -rum '!(\S+\.local)\b' -f nftables.conf
   define set.gw.ipv4 = { 10.12.34.1, 10.12.34.2 }
