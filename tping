@@ -2,7 +2,23 @@
 
 import itertools as it, operator as op, functools as ft
 from collections import OrderedDict
-import os, sys, asyncio, socket, signal, contextlib
+import os, sys, logging, asyncio, socket, signal, contextlib
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
 async def conn_discard(conn):
@@ -27,7 +43,7 @@ async def _run_tping(loop, conns, sock_addr, sock_af, delay_retry, timeout):
 	while True:
 		ts = loop.time()
 		conns[ts] = t = loop.create_task(asyncio.open_connection(
-			*sock_addr, family=sock_af, proto=socket.IPPROTO_TCP ))
+			*sock_addr[:2], family=sock_af, proto=socket.IPPROTO_TCP ))
 		t.ts_conn = ts
 
 		ts_abort = ts - timeout
@@ -57,6 +73,13 @@ async def _run_tping(loop, conns, sock_addr, sock_af, delay_retry, timeout):
 		if done: break
 		ts_retry += delay_retry
 
+
+def sockopt_resolve(prefix, v):
+	prefix = prefix.upper()
+	for k in dir(socket):
+		if not k.startswith(prefix): continue
+		if getattr(socket, k) == v: return k[len(prefix):]
+	return v
 
 port_default = 22
 
@@ -89,7 +112,12 @@ def main(args=None):
 		help='Delay after which to consider establishing'
 			' connection as timed-out and cancel it. Default: %(default)ss')
 
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
 
 	host = opts.host.rsplit(':', 1)
 	host, port = (host[0], None) if len(host) == 1 else host
@@ -110,6 +138,8 @@ def main(args=None):
 		parser.error( 'Failed to resolve socket parameters (address, family)'
 			' via getaddrinfo: {!r} - [{}] {}'.format((host, port), err.__class__.__name__, err) )
 	sock_af, sock_t, _, _, sock_addr = addrinfo[0]
+	log.debug( 'Resolved host:port {!r}:{!r} to endpoint: {} (family: {}, type: {})',
+		host, port, sock_addr, sockopt_resolve('af_', sock_af), sockopt_resolve('sock_', sock_t) )
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		return loop.run_until_complete(run_tping(
