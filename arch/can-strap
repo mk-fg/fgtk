@@ -47,7 +47,7 @@ do [[ ! -e "$conf" ]] || rsync -aL "$conf" "$can$conf"
 done
 
 chsh_cmd=true
-[[ "${SHELL##*/}" != zsh ]] || {
+[[ "${SHELL##*/}" != zsh || ! -e "$can"/etc/zsh/ ]] || {
 	cp /etc/zsh/* "$can"/etc/zsh/
 	chsh_cmd="chsh -s $SHELL"
 }
