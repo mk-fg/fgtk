@@ -52,7 +52,7 @@ def get_socket_info( host, port=0, family=0,
 		ai_addr.append((addr[0], family))
 
 	if len(ai_af) > 1:
-		af_names = dict((v, k) for k,v in vars(socket).viewitems() if k.startswith('AF_'))
+		af_names = dict((v, k) for k,v in vars(socket).items() if k.startswith('AF_'))
 		ai_af_names = list(af_names.get(af, str(af)) for af in ai_af)
 		if socket.AF_INET not in ai_af:
 			log.fatal(
