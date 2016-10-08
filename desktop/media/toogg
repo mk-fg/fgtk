@@ -3,7 +3,7 @@
 import itertools as it, operator as op, functools as ft
 from collections import OrderedDict
 from asyncio import subprocess
-import os, sys, re, logging, contextlib, asyncio, signal, json
+import os, sys, re, logging, contextlib, asyncio, signal, json, tempfile
 
 
 class LogMessage(object):
@@ -20,6 +20,72 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class FFProc(object):
+
+	proc = finished = None
+
+	def __init__(self, loop, src, cmd, stream_len=None, progress=True, prefix=None, **kws):
+		self.loop, self.src, self.cmd, self.kws = loop, src, cmd, kws
+		self.progress, self.stream_len = progress, stream_len
+		self.prefix = ' '.join(filter(None, ['[{!r}]'.format(src), prefix])) + ': '
+		self.cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
+
+	async def __aenter__(self):
+		await self.run(wait=False)
+		return self
+
+	async def __aexit__(self, *err):
+		if self.finished and not self.finished.done():
+			self.finished.cancel()
+			with contextlib.suppress(asyncio.CancelledError): await self.finished
+
+	async def run(self, wait=True):
+		assert not self.proc
+		log.debug('[{!r}] running: {}', self.src, self.cmd_repr)
+		if self.progress: self.kws['stdout'] = subprocess.PIPE
+		self.proc = await asyncio.create_subprocess_exec(*self.cmd, **self.kws)
+		for k in 'stdin', 'stdout', 'stderr': setattr(self, k, getattr(self.proc, k))
+		self.finished = self.loop.create_task(self.wait())
+		if wait: await self.finished
+		return self
+
+	async def wait(self):
+		progress_task = None
+		if self.progress and self.proc.stdout:
+			progress_task = self.loop.create_task(self.print_progress())
+		try:
+			await self.proc.wait()
+			if progress_task: await progress_task
+			if self.proc.returncode != 0:
+				cmd_repr = '' if not self.cmd_repr else ': {}'.format(self.cmd_repr)
+				raise AudioConverterError(( 'Command for src {!r} exited with'
+					' non-zero status ({}){}' ).format(self.src, self.proc.returncode, cmd_repr))
+		finally:
+			if progress_task and not progress_task.done():
+				progress_task.cancel()
+				with contextlib.suppress(asyncio.CancelledError): await progress_task
+
+	async def print_progress(self):
+		report, pos_str = dict(), lambda n:\
+			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, n//60, n%60]))
+		p = lambda tpl,*a,**k: print('\r{}'.format(self.prefix) + (
+			tpl.format(*a,**k) if a or k else tpl ), end='', flush=True)
+		try:
+			while True:
+				line = (await self.proc.stdout.readline()).decode()
+				if not line: return
+				k, v = line.split('=', 1)
+				report[k] = v
+				if k == 'progress':
+					pos = int(report.get('out_time_ms', 0)) / 1000000
+					if pos: # XXX: handle multiple files somehow
+						if not self.stream_len: p(pos_str(pos))
+						else:
+							p( '{:.1f}% - {} / {}',
+								(pos / self.stream_len) * 100, pos_str(pos), pos_str(self.stream_len) )
+		finally: print()
 
 
 class AudioConverterError(Exception): pass
@@ -93,82 +159,80 @@ class AudioConverter(object):
 	async def conv_src(self, src):
 		src_base = os.path.basename(src)
 		dst_path = src_base.rsplit('.', 1)[0] + '.ogg'
-		paths, procs = {dst_path}, list()
+		paths = {dst_path}
 
 		def tmp_file(ext):
 			p = '{}.{}'.format(dst_path, ext)
 			paths.add(p)
 			return p
 
-		async def proc_run(cmd, wait=True, **kws):
-			cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
-			log.debug( '[{!r}] running: {}', src_base, cmd_repr)
-			proc = await asyncio.create_subprocess_exec(*cmd, **kws)
-			procs.append(proc)
-			if not wait: return proc
-			await proc_wait(proc, cmd_repr)
-			return proc
-
-		async def proc_wait(proc, cmd_repr=None):
-			await proc.wait()
-			if proc.returncode != 0:
-				cmd_repr = '' if not cmd_repr else ': {}'.format(cmd_repr)
-				raise AudioConverterError(( 'Command for src {!r}'
-					' exited with non-zero status ({}){}' ).format(src, proc.returncode, cmd_repr))
+		async with FFProc( self.loop, src_base,
+				['ffprobe', '-v', 'error', '-show_streams', '-print_format', 'json', src],
+				progress=False, stdout=subprocess.PIPE ) as proc:
+			src_info = (await proc.stdout.read()).decode()
+			await proc.finished
+			src_duration = None
+			try:
+				src_info = json.loads(src_info)
+				for stream in src_info['streams']:
+					if stream.get('codec_type') != 'audio': continue
+					src_duration = float(stream['duration'])
+					break
+			except Exception as err:
+				log.error('[{!r}] ffprobe failed, progress info wont be available: {}', src, err)
+			log.debug('[{!r}] Detected audio stream duration: {}', src, src_duration)
 
 		try:
-			ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y']
-			await proc_run(ffmpeg_cmd + ['-i', src, '-f', 'wav', tmp_file('src.wav')])
+			ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
+			ffmpeg_proc = lambda pre, cmd_ext, **kws: FFProc(
+				self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration, prefix=pre, **kws )
+			await ffmpeg_proc('to-wav [1/3]', ['-i', src, '-f', 'wav', tmp_file('src.wav')]).run()
 
 			ffmpeg_env = os.environ.copy()
 			ffmpeg_env['NO_COLOR'] = '1'
 			opts = self.loudnorm_opts.strip(':')
 			if opts: opts += ':'
-			proc = await proc_run(
-				ffmpeg_cmd + [ '-v', 'info', '-i', tmp_file('src.wav'),
-					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
-				wait=False, env=ffmpeg_env, stderr=subprocess.PIPE )
-			norm_info, ffmpeg_stderr = list(), list()
-			while True:
-				line = await proc.stderr.readline()
-				ffmpeg_stderr.append(line.decode().rstrip())
-				if not line: break
-				line = line.decode().strip()
-				if norm_info:
-					norm_info.append(line)
-					if line == '}': break
-				if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
-			norm_info = ''.join(norm_info)
-			try: await proc_wait(proc, 'loudnorm-pass-1')
-			except:
-				log.error(
-					'ffmpeg stderr:\n--------------------\n{}\n--------------------',
-					'\n'.join(ffmpeg_stderr).rstrip() )
-				raise
-			log.debug('[{!r}] detected audio normalization info: {!r}', src_base, norm_info)
-			if not norm_info:
-				raise AudioConverterError('ffmpeg failed to produce normalization info json')
-			norm_info = json.loads(norm_info)
+
+			async with ffmpeg_proc( 'loudnorm-info [2/3]',
+					[ '-v', 'info', '-i', tmp_file('src.wav'),
+						'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
+					env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
+				norm_info, ffmpeg_stderr = list(), list()
+				while True:
+					line = await proc.stderr.readline()
+					ffmpeg_stderr.append(line.decode().rstrip())
+					if not line: break
+					line = line.decode().strip()
+					if norm_info:
+						norm_info.append(line)
+						if line == '}': break
+					if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
+				norm_info = ''.join(norm_info)
+				try: await proc.finished
+				except:
+					log.error(
+						'ffmpeg stderr:\n--------------------\n{}\n--------------------',
+						'\n'.join(ffmpeg_stderr).rstrip() )
+					raise
+				log.debug('[{!r}] detected audio normalization info: {!r}', src_base, norm_info)
+				if not norm_info:
+					raise AudioConverterError( 'ffmpeg failed to produce'
+						' normalization info json (source file: {!r})'.format(src_base) )
+				norm_info = json.loads(norm_info)
 
 			opts_ext = (
 					'measured_I={}:measured_TP={}:'
 					'measured_LRA={}:measured_thresh={}:offset={}'
 				).format(*op.itemgetter(
 					'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
-			await proc_run(
-				ffmpeg_cmd + [ '-i', tmp_file('src.wav'),
-					'-af', 'loudnorm={}{}'.format(opts, opts_ext),
-					'-ar', '48k', '-f', 'ogg', dst_path ] )
+			await ffmpeg_proc( 'to-ogg [3/3]', [ '-i', tmp_file('src.wav'), '-af',
+					'loudnorm={}{}'.format(opts, opts_ext), '-ar', '48k', '-f', 'ogg', dst_path ]).run()
 
 			paths.remove(dst_path)
 
 		finally:
 			for p in paths:
 				with contextlib.suppress(OSError): os.unlink(p)
-			for p in procs:
-				if p.returncode is not None: continue
-				p.kill()
-				p.wait()
 
 		return dst_path
 
