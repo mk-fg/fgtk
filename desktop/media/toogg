@@ -126,7 +126,7 @@ class AudioConverter(object):
 			if opts: opts += ':'
 			proc = await proc_run(
 				ffmpeg_cmd + [ '-v', 'info', '-i', tmp_file('src.wav'),
-					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '-' ],
+					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
 				wait=False, env=ffmpeg_env, stderr=subprocess.PIPE )
 			norm_info, ffmpeg_stderr = list(), list()
 			while True:
@@ -157,7 +157,7 @@ class AudioConverter(object):
 					'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
 			await proc_run(
 				ffmpeg_cmd + [ '-i', tmp_file('src.wav'),
-					'-af', 'loudnorm={}{}:linear=true'.format(opts, opts_ext),
+					'-af', 'loudnorm={}{}'.format(opts, opts_ext),
 					'-ar', '48k', '-f', 'ogg', dst_path ] )
 
 			paths.remove(dst_path)
