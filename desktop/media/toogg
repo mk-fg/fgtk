@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from asyncio import subprocess
 import os, sys, re, logging, contextlib, asyncio, signal, json, tempfile
 
@@ -88,17 +88,22 @@ class FFProc(object):
 		finally: print()
 
 
-class AudioConverterError(Exception): pass
+class AudioConvError(Exception): pass
 
-class AudioConverter(object):
+class AudioConvJob(object):
+	__slots__ = 'name src dst tmp_file ffmpeg'.split()
+	def __init__(self, *args, **kws):
+		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
+
+class AudioConv(object):
 
 	@classmethod
 	async def run_async(cls, *args, **kws):
 		async with cls(*args, **kws) as self: return await self.run()
 
-	def __init__(self, loop, src_list, loudnorm_opts=None, max_parallel=None):
-		self.loop, self.src_list = loop, src_list
-		self.loudnorm_opts, self.max_parallel = loudnorm_opts or '', max_parallel or os.cpu_count()
+	def __init__(self, loop, src_list, loudnorm=False, loudnorm_opts=None, max_parallel=None):
+		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
+		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 
 	async def __aenter__(self):
 		self.conv_jobs = OrderedDict()
@@ -156,18 +161,21 @@ class AudioConverter(object):
 		assert len(self.src_done) == len(self.src_list)
 		self.success = True
 
+
 	async def conv_src(self, src):
 		src_base = os.path.basename(src)
-		dst_path = src_base.rsplit('.', 1)[0] + '.ogg'
-		paths = {dst_path}
+		dst = src_base.rsplit('.', 1)[0] + '.ogg'
+		paths = {dst}
 
 		def tmp_file(ext):
-			p = '{}.{}'.format(dst_path, ext)
+			p = '{}.{}'.format(dst, ext)
 			paths.add(p)
 			return p
 
-		async with FFProc( self.loop, src_base,
-				['ffprobe', '-v', 'error', '-show_streams', '-print_format', 'json', src],
+		job = AudioConvJob(src_base, src, dst, tmp_file)
+
+		async with FFProc( self.loop, job.name,
+				['ffprobe', '-v', 'error', '-show_streams', '-print_format', 'json', job.src],
 				progress=False, stdout=subprocess.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
@@ -179,74 +187,85 @@ class AudioConverter(object):
 					src_duration = float(stream['duration'])
 					break
 			except Exception as err:
-				log.error('[{!r}] ffprobe failed, progress info wont be available: {}', src, err)
-			log.debug('[{!r}] Detected audio stream duration: {}', src, src_duration)
+				log.error('[{!r}] ffprobe failed, progress info wont be available: {}', job.name, err)
+			log.debug('[{!r}] Detected audio stream duration: {}', job.name, src_duration)
 
+		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
+		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
+			self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration, prefix=pre, **kws )
+
+		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
 		try:
-			ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
-			ffmpeg_proc = lambda pre, cmd_ext, **kws: FFProc(
-				self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration, prefix=pre, **kws )
-			await ffmpeg_proc('to-wav [1/3]', ['-i', src, '-f', 'wav', tmp_file('src.wav')]).run()
-
-			ffmpeg_env = os.environ.copy()
-			ffmpeg_env['NO_COLOR'] = '1'
-			opts = self.loudnorm_opts.strip(':')
-			if opts: opts += ':'
-
-			async with ffmpeg_proc( 'loudnorm-info [2/3]',
-					[ '-v', 'info', '-i', tmp_file('src.wav'),
-						'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
-					env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
-				norm_info, ffmpeg_stderr = list(), list()
-				while True:
-					line = await proc.stderr.readline()
-					ffmpeg_stderr.append(line.decode().rstrip())
-					if not line: break
-					line = line.decode().strip()
-					if norm_info:
-						norm_info.append(line)
-						if line == '}': break
-					if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
-				norm_info = ''.join(norm_info)
-				try: await proc.finished
-				except:
-					log.error(
-						'ffmpeg stderr:\n--------------------\n{}\n--------------------',
-						'\n'.join(ffmpeg_stderr).rstrip() )
-					raise
-				log.debug('[{!r}] detected audio normalization info: {!r}', src_base, norm_info)
-				if not norm_info:
-					raise AudioConverterError( 'ffmpeg failed to produce'
-						' normalization info json (source file: {!r})'.format(src_base) )
-				norm_info = json.loads(norm_info)
-
-			opts_ext = (
-					'measured_I={}:measured_TP={}:'
-					'measured_LRA={}:measured_thresh={}:offset={}'
-				).format(*op.itemgetter(
-					'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
-			await ffmpeg_proc( 'to-ogg [3/3]', [ '-i', tmp_file('src.wav'), '-af',
-					'loudnorm={}{}'.format(opts, opts_ext), '-ar', '48k', '-f', 'ogg', dst_path ]).run()
-
-			paths.remove(dst_path)
-
+			await func(job)
+			paths.remove(dst)
 		finally:
 			for p in paths:
 				with contextlib.suppress(OSError): os.unlink(p)
+		return dst
 
-		return dst_path
+
+	async def conv_src_simple(self, job):
+		await job.ffmpeg('to-ogg', ['-i', job.src, '-vn', '-f', 'ogg', job.dst]).run()
+
+	async def conv_src_loudnorm(self, job):
+		await job.ffmpeg('to-wav [1/3]', ['-i', job.src, '-f', 'wav', job.tmp_file('src.wav')]).run()
+
+		ffmpeg_env = os.environ.copy()
+		ffmpeg_env['NO_COLOR'] = '1'
+		opts = self.loudnorm_opts.strip(':')
+		if opts: opts += ':'
+
+		async with job.ffmpeg( 'loudnorm-info [2/3]',
+				[ '-v', 'info', '-i', job.tmp_file('src.wav'),
+					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
+				env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
+			norm_info, ffmpeg_stderr = list(), list()
+			while True:
+				line = await proc.stderr.readline()
+				ffmpeg_stderr.append(line.decode().rstrip())
+				if not line: break
+				line = line.decode().strip()
+				if norm_info:
+					norm_info.append(line)
+					if line == '}': break
+				if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
+			norm_info = ''.join(norm_info)
+			try: await proc.finished
+			except:
+				log.error(
+					'ffmpeg stderr:\n--------------------\n{}\n--------------------',
+					'\n'.join(ffmpeg_stderr).rstrip() )
+				raise
+			log.debug('[{!r}] detected audio normalization info: {!r}', job.name, norm_info)
+			if not norm_info:
+				raise AudioConvError( 'ffmpeg failed to produce'
+					' normalization info json (source file: {!r})'.format(job.name) )
+			norm_info = json.loads(norm_info)
+
+		opts_ext = (
+				'measured_I={}:measured_TP={}:'
+				'measured_LRA={}:measured_thresh={}:offset={}'
+			).format(*op.itemgetter(
+				'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
+		await job.ffmpeg( 'to-ogg [3/3]', [ '-i', job.tmp_file('src.wav'), '-af',
+				'loudnorm={}{}'.format(opts, opts_ext), '-ar', '48k', '-f', 'ogg', job.dst ]).run()
 
 
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Convert source file(s) to audio, normalize it and encode to ogg/vorbis.'
-			' Uses ffmpeg "loudnorm" filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
+			' Optionally uses ffmpeg "loudnorm" filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
 	parser.add_argument('src', nargs='+', help='File(s) to convert.')
 	parser.add_argument('-x', '--remove-src', action='store_true',
 		help='Remove source file(s) on success of the whole operation.')
 	parser.add_argument('-t', '--dst-dir', metavar='path',
 		help='Path to store resulting files in. Defaults to current one.')
+	parser.add_argument('-l', '--loudnorm', action='store_true',
+		help='Use ffmpeg "loudnorm" filter to have sane volume level.'
+			' It takes quite a while to process longer files with it.'
+			' Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.'
+			' ffmpeg docs link: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
 	parser.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts',
 		help='String of options to pass to loudnorm filter,'
 				' same as they would appear on ffmpeg command line.'
@@ -263,7 +282,8 @@ def main(args=None):
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
-			AudioConverter.run_async(loop, src_list, loudnorm_opts=opts.loudnorm_opts) )
+			AudioConv.run_async( loop, src_list,
+				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
 	if success and opts.remove_src:
 		for src in src_list: os.unlink(src)
 

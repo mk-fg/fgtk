@@ -1466,13 +1466,14 @@ what's being played, with a mute button (on SIGQUIT button from terminal).
 toogg
 '''''
 
-Any-media-to-ogg convertor, using ffmpeg and its `loudnorm filter`_ (EBU R128
-loudness normalization) in double-pass mode.
+Any-media-to-ogg convertor, using ffmpeg and - optionally (with -l/--loudnorm) -
+its `loudnorm filter`_ (EBU R128 loudness normalization) in double-pass mode.
 
 Main purpose is to turn anything that has audio track in it into podcast for an
 audio player.
 
-Can process several source files in parallel, python3/asyncio.
+Can process several source files in parallel, displays progress (from ``ffmpeg
+-progress`` pipe), python3/asyncio.
 
 loudnorm filter and libebur128 are fairly recent additions to ffmpeg
 (3.1 release, 2016-06-27), and might not be enabled/available in distros by
