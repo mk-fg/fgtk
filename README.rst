@@ -1651,23 +1651,6 @@ Script to spam sounds and desktop-notifications upon detecting low battery
 level. Not the only one to do somethng like that on my system, but saved me some
 work on many occasions.
 
-skype
-'''''
-
-Script to make Skype use desktop-notification protocol.
-
-* open Skype
-* open the menu and press 'Options' or press Ctrl-O
-* go to 'Notifications' tab
-* hit the 'Advanced' button and check 'Execute the following script on *any*
-  event'
-* paste: ``notify.skype "%type" "%sname" "%fname" "%fpath" "%smessage" "%fsize" "%sskype"``
-* disable or enable the notifications you want to receive.
-
-Imported from `skype-notify.py gist`_.
-
-.. _skype-notify.py gist: https://gist.github.com/1958564
-
 logtail
 '''''''
 
