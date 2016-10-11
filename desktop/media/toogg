@@ -6,7 +6,7 @@ from asyncio import subprocess
 import os, sys, re, logging, contextlib, asyncio, signal, json, tempfile
 
 
-class LogMessage(object):
+class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
 	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
 
@@ -22,7 +22,7 @@ class LogStyleAdapter(logging.LoggerAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
-class FFProc(object):
+class FFProc:
 
 	proc = finished = None
 
@@ -90,12 +90,12 @@ class FFProc(object):
 
 class AudioConvError(Exception): pass
 
-class AudioConvJob(object):
+class AudioConvJob:
 	__slots__ = 'name src dst tmp_file ffmpeg'.split()
 	def __init__(self, *args, **kws):
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
-class AudioConv(object):
+class AudioConv:
 
 	@classmethod
 	async def run_async(cls, *args, **kws):
