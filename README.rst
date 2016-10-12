@@ -2276,6 +2276,17 @@ them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
 .. _xdiskusage: http://xdiskusage.sourceforge.net/
 .. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/scraps/d3-du-disk-space-usage-layout.html
 
+asciitree-parse
+^^^^^^^^^^^^^^^
+
+Py3 script to parse output of asciitree.LeftAligned tree, as produced by
+`asciitree module`_ (see module docs for format examples).
+
+Can be embedded into python code as a parser for easily-readable trees of
+strings, without need to abuse YAML or something less-readable for those.
+
+.. _asciitree module: https://pypi.python.org/pypi/asciitree/0.3.3
+
 
 
 License (WTFPL)

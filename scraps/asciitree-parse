@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+from collections import defaultdict, OrderedDict
+import os, sys, re
+
+
+def parse_tree(src, indent=0):
+	tree, node_pos = OrderedDict(), dict()
+
+	for line in src:
+		if line.lstrip().startswith('#'): continue
+		tokens = iter(re.finditer(r'(\|)|(\+-+)|(\S.*$)', line))
+		node_parsed = False
+		for m in tokens:
+			assert not node_parsed, line # only one node per line
+			pos, (t_next, t_leaf, val) = m.start(), m.groups()
+
+			if t_next:
+				assert pos in node_pos, [line, pos, node_pos]
+				continue
+			elif t_leaf:
+				m = next(tokens)
+				val, pos_sub = m.group(3), m.start()
+			elif val:# root
+				assert not tree, line
+				pos_sub = 1
+
+			parent = node_pos[pos] if pos else tree
+			node = parent[val] = dict()
+			node_parsed, node_pos[pos_sub] = True, node
+
+	return tree
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Parse vertical ASCII tree'
+				' to nested OrderedDict structure and print/pickle it to stdout.'
+			' Tree must be in asciitree.LeftAligned format, asciitree is a python module.')
+	parser.add_argument('tree_file', nargs='?',
+		help='File that ascitree is stored in.'
+			' Any lines starting with # will be ignored. If not specified or "-", stdin will be used.')
+	parser.add_argument('-p', '--pickle', nargs='?', metavar='path', const='-',
+		help='Pickle (python binary format) resulting structure to'
+			' specified file or stdout (if no path or "-" is provided as arg).')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	src = open(opts.tree_file) if opts.tree_file and opts.tree_file != '-' else sys.stdin
+	with src as src: tree = parse_tree(src)
+
+	if opts.pickle:
+		import pickle
+		dst = open(opts.pickle, 'wb') if opts.pickle and opts.pickle != '-' else sys.stdout
+		with dst as dst: pickle.dump(tree, dst)
+	else: print(tree)
+
+if __name__ == '__main__': sys.exit(main())
