@@ -5,11 +5,11 @@ from collections import defaultdict, OrderedDict
 import os, sys, re
 
 
-def parse_tree(src, indent=0):
+def parse_tree(src):
 	tree, node_pos = OrderedDict(), dict()
 
 	for line in src:
-		if line.lstrip().startswith('#'): continue
+		if line.lstrip().startswith('#') or not line.strip(): continue
 		tokens = iter(re.finditer(r'(\|)|(\+-+)|(\S.*$)', line))
 		node_parsed = False
 		for m in tokens:
@@ -22,7 +22,7 @@ def parse_tree(src, indent=0):
 			elif t_leaf:
 				m = next(tokens)
 				val, pos_sub = m.group(3), m.start()
-			elif val:# root
+			elif val: # root
 				assert not tree, line
 				pos_sub = 1
 
@@ -41,7 +41,8 @@ def main(args=None):
 			' Tree must be in asciitree.LeftAligned format, asciitree is a python module.')
 	parser.add_argument('tree_file', nargs='?',
 		help='File that ascitree is stored in.'
-			' Any lines starting with # will be ignored. If not specified or "-", stdin will be used.')
+			' Any empty lines or lines starting with # will be ignored.'
+			' If not specified or "-", stdin will be used.')
 	parser.add_argument('-p', '--pickle', nargs='?', metavar='path', const='-',
 		help='Pickle (python binary format) resulting structure to'
 			' specified file or stdout (if no path or "-" is provided as arg).')
