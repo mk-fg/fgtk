@@ -1271,6 +1271,8 @@ tty-related should work fine afterwards.
 
 If run without argument or with -l/--list option, will list running machines.
 
+See also: lsns(1), nsenter(1), unshare(1)
+
 ssh-tunnels-cleanup
 ^^^^^^^^^^^^^^^^^^^
 
