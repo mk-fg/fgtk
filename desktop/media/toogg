@@ -69,7 +69,7 @@ class FFProc:
 
 	async def print_progress(self):
 		report, pos_str = dict(), lambda n:\
-			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, n//60, n%60]))
+			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, (n%3600)//60, n%60]))
 		p = lambda tpl,*a,**k: print('\r{}'.format(self.prefix) + (
 			tpl.format(*a,**k) if a or k else tpl ), end='', flush=True)
 		try:
