@@ -61,7 +61,7 @@ class FFProc:
 			if progress_task: await progress_task
 			if self.proc.returncode != 0:
 				cmd_repr = '' if not self.cmd_repr else ': {}'.format(self.cmd_repr)
-				raise AudioConverterError(( 'Command for src {!r} exited with'
+				raise AudioConvError(( 'Command for src {!r} exited with'
 					' non-zero status ({}){}' ).format(self.src, self.proc.returncode, cmd_repr))
 		finally:
 			if progress_task and not progress_task.done():
@@ -99,7 +99,7 @@ class FFProc:
 class AudioConvError(Exception): pass
 
 class AudioConvJob:
-	__slots__ = 'name src dst tmp_file ffmpeg'.split()
+	__slots__ = 'name src dst input_opts tmp_file ffmpeg'.split()
 	def __init__(self, *args, **kws):
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
@@ -109,8 +109,10 @@ class AudioConv:
 	async def run_async(cls, *args, **kws):
 		async with cls(*args, **kws) as self: return await self.run()
 
-	def __init__(self, loop, src_list, loudnorm=False, loudnorm_opts=None, max_parallel=None):
+	def __init__(self, loop, src_list,
+			start=None, length=None, loudnorm=False, loudnorm_opts=None, max_parallel=None ):
 		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
+		self.start, self.length = start, length
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 
 	async def __aenter__(self):
@@ -180,7 +182,10 @@ class AudioConv:
 			paths.add(p)
 			return p
 
-		job = AudioConvJob(src_base, src, dst, tmp_file)
+		job_input_opts = list()
+		if self.start: job_input_opts.extend(['-ss', str(self.start)])
+		if self.length: job_input_opts.extend(['-t', str(self.length)])
+		job = AudioConvJob(src_base, src, dst, job_input_opts, tmp_file)
 
 		async with FFProc( self.loop, job.name,
 				['ffprobe', '-v', 'error', '-show_streams', '-print_format', 'json', job.src],
@@ -196,6 +201,9 @@ class AudioConv:
 					break
 			except Exception as err:
 				log.error('[{!r}] ffprobe failed, progress info wont be available: {}', job.name, err)
+			if src_duration:
+				if self.start: src_duration = max(0, src_duration - self.start)
+				if self.length: src_duration = min(src_duration, self.length)
 			log.debug('[{!r}] Detected audio stream duration: {}', job.name, src_duration)
 
 		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
@@ -213,10 +221,12 @@ class AudioConv:
 
 
 	async def conv_src_simple(self, job):
-		await job.ffmpeg('to-ogg', ['-i', job.src, '-vn', '-f', 'ogg', job.dst]).run()
+		await job.ffmpeg( 'to-ogg',
+			['-i', job.src] + job.input_opts + ['-vn', '-f', 'ogg', job.dst] ).run()
 
 	async def conv_src_loudnorm(self, job):
-		await job.ffmpeg('to-wav [1/3]', ['-i', job.src, '-f', 'wav', job.tmp_file('src.wav')]).run()
+		await job.ffmpeg( 'to-wav [1/3]',
+			['-i', job.src] + job.input_opts + ['-f', 'wav', job.tmp_file('src.wav')] ).run()
 
 		ffmpeg_env = os.environ.copy()
 		ffmpeg_env['NO_COLOR'] = '1'
@@ -259,30 +269,56 @@ class AudioConv:
 				'loudnorm={}{}'.format(opts, opts_ext), '-ar', '48k', '-f', 'ogg', job.dst ]).run()
 
 
+def parse_pos_spec(pos):
+	if not pos: return
+	try: mins, secs = pos.rsplit(':', 1)
+	except ValueError: hrs, mins, secs = 0, 0, pos
+	else:
+		try: hrs, mins = mins.rsplit(':', 1)
+		except ValueError: hrs = 0
+	return sum( a*b for a, b in
+		zip([3600, 60, 1], map(float, [hrs, mins, secs])) )
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Convert source file(s) to audio, normalize it and encode to ogg/vorbis.'
 			' Optionally uses ffmpeg "loudnorm" filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
-	parser.add_argument('src', nargs='+', help='File(s) to convert.')
-	parser.add_argument('-x', '--remove-src', action='store_true',
+
+	group = parser.add_argument_group('Source/destination')
+	group.add_argument('src', nargs='+', help='File(s) to convert.')
+	group.add_argument('-x', '--remove-src', action='store_true',
 		help='Remove source file(s) on success of the whole operation.')
-	parser.add_argument('-t', '--dst-dir', metavar='path',
+	group.add_argument('-t', '--dst-dir', metavar='path',
 		help='Path to store resulting files in. Defaults to current one.')
-	parser.add_argument('-l', '--loudnorm', action='store_true',
+
+	group = parser.add_argument_group('Volume normalization')
+	group.add_argument('-n', '--loudnorm', action='store_true',
 		help='Use ffmpeg "loudnorm" filter to have sane volume level.'
 			' It takes quite a while to process longer files with it.'
 			' Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.'
 			' ffmpeg docs link: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
-	parser.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts',
+	group.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts',
 		help='String of options to pass to loudnorm filter,'
 				' same as they would appear on ffmpeg command line.'
 			' Example: I=-16:TP=-1.5:LRA=11')
-	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	group = parser.add_argument_group('Other ffmpeg options')
+	group.add_argument('-s', '--start', metavar='((hh:)mm:)ss(.ms)',
+		help='Convert only part of src file(s), starting from specified timestamp.'
+			' Passed to ffmpeg -ss option, see "Time duration" in ffmpeg-utils(1) manpage.')
+	group.add_argument('-l', '--length', metavar='((hh:)mm:)ss(.ms)',
+		help='Convert only specified length of src file(s). Can be combined with -s/--start.'
+			' Passed to ffmpeg -t option, see "Time duration" in ffmpeg-utils(1) manpage.')
+
+	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list(map(os.path.realpath, opts.src))
 	if opts.dst_dir: os.chdir(opts.dst_dir)
+	start, length = map(parse_pos_spec, [opts.start, opts.length])
 
 	global log
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -290,7 +326,7 @@ def main(args=None):
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
-			AudioConv.run_async( loop, src_list,
+			AudioConv.run_async( loop, src_list, start=start, length=length,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
 	if success and opts.remove_src:
 		for src in src_list: os.unlink(src)
