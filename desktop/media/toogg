@@ -3,7 +3,7 @@
 import itertools as it, operator as op, functools as ft
 from collections import OrderedDict, namedtuple
 from asyncio import subprocess
-import os, sys, re, logging, contextlib, asyncio, signal, json, tempfile
+import os, sys, re, logging, contextlib, asyncio, signal, json, tempfile, shutil
 
 
 class LogMessage:
@@ -29,7 +29,8 @@ class FFProc:
 	def __init__(self, loop, src, cmd, stream_len=None, progress=True, prefix=None, **kws):
 		self.loop, self.src, self.cmd, self.kws = loop, src, cmd, kws
 		self.progress, self.stream_len = progress, stream_len
-		self.prefix = ' '.join(filter(None, ['[{!r}]'.format(src), prefix])) + ': '
+		self.term_width = shutil.get_terminal_size()[0] - 2
+		self.prefix = prefix or ''
 		self.cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
 
 	async def __aenter__(self):
@@ -70,8 +71,6 @@ class FFProc:
 	async def print_progress(self):
 		report, pos_str = dict(), lambda n:\
 			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, (n%3600)//60, n%60]))
-		p = lambda tpl,*a,**k: print('\r{}'.format(self.prefix) + (
-			tpl.format(*a,**k) if a or k else tpl ), end='', flush=True)
 		try:
 			while True:
 				line = (await self.proc.stdout.readline()).decode()
@@ -83,8 +82,17 @@ class FFProc:
 					if pos: # XXX: handle multiple files somehow
 						if not self.stream_len: p(pos_str(pos))
 						else:
-							p( '{:.1f}% - {} / {}',
+							msg = '{:.1f}% - {} / {}'.format(
 								(pos / self.stream_len) * 100, pos_str(pos), pos_str(self.stream_len) )
+							prefix_max_len = self.term_width - len(msg)
+							if prefix_max_len >= len(self.prefix) + 10:
+								prefix_len, prefix = prefix_max_len - len(self.prefix) - 6, repr(self.src)
+								if len(prefix) > prefix_len: prefix = prefix[:prefix_len]
+								prefix = ' '.join(filter(None, ['[{}]'.format(prefix), self.prefix]))
+								msg = '{}: {}'.format(prefix, msg)
+							elif prefix_max_len > 3: msg = '{}: {}'.format(self.prefix[:prefix_max_len-2], msg)
+							else: msg = msg[:self.term_width]
+							print('\r{}'.format(msg), end='', flush=True)
 		finally: print()
 
 
