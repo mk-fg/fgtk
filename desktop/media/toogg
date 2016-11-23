@@ -26,12 +26,16 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 class FFProc:
 
 	proc = finished = None
+	stream_reader_limit = 32 * 2**10
+	crop_mark = '... ¯\_(ツ)_/¯'
 
-	def __init__(self, loop, src, cmd, stream_len=None, progress=True, prefix=None, **kws):
+	def __init__( self, loop, src, cmd,
+			stream_len=None, progress=True, prefix=None, limit=None, **kws ):
 		self.loop, self.src, self.cmd, self.kws = loop, src, cmd, kws
 		self.progress, self.stream_len = progress, stream_len
 		self.term_width = shutil.get_terminal_size()[0] - 2
 		self.prefix = prefix or ''
+		self.line_max_len = self.kws['limit'] = limit or self.stream_reader_limit
 		self.cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
 
 	async def __aenter__(self):
@@ -42,6 +46,7 @@ class FFProc:
 		if self.finished and not self.finished.done():
 			self.finished.cancel()
 			with contextlib.suppress(asyncio.CancelledError): await self.finished
+
 
 	async def run(self, wait=True):
 		assert not self.proc
@@ -69,12 +74,41 @@ class FFProc:
 				progress_task.cancel()
 				with contextlib.suppress(asyncio.CancelledError): await progress_task
 
+
+	async def readline(self, stream=None, sep=b'\n',
+			decode_enc='utf-8', decode_err='replace', crop_to=8 * 2**10, crop_mark=None):
+		'''Similar to StreamReader.readline, but also:
+				- Decodes all lines (with `decode_enc` and `decode_err` opts).
+				- Lines that are longer than `crop_to` (after decoding)
+					are cropped to that limit and `crop_mark` is appended.
+				- StreamReader `limit` is not an issue -
+					line tails above that are cropped-out and discarded.'''
+		if not stream: stream = self.stdout
+		elif isinstance(stream, str): stream = getattr(self, stream)
+		assert crop_to <= self.line_max_len
+		crop_mark = crop_mark or self.crop_mark
+
+		try: line = await stream.readuntil(sep)
+		except asyncio.IncompleteReadError as err: line = err.partial
+		except asyncio.LimitOverrunError:
+			line = await stream.read(self.line_max_len)
+			while True:
+				try: await stream.readuntil(sep)
+				except asyncio.IncompleteReadError: break
+				except asyncio.LimitOverrunError: stream.read(self.line_max_len)
+				else: break
+
+		line = line.decode(decode_enc, decode_err)
+		if len(line) > crop_to: line = line[:crop_to] + crop_mark
+		return line
+
+
 	async def print_progress(self):
 		report, pos_str = dict(), lambda n:\
 			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, (n%3600)//60, n%60]))
 		try:
 			while True:
-				line = (await self.proc.stdout.readline()).decode()
+				line = await self.readline()
 				if not line: return
 				k, v = line.split('=', 1)
 				report[k] = v
@@ -240,11 +274,12 @@ class AudioConv:
 				env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
 			norm_info, ffmpeg_stderr = list(), list()
 			while True:
-				line = await proc.stderr.readline()
-				ffmpeg_stderr.append(line.decode().rstrip())
+				line = await proc.readline('stderr')
+				ffmpeg_stderr.append(line.rstrip())
 				if not line: break
-				line = line.decode().strip()
+				line = line.strip()
 				if norm_info:
+					assert not line.endswith(proc.crop_mark)
 					norm_info.append(line)
 					if line == '}': break
 				if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
