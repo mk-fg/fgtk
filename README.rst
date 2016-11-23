@@ -1071,6 +1071,10 @@ Useless without systemd and requires systemd python module.
 bt-pan
 ^^^^^^
 
+Note: you might want to look at "bneptest" tool that comes with bluez - might be
+a good replacement for this script, which I haven't seen at the moment of its
+writing (maybe wasn't there, maybe just missed it).
+
 Bluetooth Personal Area Network (PAN) client/server setup script.
 
 BlueZ does all the work here, script just sends it commands to enable/register

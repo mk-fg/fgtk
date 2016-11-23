@@ -100,6 +100,9 @@ def main(args=None):
 
 	cmd = cmds.add_parser('client', help='Connect to a PAN network.')
 	cmd.add_argument('remote_addr', help='Remote device address to connect to.')
+	cmd.add_argument('-d', '--disconnect', action='store_true',
+		help='Instead of connecting (default action), disconnect'
+			' (if connected) and exit. Overrides all other options for this command.')
 	cmd.add_argument('-w', '--wait', action='store_true',
 		help='Go into an endless wait-loop after connection, terminating it on exit.')
 	cmd.add_argument('-c', '--if-not-connected', action='store_true',
@@ -188,8 +191,20 @@ def main(args=None):
 			prop_get(dev_remote, 'Address'), dev_remote.object_path )
 		try: dev_remote.ConnectProfile(opts.uuid)
 		except: pass # no idea why it fails sometimes, but still creates dbus interface
-
 		net = dbus.Interface(dev_remote, 'org.bluez.Network1')
+
+		if opts.disconnect:
+			try: net.Disconnect()
+			except dbus.exceptions.DBusException as err:
+				if err.get_dbus_name() != 'org.bluez.Error.Failed': raise
+				connected = prop_get(net, 'Connected')
+				if connected: raise
+			log.debug(
+				'Disconnected from network'
+					' (dev_remote: %s, addr: %s) uuid %r, by explicit command',
+				dev_remote.object_path, prop_get(dev_remote, 'Address'), opts.uuid )
+			return
+
 		for n in xrange(2):
 			try: iface = net.Connect(opts.uuid)
 			except dbus.exceptions.DBusException as err:
