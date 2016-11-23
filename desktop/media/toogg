@@ -295,6 +295,8 @@ class AudioConv:
 				raise AudioConvError( 'ffmpeg failed to produce'
 					' normalization info json (source file: {!r})'.format(job.name) )
 			norm_info = json.loads(norm_info)
+			with open(job.tmp_file('loudnorm.json'), 'w') as dst:
+				json.dump(norm_info, dst, sort_keys=True, indent=2, separators=(',', ': '))
 
 		opts_ext = (
 				'measured_I={}:measured_TP={}:'
