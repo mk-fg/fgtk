@@ -1165,7 +1165,7 @@ class SensorMeta(object):
 	types = dict(
 		rpi_soc=SensorRPiSoC, lm=SensorLM,
 		adafruit_dht=SensorAdafruitDHT, sht=SensorSHT )
-	metric_default = 't', 'rh'
+	metric_default = 't'
 
 	def value_repr(self, n, metric, units=True, decode=False):
 		if isinstance(n, (int, long)): n = bytes(n)
