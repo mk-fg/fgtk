@@ -1050,7 +1050,12 @@ class SensorLM(Sensor):
 		chip_ss, chip_st = self.lib_ss[conf.chip]
 		feat, ft = conf.get('feature'), conf.get('feature_type')
 		if feat:
-			self.s, self.st = chip_ss[feat]
+			try: self.s, self.st = chip_ss[feat]
+			except KeyError:
+				feats = chip_ss.keys()
+				self.log.error( 'Failed to find feature: %r'
+					' (all available: %s, conf: %s)', feat, feats, conf )
+				raise
 			if ft: assert self.st == ft, [self.s.name, self.st, ft, chip_st[ft]]
 		else:
 			if ft: ss = chip_st[ft]
