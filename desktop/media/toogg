@@ -106,6 +106,7 @@ class FFProc:
 	async def print_progress(self):
 		report, pos_str = dict(), lambda n:\
 			'{:02d}:{:02d}:{:02d}'.format(*map(int, [n//3600, (n%3600)//60, n%60]))
+		print_progress = ft.partial(self.progress_func, (self.src, self.prefix))
 		try:
 			while True:
 				line = await self.readline()
@@ -127,8 +128,8 @@ class FFProc:
 								msg = '{}: {}'.format(prefix, msg)
 							elif prefix_max_len > 3: msg = '{}: {}'.format(self.prefix[:prefix_max_len-2], msg)
 							else: msg = msg[:self.term_width]
-							self.progress_func(msg)
-		finally: self.progress_func()
+							print_progress(msg)
+		finally: print_progress()
 
 
 class AudioConvError(Exception): pass
@@ -178,25 +179,30 @@ class AudioConv:
 
 
 	async def status_line_cycle(self, interval=1.0):
-		status_queue, term_width = None, shutil.get_terminal_size()[0] - 2
+		status_queue, term_width = list(), shutil.get_terminal_size()[0] - 2
+		term_pad = lambda line: (
+			(line + ' '*max(0, term_width - len(line)))\
+				if len(line) < term_width else line[:term_width] )
 		while True:
 			if self.status_lines:
-				if not status_queue: status_queue = sorted(self.status_lines)
+				if not status_queue: status_queue.extend(sorted(self.status_lines))
 				k = status_queue.pop()
-				try: line = self.status_lines[k]
+				try: line, end = self.status_lines[k], ''
 				except KeyError: continue
 				if line.endswith('\n'): # final status for this key
-					line = line.rstrip('\n')
+					line, end = line.rstrip('\n'), '\n'
 					del self.status_lines[k]
-				if len(line) < term_width: line += ' '*max(0, term_width - len(line))
-				else: line = line[:term_width]
-				print('\r' + line, end='', flush=True)
+				print('\r' + term_pad(line), end=end, flush=True)
 			try: await asyncio.sleep(interval)
-			except asyncio.CancelledError: break
+			except asyncio.CancelledError:
+				for k in it.chain(status_queue, list(self.status_lines)):
+					line = self.status_lines.pop(k, None)
+					if line: print('\r' + term_pad(line.rstrip('\n')), end='\n', flush=True)
+				break
 
-	def status_line_set(self, name, line=None):
-		if line: self.status_lines[name] = line
-		else: self.status_lines[name] += '\n'
+	def status_line_set(self, key, line=None):
+		if line: self.status_lines[key] = line
+		elif key in self.status_lines: self.status_lines[key] += '\n'
 
 
 	async def conv_cleanup(self, *src, raise_errors=False):
@@ -272,7 +278,7 @@ class AudioConv:
 		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration,
-			prefix=pre, progress_func=ft.partial(self.status_line_set, src_base), **kws )
+			prefix=pre, progress_func=self.status_line_set, **kws )
 
 		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
 		try:
