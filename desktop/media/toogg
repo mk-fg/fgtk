@@ -30,9 +30,9 @@ class FFProc:
 	crop_mark = '... ¯\_(ツ)_/¯'
 
 	def __init__( self, loop, src, cmd,
-			stream_len=None, progress=True, prefix=None, limit=None, **kws ):
+			stream_len=None, progress_func=None, prefix=None, limit=None, **kws ):
 		self.loop, self.src, self.cmd, self.kws = loop, src, cmd, kws
-		self.progress, self.stream_len = progress, stream_len
+		self.progress_func, self.stream_len = progress_func, stream_len
 		self.term_width = shutil.get_terminal_size()[0] - 2
 		self.prefix = prefix or ''
 		self.line_max_len = self.kws['limit'] = limit or self.stream_reader_limit
@@ -51,7 +51,7 @@ class FFProc:
 	async def run(self, wait=True):
 		assert not self.proc
 		log.debug('[{!r}] running: {}', self.src, self.cmd_repr)
-		if self.progress: self.kws['stdout'] = subprocess.PIPE
+		if self.progress_func: self.kws['stdout'] = subprocess.PIPE
 		self.proc = await asyncio.create_subprocess_exec(*self.cmd, **self.kws)
 		for k in 'stdin', 'stdout', 'stderr': setattr(self, k, getattr(self.proc, k))
 		self.finished = self.loop.create_task(self.wait())
@@ -60,7 +60,7 @@ class FFProc:
 
 	async def wait(self):
 		progress_task = None
-		if self.progress and self.proc.stdout:
+		if self.progress_func and self.proc.stdout:
 			progress_task = self.loop.create_task(self.print_progress())
 		try:
 			await self.proc.wait()
@@ -127,8 +127,8 @@ class FFProc:
 								msg = '{}: {}'.format(prefix, msg)
 							elif prefix_max_len > 3: msg = '{}: {}'.format(self.prefix[:prefix_max_len-2], msg)
 							else: msg = msg[:self.term_width]
-							print('\r{}'.format(msg), end='', flush=True)
-		finally: print()
+							self.progress_func(msg)
+		finally: self.progress_func()
 
 
 class AudioConvError(Exception): pass
@@ -149,18 +149,24 @@ class AudioConv:
 		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
 		self.start, self.length = start, length
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
+		self.status_lines = dict()
 
 	async def __aenter__(self):
-		self.conv_jobs = OrderedDict()
+		self.conv_jobs, self.status_line_task = OrderedDict(), None
 		self.success, self.src_done, self.exit_sig = False, OrderedDict(), None
 		return self
 
 	async def __aexit__(self, *err):
 		if self.conv_jobs:
 			await self.conv_cleanup()
+		if self.status_line_task:
+			self.status_line_task.cancel()
+			await self.status_line_task
+			self.status_line_task = None
 
 	async def run(self):
 		self.conv = self.loop.create_task(self.conv_list())
+		self.status_line_task = self.loop.create_task(self.status_line_cycle())
 		def sig_handler(sig):
 			self.exit_sig = sig
 			self.conv.cancel()
@@ -169,6 +175,28 @@ class AudioConv:
 				getattr(signal, 'SIG{}'.format(sig.upper())), ft.partial(sig_handler, sig) )
 		with contextlib.suppress(asyncio.CancelledError): await self.conv
 		return self.success
+
+
+	async def status_line_cycle(self, interval=1.0):
+		status_queue, term_width = None, shutil.get_terminal_size()[0] - 2
+		while True:
+			if self.status_lines:
+				if not status_queue: status_queue = sorted(self.status_lines)
+				k = status_queue.pop()
+				try: line = self.status_lines[k]
+				except KeyError: continue
+				if line.endswith('\n'): # final status for this key
+					line = line.rstrip('\n')
+					del self.status_lines[k]
+				if len(line) < term_width: line += ' '*max(0, term_width - len(line))
+				else: line = line[:term_width]
+				print('\r' + line, end='', flush=True)
+			try: await asyncio.sleep(interval)
+			except asyncio.CancelledError: break
+
+	def status_line_set(self, name, line=None):
+		if line: self.status_lines[name] = line
+		else: self.status_lines[name] += '\n'
 
 
 	async def conv_cleanup(self, *src, raise_errors=False):
@@ -224,7 +252,7 @@ class AudioConv:
 
 		async with FFProc( self.loop, job.name,
 				['ffprobe', '-v', 'error', '-show_streams', '-print_format', 'json', job.src],
-				progress=False, stdout=subprocess.PIPE ) as proc:
+				stdout=subprocess.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
 			src_duration = None
@@ -243,7 +271,8 @@ class AudioConv:
 
 		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
-			self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration, prefix=pre, **kws )
+			self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration,
+			prefix=pre, progress_func=ft.partial(self.status_line_set, src_base), **kws )
 
 		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
 		try:
