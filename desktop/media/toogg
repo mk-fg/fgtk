@@ -95,7 +95,7 @@ class FFProc:
 			while True:
 				try: await stream.readuntil(sep)
 				except asyncio.IncompleteReadError: break
-				except asyncio.LimitOverrunError: stream.read(self.line_max_len)
+				except asyncio.LimitOverrunError: await stream.read(self.line_max_len)
 				else: break
 
 		line = line.decode(decode_enc, decode_err)
