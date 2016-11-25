@@ -1,0 +1,21 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin src-dir mountpoint [bindfs-opts]"
+	echo >&2
+	echo >&2 "Convenience wrapper for: bindfs --map=... --create-for-user=... --create-for-group=..."
+	echo >&2 "uid of the src-dir owner will be mapped to mountpoint owner,"
+	echo >&2 " and anything created in mountpoint will be done as src-dir owner/group."
+	exit ${1:-0}
+}
+[[ "$#" -lt 2 || "$1" = -h || "$1" = --help ]] && usage
+
+src=$(realpath "$1") dst=$(realpath "$2")
+read uid_src gid_src < <(stat --format='%u %g' "$src")
+read uid_dst gid_dst < <(stat --format='%u %g' "$dst")
+shift; shift
+
+exec bindfs\
+	--map="$uid_src"/"$uid_dst" --create-for-user="$uid_src" --create-for-group="$gid_src"\
+	"$@" "$src" "$dst"

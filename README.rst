@@ -1366,6 +1366,24 @@ until hostname resolves, only for connection itself.
 Uses Python-3.5+ stdlib stuff, namely asyncio, to juggle multiple connections in
 an efficient manner.
 
+bindfs-idmap
+^^^^^^^^^^^^
+
+`bindfs <http://bindfs.org/>`_ wrapper script to setup id-mapping from uid of
+the mountpoint to uid/gid of the source directory.
+
+I.e. after ``bindfs-idmap /var/lib/machines/home/src-user ~dst-user/tmp``,
+``~dst-user/tmp`` will be accessible to dst-user as if they were src-user, with
+all operations proxied to src-user's dir.
+
+Anything created under ``~dst-user/tmp`` will have uid/gid of the src dir.
+
+Useful to allow temporary access to some uid's files in a local container to
+user acc in a main namespace.
+
+For long-term access (e.g. for some daemon), there probably are better options
+than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
+
 
 
 desktop
