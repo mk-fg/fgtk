@@ -84,7 +84,14 @@ def parse_timestamp(ts_str):
 		proc = subprocess.Popen( ['date', '+%s', '-d', ts_str],
 				stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, close_fds=True )
 		val = proc.stdout.read()
-		if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
+		if not proc.wait():
+			val = int(val.strip())
+			# Try to add +1 day to simple timestamps like 3:00 if they're in the past
+			# Whitelisted cases: 1:00, 4am, 5am GMT, 3:30 UTC-4
+			if 0 < time.time() - val <= 24*3600 and re.search(
+					r'^(?i)[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?$', ts_str.strip() ):
+				val += 24*3600
+			ts = datetime.fromtimestamp(val)
 
 	if ts: return ts
 	raise ValueError('Unable to parse date/time string: {0}'.format(ts_str))
