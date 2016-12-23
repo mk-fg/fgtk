@@ -2,8 +2,8 @@
 
 usage() {
 	bin=$(basename $0)
-	echo >&2 "Usage: $bin [-r] [file]"
-	echo >&2 "  or: $bin [-r] -m machine"
+	echo >&2 "Usage: $bin [-r] [-c comment] [file]"
+	echo >&2 "  or: $bin [-r] [-c comment] -m machine"
 	echo >&2
 	echo >&2 'Init new ed25519 ssh key using'
 	echo >&2 ' ssh-keygen without asking any stupid questions.'
@@ -14,12 +14,13 @@ usage() {
 }
 [[ "$1" = -h || "$1" = --help ]] && usage
 
-replace= machine=
-while getopts "hrm" opt; do
+replace= machine= comment=
+while getopts "hrmc:" opt; do
 case "$opt" in
 		h) usage 0;;
 		r) replace=t;;
 		m) machine=t;;
+		c) comment="$OPTARG";;
 		*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; exit 1;;
 	esac
 done
@@ -55,7 +56,7 @@ read uid gid < <(stat --dereference --format='%u %g' "$p_dir" 2>/dev/null)
 [[ $? -eq 0 ]] || exit 1
 
 [[ -z "$replace" ]] || rm -f "$p"
-ssh-keygen -q -t ed25519 -f "$p" -N '' </dev/null
+ssh-keygen -q -t ed25519 -N '' -C "$comment" -f "$p" </dev/null
 [[ $? -eq 0 && -e "$p" ]] || {
 	echo >&2
 	echo >&2 'ERROR: ssh-keygen has failed to create keyfile'
