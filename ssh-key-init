@@ -35,8 +35,24 @@ if [[ -z "$replace" && -e "$p" ]]; then
 	usage 1
 fi
 
+# Create directory components using uid/gid from the existsing part of the path
 p_dir=$(dirname "$p")
-[[ -e "$p_dir" ]] || mkdir -p "$p_dir"
+[[ -e "$p_dir" ]] || {
+	[[ "$p_dir" =~ ^/ ]] || p_dir="$PWD/$p_dir"
+	IFS='/' read -ra p_dir_arr <<< "$p_dir"
+	p_dir= last_uid=0 last_gid=0
+	for c in "${p_dir_arr[@]}"; do
+		[[ -n "$c" ]] || continue
+		p_dir+=/"$c"
+		read uid gid < <(stat --dereference --format='%u %g' "$p_dir" 2>/dev/null)
+		if [[ $? -eq 0 ]]
+		then last_uid=$uid last_gid=$gid
+		else mkdir -m700 "$p_dir" && chown "${last_uid}:${last_gid}" "$p_dir" || exit 1
+		fi
+	done
+}
+read uid gid < <(stat --dereference --format='%u %g' "$p_dir" 2>/dev/null)
+[[ $? -eq 0 ]] || exit 1
 
 [[ -z "$replace" ]] || rm -f "$p"
 ssh-keygen -q -t ed25519 -f "$p" -N '' </dev/null
@@ -45,3 +61,4 @@ ssh-keygen -q -t ed25519 -f "$p" -N '' </dev/null
 	echo >&2 'ERROR: ssh-keygen has failed to create keyfile'
 	exit 1
 }
+chown "${uid}:${gid}" "$p"{,.pub} || exit 1

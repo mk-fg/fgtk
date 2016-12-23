@@ -1217,6 +1217,7 @@ to do).
 
 Has -m option to init key for an nspawn container under ``/var/lib/machines``
 (e.g. ``ssh-key-init -m mymachine``) and -r option to replace any existing keys.
+Sets uid/gid of the parent path for all new ones and -m700.
 
 rrd-sensors-logger
 ^^^^^^^^^^^^^^^^^^
