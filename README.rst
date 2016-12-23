@@ -1202,6 +1202,22 @@ voice-comm link, if necessary.
 
 .. _Douglas Crockford's human-oriented Base32: http://www.crockford.com/wrmg/base32.html
 
+ssh-key-init
+^^^^^^^^^^^^
+
+Bash script to generate (init) ssh key (via ssh-keygen) without asking about
+various legacy and uninteresting options and safe against replacing existing
+keys.
+
+I.e. don't ever want RSA, ECDSA or such nonsense (Ed25519 is the norm), don't
+need passwords for 99.999% of the keys, don't care about any of the ssh-keygen
+output, don't need any interactivity, but do care about silently overwriting
+existing key and want the thing to create parent dirs properly (which -f fails
+to do).
+
+Has -m option to init key for an nspawn container under ``/var/lib/machines``
+(e.g. ``ssh-key-init -m mymachine``) and -r option to replace any existing keys.
+
 rrd-sensors-logger
 ^^^^^^^^^^^^^^^^^^
 

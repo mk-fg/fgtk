@@ -1,0 +1,47 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [-r] [file]"
+	echo >&2 "  or: $bin [-r] -m machine"
+	echo >&2
+	echo >&2 'Init new ed25519 ssh key using'
+	echo >&2 ' ssh-keygen without asking any stupid questions.'
+	echo >&2 'Default path is ~/.ssh/id_ed25519, under /var/lib/machines/... with -m.'
+	echo >&2 'Recursively creates dir for the thing with -m700.'
+	echo >&2 'Will refuse to overwrite files unless -r is specified.'
+	exit ${1:-0}
+}
+[[ "$1" = -h || "$1" = --help ]] && usage
+
+replace= machine=
+while getopts "hrm" opt; do
+case "$opt" in
+		h) usage 0;;
+		r) replace=t;;
+		m) machine=t;;
+		*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; exit 1;;
+	esac
+done
+shift $((OPTIND-1))
+
+p="$1"
+[[ -n "$p" ]] || p="$HOME"/.ssh/id_ed25519
+[[ -z "$machine" ]] || p=/var/lib/machines/"$p"/root/.ssh/id_ed25519
+
+if [[ -z "$replace" && -e "$p" ]]; then
+	echo >&2 "ERROR: Specified key file already exists (use -r to replace): $p"
+	echo >&2
+	usage 1
+fi
+
+p_dir=$(dirname "$p")
+[[ -e "$p_dir" ]] || mkdir -p "$p_dir"
+
+[[ -z "$replace" ]] || rm -f "$p"
+ssh-keygen -q -t ed25519 -f "$p" -N '' </dev/null
+[[ $? -eq 0 && -e "$p" ]] || {
+	echo >&2
+	echo >&2 'ERROR: ssh-keygen has failed to create keyfile'
+	exit 1
+}
