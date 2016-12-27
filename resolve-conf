@@ -162,6 +162,12 @@ def main(args=None):
 
 	parser.add_argument('--conf-file', metavar='path',
 		help='YAML config to pass to template context as "conf" var.')
+	parser.add_argument('--ls-prefix',
+		default='%%', metavar='prefix',
+		help='Jinja2 line-statement prefix. Default: %(default)s')
+	parser.add_argument('--lc-prefix',
+		default='%%%', metavar='prefix',
+		help='Jinja2 line-comment prefix. Default: %(default)s')
 	parser.add_argument('--hosts-opts',
 		default='fwd, fwd-rev1, rev-deep', metavar='option[,option...]',
 		help=(
@@ -181,7 +187,10 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = get_logger('main')
 
-	jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader('/var/empty'))
+	jinja_env = jinja2.Environment(
+		loader=jinja2.FileSystemLoader('/var/empty'),
+		line_statement_prefix=opts.ls_prefix, line_comment_prefix=opts.lc_prefix,
+		keep_trailing_newline=True )
 	jinja_env.filters['dns'] = tpl_resolve
 
 	hosts = tpl_parse_hosts(sorted(k for k,v in dict(
@@ -198,7 +207,7 @@ def main(args=None):
 
 	result = tpl.render(**tpl_ctx)
 
-	if opts.out: pathlib.Path(opts.out).write_string(result)
+	if opts.out: pathlib.Path(opts.out).write_text(result)
 	else: sys.stdout.write(result)
 
 if __name__ == '__main__': sys.exit(main())
