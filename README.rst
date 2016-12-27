@@ -364,9 +364,9 @@ Python-3/Jinja2 script to produce a text file from a template, focused
 specifically on templating configuration files, somewhat similar to
 "resolve-hostnames" above or templating provided by ansible/saltstack.
 
-Jinja2 env for template has following values:
+Jinja2 env for template has following filters and values:
 
-- ``dns(host [, af, proto, sock, default, force_unique=True])`` filter.
+- ``dns(host [, af, proto, sock, default, force_unique=True])`` filter/global.
 
   getaddrinfo(3) wrapper to resolve ``host`` (name or address) with optional
   parameters to a single address, raising exception if it's non-unique by default.
@@ -389,6 +389,9 @@ Jinja2 env for template has following values:
 
   | Can be used as a reliable dns/network-independent names.
   | ``--hosts-opts`` cli option allows some tweaks wrt how that file is parsed.
+
+- ``it`` - itertools, ``_v``/``v_``/``_v_`` - global funcs for adding spaces
+  before/after/around non-empty strings.
 
 - Whatever is loaded from ``--conf-file`` (YAML), if specified.
 
