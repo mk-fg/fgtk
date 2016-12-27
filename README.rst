@@ -357,6 +357,46 @@ names (in some arbitrary format) to IP addresses, and such.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
+resolve-conf
+''''''''''''
+
+Python-3/Jinja2 script to produce a text file from a template, focused
+specifically on templating configuration files, somewhat similar to
+"resolve-hostnames" above or templating provided by ansible/saltstack.
+
+Jinja2 env for template has following values:
+
+- ``dns(host [, af, proto, sock, default, force_unique=True])`` filter.
+
+  getaddrinfo(3) wrapper to resolve ``host`` (name or address) with optional
+  parameters to a single address, raising exception if it's non-unique by default.
+
+  af/proto/sock values can be either enum value names (without AF/SOL/SOCK
+  prefix) or integers.
+
+- ``hosts`` - /etc/hosts as a mapping.
+
+  For example, hosts-file line ``1.2.3.4 sub.host.example.org`` will produce
+  following mapping (represented as yaml)::
+
+    sub.host.example.org: 1.2.3.4
+    host.example.org:
+      sub: 1.2.3.4
+    org:
+      example:
+        host:
+          sub: 1.2.3.4
+
+  | Can be used as a reliable dns/network-independent names.
+  | ``--hosts-opts`` cli option allows some tweaks wrt how that file is parsed.
+
+- Whatever is loaded from ``--conf-file`` (YAML), if specified.
+
+Use-case is a simple conf-file pre-processor for autonomous templating on
+service startup with a minimal toolbox on top of jinja2, without huge dep-tree
+or any other requirements and complexity, that is not scary to run from
+``ExecStartPre=`` line as root.
+
 temp-patch
 ''''''''''
 

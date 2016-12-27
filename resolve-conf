@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, re, socket, logging, pathlib
+import jinja2
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class AddressError(Exception): pass
+
+
+def sock_enum_val(name_or_num, prefix=None):
+	name_or_num = name_or_num.upper()
+	if prefix: prefix = prefix.upper()
+	try:
+		return getattr( socket, name_or_num
+			if not prefix else '{}_{}'.format(prefix, name_or_num) )
+	except AttributeError: pass
+	try: return int(name_or_num)
+	except ValueError: pass
+	raise AddressError(( 'Failed to resolve'
+		' socket parameter name/value: {!r}' ).format(name_or_num))
+
+
+def get_socket_info( host, port=0, family=0,
+		socktype=0, protocol=0, force_unique_address=False ):
+	log_params = [port, family, socktype, protocol]
+	log.debug('Resolving: {} (params: {})', host, log_params)
+	try:
+		addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
+		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
+	except (socket.gaierror, socket.error) as err:
+		raise AddressError( 'Failed to resolve host:'
+			' {!r} (params: {}) - {} {}'.format(host, log_params, type(err), err) )
+
+	ai_af, ai_addr = set(), list()
+	for family, _, _, hostname, addr in addrinfo:
+		ai_af.add(family)
+		ai_addr.append((addr[0], family))
+
+	if len(ai_af) > 1:
+		af_names = dict((v, k) for k,v in vars(socket).items() if k.startswith('AF_'))
+		ai_af_names = list(af_names.get(af, str(af)) for af in ai_af)
+		if socket.AF_INET not in ai_af:
+			log.fatal(
+				'Ambiguous socket host specification (matches address famlies: {}),'
+					' refusing to pick one at random - specify socket family instead. Addresses: {}'
+				', '.join(ai_af_names), ', '.join(ai_addr) )
+			raise AddressError
+		log.warn( 'Specified host matches more than'
+			' one address family ({}), using it as IPv4 (AF_INET).', ai_af_names )
+		af = socket.AF_INET
+	else: af = list(ai_af)[0]
+
+	for addr, family in ai_addr:
+		if family == af: break
+	else: raise AddressError
+	ai_addr_unique = set(ai_addr)
+	if len(ai_addr_unique) > 1:
+		if force_unique_address:
+			raise AddressError('Address matches more than one host: {}'.format(ai_addr_unique))
+		log.warn( 'Specified host matches more than'
+			' one address ({}), using first one: {}', ai_addr_unique, addr )
+
+	return addr, port
+
+
+class HostsNode:
+	_slots = 'addr sub path'.split()
+	_defaults = property(lambda s: (None, dict(), list()))
+	__slots__ = _slots
+	def __init__(self, *args, **kws):
+		for k,v in it.chain( zip(self._slots, self._defaults),
+			zip(self._slots, args), kws.items() ): setattr(self, k, v)
+	def init_key(self, k, v=None):
+		if k not in self.sub: self.sub[k] = HostsNode(path=self.path + [k])
+		if v: self.sub[k].addr = v
+		return self.sub[k]
+	def __repr__(self):
+		return '<HN [{} {} {}]>'.format(
+			'.'.join(self.path) or '-', self.addr or '-', self.sub or '.' )
+	repr = __repr__
+	def __str__(self):
+		if not self.addr: raise ValueError
+		return str(self.addr)
+	def __getitem__(self, k):
+		try: return self.sub[k]
+		except KeyError: raise KeyError(self.repr(), k)
+	def __setitem__(self, k, v): self.init_key(k, v)
+	__getattr__ = __getitem__
+
+tpl_parse_hosts_flags = 'fwd fwd-deep rev rev-deep fwd-rev1'.split()
+def tpl_parse_hosts(flags):
+	'''Parses /etc/hosts to mapping.
+		For example, `1.2.3.4 sub.host.example.org` will
+				produce following mapping (presented as yaml):
+			sub.host.example.org: 1.2.3.4
+			host.example.org:
+				sub: 1.2.3.4
+			org:
+				example:
+					host:
+						sub: 1.2.3.4
+		Can be used in templates as a reliable dns/network-independent names.'''
+	hosts, flag = HostsNode(), lambda k: k in flags
+	with open('/etc/hosts') as src:
+		for line in src:
+			line = line.strip().split()
+			if not line or line[0][0] == '#': continue
+			ip, names = line[0], line[1:]
+			for name in names:
+				if flag('fwd'): hosts[name] = ip # hosts['sub.host.example.org']
+				name = name.split('.')
+				if flag('rev'): hosts['.'.join(reversed(name))] = ip # hosts['org.example.host.sub']
+				dst_fwd = dst_rev = hosts
+				if len(name) > 1:
+					if flag('fwd-deep'): # hosts.sub.host.example
+						for slug in name[:-1]: dst_fwd = dst_fwd.init_key(slug)
+					if flag('rev-deep'): # hosts.org.example.host
+						for slug in reversed(name[1:]): dst_rev = dst_rev.init_key(slug)
+					if flag('fwd-rev1') and len(name) > 2: # hosts['host.example.org'].sub
+						hosts.init_key('.'.join(name[1:]))[name[0]] = ip
+				if flag('fwd-deep'): dst_fwd[name[-1]] = ip # hosts.sub.host.example.org
+				if flag('rev-deep'): dst_rev[name[0]] = ip # hosts.org.example.host.sub
+	return hosts
+
+def tpl_resolve(host, af=0, proto=0, sock=0, default=None, force_unique=True):
+	'''DNS-resolve filter func wrapper for templates.
+		af: inet/inet6, proto: tcp/udp, sock: stream/dgram'''
+	if af != 0: af = sock_enum_val(af, 'af')
+	if proto != 0: proto = sock_enum_val(proto, 'sol')
+	if sock != 0: sock = sock_enum_val(sock, 'sock')
+	try:
+		addr, port = get_socket_info(
+			host, family=af, protocol=proto,
+			socktype=sock, force_unique_address=force_unique )
+	except AddressError:
+		if default is None: raise
+		return default
+	return addr
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Process specified input template with jinja2.' )
+
+	parser.add_argument('--conf-file', metavar='path',
+		help='YAML config to pass to template context as "conf" var.')
+	parser.add_argument('--hosts-opts',
+		default='fwd, fwd-rev1, rev-deep', metavar='option[,option...]',
+		help=(
+			'Extra flags for parsing /etc/hosts file, separated by spaces or commas.'
+			# ' Any flag can be prefixed by "-" (dash) to disable it instead of enabling.'
+			' Supported flags: {}. Default: %(default)s' ).format(', '.join(tpl_parse_hosts_flags)))
+
+	parser.add_argument('-f', '--file',
+		metavar='path', help='File to resolve stuff in (default: use stdin).')
+	parser.add_argument('-o', '--out',
+		metavar='path', help='Output file or path (default: use stdout).')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader('/var/empty'))
+	jinja_env.filters['dns'] = tpl_resolve
+
+	hosts = tpl_parse_hosts(sorted(k for k,v in dict(
+		(flag.lstrip('+-'), not flag.startswith('-'))
+		for flag in opts.hosts_opts.replace(',', ' ').split() ).items() if v))
+	tpl_ctx = dict(hosts=hosts)
+	if opts.conf_file:
+		import yaml
+		tpl_ctx['conf'] = yaml.safe_load(pathlib.Path(opts.conf_file).open())
+	else: tpl_ctx['conf'] = None
+
+	tpl = jinja_env.from_string(
+		pathlib.Path(opts.file).read_text() if opts.file else sys.stdin.read() )
+
+	result = tpl.render(**tpl_ctx)
+
+	if opts.out: pathlib.Path(opts.out).write_string(result)
+	else: sys.stdout.write(result)
+
+if __name__ == '__main__': sys.exit(main())
