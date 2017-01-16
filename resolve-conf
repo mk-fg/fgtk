@@ -21,7 +21,47 @@ class LogStyleAdapter(logging.LoggerAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
-class AddressError(Exception): pass
+import ctypes as ct
+
+class sockaddr_in(ct.Structure):
+	_fields_ = [('sin_family', ct.c_short), ('sin_port', ct.c_ushort), ('sin_addr', ct.c_byte*4)]
+
+class sockaddr_in6(ct.Structure):
+	_fields_ = [ ('sin6_family', ct.c_short), ('sin6_port', ct.c_ushort),
+		('sin6_flowinfo', ct.c_uint32), ('sin6_addr', ct.c_byte * 16) ]
+
+class sockaddr(ct.Structure):
+	_fields_ = [('sa_family', ct.c_ushort)]
+
+class ifaddrs(ct.Structure): pass
+ifaddrs._fields_ = [ # recursive
+	('ifa_next', ct.POINTER(ifaddrs)), ('ifa_name', ct.c_char_p),
+	('ifa_flags', ct.c_uint), ('ifa_addr', ct.POINTER(sockaddr)) ]
+
+def get_iface_addrs():
+	libc = ct.CDLL('libc.so.6', use_errno=True)
+	libc.getifaddrs.restype = ct.c_int
+	ifaddr_p = head = ct.pointer(ifaddrs())
+	ifaces, err = dict(), libc.getifaddrs(ct.pointer(ifaddr_p))
+	if err != 0:
+		err = ct.get_errno()
+		raise OSError(err, os.strerror(err), 'getifaddrs()')
+	while ifaddr_p:
+		addrs = ifaces.setdefault(ifaddr_p.contents.ifa_name.decode(), list())
+		addr = ifaddr_p.contents.ifa_addr
+		if addr:
+			af = addr.contents.sa_family
+			if af == socket.AF_INET:
+				addr = ct.cast(addr, ct.POINTER(sockaddr_in))
+				addr = socket.inet_ntop(af, addr.contents.sin_addr)
+			elif af == socket.AF_INET6:
+				addr = ct.cast(addr, ct.POINTER(sockaddr_in6))
+				addr = socket.inet_ntop(af, addr.contents.sin6_addr)
+			else: addr = None
+			if addr: addrs.append(addr)
+		ifaddr_p = ifaddr_p.contents.ifa_next
+	libc.freeifaddrs(head)
+	return ifaces
 
 
 def sock_enum_val(name_or_num, prefix=None):
@@ -44,7 +84,7 @@ def get_socket_info( host, port=0, family=0,
 	try:
 		addrinfo = socket.getaddrinfo(host, port, family, socktype, protocol)
 		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
-	except (socket.gaierror, socket.error) as err:
+	except OSError as err:
 		raise AddressError( 'Failed to resolve host:'
 			' {!r} (params: {}) - {} {}'.format(host, log_params, type(err), err) )
 
@@ -199,7 +239,7 @@ def main(args=None):
 	hosts = tpl_parse_hosts(sorted(k for k,v in dict(
 		(flag.lstrip('+-'), not flag.startswith('-'))
 		for flag in opts.hosts_opts.replace(',', ' ').split() ).items() if v))
-	tpl_ctx = dict(hosts=hosts)
+	tpl_ctx = dict(hosts=hosts, iface=get_iface_addrs())
 	if opts.conf_file:
 		import yaml
 		tpl_ctx['conf'] = yaml.safe_load(pathlib.Path(opts.conf_file).open())

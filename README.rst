@@ -390,6 +390,26 @@ Jinja2 env for template has following filters and values:
   | Can be used as a reliable dns/network-independent names.
   | ``--hosts-opts`` cli option allows some tweaks wrt how that file is parsed.
 
+- ``iface`` - current network interfaces and IPv4/IPv6 addresses assigned there
+  (fetched from libc getifaddrs via ctypes).
+
+  Example value structure (as yaml)::
+
+    enp1s0:
+      - 10.0.0.134
+      - fd00::134
+      - 2001:470:1f0b:11de::134
+      - fe80::c646:19ff:fe64:632f
+    enp2s7:
+      - 10.0.1.1
+    lo:
+      - 127.0.0.1
+      - ::1
+    ip_vti0: []
+
+  Probably a good idea to use this stuff only when IPs are static and get
+  assigned strictly before templating.
+
 - ``it`` - itertools, ``_v``/``v_``/``_v_`` - global funcs for adding spaces
   before/after/around non-empty strings.
 
