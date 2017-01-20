@@ -827,21 +827,6 @@ ssh-tunnel
 Script to keep persistent, unique and reasonably responsive ssh tunnel.  Mostly
 just a wrapper with collection of options for such use-case.
 
-task
-^^^^
-
-Wrapper scripts to run stuff from cron:
-
-* Introducing controllable random delays (so the same crontab line on
-  multiple servers won't be ran in sync, introducing unnecessary load
-  spikes on any shared resources).
-
-* Adding syslog entries about jobs' start/stop/delay.
-
-* Running job from a oneshot systemd service, to enforce any arbitrary
-  cgroup limits via unit file, dependencies and prevent parallel
-  execution.
-
 urlparse
 ^^^^^^^^
 
@@ -1124,7 +1109,7 @@ Example watchdog.service::
   StartLimitBurst=10
   StartLimitAction=reboot-force
   Type=notify
-  ExecStart=/usr/local/sbin/systemd-watchdog
+  ExecStart=/usr/local/bin/systemd-watchdog
 
   [Install]
   WantedBy=multi-user.target
