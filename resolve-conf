@@ -64,6 +64,8 @@ def get_iface_addrs():
 	return ifaces
 
 
+class AddressError(Exception): pass
+
 def sock_enum_val(name_or_num, prefix=None):
 	name_or_num = name_or_num.upper()
 	if prefix: prefix = prefix.upper()
@@ -75,7 +77,6 @@ def sock_enum_val(name_or_num, prefix=None):
 	except ValueError: pass
 	raise AddressError(( 'Failed to resolve'
 		' socket parameter name/value: {!r}' ).format(name_or_num))
-
 
 def get_socket_info( host, port=0, family=0,
 		socktype=0, protocol=0, force_unique_address=False ):
