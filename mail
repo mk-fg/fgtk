@@ -22,4 +22,4 @@ letter+=( "To: ${rcpt[*]}" )
 IFS=$ifs_; unset ifs_
 
 { for line in "${letter[@]}"; do echo "${line}"; done; echo; cat; } |
-	exec /usr/sbin/sendmail "${from[@]}" "${rcpt[@]}"
+	exec /usr/bin/sendmail "${from[@]}" "${rcpt[@]}"
