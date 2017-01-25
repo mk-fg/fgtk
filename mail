@@ -1,4 +1,22 @@
 #!/bin/bash
+set -e
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $(basename "$0") [opts] rcpt [rcpt ...] < message"
+	echo >&2 " opts: [-s subject] [-a 'header: value' [-a ...]] [-f mail-from@host]"
+	echo >&2
+	echo >&2 "Generated message headers:"
+	echo >&2 "  $header_from"
+	echo >&2 "  $header_date"
+	echo >&2 "  Subject: [exactly as per -s option]"
+	echo >&2 "  [any headers exactly as per -a values]"
+	echo >&2 "  To: [all rcpt args, comma/space-separated]"
+	echo >&2
+	echo >&2 "Replacement for crappy sendmail wrappers that do"
+	echo >&2 " too much stuff but can't/won't allow adding any random headers."
+	exit ${1:-0}
+}
 
 user=$(id -un)
 header_from="From: ${user} (${user})"
@@ -14,21 +32,8 @@ while [[ -n "$1" ]]; do
 		-a) shift; letter+=( "$1" ); shift ;;
 		-f) shift; from=( -f "$1" ); shift ;;
 		--) opt_chk=; shift ;;
-		-h|--help)
-			echo >&2 "Usage: $(basename "$0") [opts] rcpt [rcpt ...] < message"
-			echo >&2 " opts: [-s subject] [-a 'header: value' [-a ...]] [-f mail-from@host]"
-			echo >&2
-			echo >&2 "Generated message headers:"
-			echo >&2 "  $header_from"
-			echo >&2 "  $header_date"
-			echo >&2 "  Subject: [exactly as per -s option]"
-			echo >&2 "  [any headers exactly as per -a values]"
-			echo >&2 "  To: [all rcpt args, comma/space-separated]"
-			echo >&2
-			echo >&2 "Replacement for crappy sendmail wrappers that do"
-			echo >&2 " too much stuff but can't/won't allow adding any random headers."
-			exit 0 ;;
-		-*) if [[ -n "$opt_chk" ]]; then echo >&2 "Unknown option: $1"; exit 1; fi ;;
+		-h|--help) usage ;;
+		-*) [[ -z "$opt_chk" ]] || { echo >&2 "Unknown option: $1"; exit 1; } ;;
 		*) rcpt+=( "$1" ); shift ;;
 	esac
 done
@@ -36,6 +41,8 @@ done
 ifs_=$IFS; IFS=", "
 letter+=( "To: ${rcpt[*]}" )
 IFS=$ifs_; unset ifs_
+
+[[ ${#rcpt[@]} -gt 0 ]] || usage 1
 
 { for line in "${letter[@]}"; do echo "${line}"; done; echo; cat; } |
 	exec /usr/bin/sendmail "${from[@]}" "${rcpt[@]}"
