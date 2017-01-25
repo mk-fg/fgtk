@@ -1,7 +1,9 @@
 #!/bin/bash
 
 user=$(id -un)
-letter=( "From: ${user} (${user})" "Date: $(date --rfc-822)" )
+header_from="From: ${user} (${user})"
+header_date="Date: $(date --rfc-822)"
+letter=( "$header_from" "$header_date" )
 rcpt=()
 from=()
 opt_chk=true
@@ -12,6 +14,20 @@ while [[ -n "$1" ]]; do
 		-a) shift; letter+=( "$1" ); shift ;;
 		-f) shift; from=( -f "$1" ); shift ;;
 		--) opt_chk=; shift ;;
+		-h|--help)
+			echo >&2 "Usage: $(basename "$0") [opts] rcpt [rcpt ...] < message"
+			echo >&2 " opts: [-s subject] [-a 'header: value' [-a ...]] [-f mail-from@host]"
+			echo >&2
+			echo >&2 "Generated message headers:"
+			echo >&2 "  $header_from"
+			echo >&2 "  $header_date"
+			echo >&2 "  Subject: [exactly as per -s option]"
+			echo >&2 "  [any headers exactly as per -a values]"
+			echo >&2 "  To: [all rcpt args, comma/space-separated]"
+			echo >&2
+			echo >&2 "Replacement for crappy sendmail wrappers that do"
+			echo >&2 " too much stuff but can't/won't allow adding any random headers."
+			exit 0 ;;
 		-*) if [[ -n "$opt_chk" ]]; then echo >&2 "Unknown option: $1"; exit 1; fi ;;
 		*) rcpt+=( "$1" ); shift ;;
 	esac

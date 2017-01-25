@@ -199,7 +199,7 @@ def tpl_resolve(host, af=0, proto=0, sock=0, default=None, force_unique=True):
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Process specified input template with jinja2.' )
+		description='Process specified input template with jinja2.')
 
 	parser.add_argument('--conf-file', metavar='path',
 		help='YAML config to pass to template context as "conf" var.')
