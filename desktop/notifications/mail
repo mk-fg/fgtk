@@ -108,7 +108,7 @@ def file_follow_durable( path,
 			if sha1(src.read(data_len)).digest() != chksum:
 				raise IOError('Last log line doesnt match checksum')
 		except (OSError, IOError) as err:
-			collectd.info('Failed to restore log position: {}'.format(err))
+			log.info('Failed to restore log position: %s', err)
 			src.seek(0)
 	tailer = file_follow(src, yield_file=True, **follow_kwz)
 
