@@ -313,6 +313,9 @@ def main(args=None):
 
 	cmds = parser.add_subparsers(title='Commands', dest='call')
 
+	cmd = cmds.add_parser('account-info',
+		help='Request and print info for ACME account associated with the specified key.')
+
 	cmd = cmds.add_parser('verify-domain',
 		help='Verify (and optionally register) --account-key for specified domain(s).')
 	cmd.add_argument('domain', nargs='+',
@@ -430,7 +433,14 @@ def main(args=None):
 
 	### Handle commands
 
-	if opts.call == 'verify-domain': pass
+	if opts.call == 'account-info':
+		res = acme_url_req(acc_meta['acc.url'], dict(resource='reg'))
+		if res.code not in [200, 201, 202]:
+			p_err('ERROR: ACME account info request failed')
+			return print_req_err_info()
+		p(res.body.decode())
+
+	elif opts.call == 'verify-domain': pass
 		# for domain in opts.domain:
 		# 	log.info('Verifying domain: {!r}', domain)
 		# 	res = acme_url_req('new-authz', dict(identifier=dict(type='dns', value=domain)))
