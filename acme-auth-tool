@@ -284,15 +284,16 @@ def main(args=None):
 		help='ACME authentication key type to generate.'
 			' Possible values: rsa-4096, ec-384 (secp384r1). Default: %(default)s')
 
-	group = parser.add_argument_group('Key registration and roll-over options')
+	group = parser.add_argument_group('Account/key registration and update options')
 	group.add_argument('-r', '--register', action='store_true',
 		help='Register key with CA before verifying domains. Must be done at least once for key.'
 			' Should be safe to try doing that more than once,'
 				' CA will just return "409 Conflict" error (ignored by this script).'
 			' Performed automatically if --account-key file does not have account URL stored there.')
-	group.add_argument('-e', '--register-email', metavar='email',
+	group.add_argument('-e', '--contact-email', metavar='email',
 		help='Email address for any account-specific issues,'
-				' warnings and notifications to register along with the key.')
+				' warnings and notifications to register along with the key.'
+			' If was not specified previously or differs from that, will be automatically updated.')
 	group.add_argument('-o', '--account-key-old', metavar='path',
 		help='Issue a key-change command from an old key specified with this option.'
 			' Overrides -r/--register option - if old key is specified,'
@@ -352,10 +353,12 @@ def main(args=None):
 		''.join('  {}'.format(line) for line in res.body.decode().splitlines(keepends=True)) )
 
 
-	### Handle account registration status
+	### Handle account status
 
 	acc_key_old = opts.account_key_old
 	acc_register = opts.register or acc_key_old or not acc_meta.get('acc.url')
+	acc_contact = opts.contact_email and 'mailto:{}'.format(opts.contact_email)
+
 	if acc_register:
 		payload_reg = {'terms-of-service-agreed': True}
 
@@ -385,16 +388,15 @@ def main(args=None):
 					return print_req_err_info()
 				acc_url_old = res.headers['Location']
 
-		acc_reg_contact = opts.register_email and 'mailto:{}'.format(opts.register_email)
 		if not acc_key_old: # new-reg
-			if acc_reg_contact: payload_reg['contact'] = [acc_reg_contact]
+			if acc_contact: payload_reg['contact'] = [acc_contact]
 			res = acme_url_req('new-reg', payload_reg)
 			if res.code not in [201, 409]:
 				p_err('ERROR: ACME new-reg (key registration) request failed')
 				return print_req_err_info()
 			log.debug('Account registration status: {} {}', res.code, res.reason)
 			acc_meta['acc.url'] = res.headers['Location']
-			if res.code == 201: acc_meta['acc.contact'] = acc_reg_contact
+			if res.code == 201: acc_meta['acc.contact'] = acc_contact
 		else: # key-change
 			payload = dict(account=acc_url_old, newKey=acc_key.jwk)
 			payload = signed_req_body(acc_key, payload)
@@ -407,16 +409,15 @@ def main(args=None):
 			acc_meta['acc.contact'] = acc_meta_old.get('acc.contact')
 		acc_meta.save_to_key_file(p_acc_key)
 
-		if acc_reg_contact and acc_reg_contact != acc_meta.get('acc.contact'):
-			res = acme_url_req( acc_meta['acc.url'],
-				dict(resource='reg', contact=[acc_reg_contact]) )
-			if res.code not in [200, 202]:
-				p_err('ERROR: ACME contact info update request failed')
-				return print_req_err_info()
-			log.debug( 'Account contact info updated:'
-				' {!r} -> {!r}', acc_meta['acc.contact'], acc_reg_contact )
-			acc_meta['acc.contact'] = acc_reg_contact
-			acc_meta.save_to_key_file(p_acc_key)
+	if acc_contact and acc_contact != acc_meta.get('acc.contact'):
+		res = acme_url_req( acc_meta['acc.url'],
+			dict(resource='reg', contact=[acc_contact]) )
+		if res.code not in [200, 201, 202]:
+			p_err('ERROR: ACME contact info update request failed')
+			return print_req_err_info()
+		log.debug('Account contact info updated: {!r} -> {!r}', acc_meta['acc.contact'], acc_contact)
+		acc_meta['acc.contact'] = acc_contact
+		acc_meta.save_to_key_file(p_acc_key)
 
 
 	### Handle commands
