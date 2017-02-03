@@ -195,7 +195,8 @@ class HTTPResponse:
 		for k,v in it.chain( zip(self.__slots__, it.repeat(None)),
 			zip(self.__slots__, args), kws.items() ): setattr(self, k, v)
 
-def signed_req_body(acc_key, payload, nonce=None, url=None, resource=None):
+def signed_req_body( acc_key, payload,
+		nonce=None, url=None, resource=None, encode=True ):
 	protected = dict(alg=acc_key.jws_alg, jwk=acc_key.jwk, url=url)
 	if nonce: protected['nonce'] = nonce
 	if url: protected['url'] = url
@@ -203,23 +204,26 @@ def signed_req_body(acc_key, payload, nonce=None, url=None, resource=None):
 	# "resource" is for letsencrypt/boulder/blob/d26a54b/docs/acme-divergences.md#section-541
 	if ( resource and isinstance(payload, dict)
 		and 'resource' not in payload ): payload['resource'] = resource
-	payload = b64_b2a_jose(json.dumps(payload))
+	if not isinstance(payload, str):
+		if not isinstance(payload, bytes): payload = json.dumps(payload)
+		payload = b64_b2a_jose(payload)
 	signature = b64_b2a_jose(
 		acc_key.sign_func('{}.{}'.format(protected, payload).encode()) )
-	body = json.dumps(dict( protected=protected,
-		payload=payload, signature=signature )).encode()
+	body = dict(protected=protected, payload=payload, signature=signature)
+	if encode: body = json.dumps(body).encode()
 	return body
 
-def signed_req(acc_key, url, payload, nonce=None, acme_url=None):
-	url_full, resource = url if ':' in url else None, None
+def signed_req(acc_key, url, payload, nonce=None, resource=None, acme_url=None):
+	url_full = url if ':' in url else None
 	if not url_full or not nonce:
 		assert acme_url, [url, acme_url] # need to query directory
 		log.debug('Sending acme-directory http request to: {!r}', acme_url)
 		with urlopen(acme_url) as r:
-			assert r.getcode() == 200 # XXX: retries with backoff
+			assert r.getcode() == 200
 			acme_dir = json.load(r)
 			nonce = r.headers['Replay-Nonce']
-		if not url_full: url_full, resource = acme_dir[url], url
+		if not url_full: url_full = acme_dir[url]
+		if not resource: resource = url
 	body = signed_req_body( acc_key, payload,
 		nonce=nonce, url=url_full, resource=resource )
 	log.debug('Sending signed http request to URL: {!r} ...', url_full)
@@ -228,7 +232,7 @@ def signed_req(acc_key, url, payload, nonce=None, acme_url=None):
 			'User-Agent': 'acme-auth-tool/1.0 (+https://github.com/mk-fg/fgtk/#acme-auth-tool)' } )
 	try:
 		try: r = urlopen(req)
-		except HTTPError as err: r = err # XXX: retries with backoff
+		except HTTPError as err: r = err
 		res = HTTPResponse(r.getcode(), r.reason, r.headers, r.read())
 		r.close()
 	except URLError as r: res = HTTPResponse(reason=r.reason)
@@ -373,7 +377,7 @@ def main(args=None):
 				log.debug( 'Both -r/--register and'
 					' -o/--account-key-old are specified, acting according to latter option.' )
 			p_acc_key_old = pathlib.Path(acc_key_old)
-			acc_key_old = AccKey.load_from_key_file(p_acc_key_old)
+			acc_key_old = AccKey.load_from_file(p_acc_key_old)
 			if not acc_key_old:
 				parser.error('Unknown/unsupported key type'
 					' specified with -o/--account-key-old: {}'.format(p_acc_key))
@@ -398,10 +402,14 @@ def main(args=None):
 			acc_meta['acc.url'] = res.headers['Location']
 			if res.code == 201: acc_meta['acc.contact'] = acc_contact
 		else: # key-change
+			with urlopen(acme_url) as r: # need same URL for both inner and outer payloads
+				assert r.getcode() == 200
+				resource, acme_dir = 'key-change', json.load(r)
+				url, nonce = acme_dir[resource], r.headers['Replay-Nonce']
 			payload = dict(account=acc_url_old, newKey=acc_key.jwk)
-			payload = signed_req_body(acc_key, payload)
-			res = signed_req(acc_key_old, 'key-change', payload, acme_url=acme_url)
-			if res.code != 200:
+			payload = signed_req_body(acc_key, payload, url=url, encode=False)
+			res = signed_req(acc_key_old, url, payload, nonce=nonce, resource=resource)
+			if res.code not in [200, 201, 202]:
 				p_err('ERROR: ACME key-change request failed')
 				return print_req_err_info()
 			log.debug('Account key-change success: {} -> {}', acc_key_old.pk_hash, acc_key.pk_hash)
