@@ -119,7 +119,7 @@ class FFProc:
 						if not self.stream_len: msg = pos_str(pos)
 						else:
 							msg = '{:.1f}% - {} / {}'.format(
-								(pos / self.stream_len) * 100, pos_str(pos), stream_len_str )
+								(pos / self.stream_len) * 100, pos_str(pos), pos_str(self.stream_len) )
 						prefix_max_len = self.term_width - len(msg)
 						if prefix_max_len >= len(self.prefix) + 10:
 							prefix_len, prefix = prefix_max_len - len(self.prefix) - 6, repr(self.src)
