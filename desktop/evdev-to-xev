@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+from collections import namedtuple
+import os, sys, logging
+import asyncio, signal, contextlib
+import subprocess, re
+
+import evdev, yaml
+from evdev import ecodes
+from evdev import uinput
+
+
+example_conf_str = '''\
+## Run e.g. "evtest /dev/input/event..." to see all evdev events and key names
+
+map:
+	## "evdev-event -> keypress(es)" mappings
+	## Format: ev_name ["<"|">"|"="]value: key-1 [key-2 ...]
+	## Keys should be space-separated, in evdev notation.
+	## All space-separated keys are pressed simultaneously, while key-lists
+	##  wrapped in sequence are sent one after another (see BTN_EAST example).
+	ABS_RX <-30_000: left
+	ABS_RX >30_000: right
+	ABS_RY <-30_000: up
+	ABS_RY >30_000: down
+	ABS_HAT0Y -1: w
+	ABS_HAT0Y 1: s
+	ABS_HAT0X -1: a
+	ABS_HAT0X 1: d
+	BTN_EAST 1: [leftshift a, leftshift s, leftshift d]
+	BTN_WEST 1: leftctrl leftshift equal
+	BTN_NORTH 1: leftctrl minus
+	BTN_SOUTH 1: [t,y,p,i,n,g,space,t,e,s,t,enter]
+
+timings:
+	hold: 0.02 # how long to "hold" each set of pressed keys
+	delay: 0.02 # delay between sequential keypresses, e.g. [q,w,e,r,t,y]
+	repeat: 0.25 # min delay before processing event of the same type (debouncing)
+
+options:
+	use-xset: true # query/restore keyboard repeat rate on script start/exit
+'''.replace('\t', '  ')
+
+act_value_checks = {'=': op.eq, '>': op.gt, '<': op.lt}
+
+
+def p(*a, file=None, end='\n', flush=False, **k):
+	if len(a) > 0:
+		fmt, a = a[0], a[1:]
+		a, k = ( ([fmt.format(*a,**k)], dict())
+			if isinstance(fmt, str) and (a or k)
+			else ([fmt] + list(a), k) )
+	print(*a, file=file, end=end, flush=flush, **k)
+p_err = lambda *a,**k: p(*a, file=sys.stderr, **k) or 1
+
+class AttrDict(dict):
+	def __init__(self, *args, **kwargs):
+		super(AttrDict, self).__init__(*args, **kwargs)
+		for k, v in self.items():
+			assert not getattr(self, k, None)
+			if '-' in k: self[k.replace('-', '_')] = self.pop(k)
+		self.__dict__ = self
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+async def event_loop(loop, conf, evdev_list):
+	exit_code, readers, queue = 0, list(), asyncio.Queue(loop=loop)
+	with contextlib.ExitStack() as stack:
+		for p in evdev_list:
+			dev = stack.enter_context(
+				contextlib.closing(evdev.InputDevice(p)) )
+			readers.append(loop.create_task(evdev_reader(dev, queue)))
+		ui = stack.enter_context(uinput.UInput())
+		xev_emu = loop.create_task(run_xev_emu(loop, conf, queue, ui))
+		def sig_handler(code):
+			nonlocal exit_code
+			exit_code = code
+			xev_emu.cancel()
+		for sig, code in ('SIGINT', 1), ('SIGTERM', 0):
+			loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
+		with contextlib.suppress(asyncio.CancelledError): await xev_emu
+		for reader in readers: reader.cancel()
+	return exit_code
+
+
+Event = namedtuple('Ev', 'ev dev')
+
+async def evdev_reader(dev, queue):
+	while True:
+		ev_list = await dev.async_read()
+		for ev in ev_list: queue.put_nowait(Event(ev, dev))
+
+async def run_xev_emu(loop, conf, queue, ui):
+	acts, act_ts, act_delay = dict(conf.acts.items()), dict(), conf.t.get('repeat', 0)
+	sim_keys = ft.partial(simulate_keys, ui, hold=conf.t.get('hold', 0))
+	sim_keys_delay = conf.t.get('delay', 0)
+
+	while True:
+		e = await queue.get()
+		# if log.isEnabledFor(logging.DEBUG):
+		# 	log.debug('Event: {} = {}', evdev.categorize(e.ev), e.ev.value)
+
+		ev_id = e.ev.code, e.ev.type
+		if ev_id not in acts:
+			ev_map_ids = set()
+			ev_code_map = ecodes.bytype[e.ev.type]
+			ev_map_id = ev_code_map.get(e.ev.code) or str(e.ev.code)
+			if isinstance(ev_map_id, str): ev_map_id = [ev_map_id]
+			for ev_map_id in ev_map_id:
+				ev_map_ids.add(ev_map_id)
+				if ev_map_id.startswith('REL_'):
+					ev_map_ids.add('R{}'.format(ev_map_id[4:]))
+			for ev_map_id in ev_map_ids:
+				act_list = acts.get(ev_map_id)
+				if act_list: break
+			else: act_list = None
+			acts[ev_id] = act_list
+
+		act_list = acts[ev_id]
+		if not act_list: continue
+		for act in act_list:
+			(v_func, v_chk), act = act
+			if not act_value_checks[v_func](e.ev.value, v_chk): continue
+			if act_delay > 0:
+				ts = loop.time()
+				ts_diff = ts - act_ts.get(ev_id, 0)
+				if ts_diff < act_delay:
+					log.debug( 'Ignoring repeated action'
+						' due to repeat-delay: {:.3f} < {:.3f}', ts_diff, act_delay )
+					continue
+				act_ts[ev_id] = ts
+			first = True
+			for keys in act:
+				if not first and sim_keys_delay:
+					await asyncio.sleep(sim_keys_delay)
+				first = False
+				await sim_keys(keys)
+
+async def simulate_keys(ui, keys, hold):
+	log.debug('Simulating key(s) (hold={:.3f}): {}', hold, keys)
+	for t, c in keys: ui.write(t, c, 1)
+	ui.syn()
+	if hold: await asyncio.sleep(hold)
+	for t, c in keys: ui.write(t, c, 0)
+	ui.syn()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to read/match events'
+				' from linux evdev and simulate Xorg events.'
+			' Run without any options to print configuration file example.')
+	parser.add_argument('evdev', nargs='*',
+		help='Linux Event Device to read input events from.')
+	parser.add_argument('-c', '--conf', metavar='path',
+		help='YAML configuration file with "evdev event -> X event" mappings.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	if not opts.conf:
+		p_err( 'ERROR: Configuration file with key'
+			' mappings must be specified using -c/--conf option.' )
+		p_err()
+		example_title = 'Config file example (YAML):'
+		hr_fmt = ' {{0}} {{1:^{}s}}{{0}}'.format(len(example_title))
+		p_err(hr_fmt, ' -'*3, example_title)
+		sys.stdout.write(example_conf_str)
+		p_err(hr_fmt, ' -'*3, 'example end')
+		return 1
+	if not opts.evdev:
+		parser.error('At least one evdev-path argument must be specified')
+
+	acts = dict()
+	with open(opts.conf) as src: conf = yaml.safe_load(src)
+	for m, act in conf['map'].items():
+		tc, v = m.split()
+		if v[0] in act_value_checks: v_func, v = v[0], v[1:]
+		else: v_func = '='
+		v = yaml.safe_load(v)
+		if not isinstance(act, list): act = [act]
+		for n, keys in enumerate(act):
+			key_codes = list()
+			for k in keys.lower().split():
+				if k.isdigit(): k = int(k)
+				else:
+					if not k.startswith('key_'): k = 'key_{}'.format(k)
+					k = getattr(ecodes, k.upper())
+				key_codes.append((ecodes.EV_KEY, k))
+			act[n] = key_codes
+		acts.setdefault(tc, list()).append(((v_func, v), act))
+	conf = AttrDict( acts=acts,
+		t=AttrDict(**conf['timings']), opts=AttrDict(**conf['options']) )
+
+	xset_rate = conf.opts.get('use_xset')
+	if xset_rate:
+		xset = subprocess.run(['xset', 'q'], stdout=subprocess.PIPE, check=True)
+		for line in xset.stdout.splitlines():
+			m = re.search( r'^\s*auto repeat delay:\s+'
+				r'(\d+)\s+repeat rate:\s+(\d+)\s*$', line.decode() )
+			if not m: continue
+			xset_rate = m.groups()
+			break
+		else: raise OSError('Failed to parse keyboard repeat rate from xset output')
+		log.debug('Remembering xset rate as: {} {}', *xset_rate)
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		exit_code = loop.run_until_complete(event_loop(loop, conf, opts.evdev))
+	if xset_rate:
+		delay, repeat = map(str, xset_rate)
+		log.debug('Restoring xset rate back to: {} {}', delay, repeat)
+		subprocess.run(['xset', 'r', 'rate', delay, repeat], check=True)
+	return exit_code
+
+if __name__ == '__main__': sys.exit(main())

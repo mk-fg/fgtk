@@ -2060,6 +2060,29 @@ Useful to do any kind of letter-by-letter checks and stuff manually.
 Can also be an example code / stub for composited screen overlays with input
 grab.
 
+evdev-to-xev
+''''''''''''
+
+Simple tool to bind events (and specific values passed with these) from
+arbitrary evdev device(s) to keyboard button presses (through uinput).
+
+"evdev -> keyboard" mappings are specified in a YAML file, as well as some other
+minor parameters (e.g. how long to press keys for, intervals, delays, etc).
+
+For example, to bind rightmost-ish joystick position to press "right" key,
+yaml mapping can have this line: ``ABS_X >30_000: right`` (absolute right is
+~32768, so anything >30k is "close enough", "30_000" is valid YAML integer spec).
+
+Or, to type stuff on gamepad button press: ``BTN_SOUTH 1: [t,e,s,t,enter]``
+
+| Script can be run without any options to print config file example.
+| Can work with multiple evdev inputs (uses asyncio to poll stuff).
+
+Requires python3, python-evdev_, standard "uinput" kernel module enabled/loaded,
+read access to specified evdev(s) and rw to /dev/uinput.
+
+.. _python-evdev: http://python-evdev.readthedocs.org/
+
 
 
 VM
