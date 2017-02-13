@@ -209,7 +209,8 @@ def main(args=None):
 			act[n] = key_codes
 		acts.setdefault(tc, list()).append(((v_func, v), act))
 	conf = AttrDict( acts=acts,
-		t=AttrDict(**conf['timings']), opts=AttrDict(**conf['options']) )
+		t=AttrDict(**conf.get('timings') or dict()),
+		opts=AttrDict(**conf.get('options') or dict()) )
 
 	xset_rate = conf.opts.get('use_xset')
 	if xset_rate:
