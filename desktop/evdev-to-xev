@@ -21,7 +21,9 @@ map:
 	## All space-separated keys are pressed simultaneously, while key-lists
 	##  wrapped in sequence are sent one after another (see BTN_EAST example).
 	ABS_RX <-30_000: left
-	ABS_RX >30_000: right
+	ABS_RX >30_000:
+		key: right
+		timings: {repeat: 0} # override for just this one key, same as "timings" section below
 	ABS_RY <-30_000: up
 	ABS_RY >30_000: down
 	ABS_HAT0Y -1: w
@@ -33,7 +35,7 @@ map:
 	BTN_NORTH 1: leftctrl minus
 	BTN_SOUTH 1: [t,y,p,i,n,g,space,t,e,s,t,enter]
 
-timings:
+timings: # can be overidden for specific actions in the "map" section
 	hold: 0.02 # how long to "hold" each set of pressed keys
 	delay: 0.02 # delay between sequential keypresses, e.g. [q,w,e,r,t,y]
 	repeat: 0.25 # min delay before processing event of the same type (debouncing)
@@ -78,6 +80,8 @@ class LogStyleAdapter(logging.LoggerAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
+Action = namedtuple('Act', 'key_codes opts')
+
 async def event_loop(loop, conf, evdev_list):
 	exit_code, readers, queue = 0, list(), asyncio.Queue(loop=loop)
 	with contextlib.ExitStack() as stack:
@@ -106,15 +110,15 @@ async def evdev_reader(dev, queue):
 		for ev in ev_list: queue.put_nowait(Event(ev, dev))
 
 async def run_xev_emu(loop, conf, queue, ui):
-	acts, act_ts, act_delay = dict(conf.acts.items()), dict(), conf.t.get('repeat', 0)
-	sim_keys = ft.partial(simulate_keys, ui, hold=conf.t.get('hold', 0))
-	sim_keys_delay = conf.t.get('delay', 0)
+	acts, act_ts = dict(conf.acts.items()), dict()
 
 	while True:
 		e = await queue.get()
 		# if log.isEnabledFor(logging.DEBUG):
 		# 	log.debug('Event: {} = {}', evdev.categorize(e.ev), e.ev.value)
 
+		# Get list of actions to run for this event type/code
+		# There can be >1 (list) because diff actions can be bound to diff values
 		ev_id = e.ev.code, e.ev.type
 		if ev_id not in acts:
 			ev_map_ids = set()
@@ -130,12 +134,17 @@ async def run_xev_emu(loop, conf, queue, ui):
 				if act_list: break
 			else: act_list = None
 			acts[ev_id] = act_list
-
 		act_list = acts[ev_id]
 		if not act_list: continue
+
+		# Run all actions that have matching event value
 		for act in act_list:
 			(v_func, v_chk), act = act
 			if not act_value_checks[v_func](e.ev.value, v_chk): continue
+			act_t = conf.t.copy()
+			act_t.update(act.opts.get('timings') or dict())
+
+			act_delay = act_t.get('repeat', 0)
 			if act_delay > 0:
 				ts = loop.time()
 				ts_diff = ts - act_ts.get(ev_id, 0)
@@ -144,12 +153,14 @@ async def run_xev_emu(loop, conf, queue, ui):
 						' due to repeat-delay: {:.3f} < {:.3f}', ts_diff, act_delay )
 					continue
 				act_ts[ev_id] = ts
+
 			first = True
-			for keys in act:
-				if not first and sim_keys_delay:
-					await asyncio.sleep(sim_keys_delay)
+			sim_hold, sim_delay = (act_t.get(k, 0) for k in ['hold', 'delay'])
+			for keys in act.key_codes:
+				if not first and sim_delay:
+					await asyncio.sleep(sim_delay)
 				first = False
-				await sim_keys(keys)
+				await simulate_keys(ui, keys, sim_hold)
 
 async def simulate_keys(ui, keys, hold):
 	log.debug('Simulating key(s) (hold={:.3f}): {}', hold, keys)
@@ -196,7 +207,10 @@ def main(args=None):
 		tc, v = m.split()
 		if v[0] in act_value_checks: v_func, v = v[0], v[1:]
 		else: v_func = '='
-		v = yaml.safe_load(v)
+		v, act_opts = yaml.safe_load(v), dict()
+		if isinstance(act, dict):
+			act_opts.update(act)
+			act = act_opts.pop('key')
 		if not isinstance(act, list): act = [act]
 		for n, keys in enumerate(act):
 			key_codes = list()
@@ -207,7 +221,7 @@ def main(args=None):
 					k = getattr(ecodes, k.upper())
 				key_codes.append((ecodes.EV_KEY, k))
 			act[n] = key_codes
-		acts.setdefault(tc, list()).append(((v_func, v), act))
+		acts.setdefault(tc, list()).append(((v_func, v), Action(act, act_opts)))
 	conf = AttrDict( acts=acts,
 		t=AttrDict(**conf.get('timings') or dict()),
 		opts=AttrDict(**conf.get('options') or dict()) )
