@@ -62,6 +62,8 @@ def main_core(argv=None):
 
 
 	## Find all the logs
+	## Aside: znc people sure do love to change how they store their logs!
+
 	log.debug('Finding and normalizing log sources')
 	os.chdir(opts.znc_home)
 	ts_now = datetime.now()
@@ -80,7 +82,7 @@ def main_core(argv=None):
 		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
 		logs_append(net, chan, ts, path)
 
-	# Modern logs for old-style setup with user=network
+	# Logs for old-style setup with user=network
 	for path in glob.glob('moddata/log/*.log'):
 		match = re.search( r'^moddata/log/(?P<net>[^/]+?)'
 			r'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
@@ -89,7 +91,7 @@ def main_core(argv=None):
 		assert '_' not in net, [net, path]
 		logs_append(net, chan, ts, path)
 
-	# Modern logs and multi-network users
+	# Old (initial) logs for multi-network users
 	for path in glob.glob('moddata/log/*.log'):
 		match = re.search( r'^moddata/log/(?P<user>[^/]+?)'
 			r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
@@ -99,6 +101,14 @@ def main_core(argv=None):
 		assert '_' not in user and '_' not in net, [user, net, path]
 		assert user not in logs, user
 		logs_append(net, chan, ts, path)
+
+	# Modern logs for multi-network users
+	for path in glob.glob('moddata/log/*/*/*/*.log'):
+		match = re.search( r'^moddata/log/(?P<user>[^/]+?)/'
+			r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$', path )
+		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
+		assert '_' not in user and '_' not in net, [user, net, path]
+		logs_append(net, chan, ts.replace('-', ''), path)
 
 	# from pprint import pprint
 	# pprint(logs)
