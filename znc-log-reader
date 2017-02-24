@@ -9,7 +9,10 @@ from os.path import expanduser, realpath, join, isdir, exists
 from datetime import datetime, timedelta
 import os, sys, re, glob, types, tempfile
 
-try: import lzma
+try:
+	try: import lzma
+	except ImportError:
+		from backports import lzma
 except ImportError: lzma = None
 
 
