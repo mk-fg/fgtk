@@ -1,9 +1,9 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
-
 from __future__ import print_function
+
 from collections import defaultdict, OrderedDict
-from os.path import join, basename, dirname, islink, isfile, isdir
+from os.path import join, basename, dirname, islink, isfile, isdir, exists
 import os, sys, re
 
 
@@ -67,16 +67,17 @@ def main(args=None):
 	vfiles = OrderedDict(sorted(vfiles.viewitems()))
 
 	# Keep linked version and its .old variant (if any)
-	p_linked = os.readlink('vmlinuz')
-	m = path_re.search(p_linked)
-	assert m, p_linked
-	v_linked = v = path_v(m.group(2), m.group(3))
-	v_linked_major = v_linked[:2]
-	assert v_linked in vfiles, [v, vfiles]
 	rmq_kept = list()
-	for old in 0, 1:
-		v = v[:3] + (old,)
-		if v in vfiles: rmq_kept.append((v, vfiles.pop(v)))
+	if exists('vmlinuz'):
+		p_linked = os.readlink('vmlinuz')
+		m = path_re.search(p_linked)
+		assert m, p_linked
+		v_linked = v = path_v(m.group(2), m.group(3))
+		v_linked_major = v_linked[:2]
+		assert v_linked in vfiles, [v, vfiles]
+		for old in 0, 1:
+			v = v[:3] + (old,)
+			if v in vfiles: rmq_kept.append((v, vfiles.pop(v)))
 
 	# Rehash by version_major-version
 	vfiles_by_major = OrderedDict()
