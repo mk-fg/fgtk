@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, socket, logging, contextlib
-
-import netaddr
+import os, sys, socket, logging, contextlib, ipaddress
 
 
 class LogMessage(object):
@@ -22,7 +20,7 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
 def ipv6_dns(opts):
-	addr = netaddr.IPAddress(opts.ipv6_address).format(netaddr.ipv6_verbose)
+	addr = ipaddress.IPv6Address(opts.ipv6_address).exploded
 	log.debug('Exploded address: {}', addr)
 	addr = addr.replace(':', '')
 	if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
@@ -39,7 +37,7 @@ def ipv6_lladdr(opts):
 		opts.lladdr = lladdr['addr']
 		log.debug('Got lladdr from interface (%s): %s', opts.iface, opts.lladdr)
 
-	ipv6_lladdr = netaddr.EUI(opts.lladdr).ipv6_link_local()
+	ipv6_lladdr = netaddr.EUI(opts.lladdr).ipv6_link_local() # XXX: no EUI in ipaddress
 
 	if not opts.assign: print(ipv6_lladdr)
 	else:
