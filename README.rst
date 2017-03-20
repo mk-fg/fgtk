@@ -1449,6 +1449,24 @@ user acc in a main namespace.
 For long-term access (e.g. for some daemon), there probably are better options
 than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
 
+patch-nspawn-ids
+^^^^^^^^^^^^^^^^
+
+Python3 script to "shift" or "patch" uid/gid values with new container-id
+according to systemd-nspawn schema, i.e. set upper 16-bit to specified
+container-id value and keep lower 16 bits to uid/gid inside the container.
+
+Similar operation to what systemd-nspawn's --private-users-chown option does
+(described in nspawn-patch-uid.c), but standalone, doesn't bother with ACLs or
+checks on filesystem boundaries.
+
+Main purpose is to update uids when migrating systemd-nspawn containers or
+adding paths/filesystems to these without clobbering ownership info there.
+
+Should be safe to use anywhere, as in most non-nspawn cases upper bits of
+uid/gid are always zero, hence any changes can be easily reverted by running
+this tool again with -c0.
+
 
 
 desktop
