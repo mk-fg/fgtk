@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, pathlib, logging
+
+
+def patch_xattrs(path,
+		copy=True, wipe_user=False, wipe_trusted=False, dry_run=False ):
+	def patch_node(p):
+		try: bugged = p.is_symlink() and not p.exists()
+		except OSError: bugged = True
+		if bugged:
+			if not dry_run: p.unlink()
+			return
+		for k in os.listxattr(str(p), follow_symlinks=False):
+			if wipe_user and k.startswith('user.'):
+				if not dry_run: os.removexattr(str(p), k, follow_symlinks=False)
+			if not k.startswith('trusted.'): continue
+			if copy:
+				k_user = 'user.{}'.format(k[8:])
+				v = os.getxattr(str(p), k, follow_symlinks=False)
+				log.debug('patch: {} :: {} -> {} [{!r}]'.format(p, k, k_user, v))
+				if not dry_run: os.setxattr(str(p), k_user, v, follow_symlinks=False)
+			if wipe_trusted:
+				if not dry_run: os.removexattr(str(p), k, follow_symlinks=False)
+	for top, dirs, files in os.walk(str(path)):
+		p = pathlib.Path(top)
+		patch_node(p)
+		for fn in files: patch_node(p / fn)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Tool to copy trusted.* xattrs to user.* ones.')
+	parser.add_argument('path', nargs='+',
+		help='Path(s) to operate on recursively.')
+	parser.add_argument('-w', '--wipe-trusted', action='store_true',
+		help='Do not copy anything, only remove all trusted.* attributes.')
+	parser.add_argument('-u', '--wipe-user', action='store_true',
+		help='Do not copy anything, only remove all user.* attributes.')
+	parser.add_argument('-c', '--copy', action='store_true',
+		help='Override --wipe-* options behavior and also copy stuff before/after wipe.')
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Do not change anything on fs, only navigate over it and run all the checks.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger('main')
+
+	op_kws = dict()
+	if opts.wipe_trusted: op_kws.update(wipe_trusted=True)
+	if opts.wipe_user: op_kws.update(wipe_user=True)
+	if opts.copy or not op_kws: op_kws.update(copy=True)
+
+	paths = list(pathlib.Path(p).resolve() for p in opts.path)
+	for p in paths: patch_xattrs(p, dry_run=opts.dry_run, **op_kws)
+
+if __name__ == '__main__': sys.exit(main())

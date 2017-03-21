@@ -2417,6 +2417,17 @@ strings, without need to abuse YAML or something less-readable for those.
 
 .. _asciitree module: https://pypi.python.org/pypi/asciitree/0.3.3
 
+glusterfs-xattr-trusted-to-user
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Script (python3) to copy trusted.\* xattrs to user.\* and/or wipe out either one
+of these.
+
+Useful when running patched glusterd in a container, as described in
+`running-glusterfs-in-a-user-namespace blog post here`_, and probably not much else.
+
+.. _running-glusterfs-in-a-user-namespace blog post here: http://blog.fraggod.net/2017/03/21/running-glusterfs-in-a-user-namespace-uid-mapped-container.html
+
 
 
 License (WTFPL)
