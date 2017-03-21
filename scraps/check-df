@@ -1,8 +1,8 @@
 #!/bin/bash
 
-max_space=85
+max_space=90
 max_inodes=85
-skip_fstypes=( fuse.sshfs )
+skip_fstypes=( fuse.sshfs squashfs )
 skip_mps=( )
 err=
 
