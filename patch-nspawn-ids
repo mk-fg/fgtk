@@ -37,7 +37,7 @@ def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False):
 		if log.isEnabledFor(logging.DEBUG):
 			log.debug('patch: {} :: {} [{}-{}] -> {} [{:x}]'.format( p,
 				id_repr(s.st_uid, s.st_gid), id_repr(map(id_cid, [s.st_uid, s.st_gid]), as_hex=True),
-				id_repr(map(id_base, [s.st_uid, s.st_gid])), id_repr(dst_uid, dst_gid), cid ))
+				id_repr(map(id_base, [s.st_uid, s.st_gid])), id_repr(dst_uid, dst_gid), cid>>16 ))
 		if not dry_run:
 			os.chown(p, dst_uid, dst_gid, follow_symlinks=False)
 			# Linux can drop stuff like suid/sgid bits after chown, so restore these
