@@ -134,9 +134,9 @@ class IterLines(object):
 					err = subprocess.Popen(['xz', '-d'], stdin=src, stdout=tmp, close_fds=True).wait()
 					if err != 0: raise OSError('xz subprocess failed (code: {})'.format(err))
 				tmp.seek(0)
-				for line in tmp: yield line.rstrip()
+				for line in tmp: yield line.strip('\0\n')
 		else:
-			for line in open(self.path): yield line.rstrip('\n')
+			for line in open(self.path): yield line.strip('\0\n')
 
 def match_line_ts(line):
 	match = re.search(r'^\s*\[([^]]+)\]\s+', line)
