@@ -134,13 +134,17 @@ async def mux_listen( loop, secret, ident_db,
 				await responses[ident]
 			tun_port = ident_db.get(ident)
 			if not tun_port or not tun_port_a <= tun_port <= tun_port_b:
-				tun_port = next(tun_ports_iter)
+				try: tun_port = next(tun_ports_iter)
+				except StopIteration:
+					log.debug( 'No more ports to allocate'
+						' ident: {} (addr={})', ident_repr(ident), addr )
+					continue
 			ident_db[ident] = tun_port
 			ident_db.sync()
 			response = build_res(secret, ident, tun_port, ssh_port)
 			log.debug(
-				'Allocated [tun={}, ssh={}] for ident: {}',
-				tun_port, ssh_port, ident_repr(ident) )
+				'Allocated [tun={}, ssh={}] for ident: {} (addr={})',
+				tun_port, ssh_port, ident_repr(ident), addr )
 			responses[ident] = loop.create_task(
 				mux_send(loop, transport, response, addr, delays) )
 	finally:

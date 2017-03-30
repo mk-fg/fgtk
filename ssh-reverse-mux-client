@@ -12,7 +12,8 @@ class SSHMuxConfig:
 	ssh_opts = '''
 		-oControlPath=none -oControlMaster=no
 		-oConnectTimeout=180 -oServerAliveInterval=6 -oServerAliveCountMax=10
-		-oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 -qyNnT'''.split()
+		-oBatchMode=yes -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0
+		-qNnT'''.split()
 
 
 class LogMessage(object):
@@ -162,6 +163,9 @@ def main(args=None, conf=None):
 		help='Any string to use as this node identity - '
 				'i.e. serial number, mac/hw address, machine-id, etc.'
 			' Hash of /etc/machine-id contents is used, if not specified.')
+	parser.add_argument('--ident-rpi', action='store_true',
+		help='Use hash of "Serial" from /proc/cpuinfo as ident.'
+			' Only available on Raspberry Pi boards.')
 
 	parser.add_argument('-m', '--mux-port',
 		default=conf.mux_port, type=int, metavar='port',
@@ -190,8 +194,17 @@ def main(args=None, conf=None):
 
 	ident = opts.ident_string
 	if not ident:
-		with open('/etc/machine-id', 'rb') as src:
-			ident = hashlib.blake2b(src.read(), key=to_bytes(opts.auth_secret)).digest()
+		if opts.ident_rpi:
+			import re
+			with open('/proc/cpuinfo') as src:
+				for line in src:
+					m = re.search(r'^\s*Serial\s*:\s*(\S+)\s*$', line)
+					if m: break
+				else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
+				ident = hashlib.blake2b(m.group(1).encode(), key=to_bytes(opts.auth_secret)).digest()
+		else:
+			with open('/etc/machine-id', 'rb') as src:
+				ident = hashlib.blake2b(src.read(), key=to_bytes(opts.auth_secret)).digest()
 
 	user, host = None, opts.host.rsplit(':', 1)
 	host, port_mux = (host[0], opts.mux_port) if len(host) == 1 else host
