@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os, sys, logging, contextlib, asyncio, socket, signal
-import math, hashlib, secrets, struct
+import math, hashlib, secrets, struct, subprocess
 
 
 class SSHMuxConfig:
@@ -184,6 +184,14 @@ def main(args=None, conf=None):
 	parser.add_argument('-t', '--timeout',
 		type=float, metavar='seconds', default=conf.mux_timeout,
 		help='Negotiation response timeout on --mux-port, in seconds. Default: %(default)ss')
+	parser.add_argument('-c', '--mux-hook',
+		action='append', metavar='command/args',
+		help='Command to run after successful mux-server negotiation and right before ssh exec.'
+			' Will be run via Popen, with PATH lookup, no shell, and arguments split on spaces'
+				' if option is specified once (e.g.: -c "logger arg1 arg2"),'
+				' otherwise each arg is passed as-is (e.g.: -c logger -c arg1 -c "arg2 with spaces").'
+			' Two extra arguments always appended -'
+				' remote ssh port and tunnel listening port, as received from mux-server.')
 
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -205,6 +213,9 @@ def main(args=None, conf=None):
 		else:
 			with open('/etc/machine-id', 'rb') as src:
 				ident = hashlib.blake2b(src.read(), key=to_bytes(opts.auth_secret)).digest()
+
+	mux_hook = opts.mux_hook
+	if len(mux_hook) == 1: mux_hook = mux_hook[0].split()
 
 	user, host = None, opts.host.rsplit(':', 1)
 	host, port_mux = (host[0], opts.mux_port) if len(host) == 1 else host
@@ -238,6 +249,11 @@ def main(args=None, conf=None):
 			return
 	log.debug( 'Negotiated ssh params:'
 		' ssh -R {}:localhost:22 -p{} {!r}', tun_port, ssh_port, ssh_login )
+
+	if mux_hook:
+		mux_hook.extend(map(str, [ssh_port, tun_port]))
+		log.debug('Running hook command: {}', ' '.join(mux_hook))
+		subprocess.Popen(mux_hook, close_fds=True).wait()
 
 	if opts.ssh_port: ssh_port = opts.ssh_port
 	ssh_cmd = ( ['ssh'] + conf.ssh_opts +
