@@ -827,6 +827,25 @@ ssh-tunnel
 Script to keep persistent, unique and reasonably responsive ssh tunnel.  Mostly
 just a wrapper with collection of options for such use-case.
 
+ssh-reverse-mux-\*
+^^^^^^^^^^^^^^^^^^
+
+Python 3.6+ (asyncio) scripts to establish multiple ssh reverse-port-forwarding
+("ssh -R") connections to the same tunnel-server from mutliple hosts using same
+exact configuration on each.
+
+Normally, first client host will bind the "ssh -R" listening port and all others
+will fail, but these two scripts negotiate unique port within specified range to
+each host, so there are no clashes and all tunnels work fine.
+
+Tunnel server also stores allocated ports in a db file, so that each client gets
+more-or-less persistent listening port.
+
+Each client negotiates port before exec'ing "ssh -R" command, identifying itself
+via -i/--ident string (derived from /etc/machine-id by default), and both
+client/server need to use same -s/--auth-secret to create/validate MACs in each
+packet.
+
 urlparse
 ^^^^^^^^
 
