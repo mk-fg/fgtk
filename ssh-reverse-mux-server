@@ -90,7 +90,7 @@ def parse_req(secret, req):
 		mac_chk = hashlib.blake2b(ident, key=to_bytes(secret), salt=salt).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except AuthError as err:
-		log.debug('Failed to parse/atuh request value: {}', err)
+		log.debug('Failed to parse/auth request value: {}', err)
 		return
 	return base64.urlsafe_b64encode(ident).decode()
 

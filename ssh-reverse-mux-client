@@ -100,7 +100,7 @@ def parse_res(secret, ident, res):
 		mac_chk = hashlib.blake2b(res_chk, key=to_bytes(secret), salt=salt).digest()
 		if secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except AuthError as err:
-		log.debug('Failed to parse/atuh response value: {}', err)
+		log.debug('Failed to parse/auth response value: {}', err)
 		return
 	ssh_port, tun_port = struct.unpack('>HH', res)
 	return ssh_port, tun_port
