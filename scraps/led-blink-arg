@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, pathlib, time
+
+
+class BlinkConfig:
+	leds_root = pathlib.Path('/sys/class/leds')
+	bit_repr = 1300, 100, 700
+	interval = 1.5, 5.0
+	interval_mark = 100, 100, 5
+
+
+def file_access_wrap(func, checks=12, timeout=1.0):
+	for n in range(checks, -1, -1):
+		try: return func()
+		except OSError: pass
+		if checks <= 0: break
+		if n: time.sleep(timeout / checks)
+	else: raise OSError('Access failed', func, timeout)
+
+sysfs_node = lambda n: file_access_wrap(ft.partial(open, n, 'wb', buffering=0))
+
+
+def main(args=None, conf=None):
+	if not conf: conf = BlinkConfig()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Blink passed port argument using linux led sysfs interface.')
+
+	parser.add_argument('args', nargs='+',
+		help='Any arguments to be used with e.g. -n/--arg-num option.')
+
+	parser.add_argument('-f', '--fork', action='store_true',
+		help='Fork and exit in main pid after start, i.e. daemonize.')
+	parser.add_argument('-l', '--led',
+		metavar='name', required=True,
+		help=f'Name of the led under {conf.leds_root} to use.')
+	parser.add_argument('-n', '--arg-num', metavar='n/bits-dec',
+		help='Argument ("1" for first) to use as a number for blinking.'
+			' Can include "/bits" suffix to blink only specified number of last bits.'
+			' Can also include "-dec" suffix to decrement value by specified number first.')
+
+	parser.add_argument('-d', '--debug',
+		action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	os.chdir(conf.leds_root / opts.led)
+	if opts.fork and os.fork(): return
+
+	if opts.arg_num:
+		n = opts.arg_num
+		n, bits = n.split('/', 1) if '/' in n else (n, None)
+		bits, dec = bits.split('-', 1) if '-' in bits else (bits, 0)
+		value = int(opts.args[int(n)-1])
+		bits = int(bits) if bits else value.bit_length()
+		if dec: value -= int(dec)
+
+		delay_pre, delay_post = conf.interval
+		bit_1, bit_0, bit_delay = conf.bit_repr
+		flash_on, flash_delay, flash_count = conf.interval_mark
+
+		with sysfs_node('trigger') as dst: dst.write(b'transient')
+		with sysfs_node('duration') as led_time, \
+				sysfs_node('state') as led_set, sysfs_node('activate') as led_run:
+
+			# Allow for warm-up slack on these first nodes
+			file_access_wrap(ft.partial(
+				led_time.write, str(flash_on).encode() ))
+			file_access_wrap(ft.partial(led_set.write, b'1\n'))
+
+			while True:
+				for n in range(flash_count):
+					led_run.write(b'1\n')
+					time.sleep((flash_on + flash_delay) / 1000.0)
+				time.sleep(delay_pre)
+
+				v = value
+				if opts.debug: print(f'Value: {v:b}')
+				for n in range(bits):
+					bit, v = v & 1, v >> 1
+					delay = bit_1 if bit else bit_0
+					if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
+					led_time.write(str(delay).encode())
+					led_run.write(b'1\n')
+					time.sleep((delay + bit_delay) / 1000.0)
+				time.sleep(delay_post)
+
+	else: parser.error('No blink-control options (e.g. -n/--arg-num) specified')
+
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())

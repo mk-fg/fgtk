@@ -2447,6 +2447,15 @@ Useful when running patched glusterd in a container, as described in
 
 .. _running-glusterfs-in-a-user-namespace blog post here: http://blog.fraggod.net/2017/03/21/running-glusterfs-in-a-user-namespace-uid-mapped-container.html
 
+led-blink-arg
+^^^^^^^^^^^^^
+
+Py3 script to blink bit-pattern from a passed argument using linux led subsystem
+(i.e. one of the leds in /sys/class/leds).
+
+Useful to make e.g. RPi boards booted from identical OS img distinguishable by
+blinking last bits of their IP address, MAC, serial number or stuff like that.
+
 
 
 License (WTFPL)
