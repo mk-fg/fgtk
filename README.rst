@@ -2456,6 +2456,13 @@ Py3 script to blink bit-pattern from a passed argument using linux led subsystem
 Useful to make e.g. RPi boards booted from identical OS img distinguishable by
 blinking last bits of their IP address, MAC, serial number or stuff like that.
 
+ssh-direct-gue-tunnel
+^^^^^^^^^^^^^^^^^^^^^
+
+Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
+
+One command instead of bunch of them, with some built-in templating to make it
+easier for identical remote hosts.
 
 
 License (WTFPL)

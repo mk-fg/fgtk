@@ -15,15 +15,14 @@ usage() {
 [[ "$1" = -h || "$1" = --help ]] && usage
 
 replace= machine= comment=
-while getopts "hrmc:" opt; do
-case "$opt" in
-		h) usage 0;;
-		r) replace=t;;
-		m) machine=t;;
-		c) comment="$OPTARG";;
-		*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; exit 1;;
-	esac
-done
+while getopts "hrmc:" opt
+do case "$opt" in
+	h) usage 0;;
+	r) replace=t;;
+	m) machine=t;;
+	c) comment=$OPTARG;;
+	*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; usage 1;;
+esac; done
 shift $((OPTIND-1))
 
 p="$1"

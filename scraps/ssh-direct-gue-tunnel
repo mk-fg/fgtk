@@ -1,0 +1,75 @@
+#!/bin/bash
+set -e
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage:"
+	echo >&2 "  $bin { add | del } [-v]"
+	echo >&2 "    [ -n tun-num ] [ -o tun-num-offset ]"
+	echo >&2 "    tun-name tun-dst-addr tun-port-base  addr-local addr-peer"
+	echo >&2
+	echo >&2 "Creates GUE tunnel to specified tun-dst-addr,"
+	echo >&2 " with src/dst port calculated as: tun-port-base [+tun-num [-tun-num-offset]]"
+	echo >&2 "If tun-num-offset is specified without tun-num,"
+	echo >&2 " latter is picked as last arg from led-blink-arg pid cmdline."
+	echo >&2 "Resulting tun-num is substituted instead of @ in all addrs."
+	exit ${1:-0}
+}
+
+op=$1
+case "$op" in
+	a|add) op=add;;
+	d|del) op=del;;
+	*) usage 1;;
+esac
+shift
+
+verbose= tun_num= tun_offset=
+while getopts ":hvn:o:" opt
+do case "$opt" in
+	h) usage 0;;
+	n) tun_num=$OPTARG;;
+	o) tun_offset=$OPTARG;;
+	v) verbose=t;;
+	*) echo >&2 "ERROR: Invalid option: -$OPTARG"; usage 1;;
+esac; done
+shift $((OPTIND-1))
+[[ $# -eq 5 ]] || usage 1
+tun=$1 tun_dst=$2 tun_base=$3 iface_addr=$4 iface_peer=$5
+
+[[ -n "$tun_num" || -z "$tun_offset" ]] || {
+	tun_num=$(pgrep -ofa -U0 '\<led-blink-arg\>' | awk '{print $NF}')
+	[[ -n "$tun_num" ]] || {
+		echo >&2 "Failed to auto-detect tun-num from led-blink-arg cmd"
+		exit 1
+	}
+}
+[[ -z "$tun_offset" ]] || tun_num=$(( "$tun_num" - "$tun_offset" ))
+[[ -n "$tun_num" ]] || tun_num=0
+tun_port=$(( "$tun_base" + "$tun_num" ))
+
+tun_dst=${tun_dst//@/$tun_num}
+iface_addr=${iface_addr//@/$tun_num}
+iface_peer=${iface_peer//@/$tun_num}
+
+if [[ "$op" = add ]]; then
+	[[ -z "$verbose" ]] || { echo "Tunnel [$tun] port: $tun_port"; set -x; }
+	modprobe fou
+	modprobe gre
+	ip link add name "$tun" type gre remote "$tun_dst" ttl 225 \
+		encap gue encap-sport "$tun_port" encap-dport "$tun_port" \
+		noencap-csum noencap-remcsum
+	ip addr add "$iface_addr" peer "$iface_peer" dev "$tun"
+	ip link set "$tun" up
+	ip fou add port "$tun_port" gue
+	exit 0
+fi
+
+if [[ "$op" = del ]]; then
+	[[ -z "$verbose" ]] || set -x
+	ip addr flush dev "$tun"
+	ip link set "$tun" down
+	ip link del "$tun"
+	ip fou del port "$tun_port"
+	exit 0
+fi

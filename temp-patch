@@ -25,15 +25,14 @@ usage() {
 }
 
 rw= touch_before= touch_after=t
-while getopts ":hwtm" opt; do
-case "$opt" in
-		h) usage 0;;
-		w) rw=t;;
-		t) touch_before=t touch_after=;;
-		m) [[ -z "$touch_after" ]] && touch_after=t || touch_after=;;
-		*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n";;
-	esac
-done
+while getopts ":hwtm" opt
+do case "$opt" in
+	h) usage 0;;
+	w) rw=t;;
+	t) touch_before=t touch_after=;;
+	m) [[ -z "$touch_after" ]] && touch_after=t || touch_after=;;
+	*) echo >&2 -e "ERROR: Invalid option: -$OPTARG\n";;
+esac; done
 shift $((OPTIND-1))
 
 [[ "$#" -ge 2 && "$#" -le 3 ]] || { echo >&2 "ERROR: Invalid number of args ($#)"; exit 1; }
