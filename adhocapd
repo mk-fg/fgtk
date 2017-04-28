@@ -99,10 +99,11 @@ run() {
 	echo "ip: $ip_min - $ip_max ($ip_mask), gw: $ip_gw"
 	echo "wifi: band=$ap_band chan=$ap_chan $ap_ht ${ap_vht%%$'\n'*}"
 	echo '--------------------'
+	echo "sysctl -w net.ipv4.conf.all.forwarding=1"
 	echo "iptables -t nat -I POSTROUTING -s ${ip_net} -j MASQUERADE"
-	echo "iptables -I FORWARD -s ${ip_net} -i ${dev} -j ACCEPT"
-	echo "iptables -I FORWARD -d ${ip_net} -o ${dev} -j ACCEPT"
-	echo "iptables -I INPUT -s ${ip_net} -i ${dev} -m udp --dport bootps -j ACCEPT"
+	echo "iptables -I FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	echo "iptables -I FORWARD -i ${dev} -s ${ip_net} -j ACCEPT"
+	echo "iptables -I INPUT -i ${dev} -p udp --dport 67 -j ACCEPT"
 	echo '--------------------'
 
 	exec > >(gawk '{print strftime("[%Y-%m-%dT%H:%M:%S]"), $0; fflush()}') 2>&1
