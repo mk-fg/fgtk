@@ -9,6 +9,7 @@ class BlinkError(Exception): pass
 
 class BlinkConfig:
 	leds_root = pathlib.Path('/sys/class/leds')
+	gpio_root = pathlib.Path('/sys/class/gpio')
 	bit_repr = 1300, 150, 700
 
 
@@ -23,9 +24,8 @@ class LEDControl(LEDControlBase):
 	led_sysfs = led_gpio = None
 
 	def __init__(self, led, conf):
-		if not isinstance(led, str):
-			raise NotImplementedError(led)
-		self.led_sysfs = conf.leds_root / led
+		if isinstance(led, str): self.led_sysfs = conf.leds_root / led
+		else: self.led_gpio, self.gpio_root = led, conf.gpio_root
 
 	def file_access_wrap(self, func, checks=12, timeout=1.0):
 		for n in range(checks, -1, -1):
@@ -47,6 +47,13 @@ class LEDControl(LEDControlBase):
 			self.led_set, self.led_time, self.led_run = (
 				self.sysfs_node(self.led_sysfs / k) for k in 'state duration activate'.split() )
 			self.sysfs_write(self.led_set, b'1')
+		else:
+			p = self.gpio_root / f'gpio{self.led_gpio}'
+			if not p.exists():
+				with self.sysfs_node(self.gpio_root / 'export') as dst:
+					self.sysfs_write(dst, str(self.led_gpio).encode())
+			with self.sysfs_node(p / 'direction') as dst: self.sysfs_write(dst, b'low')
+			self.led_gpio = self.sysfs_node(p / 'value')
 		return self
 
 	def __exit__(self, *err):
@@ -56,13 +63,18 @@ class LEDControl(LEDControlBase):
 			self.led_set.close()
 			self.led_trigger.write(b'none')
 			self.led_trigger.close()
+		else:
+			self.sysfs_write(self.led_gpio, b'0')
+			self.led_gpio.close()
 
 	def state(self, on, ms):
-		if on:
-			if self.led_sysfs:
-				self.sysfs_write(self.led_time, str(ms).encode())
-				self.sysfs_write(self.led_run, b'1')
+		if self.led_sysfs and on:
+			self.sysfs_write(self.led_time, str(ms).encode())
+			self.sysfs_write(self.led_run, b'1')
+		if self.led_gpio:
+			self.sysfs_write(self.led_gpio, str(int(bool(on))).encode())
 		time.sleep(ms / 1000)
+		if self.led_gpio and on: self.sysfs_write(self.led_gpio, b'0')
 
 
 def blink_seq(conf, led, seq, dry_run=False, log=None):
@@ -191,7 +203,7 @@ def main(args=None, conf=None):
 
 	seq = ' '.join(opts.seq).split()
 	led_spec = opts.led or int(opts.gpio_pin)
-	blink_seq(conf, led_spec, seq, dry_run=True, log=log) # syntax check
+	blink_seq(conf, led_spec, seq, dry_run=True, log=opts.dry_run and log) # syntax check
 
 	if not opts.dry_run:
 		if opts.fork and os.fork(): return
@@ -200,5 +212,6 @@ def main(args=None, conf=None):
 
 if __name__ == '__main__':
 	import signal
-	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	for sig in 'int term'.upper().split():
+		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
 	sys.exit(main())
