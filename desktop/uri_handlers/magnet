@@ -20,17 +20,20 @@ coproc awk '
 	match($0, /\<xt=urn:btih:([0-9a-fA-F]+)/, a)\
 		{printf("bt %s.magnet\n", a[1]); fflush(); next}
 	{ print $0 |& "md5sum"; close("md5sum", "to"); "md5sum" |& getline
-		printf("misc %s.magnet", $1); fflush() }'
+		printf("misc %s.magnet\n", $1); fflush() }'
 
 err=
 for src in "$@"; do
 	echo "$src"> /dev/fd/"${COPROC[1]}"
 	read dst_type dst_basename < /dev/fd/"${COPROC[0]}"
 
-	dst="${dst_dirs[$dst_type]}/${dst_basename}"
-	[[ -z "$dst" ]] && { echo >&2 "Failed to classify link"\
-		"(type: ${dst_type}, basename: ${dst_basename})"; err=true; }
-	echo "$src" >"$dst" || { echo >&2 "Failed to write to a destination file (${dst})"; err=true; }
+	[[ -n "${dst_dirs[$dst_type]}" ]] && dst="${dst_dirs[$dst_type]}/${dst_basename}"\
+		|| { printf >&2 "ERROR: No --dst-$dst_type specified for link: %q\n" "$src"; dst=; }
+	[[ -n "$dst" ]] || {
+		echo >&2 "ERROR: Failed to classify link, skipping" \
+			"(type: ${dst_type}, basename: ${dst_basename})"; err=true; continue; }
+	echo "$src" >"$dst" || {
+		echo >&2 "ERROR: Failed to write to a destination file (${dst})"; err=true; }
 done
 
 eval "exec ${COPROC[0]}>&- ${COPROC[1]}>&-"
