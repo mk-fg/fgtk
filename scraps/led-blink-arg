@@ -29,7 +29,9 @@ def main(args=None, conf=None):
 
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Blink passed port argument using linux led sysfs interface.')
+		description='Blink passed port argument using linux led sysfs interface.',
+		epilog='Example: `led-blink-arg -f -l led0 -n 2/4-2200'
+			' -- some-arg 2213 yada yada` (will blink 13 in 4 bits on led0).')
 
 	parser.add_argument('args', nargs='+',
 		help='Any arguments to be used with e.g. -n/--arg-num option.')
@@ -48,48 +50,48 @@ def main(args=None, conf=None):
 		action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+	if not opts.arg_num:
+		parser.error('No blink-control options (e.g. -n/--arg-num) specified')
+
 	os.chdir(conf.leds_root / opts.led)
 	if opts.fork and os.fork(): return
 
-	if opts.arg_num:
-		n = opts.arg_num
-		n, bits = n.split('/', 1) if '/' in n else (n, None)
-		bits, dec = bits.split('-', 1) if '-' in bits else (bits, 0)
-		value = int(opts.args[int(n)-1])
-		bits = int(bits) if bits else value.bit_length()
-		if dec: value -= int(dec)
+	n = opts.arg_num
+	n, bits = n.split('/', 1) if '/' in n else (n, None)
+	bits, dec = bits.split('-', 1) if '-' in bits else (bits, 0)
+	value = int(opts.args[int(n)-1])
+	bits = int(bits) if bits else value.bit_length()
+	if dec: value -= int(dec)
 
-		delay_pre, delay_post = conf.interval
-		bit_1, bit_0, bit_delay = conf.bit_repr
-		flash_on, flash_delay, flash_count = conf.interval_mark
+	delay_pre, delay_post = conf.interval
+	bit_1, bit_0, bit_delay = conf.bit_repr
+	flash_on, flash_delay, flash_count = conf.interval_mark
 
-		with sysfs_node('trigger') as dst: dst.write(b'transient')
-		with sysfs_node('duration') as led_time, \
-				sysfs_node('state') as led_set, sysfs_node('activate') as led_run:
+	with sysfs_node('trigger') as dst: dst.write(b'transient')
+	with sysfs_node('duration') as led_time, \
+			sysfs_node('state') as led_set, sysfs_node('activate') as led_run:
 
-			# Allow for warm-up slack on these first nodes
-			file_access_wrap(ft.partial(
-				led_time.write, str(flash_on).encode() ))
-			file_access_wrap(ft.partial(led_set.write, b'1\n'))
+		# Allow for warm-up slack on these first nodes
+		file_access_wrap(ft.partial(
+			led_time.write, str(flash_on).encode() ))
+		file_access_wrap(ft.partial(led_set.write, b'1\n'))
 
-			while True:
-				for n in range(flash_count):
-					sysfs_write(led_run, b'1')
-					time.sleep((flash_on + flash_delay) / 1000.0)
-				time.sleep(delay_pre)
+		while True:
+			for n in range(flash_count):
+				sysfs_write(led_run, b'1')
+				time.sleep((flash_on + flash_delay) / 1000.0)
+			time.sleep(delay_pre)
 
-				v = value
-				if opts.debug: print(f'Value: {v:b}')
-				for n in range(bits):
-					bit, v = v & 1, v >> 1
-					delay = bit_1 if bit else bit_0
-					if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
-					sysfs_write(led_time, str(delay).encode())
-					sysfs_write(led_run, b'1')
-					time.sleep((delay + bit_delay) / 1000.0)
-				time.sleep(delay_post)
-
-	else: parser.error('No blink-control options (e.g. -n/--arg-num) specified')
+			v = value
+			if opts.debug: print(f'Value: {v:b}')
+			for n in range(bits):
+				bit, v = v & 1, v >> 1
+				delay = bit_1 if bit else bit_0
+				if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
+				sysfs_write(led_time, str(delay).encode())
+				sysfs_write(led_run, b'1')
+				time.sleep((delay + bit_delay) / 1000.0)
+			time.sleep(delay_post)
 
 
 if __name__ == '__main__':
