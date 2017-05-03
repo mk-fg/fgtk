@@ -77,7 +77,7 @@ class LEDControl(LEDControlBase):
 		if self.led_gpio and on: self.sysfs_write(self.led_gpio, b'0')
 
 
-def blink_seq(conf, led, seq, dry_run=False, log=None):
+def blink_seq(led, seq, dry_run=False, conf=None, log=None):
 	'''Blinks `seq` on `led` (str for sysfs name, int for gpio pin).
 		`conf` should be an instance of BlinkConfig.
 		`dry_run` runs the `seq` ignoring any looping options just to check for correctness.
@@ -87,6 +87,7 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 				{ 'bit-repr' | 'r'['epeat'] }:{args} | {n[/bits][-dec]} | '[' | ']' | '<'
 		`seq` example: +1s r:5 [ -100 +100 ] -1.5s 237 -5s <
 	'''
+	if not conf: conf = BlinkConfig()
 	if isinstance(seq, str): seq = seq.split()
 
 	ledctl_ctx = (LEDControl if not dry_run else LEDControlBase)(led, conf)
@@ -166,7 +167,7 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 				else: repeat_step = [step]
 				if repeat_step:
 					if log: log.debug(f'Repeat: {repeat} x {repeat_step}')
-					for n in range(repeat):
+					for n in range(repeat-1):
 						seq_deque.extendleft(reversed(repeat_step))
 					repeat = 0
 
@@ -203,11 +204,11 @@ def main(args=None, conf=None):
 
 	seq = ' '.join(opts.seq).split()
 	led_spec = opts.led or int(opts.gpio_pin)
-	blink_seq(conf, led_spec, seq, dry_run=True, log=opts.dry_run and log) # syntax check
+	blink_seq(led_spec, seq, dry_run=True, conf=conf, log=opts.dry_run and log) # syntax check
 
 	if not opts.dry_run:
 		if opts.fork and os.fork(): return
-		blink_seq(conf, led_spec, seq, log=log)
+		blink_seq(led_spec, seq, conf=conf, log=log)
 
 
 if __name__ == '__main__':
