@@ -67,31 +67,31 @@ def main(args=None, conf=None):
 	bit_1, bit_0, bit_delay = conf.bit_repr
 	flash_on, flash_delay, flash_count = conf.interval_mark
 
-	with sysfs_node('trigger') as dst: dst.write(b'transient')
-	with sysfs_node('duration') as led_time, \
-			sysfs_node('state') as led_set, sysfs_node('activate') as led_run:
+	with sysfs_node('trigger') as dst:
+		sysfs_write(dst, b'transient')
+		try:
+			with sysfs_node('duration') as led_time, \
+					sysfs_node('state') as led_set, sysfs_node('activate') as led_run:
+				sysfs_write(led_set, b'1')
 
-		# Allow for warm-up slack on these first nodes
-		file_access_wrap(ft.partial(
-			led_time.write, str(flash_on).encode() ))
-		file_access_wrap(ft.partial(led_set.write, b'1\n'))
+				while True:
+					sysfs_write(led_time, str(flash_on).encode())
+					for n in range(flash_count):
+						sysfs_write(led_run, b'1')
+						time.sleep((flash_on + flash_delay) / 1000.0)
+					time.sleep(delay_pre)
 
-		while True:
-			for n in range(flash_count):
-				sysfs_write(led_run, b'1')
-				time.sleep((flash_on + flash_delay) / 1000.0)
-			time.sleep(delay_pre)
-
-			v = value
-			if opts.debug: print(f'Value: {v:b}')
-			for n in range(bits):
-				bit, v = v & 1, v >> 1
-				delay = bit_1 if bit else bit_0
-				if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
-				sysfs_write(led_time, str(delay).encode())
-				sysfs_write(led_run, b'1')
-				time.sleep((delay + bit_delay) / 1000.0)
-			time.sleep(delay_post)
+					v = value
+					if opts.debug: print(f'Value: {v:b}')
+					for n in range(bits):
+						bit, v = v & 1, v >> 1
+						delay = bit_1 if bit else bit_0
+						if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
+						sysfs_write(led_time, str(delay).encode())
+						sysfs_write(led_run, b'1')
+						time.sleep((delay + bit_delay) / 1000.0)
+					time.sleep(delay_post)
+		finally: sysfs_write(dst, b'none')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+from collections import deque
+import os, sys, pathlib, time, logging, contextlib
+
+
+class BlinkError(Exception): pass
+
+class BlinkConfig:
+	leds_root = pathlib.Path('/sys/class/leds')
+	bit_repr = 1300, 100, 700
+
+
+class LEDControlBase:
+
+	def __init__(self, led, conf): pass
+	def __enter__(self): pass
+	def __exit__(self, *err): pass
+
+class LEDControl(LEDControlBase):
+
+	led_sysfs = led_gpio = None
+
+	def __init__(self, led, conf):
+		if not isinstance(led, str):
+			raise NotImplementedError(led)
+		self.led_sysfs = conf.leds_root / led
+
+	def file_access_wrap(self, func, checks=12, timeout=1.0):
+		for n in range(checks, -1, -1):
+			try: return func()
+			except OSError: pass
+			if checks <= 0: break
+			if n: time.sleep(timeout / checks)
+		else: raise OSError('Access failed', func, timeout)
+
+	def sysfs_node(self, n):
+		return self.file_access_wrap(ft.partial(open, n, 'wb', buffering=0))
+	def sysfs_write(self, dst, data, end=b'\n'):
+		return self.file_access_wrap(ft.partial(dst.write, data + (end or b'')))
+
+	def __enter__(self):
+		if self.led_sysfs:
+			self.led_trigger = self.sysfs_node(self.led_sysfs / 'trigger')
+			self.sysfs_write(self.led_trigger, b'transient')
+			self.led_set, self.led_time, self.led_run = (
+				self.sysfs_node(self.led_sysfs / k) for k in 'state duration activate'.split() )
+			self.sysfs_write(self.led_set, b'1')
+		return self
+
+	def __exit__(self, *err):
+		if self.led_sysfs:
+			self.led_run.close()
+			self.led_time.close()
+			self.led_set.close()
+			self.led_trigger.write(b'none')
+			self.led_trigger.close()
+
+	def state(self, on, ms):
+		if on:
+			if self.led_sysfs:
+				self.sysfs_write(self.led_time, str(ms).encode())
+				self.sysfs_write(self.led_run, b'1')
+		time.sleep(ms / 1000.0)
+
+
+def blink_seq(conf, led, seq, dry_run=False, log=None):
+	'''Blinks `seq` on `led` (str for sysfs name, int for gpio pin).
+		`conf` should be an instance of BlinkConfig.
+		`dry_run` runs the `seq` ignoring any looping options just to check for correctness.
+		`log` is only used for debugging.
+		`seq` step syntax: +{ms} | -{ms} | { 'bit-repr' | 'r'['epeat'] }:{args} | {n} | '<'
+	'''
+	if isinstance(seq, str): seq = seq.split()
+
+	ledctl_ctx = (LEDControl if not dry_run else LEDControlBase)(led, conf)
+	with ledctl_ctx as ledctl:
+		init = True
+
+		while True:
+			if init:
+				bit_1, bit_0, bit_delay = conf.bit_repr
+				seq_deque, subseq = deque(seq), list()
+				init, repeat = False, 0
+			try: step = seq_deque.popleft()
+			except IndexError: break
+
+			if isinstance(step, (int, float)) and step <= 0:
+				raise BlinkError(seq, step)
+			if not step: continue
+			step = str(step)
+			if log: log.debug(f'Step: {step!r}')
+			# if log: log.debug(f'  subseq: {subseq}')
+
+			### Options and meta-steps
+
+			if ':' in step:
+				op, args = step.split(':', 1)
+				if op == 'bit-repr': bit_1, bit_0, bit_delay = map(int, args.split(','))
+				if op in ['r', 'repeat']: repeat = int(args)
+				else: raise BlinkError(seq, op, step)
+				continue
+
+			if step[0] == '<':
+				if not dry_run: init = True
+				continue
+
+			if step in '[]':
+				if step == '[':
+					if subseq: raise BlinkError(seq, step, subseq)
+					subseq.append(None)
+					continue
+				elif not subseq: raise BlinkError(seq, step, subseq)
+				else: subseq.append(None)
+			elif subseq: subseq.append(step)
+
+			### Actual LED actions
+
+			if step[0] in '+-':
+				on, ms = int(step[0] == '+'), step[1:]
+				ms = int(ms if not ms.endswith('s') else (float(ms[:-1])*1000))
+				if log: log.debug(f'- state: {on} [{ms}ms]')
+				if not dry_run: ledctl.state(on, ms)
+
+			elif step.isdigit():
+				step_bits = int(step)
+				if log: log.debug(f'- value: {step_bits:b}')
+				if step_bits:
+					v = step_bits
+					for n in range(v.bit_length()):
+						bit, v = v & 1, v >> 1
+						ms = bit_1 if bit else bit_0
+						if log: log.debug(f'-- {step:b}[{n}] = {bit} [{ms}ms]')
+						if not dry_run: ledctl.state(1, ms)
+
+			### (Limited) repeat for last step or subseq
+
+			if repeat:
+				repeat_step = None
+				if subseq:
+					if subseq[-1] is None:
+						repeat_step = subseq[1:-1]
+						subseq.clear()
+				else: repeat_step = [step]
+				if repeat_step:
+					if log: log.debug(f'Repeat: {repeat} x {repeat_step}')
+					for n in range(repeat):
+						seq_deque.extendleft(reversed(repeat_step))
+					repeat = 0
+
+
+def main(args=None, conf=None):
+	if not conf: conf = BlinkConfig()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Blink passed sequence using linux led/gpio sysfs interface.',
+		epilog='Simple example: led-blink-seq --debug'
+			' -l led0 "+1s -500 r:3 [ +100 -500 +300 -500 ] +1s -2.5s <"')
+
+	parser.add_argument('seq', nargs='+', help='Sequence of actions to run.')
+
+	parser.add_argument('-f', '--fork', action='store_true',
+		help='Fork and exit in main pid after start, i.e. daemonize.')
+	parser.add_argument('-l', '--led', metavar='name',
+		help=f'Name of the sysfs led under {conf.leds_root} to use.')
+	parser.add_argument('-g', '--gpio-pin', type=int, metavar='n',
+		help=f'GPIO pin number to switch for LED control.')
+
+	parser.add_argument('-d', '--debug',
+		action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if not bool(opts.led) ^ bool(opts.gpio_pin):
+		parser.error('One of --led or --gpio-pin must be specified (but not both).')
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger('main')
+
+	seq = ' '.join(opts.seq).split()
+	led_spec = opts.led or int(opts.gpio_pin)
+	blink_seq(conf, led_spec, seq, dry_run=True, log=log) # syntax check
+
+	if opts.fork and os.fork(): return
+	blink_seq(conf, led_spec, seq, log=log)
+
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())
