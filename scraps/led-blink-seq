@@ -9,7 +9,7 @@ class BlinkError(Exception): pass
 
 class BlinkConfig:
 	leds_root = pathlib.Path('/sys/class/leds')
-	bit_repr = 1300, 100, 700
+	bit_repr = 1300, 200, 700
 
 
 class LEDControlBase:
@@ -62,7 +62,7 @@ class LEDControl(LEDControlBase):
 			if self.led_sysfs:
 				self.sysfs_write(self.led_time, str(ms).encode())
 				self.sysfs_write(self.led_run, b'1')
-		time.sleep(ms / 1000.0)
+		time.sleep(ms / 1000)
 
 
 def blink_seq(conf, led, seq, dry_run=False, log=None):
@@ -70,7 +70,9 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 		`conf` should be an instance of BlinkConfig.
 		`dry_run` runs the `seq` ignoring any looping options just to check for correctness.
 		`log` is only used for debugging.
-		`seq` step syntax: +{ms} | -{ms} | { 'bit-repr' | 'r'['epeat'] }:{args} | {n} | '<'
+		`seq` step syntax:
+			{ '+' | '-' }{ms:int | s:float 's'} | { 'bit-repr' | 'r'['epeat'] }:{args} | {n} | '<'
+		`seq` example: +1s r:5 [ -100 +100 ] -1.5s 237 -5s <
 	'''
 	if isinstance(seq, str): seq = seq.split()
 
@@ -131,8 +133,10 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 					for n in range(v.bit_length()):
 						bit, v = v & 1, v >> 1
 						ms = bit_1 if bit else bit_0
-						if log: log.debug(f'-- {step:b}[{n}] = {bit} [{ms}ms]')
-						if not dry_run: ledctl.state(1, ms)
+						if log: log.debug(f'-- {step_bits:b}[{n}] = {bit} [{ms}ms]')
+						if not dry_run:
+							ledctl.state(1, ms)
+							time.sleep(bit_delay / 1000)
 
 			### (Limited) repeat for last step or subseq
 
@@ -157,7 +161,7 @@ def main(args=None, conf=None):
 	parser = argparse.ArgumentParser(
 		description='Blink passed sequence using linux led/gpio sysfs interface.',
 		epilog='Simple example: led-blink-seq --debug'
-			' -l led0 "+1s -500 r:3 [ +100 -500 +300 -500 ] +1s -2.5s <"')
+			' -l led0 "+1s r:5 [ -100 +100 ] -1.5s 237 -5s <"')
 
 	parser.add_argument('seq', nargs='+', help='Sequence of actions to run.')
 
