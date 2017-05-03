@@ -30,6 +30,11 @@ class sockaddr_in6(ct.Structure):
 	_fields_ = [ ('sin6_family', ct.c_short), ('sin6_port', ct.c_ushort),
 		('sin6_flowinfo', ct.c_uint32), ('sin6_addr', ct.c_byte * 16) ]
 
+class sockaddr_ll(ct.Structure):
+	_fields_ = [ ('sll_family', ct.c_ushort), ('sll_protocol', ct.c_ushort),
+		('sll_ifindex', ct.c_int), ('sll_hatype', ct.c_ushort), ('sll_pkttype', ct.c_uint8),
+		('sll_halen', ct.c_uint8), ('sll_addr', ct.c_uint8 * 8) ]
+
 class sockaddr(ct.Structure):
 	_fields_ = [('sa_family', ct.c_ushort)]
 
@@ -38,7 +43,8 @@ ifaddrs._fields_ = [ # recursive
 	('ifa_next', ct.POINTER(ifaddrs)), ('ifa_name', ct.c_char_p),
 	('ifa_flags', ct.c_uint), ('ifa_addr', ct.POINTER(sockaddr)) ]
 
-def get_iface_addrs():
+def get_iface_addrs(ipv4=False, ipv6=False, mac=False, ifindex=False):
+	if not (ipv4 or ipv6 or mac or ifindex): ipv4 = ipv6 = True
 	libc = ct.CDLL('libc.so.6', use_errno=True)
 	libc.getifaddrs.restype = ct.c_int
 	ifaddr_p = head = ct.pointer(ifaddrs())
@@ -50,15 +56,19 @@ def get_iface_addrs():
 		addrs = ifaces.setdefault(ifaddr_p.contents.ifa_name.decode(), list())
 		addr = ifaddr_p.contents.ifa_addr
 		if addr:
-			af = addr.contents.sa_family
-			if af == socket.AF_INET:
+			ac, af = addr.contents, addr.contents.sa_family
+			if ipv4 and af == socket.AF_INET:
 				addr = ct.cast(addr, ct.POINTER(sockaddr_in))
-				addr = socket.inet_ntop(af, addr.contents.sin_addr)
-			elif af == socket.AF_INET6:
+				addrs.append(socket.inet_ntop(af, ac.sin_addr))
+			elif ipv6 and af == socket.AF_INET6:
 				addr = ct.cast(addr, ct.POINTER(sockaddr_in6))
-				addr = socket.inet_ntop(af, addr.contents.sin6_addr)
-			else: addr = None
-			if addr: addrs.append(addr)
+				addrs.append(socket.inet_ntop(af, ac.sin6_addr))
+			elif (mac or ifindex) and af == socket.AF_PACKET:
+				addr = ct.cast(addr, ct.POINTER(sockaddr_ll))
+				if mac:
+					addrs.append('mac-' + ':'.join(
+						map('{:02x}'.format, ac.sll_addr[:ac.sll_halen]) ))
+				if ifindex: addrs.append(ac.sll_ifindex)
 		ifaddr_p = ifaddr_p.contents.ifa_next
 	libc.freeifaddrs(head)
 	return ifaces

@@ -20,6 +20,8 @@ def file_access_wrap(func, checks=12, timeout=1.0):
 	else: raise OSError('Access failed', func, timeout)
 
 sysfs_node = lambda n: file_access_wrap(ft.partial(open, n, 'wb', buffering=0))
+sysfs_write = lambda dst, data, end=b'\n': \
+	file_access_wrap(ft.partial(dst.write, data + (end or b'')))
 
 
 def main(args=None, conf=None):
@@ -72,7 +74,7 @@ def main(args=None, conf=None):
 
 			while True:
 				for n in range(flash_count):
-					led_run.write(b'1\n')
+					sysfs_write(led_run, b'1')
 					time.sleep((flash_on + flash_delay) / 1000.0)
 				time.sleep(delay_pre)
 
@@ -82,8 +84,8 @@ def main(args=None, conf=None):
 					bit, v = v & 1, v >> 1
 					delay = bit_1 if bit else bit_0
 					if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
-					led_time.write(str(delay).encode())
-					led_run.write(b'1\n')
+					sysfs_write(led_time, str(delay).encode())
+					sysfs_write(led_run, b'1')
 					time.sleep((delay + bit_delay) / 1000.0)
 				time.sleep(delay_post)
 

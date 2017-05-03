@@ -2,6 +2,7 @@
 
 
 dev= ssid= pass= ip_base=
+ap_band= ap_chan= ap_ht= ap_vht=
 
 ssid_list=(
 	'Police Surveillance Van 2'
@@ -71,12 +72,20 @@ ssid_list=(
 
 
 run() {
-	[[ -z "$pass" ]] && pass=$(
+	[[ -n "$pass" ]] || pass=$(
 		passgen -w $(random 2 3) 2>/dev/null\
 			|| tr -cd '[:alnum:]' </dev/urandom | head -c10 )
-	[[ -z "$dev" ]] && dev=$(iw dev | gawk '$1=="Interface" {print $2; exit}')
-	[[ -z "$ssid" ]] && ssid=${ssid_list[$(random 0 ${#ssid_list[@]})]}
-	[[ -z "$ip_base" ]] && ip_base=10.67.35
+	[[ -n "$dev" ]] || {
+		dev=$(iw dev | gawk '$1=="Interface" {print $2; exit}')
+		[[ -n "$dev" ]] || { echo >&2 "Failed to detect wireless interface name"; exit 1; }
+	}
+	[[ -n "$ssid" ]] || ssid=${ssid_list[$(random 0 ${#ssid_list[@]})]}
+	[[ -n "$ip_base" ]] || ip_base=10.67.35
+
+	[[ -n "$ap_band" ]] || ap_band=g
+	[[ -n "$ap_chan" ]] || ap_chan=2
+	[[ -z "$ap_ht" ]] || ap_ht="ieee80211n=1"
+	[[ -z "$ap_vht" ]] || ap_vht=$'ieee80211ac=1\nvht_oper_centr_freq_seg0_idx='"$ap_vht"
 
 	ip_gw="$ip_base".1
 	ip_min="$ip_base".2 ip_max="$ip_base".254
@@ -88,11 +97,13 @@ run() {
 	echo "ssid: $ssid"
 	echo "pass: $pass"
 	echo "ip: $ip_min - $ip_max ($ip_mask), gw: $ip_gw"
+	echo "wifi: band=$ap_band chan=$ap_chan $ap_ht ${ap_vht%%$'\n'*}"
 	echo '--------------------'
+	echo "sysctl -w net.ipv4.conf.all.forwarding=1"
 	echo "iptables -t nat -I POSTROUTING -s ${ip_net} -j MASQUERADE"
-	echo "iptables -I FORWARD -s ${ip_net} -i ${dev} -j ACCEPT"
-	echo "iptables -I FORWARD -d ${ip_net} -o ${dev} -j ACCEPT"
-	echo "iptables -I INPUT -s ${ip_net} -i ${dev} -m udp --dport bootps -j ACCEPT"
+	echo "iptables -I FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	echo "iptables -I FORWARD -i ${dev} -s ${ip_net} -j ACCEPT"
+	echo "iptables -I INPUT -i ${dev} -p udp --dport 67 -j ACCEPT"
 	echo '--------------------'
 
 	exec > >(gawk '{print strftime("[%Y-%m-%dT%H:%M:%S]"), $0; fflush()}') 2>&1
@@ -125,28 +136,26 @@ EOF
 #################### hostapd.conf
 	hostapd_conf="$conf"/hostapd.conf
 	cat >"$hostapd_conf" <<EOF
-# http://hostap.epitest.fi/gitweb/gitweb.cgi?p=hostap.git;a=blob_plain;f=hostapd/hostapd.conf
-
-interface=$dev
-
-driver=nl80211
-hw_mode=g
-channel=2
-
-country_code=RU
-ieee80211d=1
+# https://w1.fi/cgit/hostap/plain/hostapd/hostapd.conf
 
 ssid=$ssid
+wpa_passphrase=$pass
+interface=$dev
 
-macaddr_acl=0
-ignore_broadcast_ssid=0
+channel=$ap_chan
+hw_mode=$ap_band
+$ap_ht
+$ap_vht
 
+driver=nl80211
+country_code=RU
+ieee80211d=1
 auth_algs=1
 wpa=3
 wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
+wpa_pairwise=TKIP CCMP
 rsn_pairwise=CCMP
-wpa_passphrase=$pass
+vht_oper_chwidth=1
 
 logger_syslog=0
 logger_syslog_level=4
@@ -177,7 +186,7 @@ while [[ -n "$1" ]]; do
 				'/^\s+case\>/ {parse=1; next}
 				/^\s+esac\>/ {exit}
 				!parse {next}
-				match($0, /^\s*([\-|a-z]+)\)/, a) {
+				match($0, /^\s*([\-|a-z0-9]+)\)/, a) {
 					if (ac==0 || ac<2) ac=""; else ac=sprintf(" ...(%s)", ac-1)
 					if (ap) printf("[ %s%s ] ", ap, ac)
 					ap=a[1]; ac=0 }
@@ -185,10 +194,15 @@ while [[ -n "$1" ]]; do
 			exit 0 ;;
 
 		-x) shift; set -x ;;
-		-d|--dev) shift; dev="$1"; shift ;;
-		-s|--ssid) shift; ssid="$1"; shift ;;
-		-p|--pass) shift; pass="$1"; shift ;;
-		-a|--ip-base) shift; ip_base="$1"; shift ;;
+		-d|--dev) shift; dev=$1; shift ;;
+		-s|--ssid) shift; ssid=$1; shift ;;
+		-p|--pass) shift; pass=$1; shift ;;
+		-a|--ip-base) shift; ip_base=$1; shift ;;
+
+		-m|--wifi-band) shift; ap_band=$1; shift ;;
+		-c|--wifi-chan) shift; ap_chan=$1; shift ;;
+		-ht|--wifi-ht) shift; ap_ht=t ;;
+		-vht|--wifi-vht-seg0) shift; ap_ht=t; ap_vht=$1; shift ;;
 
 		welp) exit 1 ;;
 		*) echo "Unknown option: $1" && exit 1 ;;

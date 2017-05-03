@@ -5,7 +5,7 @@ opts=( -acodec copy -vn )
 
 [[ -z "$1" || -z "$2" || "$1" = -h || "$1" = --help ]] && {
 	cmd=$(basename "$0")
-	echo >&2 "Usage: $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ] [ ffmpeg opts ]"
+	echo >&2 "Usage: $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ]"
 	echo >&2 "Example: $cmd some-long-book.mp3 slb"
 	echo >&2 "  Resulting files will be: slb-001.mp3 slb-002.mp3 ..."
 	echo >&2 "  Default length: $step minutes"
@@ -13,14 +13,16 @@ opts=( -acodec copy -vn )
 	echo >&2 "  Special ffmpeg opts (must be before others, if any, only one at a time):"
 	echo >&2 "    -: don't pass any"
 	echo >&2 "    -v: -c copy -bsf:a aac_adtstoasc"
+	echo >&2 "Example (transcode to ogg): $cmd some-file.m4b sf-split 30 ogg -f ogg"
 	exit 1
 }
 
 set -e -o pipefail
-step=$(( $step * 60 ))
 src=$1 prefix=$2
 shift; shift
 [[ -z "$1" ]] || { step=$1; shift; }
+[[ -z "$1" ]] || { ext=$1; shift; }
+step=$(( $step * 60 ))
 
 
 if [[ $# -ge 1 ]]
@@ -33,7 +35,7 @@ fi
 len=$( ffprobe "$src" 2>&1 |
 	awk 'match($0,/Duration: (\S+)\./,a) {split(a[1],b,":");print b[1]*3600+b[2]*60+b[3]}' )
 [[ -n "$len" && "$len" -gt 0 ]] || { echo >&2 "ERROR: Failed to get source duration"; exit 1; }
-ext=${src##*.}
+[[ -n "$ext" ]] || ext=${src##*.}
 
 n=1
 ns=$(( ($len / $step) + 1 ))
