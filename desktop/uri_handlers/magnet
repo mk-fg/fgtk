@@ -17,7 +17,7 @@ done
 [[ -z "$1" ]] && { echo >&2 "Expecting at least one link"; exit 1; }
 
 coproc awk '
-	match($0, /\<xt=urn:btih:([0-9a-fA-F]+)/, a)\
+	match($0, /\<xt=urn:btih:([0-9a-zA-Z]+)/, a)\
 		{printf("bt %s.magnet\n", a[1]); fflush(); next}
 	{ print $0 |& "md5sum"; close("md5sum", "to"); "md5sum" |& getline
 		printf("misc %s.magnet\n", $1); fflush() }'
