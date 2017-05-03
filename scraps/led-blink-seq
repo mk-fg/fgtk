@@ -9,7 +9,7 @@ class BlinkError(Exception): pass
 
 class BlinkConfig:
 	leds_root = pathlib.Path('/sys/class/leds')
-	bit_repr = 1300, 200, 700
+	bit_repr = 1300, 150, 700
 
 
 class LEDControlBase:
@@ -71,7 +71,8 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 		`dry_run` runs the `seq` ignoring any looping options just to check for correctness.
 		`log` is only used for debugging.
 		`seq` step syntax:
-			{ '+' | '-' }{ms:int | s:float 's'} | { 'bit-repr' | 'r'['epeat'] }:{args} | {n} | '<'
+			{ '+' | '-' }{ ms:int | s:float 's' } |
+				{ 'bit-repr' | 'r'['epeat'] }:{args} | {n[/bits][-dec]} | '[' | ']' | '<'
 		`seq` example: +1s r:5 [ -100 +100 ] -1.5s 237 -5s <
 	'''
 	if isinstance(seq, str): seq = seq.split()
@@ -125,15 +126,19 @@ def blink_seq(conf, led, seq, dry_run=False, log=None):
 				if log: log.debug(f'- state: {on} [{ms}ms]')
 				if not dry_run: ledctl.state(on, ms)
 
-			elif step.isdigit():
-				step_bits = int(step)
-				if log: log.debug(f'- value: {step_bits:b}')
-				if step_bits:
-					v = step_bits
-					for n in range(v.bit_length()):
+			elif step[0].isdigit():
+				step_v, bits = step.split('/', 1) if '/' in step else (step, None)
+				bits, dec = bits.split('-', 1) if bits and '-' in bits else (bits, 0)
+				step_v = int(step_v)
+				bits = int(bits) if bits else step_v.bit_length()
+				if dec: step_v -= int(dec)
+				if log: log.debug(f'- value: {step_v} = {step_v:b} [{bits}b]')
+				if step_v:
+					v = step_v
+					for n in range(bits):
 						bit, v = v & 1, v >> 1
 						ms = bit_1 if bit else bit_0
-						if log: log.debug(f'-- {step_bits:b}[{n}] = {bit} [{ms}ms]')
+						if log: log.debug(f'-- {step_v:b}[{n}] = {bit} [{ms}ms]')
 						if not dry_run:
 							ledctl.state(1, ms)
 							time.sleep(bit_delay / 1000)
@@ -172,6 +177,8 @@ def main(args=None, conf=None):
 	parser.add_argument('-g', '--gpio-pin', type=int, metavar='n',
 		help=f'GPIO pin number to switch for LED control.')
 
+	parser.add_argument('-n', '--dry-run',
+		action='store_true', help='Check if supplied sequence has any errors and exit.')
 	parser.add_argument('-d', '--debug',
 		action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -186,8 +193,9 @@ def main(args=None, conf=None):
 	led_spec = opts.led or int(opts.gpio_pin)
 	blink_seq(conf, led_spec, seq, dry_run=True, log=log) # syntax check
 
-	if opts.fork and os.fork(): return
-	blink_seq(conf, led_spec, seq, log=log)
+	if not opts.dry_run:
+		if opts.fork and os.fork(): return
+		blink_seq(conf, led_spec, seq, log=log)
 
 
 if __name__ == '__main__':

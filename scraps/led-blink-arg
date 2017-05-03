@@ -58,7 +58,7 @@ def main(args=None, conf=None):
 
 	n = opts.arg_num
 	n, bits = n.split('/', 1) if '/' in n else (n, None)
-	bits, dec = bits.split('-', 1) if '-' in bits else (bits, 0)
+	bits, dec = bits.split('-', 1) if bits and '-' in bits else (bits, 0)
 	value = int(opts.args[int(n)-1])
 	bits = int(bits) if bits else value.bit_length()
 	if dec: value -= int(dec)

@@ -2456,6 +2456,35 @@ Py3 script to blink bit-pattern from a passed argument using linux led subsystem
 Useful to make e.g. RPi boards booted from identical OS img distinguishable by
 blinking last bits of their IP address, MAC, serial number or stuff like that.
 
+led-blink-seq
+^^^^^^^^^^^^^
+
+Py3 script to blink any arbitrary on/off sequence or numbers (using bits) on an
+LED, using sysfs interface (/sys/class/leds or /sys/class/gpio).
+
+Sequence is expressed using simple embedded language, for example::
+
+  +1s r:5 [ -100 +100 ] -1.5s 237 -5s <
+
+Where:
+
+- ``{ '+' | '-' }{ ms:int | s:float 's' }`` (e.g. "+100", "+1s", "-1.5s") is a
+  simple on/off state for specified number of seconds or ms.
+
+- ``r[epeat]:{N}`` (e.g. "r:5") instructs to repeat next command N times.
+
+- ``[ ... ]`` is used to group commands for repeating.
+
+- Simple number (or more complex ``n[/bits][-dec]`` form) will be blinked in
+  big-endian bit order with 150ms for 0, 1.3s for 1 and 700ms in-between these
+  (see BlinkConfig, also adjustable via ``bit-repr:{bit1_ms),{bit0_ms),{interval_ms)``
+  command).
+
+- ``<`` repeats whole thing from the start forever.
+
+Somewhat easier than writing one-off "set(0), sleep(100), set(1), ..." scripts
+with mostly boilerplate or extra deps for this simple purpose.
+
 ssh-direct-gue-tunnel
 ^^^^^^^^^^^^^^^^^^^^^
 
