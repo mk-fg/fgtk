@@ -1382,9 +1382,11 @@ be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
 Uses ps, ss, gawk and ncat (comes with nmap), only prints pids by default
 (without -k/--kill option).
 
-See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
+Also has -s/--cleanup-sessions option to remove all "abandoned" login sessions
+(think loginctl) for user with specified prefix, i.e. any leftover stuff after
+killing those useless ssh pids.
 
-TODO: add/fix cleanup for logind sessions
+See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
 
 pam-run
 ^^^^^^^

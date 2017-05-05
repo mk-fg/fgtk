@@ -1,11 +1,12 @@
 #!/bin/bash
 
-prefix=tun- kill=
+prefix=tun- kill= sessions=
 
 usage() {
 	bin=$(basename $0)
 	echo >&2 "Usage: $bin [ -l | --list | --ls ]  [ prefix ]"
-	echo >&2 "Usage: $bin { -k | --kill } [ prefix ]"
+	echo >&2 "Usage: $bin { -k | --kill } [ -s | --cleanup-sessions ] [ prefix ]"
+	echo >&2 "Usage: $bin { -k | --kill } [ -s | --cleanup-sessions ] [ prefix ]"
 	echo >&2
 	echo >&2 "Detects/kills all user sshd pids created for 'ssh -R'"
 	echo >&2 " tunnels, that have no listening socket associated with them,"
@@ -18,6 +19,7 @@ usage() {
 [[ "$1" = -h || "$1" = --help ]] && usage
 [[ "$1" = -l || "$1" = --list || "$1" = --ls ]] && shift
 [[ "$1" = -k || "$1" = --kill ]] && { kill=t; shift; }
+[[ "$1" = -s || "$1" = --cleanup-sessions ]] && { sessions=t; shift; }
 [[ -z "$1" ]] || prefix=$1
 [[ -z "$1" ]] || usage 1
 
@@ -58,9 +60,14 @@ for port in "${!sshd_ports[@]}"; do
 	fi
 done
 
-[[ ${#pids_to_kill[@]} -ne 0 ]] || exit 0
-
 if [[ -z "$kill" ]]
-then echo "${pids_to_kill[@]}"
-else kill "${pids_to_kill[@]}"
+then
+	[[ ${#pids_to_kill[@]} -eq 0 ]] || echo "${pids_to_kill[@]}"
+else
+	[[ ${#pids_to_kill[@]} -eq 0 ]] || kill "${pids_to_kill[@]}"
+	[[ -z "$sessions" ]]\
+		|| while read s; do
+			[[ "$(loginctl show-session -p State --value "$s" 2>/dev/null ||:)" = closing ]] || continue
+			loginctl terminate-session "$s"
+		done < <(loginctl  list-sessions --no-legend | awk '$3~/'"$prefix"'/ {print $1}')
 fi
