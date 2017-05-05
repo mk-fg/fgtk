@@ -1364,22 +1364,25 @@ See also: lsns(1), nsenter(1), unshare(1)
 ssh-tunnels-cleanup
 ^^^^^^^^^^^^^^^^^^^
 
-Script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
-don't have a listening socket associated with them.
+Bash script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
+don't have a listening socket associated with them or don't show ssh protocol
+greeting (e.g. "SSH-2.0-OpenSSH_7.4") there.
 
-These seem to be happening when ssh client suddenly dies and reconnects to
-create new tunnel too fast - old pid still hogs listening socket and new one
-fails to create one, but does not fail as a client, creating a weird situation
-where e.g. "ssh -R" client connects just fine but does not do what it actually
-should.
+These seem to occur when ssh client suddenly dies and reconnects to create new
+tunnel - old pid can still hog listening socket (even though there's nothing on
+the other end), but new pid won't exit and hang around uselessly.
+
+Solution is to a) check for sshd pids that don't have listenings socket, and
+b) connect to sshd pids' sockets and see if anything responds there, killing
+both non-listening and unresponsive pids.
 
 Only picks sshd pids for users with specific prefix, e.g. "tun-" by default, to
 be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
 
-Simple "ps" + "ss" + "awk" checks, comparing the output of two and feeding
-resulting list to stdout or "kill" directly.
+Uses ps, ss, gawk and ncat (comes with nmap), only prints pids by default
+(without -k/--kill option).
 
-See also: `autossh <http://www.harding.motd.ca/autossh/>`_.
+See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
 
 TODO: add/fix cleanup for logind sessions
 

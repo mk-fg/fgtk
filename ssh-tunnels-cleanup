@@ -8,7 +8,8 @@ usage() {
 	echo >&2 "Usage: $bin { -k | --kill } [ prefix ]"
 	echo >&2
 	echo >&2 "Detects/kills all user sshd pids created for 'ssh -R'"
-	echo >&2 " tunnels, that have no listening socket associated with them."
+	echo >&2 " tunnels, that have no listening socket associated with them,"
+	echo >&2 " or socket that doesn't give openssh prompt to 'ncat' connection."
 	echo >&2 "Default prefix for user of these pids is"
 	echo >&2 " '${prefix}', so e.g. '${prefix}user' pids will be detected/killed."
 	echo >&2 "'kill' is used without any extra args, i.e. just SIGTERM."
@@ -33,13 +34,33 @@ diff() {
 	done
 }
 
-user_pids=( $(ps ax -o pid=,cmd= | awk '/sshd: '"$prefix"'/&&!/( awk |\[priv\]$)/ {print $1}') )
-sshd_socket_pids=( $(ss -tnlp | awk 'match($0,/users:\(\("sshd",pid=([0-9]+),/,a) {print a[1]}') )
-hung_pids=( $(diff user_pids[@] sshd_socket_pids[@]) )
+user_pids=( $(ps ax -o pid=,cmd= | gawk '/sshd: '"$prefix"'/&&!/( gawk |\[priv\]$)/ {print $1}') )
+sshd_socket_pids=()
+declare -A sshd_ports
 
-[[ ${#hung_pids[@]} -ne 0 ]] || exit 0
+while read pid port; do
+	sshd_socket_pids+=( $pid )
+	[[ "$port" -eq 22 ]] || sshd_ports["$port"]+=" $pid"
+done < <( ss -tnlp |
+	gawk 'match($0,/users:\(\("sshd",pid=([0-9]+),/,a) {match($4,/:([0-9]+)$/,b); print a[1], b[1]}' |
+	sort -u )
+
+pids_to_kill=( $(diff user_pids[@] sshd_socket_pids[@]) )
+
+for port in "${!sshd_ports[@]}"; do
+	ssh_prompt=
+	coproc ncat --recv-only -i5 127.0.0.1 "$port" 2>/dev/null
+	read -r ssh_prompt </dev/fd/"${COPROC[0]}" ||:
+	eval "exec ${COPROC[0]}>&- ${COPROC[1]}>&-"
+	if [[ -n "$ssh_prompt" ]]
+	then kill "$COPROC_PID" 2>/dev/null && wait "$COPROC_PID" 2>/dev/null ||:
+	else pids_to_kill+=( ${sshd_ports["$port"]} )
+	fi
+done
+
+[[ ${#pids_to_kill[@]} -ne 0 ]] || exit 0
 
 if [[ -z "$kill" ]]
-then echo "${hung_pids[@]}"
-else kill "${hung_pids[@]}"
+then echo "${pids_to_kill[@]}"
+else kill "${pids_to_kill[@]}"
 fi
