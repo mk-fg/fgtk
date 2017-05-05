@@ -11,6 +11,7 @@ class BlinkConfig:
 	leds_root = pathlib.Path('/sys/class/leds')
 	gpio_root = pathlib.Path('/sys/class/gpio')
 	bit_repr = 1300, 150, 700
+	exit_state, exit_wait = 0, False
 
 
 class LEDControlBase:
@@ -26,6 +27,8 @@ class LEDControl(LEDControlBase):
 	def __init__(self, led, conf):
 		if isinstance(led, str): self.led_sysfs = conf.leds_root / led
 		else: self.led_gpio, self.gpio_root = led, conf.gpio_root
+		self.led_exit_state = conf.exit_state
+		self.led_exit_wait = conf.exit_wait or self.led_exit_state
 
 	def file_access_wrap(self, func, checks=12, timeout=1.0):
 		for n in range(checks, -1, -1):
@@ -35,8 +38,9 @@ class LEDControl(LEDControlBase):
 			if n: time.sleep(timeout / checks)
 		else: raise OSError('Access failed', func, timeout)
 
-	def sysfs_node(self, n):
-		return self.file_access_wrap(ft.partial(open, n, 'wb', buffering=0))
+	def sysfs_node(self, n, mode='wb'):
+		buff = 0 if 'b' in mode else -1
+		return self.file_access_wrap(ft.partial(open, n, mode, buffering=buff))
 	def sysfs_write(self, dst, data, end=b'\n'):
 		return self.file_access_wrap(ft.partial(dst.write, data + (end or b'')))
 
@@ -61,11 +65,27 @@ class LEDControl(LEDControlBase):
 			self.led_run.close()
 			self.led_time.close()
 			self.led_set.close()
-			self.led_trigger.write(b'none')
+			if self.led_exit_wait: self.wait_for_state(0)
+			self.sysfs_write(self.led_trigger, b'none')
 			self.led_trigger.close()
+			if self.led_exit_state: self.set_brightness()
 		else:
-			self.sysfs_write(self.led_gpio, b'0')
+			self.sysfs_write( self.led_gpio,
+				str(int(bool(self.led_exit_state))).encode() )
 			self.led_gpio.close()
+
+	def wait_for_state(self, state, checks=24, timeout=1.0):
+		for n in range(checks, -1, -1):
+			with self.sysfs_node(self.led_sysfs / 'state', 'r') as src:
+				if bool(int(self.file_access_wrap(src.read).strip())) == bool(state): break
+			if n: time.sleep(timeout / checks)
+
+	def set_brightness(self, value=None):
+		if value is None:
+			with self.sysfs_node(self.led_sysfs / 'max_brightness', 'r') as src:
+				value = int(self.file_access_wrap(src.read).strip())
+		with self.sysfs_node(self.led_sysfs / 'brightness') as dst:
+			self.sysfs_write(dst, str(value).encode())
 
 	def state(self, on, ms):
 		if self.led_sysfs and on:
@@ -188,7 +208,9 @@ def main(args=None, conf=None):
 	parser.add_argument('-l', '--led', metavar='name',
 		help=f'Name of the sysfs led under {conf.leds_root} to use.')
 	parser.add_argument('-g', '--gpio-pin', type=int, metavar='n',
-		help=f'GPIO pin number to switch for LED control.')
+		help='GPIO pin number to switch for LED control.')
+	parser.add_argument('-e', '--exit-state', type=int, metavar='1/0',
+		help='Whether to leave LED enabled or disabled on exit.')
 
 	parser.add_argument('-n', '--dry-run',
 		action='store_true', help='Check if supplied sequence has any errors and exit.')
@@ -202,6 +224,7 @@ def main(args=None, conf=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger('main')
 
+	conf.exit_state = bool(opts.exit_state)
 	seq = ' '.join(opts.seq).split()
 	led_spec = opts.led or int(opts.gpio_pin)
 	blink_seq(led_spec, seq, dry_run=True, conf=conf, log=opts.dry_run and log) # syntax check
