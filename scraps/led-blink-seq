@@ -8,10 +8,14 @@ import os, sys, pathlib, time, logging, contextlib
 class BlinkError(Exception): pass
 
 class BlinkConfig:
+
 	leds_root = pathlib.Path('/sys/class/leds')
 	gpio_root = pathlib.Path('/sys/class/gpio')
 	bit_repr = 1300, 150, 700
 	exit_state, exit_wait = 0, False
+
+	def __init__(self, **opts):
+		for k, v in opts.items(): setattr(self, k, v)
 
 
 class LEDControlBase:
