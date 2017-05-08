@@ -50,21 +50,22 @@ done < <( ss -tnlp |
 pids_to_kill=( $(diff user_pids[@] sshd_socket_pids[@]) )
 
 for port in "${!sshd_ports[@]}"; do
-	ssh_prompt=
+	ssh_hello=
 	coproc ncat --recv-only -i5 127.0.0.1 "$port" 2>/dev/null
-	read -r ssh_prompt </dev/fd/"${COPROC[0]}" ||:
+	read -r ssh_hello </dev/fd/"${COPROC[0]}" ||:
 	eval "exec ${COPROC[0]}>&- ${COPROC[1]}>&-"
-	if [[ -n "$ssh_prompt" ]]
-	then kill "$COPROC_PID" 2>/dev/null && wait "$COPROC_PID" 2>/dev/null ||:
+	if [[ -n "$ssh_hello" ]]
+	then kill "$COPROC_PID" 2>/dev/null ||: # not timed out yet
 	else pids_to_kill+=( ${sshd_ports["$port"]} )
 	fi
+	[[ -z "$COPROC_PID" ]] || wait "$COPROC_PID" 2>/dev/null ||:
 done
 
 if [[ -z "$kill" ]]
 then
 	[[ ${#pids_to_kill[@]} -eq 0 ]] || echo "${pids_to_kill[@]}"
 else
-	[[ ${#pids_to_kill[@]} -eq 0 ]] || kill "${pids_to_kill[@]}"
+	[[ ${#pids_to_kill[@]} -eq 0 ]] || kill "${pids_to_kill[@]}" 2>/dev/null
 	[[ -z "$sessions" ]]\
 		|| while read s; do
 			[[ "$(loginctl show-session -p State --value "$s" 2>/dev/null ||:)" = closing ]] || continue
