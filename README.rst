@@ -2490,13 +2490,13 @@ Where:
 Somewhat easier than writing one-off "set(0), sleep(100), set(1), ..." scripts
 with mostly boilerplate or extra deps for this simple purpose.
 
-ssh-direct-gue-tunnel
-^^^^^^^^^^^^^^^^^^^^^
+gue-tunnel
+^^^^^^^^^^
 
 Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
 
 One command instead of bunch of them, with some built-in templating to make it
-easier for identical remote hosts.
+easier to use on identical remote hosts.
 
 
 License (WTFPL)
