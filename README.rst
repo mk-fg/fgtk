@@ -2102,6 +2102,25 @@ Useful to do any kind of letter-by-letter checks and stuff manually.
 Can also be an example code / stub for composited screen overlays with input
 grab.
 
+blinds
+''''''
+
+Py3 script to draw an empty colored/transparent window with custom hints
+(default: undecorated) and size/position just to cover some screen area.
+
+Useful as a hack to cover windows that grab input or do something stupid on
+mouseover, but still be able to see their contents, or maybe just cover
+something on the screen entirely.
+
+For example, to cover left half (960px-wide) of screen with greenish-tinted
+half-transparent pane: ``blinds --pos=960xS+0 --color=0227107f``
+
+With custom wm hints::
+
+  blinds -x 'stick keep_above skip_taskbar skip_pager -accept_focus -resizable'
+
+(see -h/--help output for a full list of these)
+
 evdev-to-xev
 ''''''''''''
 

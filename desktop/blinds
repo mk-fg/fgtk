@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, logging, re, textwrap
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super().__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger.log(level, LogMessage(msg, args, kws), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+log = get_logger('shutter')
+
+
+it_adjacent = lambda seq, n: it.zip_longest(*([iter(seq)] * n))
+dedent = lambda text: textwrap.dedent(text).strip('\n') + '\n'
+
+def color_rgba(c, opacity=255):
+	cs = c.strip().lstrip('#')
+	if len(cs) in [3,4]: cs = ''.join(c*2 for c in cs)
+	if len(cs) == 6:
+		if not isinstance(opacity, str):
+			if isinstance(opacity, float): opacity = int(opacity * 255)
+			opacity = '{:x}'.format(max(0, min(255, opacity)))
+		cs += opacity
+	elif len(cs) != 8: raise ValueError(c)
+	r,g,b,a = (int(''.join(v), 16) for v in it_adjacent(cs, 2))
+	return 'rgba({},{},{},{})'.format(r,g,b,a / 255.0)
+
+
+class BlindsConf:
+
+	app_id = 'net.fraggod.blinds'
+	no_session = False
+
+	win_title = 'blinds'
+	win_role = 'blinds-main'
+	win_icon = None
+	win_default_size = 700, 500
+	win_w = win_h = None
+	win_x = win_y = None
+
+	wm_hints = dict( decorated=False,
+		skip_taskbar=True, skip_pager=True, accept_focus=False )
+	wm_hints_all = (
+		' focus_on_map modal resizable hide_titlebar_when_maximized'
+		' stick maximize fullscreen keep_above keep_below decorated'
+		' deletable skip_taskbar skip_pager urgency accept_focus'
+		' auto_startup_notification mnemonics_visible focus_visible' ).split()
+	wm_type_hints = Gdk.WindowTypeHint.NORMAL
+	wm_type_hints_all = dict(
+		(e.value_nick, v) for v, e in Gdk.WindowTypeHint.__enum_values__.items() if v )
+
+	win_css = ''
+	win_css_opts_tpl = '#blinds, #blinds * {{ background: {win_color}; }}\n'
+
+	def __init__(self, **kws):
+		for k, v in kws.items():
+			if not hasattr(self, k): raise AttributeError(k)
+			setattr(self, k, v)
+
+
+class BlindsWindow(Gtk.ApplicationWindow):
+
+	def __init__(self, app, conf):
+		super().__init__(name='blinds', application=app)
+		self.app, self.conf = app, conf
+		self.log = get_logger('blinds.win')
+
+		self.set_title(self.conf.win_title)
+		self.set_role(self.conf.win_role)
+		if self.conf.win_icon:
+			self.log.debug('Using icon: {}', self.conf.win_icon)
+			self.set_icon_name(self.conf.win_icon)
+
+		self.init_widgets()
+
+	def init_widgets(self):
+		css = Gtk.CssProvider()
+		css.load_from_data(self.conf.win_css.encode())
+		Gtk.StyleContext.add_provider_for_screen(
+			Gdk.Screen.get_default(), css,
+			Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION )
+
+		self.draw = Gtk.DrawingArea()
+		self.add(self.draw)
+
+		hints = dict.fromkeys(self.conf.wm_hints_all)
+		hints.update(self.conf.wm_hints or dict())
+		for k in list(hints):
+			setter = getattr(self, 'set_{}'.format(k), None)
+			if not setter: setter = getattr(self, 'set_{}_hint'.format(k), None)
+			if not setter: setter = getattr(self, k, None)
+			if not setter: continue
+			v = hints.pop(k)
+			if v is None: continue
+			self.log.debug('Setting WM hint: {} = {}', k, v)
+			if not setter.get_arguments(): # e.g. w.fullscreen()
+				if v: setter()
+				continue
+			setter(v)
+		assert not hints, ['Unrecognized wm-hints:', hints]
+		self.set_type_hint(self.conf.wm_type_hints)
+
+		self.connect('composited-changed', self._set_visual)
+		self.connect('screen-changed', self._set_visual)
+		self._set_visual(self)
+
+		self.ev_discard = set()
+		self.set_default_size(*self.conf.win_default_size)
+		self.connect('show', self._place_window, 'show')
+		self.connect( 'configure-event',
+			ft.partial(self._place_window, ev_done='configure-event') )
+		self._place_window(self)
+
+	def _set_visual(self, w, *ev_data):
+		visual = w.get_screen().get_rgba_visual()
+		if visual: w.set_visual(visual)
+
+	def _place_window(self, w, *ev_data, ev_done=None):
+		if ev_done:
+			if ev_done in self.ev_discard: return
+			self.ev_discard.add(ev_done)
+		s = w.get_screen()
+		sw, sh = s.width(), s.height()
+		ww = wh = None
+		if self.conf.win_w and self.conf.win_h:
+			get_val = lambda v,sv: int(v) if v != 'S' else sv
+			ww, wh = get_val(self.conf.win_w, sw), get_val(self.conf.win_h, sh)
+			w.resize(ww, wh)
+		if self.conf.win_x or self.conf.win_y:
+			if not (ww or wh): ww, wh = w.get_size()
+			wx, wy = w.get_position()
+			get_pos = lambda v,sv,wv: int(v[1]) if v[0] != '-' else (sv - wv + int(v[1]))
+			if self.conf.win_x: w.move(get_pos(self.conf.win_x, sw, ww), wy)
+			if self.conf.win_y: w.move(wx, get_pos(self.conf.win_y, sh, wh))
+
+
+class BlindsApp(Gtk.Application):
+
+	def __init__(self, conf):
+		self.conf = conf
+		super().__init__()
+		if self.conf.app_id: self.set_application_id(self.conf.app_id)
+		if self.conf.no_session: self.set_property('register-session', False)
+
+	def do_activate(self):
+		win = BlindsWindow(self, self.conf)
+		win.connect('delete-event', lambda w,*data: self.quit())
+		win.show_all()
+
+
+def main(args=None, conf=None):
+	if not conf: conf = BlindsConf()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Create semi-transparent window just to cover stuff.')
+
+	group = parser.add_argument_group('Appearance')
+	group.add_argument('-c', '--color',
+		metavar='hex', default='#0227107f',
+		help='Hex color for window background, e.g. #6ad468.'
+			' Can have alpha component at the end, e.g. #6ad46870. Default: %(default)s.')
+	group.add_argument('-o', '--opacity',
+		type=float, metavar='0-1.0', default=0.5,
+		help='Opacity of the window - float value in 0-1.0'
+				' range, with 0 being fully-transparent and 1.0 fully opaque.'
+			' Only used if -c/--color does not have alpha component in it.'
+			' Should only have any effect with compositing Window Manager.'
+			' Default: %(default)s.')
+
+	group = parser.add_argument_group('Window')
+	group.add_argument('-p', '--pos', metavar='(WxH)(+X)(+Y)',
+		help='Set window size and/or position hints for WM (usually followed).'
+			' W/H values can be special "S" to use screen size, e.g. SxS is "fullscreen".'
+			' X/Y offsets must be specified in that order, if at all, with positive'
+				' values (prefixed with "+") meaning offset from top-left corner'
+				' of the screen, and negative - bottom-right.'
+			' If not specified (default), all are left for Window Manager to decide/remember.'
+			' Examples: 800x600, -0+0 (move to top-right corner), 200xS+0.')
+	group.add_argument('-x', '--wm-hints', metavar='(+|-)hint(,...)',
+		help=( 'Comma or space-separated list of WM hints to set/unset for the window.'
+				' All of these can have boolean yes/no or unspecified/default values.'
+				' Specifying hint name in the list will have it explicity set (i.e. "yes/true" value),'
+					' and preceding name with "-" will have it explicitly unset instead ("no/false").'
+				' List of recognized hints: [ {} ].'
+				' Example: keep_top -decorated skip_taskbar skip_pager -accept_focus.' )\
+			.format(', '.join(conf.wm_hints_all)))
+	group.add_argument('-t', '--wm-type-hints', metavar='hint(,...)',
+		help=( 'Comma or space-separated list of window type hints for WM.'
+				' Similar to --wm-hints in general, but are'
+					' combined separately to set window type hint value.'
+				' List of recognized type-hints: [ {} ], all are unset by default.'
+				' Probably does not make sense to use multiple of these at once.' )\
+			.format(', '.join(conf.wm_type_hints_all)))
+	group.add_argument('-i', '--icon-name', metavar='icon',
+		help='Name of the XDG icon to use for the window.'
+			' Can be icon from a theme, one of the default gtk ones, and such.'
+			' See XDG standards for how this name gets resolved into actual file path.'
+			' Example: image-x-generic.')
+
+	group = parser.add_argument_group('Misc / debug')
+	group.add_argument('-n', '--no-register-session', action='store_true',
+		help='Do not try register app with any session manager.'
+			' Can be used to get rid of Gtk-WARNING messages'
+				' about these and to avoid using dbus, but not sure how/if it actually works.')
+	group.add_argument('--dump-css', action='store_true',
+		help='Print css that is used for windows by default and exit.')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(
+		datefmt='%Y-%m-%d %H:%M:%S',
+		format='%(asctime)s :: %(levelname)s :: %(message)s',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+
+	color = color_rgba(opts.color, opacity=opts.opacity)
+	conf.win_css += conf.win_css_opts_tpl.format(win_color=color)
+
+	if opts.dump_css: return print(conf.win_css.replace('\t', '  '), end='')
+
+	if opts.pos:
+		m = re.search(r'^((?:\d+|S)x(?:\d+|S))?([-+]\d+)?([-+]\d+)?$', opts.pos)
+		if not m: parser.error('Invalid size/position spec: {!r}', opts.pos)
+		size, x, y = m.groups()
+		if size: conf.win_w, conf.win_h = size.split('x', 1)
+		if x: conf.win_x = x
+		if y: conf.win_y = y
+	if opts.wm_hints:
+		conf.wm_hints = dict(
+			(hint.lstrip('+-'), not hint.startswith('-'))
+			for hint in opts.wm_hints.replace(',', ' ').split() )
+	if opts.wm_type_hints:
+		for k in opts.wm_type_hints.replace(',', ' ').split():
+			conf.wm_type_hints |= conf.wm_type_hints_all[k]
+	if opts.icon_name: conf.win_icon = opts.icon_name
+	conf.no_session = opts.no_register_session
+
+	log.debug('Starting application...')
+	BlindsApp(conf).run()
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())
