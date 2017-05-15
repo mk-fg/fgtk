@@ -172,7 +172,7 @@ def main(args=None, conf=None):
 
 	group = parser.add_argument_group('Appearance')
 	group.add_argument('-c', '--color',
-		metavar='hex', default='#0227107f',
+		metavar='hex', default='#022710',
 		help='Hex color for window background, e.g. #6ad468.'
 			' Can have alpha component at the end, e.g. #6ad46870. Default: %(default)s.')
 	group.add_argument('-o', '--opacity',
