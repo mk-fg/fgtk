@@ -67,6 +67,8 @@ class BlindsConf:
 	win_css = ''
 	win_css_opts_tpl = '#blinds, #blinds * {{ background: {win_color}; }}\n'
 
+	quit_keys = 'q', 'control q', 'control w', 'escape'
+
 	def __init__(self, **kws):
 		for k, v in kws.items():
 			if not hasattr(self, k): raise AttributeError(k)
@@ -126,6 +128,8 @@ class BlindsWindow(Gtk.ApplicationWindow):
 			ft.partial(self._place_window, ev_done='configure-event') )
 		self._place_window(self)
 
+		self.connect('key-press-event', self._window_key)
+
 	def _set_visual(self, w, *ev_data):
 		visual = w.get_screen().get_rgba_visual()
 		if visual: w.set_visual(visual)
@@ -148,6 +152,24 @@ class BlindsWindow(Gtk.ApplicationWindow):
 			if self.conf.win_x: w.move(get_pos(self.conf.win_x, sw, ww), wy)
 			if self.conf.win_y: w.move(wx, get_pos(self.conf.win_y, sh, wh))
 
+	def _window_key(self, w, ev, _masks=dict()):
+		if not _masks:
+			for st, mod in Gdk.ModifierType.__flags_values__.items():
+				if ( len(mod.value_names) != 1
+					or not mod.first_value_nick.endswith('-mask') ): continue
+				assert st not in _masks, [mod.first_value_nick, _masks[st]]
+				mod = mod.first_value_nick[:-5]
+				if mod.startswith('modifier-reserved-'): mod = 'res-{}'.format(mod[18:])
+				_masks[st] = mod
+		chk, keyval = ev.get_keyval()
+		if not chk: return
+		key_sum, key_name = list(), Gdk.keyval_name(keyval)
+		for st, mod in _masks.items():
+			if ev.state & st == st: key_sum.append(mod)
+		key_sum = ' '.join(sorted(key_sum) + [key_name]).lower()
+		self.log.debug('key-press-event: {!r}', key_sum)
+		if key_sum in self.conf.quit_keys: self.app.quit()
+
 
 class BlindsApp(Gtk.Application):
 
@@ -169,6 +191,14 @@ def main(args=None, conf=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Create semi-transparent window just to cover stuff.')
+
+	group = parser.add_argument_group('Controls')
+	group.add_argument('-q', '--key-quit',
+		metavar='key', action='append',
+		help='Keys or combos to make app exit, when focused.'
+			' Will override defaults if specified. Override to e.g. non-existent "xxx" key to disable.'
+			' See -d/--debug output for list of pressed keys, as the app sees them.'
+			' Can be used more than once. Default: {}.'.format(', '.join(conf.quit_keys)) )
 
 	group = parser.add_argument_group('Appearance')
 	group.add_argument('-c', '--color',
@@ -250,6 +280,8 @@ def main(args=None, conf=None):
 			conf.wm_type_hints |= conf.wm_type_hints_all[k]
 	if opts.icon_name: conf.win_icon = opts.icon_name
 	conf.no_session = opts.no_register_session
+
+	if opts.key_quit: conf.quit_keys = opts.key_quit
 
 	log.debug('Starting application...')
 	BlindsApp(conf).run()
