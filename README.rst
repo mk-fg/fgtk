@@ -1043,6 +1043,51 @@ usb-wlan interfaces will be named according to NAME there)::
   SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
     DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
 
+wpa-systemd-wrapper
+^^^^^^^^^^^^^^^^^^^
+
+Systemd wrapper for wpa_supplicant or hostapd, enabling either to work with
+Type=notify, support WatchdogSec=, different exit codes and all that goodness.
+
+Starts the daemon as a subprocess, connecting to its management interface and
+watching state/wpa_state changes, only indicating "started" state for systemd
+when daemon actually starts scanning/connecting (for wpa_supplicant) or sets
+state=enabled for hostapd.
+
+WatchdogSec= issues PING commands to underlying daemon, proxying responses back,
+as long as daemon state is somehting valid, and not INTERFACE-DISABLED,
+locally-generated disconnect or such, usually indicating hw failure, kernel
+module issue or whatever else.
+
+Such thing is needed to have systemd unit state follow AP/STA state, failing
+when e.g. wifi dongle gets pulled out from USB port, as that doesn't actually
+cause these things to fail/exit otherwise, which might be desirable if that wifi
+link is critical to other services or as a reboot-workaround for driver bugs.
+
+Example systemd unit (AP mode)::
+
+  [Service]
+  ExecStart=/usr/local/bin/wpa-systemd-wrapper \
+    --exit-check '/run/wpa.wlan0.first-run:config' \
+    --ap-mode wlan0 /etc/hostapd.wlan0.conf
+
+  Type=notify
+  WatchdogSec=90
+  Restart=on-failure
+  RestartPreventExitStatus=78
+  RestartSec=3
+  # StartLimitInterval=8min
+  # StartLimitBurst=10
+  # StartLimitAction=reboot
+
+This will run hostapd (due to -a/--ap-mode), and exit with special 78/CONFIG
+code if "first-run" file exists and hostapd never gets into ENABLED state on the
+first attempt - i.e. something likely wrong with the config and there's no point
+restarting it ad nauseum.
+
+Python3/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
+opts for more info.
+
 mikrotik-backup
 ^^^^^^^^^^^^^^^
 

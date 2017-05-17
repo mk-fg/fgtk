@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, logging, contextlib, tempfile, pathlib, re
+import asyncio, asyncio.subprocess, socket, signal
+
+from systemd import daemon
+
+
+class WPAConfig:
+
+	mode = cmd = ctrl_interface = None
+	cmd_opts = dict(hostapd=None, wpa_supplicant=None)
+	systemd_wdt = False
+	ping_interval = 60
+	exit_code_error = 1
+	exit_code_file_checks = None
+
+
+class LogMessage(object):
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class WPAClientProtocol:
+
+	transport = None
+
+	def __init__(self, loop, addr):
+		self.loop, self.addr, self._hs = loop, addr, dict()
+		self.log = get_logger('wpa.client')
+
+	def _msg_encode(self, msg, upper=True):
+		if upper: msg = msg.upper()
+		if isinstance(msg, str): msg = msg.encode()
+		return msg
+	def _msg_decode(self, msg):
+		if isinstance(msg, bytes): msg = msg.decode().rstrip(' \n')
+		return msg
+
+	def connection_made(self, transport):
+		self.log.debug('Connection made')
+		self.transport = transport
+	def error_received(self, err):
+		self.log.debug('Connection error: {}', err)
+	def connection_lost(self, err):
+		self.log.debug('Connection lost: {}', err)
+		for func in self._hs.values(): func(StopIteration)
+
+	def datagram_received(self, msg, addr):
+		self.log.debug('<<: {!r}', msg)
+		msg, hs_discard = self._msg_decode(msg), set()
+		for k, func in self._hs.items():
+			if func(msg): hs_discard.add(k)
+		for k in hs_discard: del self._hs[k]
+
+	def send(self, msg, **enc_kws):
+		msg = self._msg_encode(msg, **enc_kws)
+		self.log.debug('>>: {!r}', msg)
+		self.transport.sendto(msg, self.addr)
+
+	def add_handler(self, func): self._hs[id(func)] = func
+
+	def _expect_handler(self, msg_or_func, fut_or_cb, oneshot, msg):
+		if msg is StopIteration:
+			if not callable(fut_or_cb): fut_or_cb.cancel()
+			return
+		match = ( msg_or_func(msg) if callable(msg_or_func)
+			else (msg.lower() == self._msg_decode(msg_or_func).lower()) )
+		if not match: return
+		if callable(fut_or_cb): fut_or_cb(msg)
+		else: fut_or_cb.set_result(msg)
+		return oneshot
+
+	def expect(self, msg_or_func, fut_or_cb=None, oneshot=False):
+		if not fut_or_cb: fut_or_cb = asyncio.Future()
+		self.add_handler(ft.partial(
+			self._expect_handler, msg_or_func, fut_or_cb, oneshot ))
+		return fut_or_cb
+
+
+class WPACtrl:
+
+	proto = sock_remote = sock_local = None
+	connect_delay = 0.1, 1.5, 1.0
+
+	def __init__(self, loop, sock_path):
+		self.loop, self.sock_remote = loop, sock_path
+
+	async def __aenter__(self):
+		fd, self.sock_local = tempfile.mkstemp(prefix='.wpas.ctrl-sock.')
+		os.close(fd)
+		os.unlink(self.sock_local)
+		sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+		sock.bind(self.sock_local)
+		await self.connect(sock)
+		transport, self.proto = await self.loop.create_datagram_endpoint(
+			lambda: WPAClientProtocol(self.loop, self.sock_remote), sock=sock )
+		# local_addr=self.sock_local, remote_addr=self.sock_remote, family=socket.AF_UNIX )
+		return self
+
+	async def __aexit__(self, *err):
+		if self.sock_local: self.sock_local = os.unlink(self.sock_local)
+		if self.proto: self.proto = self.proto.transport.close()
+
+	async def connect(self, sock):
+		delay, delay_k, delay_max = self.connect_delay
+		while True:
+			try: sock.connect(self.sock_remote)
+			except socket.error: pass
+			else: break
+			await asyncio.sleep(delay)
+			delay = min(delay_max, delay * delay_k)
+
+	def send(self, *args, **kws): return self.proto.send(*args, **kws)
+	def expect(self, *args, **kws): return self.proto.expect(*args, **kws)
+
+	def req(self, msg, res, cb=None):
+		self.send(msg)
+		return self.expect(res, cb, oneshot=True)
+
+
+async def run_wpa_proc(loop, conf):
+	exit_code = conf.exit_code_error # any exit except SIGTERM is non-clean - expected to run forever
+	wpa_checks = loop.create_task(run_wpa_checks(loop, conf))
+	wpa_proc = await asyncio.create_subprocess_exec(*conf.cmd)
+	try:
+		def sig_handler(code):
+			nonlocal exit_code
+			exit_code = code
+			wpa_checks.cancel()
+		for sig, code in ('SIGINT', conf.exit_code_error), ('SIGTERM', os.EX_OK):
+			loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
+		await asyncio.wait(
+			[wpa_checks, wpa_proc.wait()],
+			return_when=asyncio.FIRST_COMPLETED )
+	finally:
+		with contextlib.suppress(OSError): wpa_proc.terminate()
+		await wpa_proc.wait()
+		with contextlib.suppress(asyncio.CancelledError):
+			if not wpa_checks.done():
+				wpa_checks.cancel()
+				await wpa_checks
+			if wpa_checks.exception(): raise wpa_checks.exception()
+	return exit_code
+
+async def run_wpa_checks(loop, conf):
+	assert conf.mode in ['hostapd', 'wpa_supplicant'], conf.mode
+	log = get_logger('wpa.checks')
+	rx = lambda regexp: re.compile(regexp).search
+
+	async with WPACtrl(loop, conf.ctrl_interface) as wpa:
+		await wpa.req('ping', 'pong')
+
+		enabled, disabled = asyncio.Event(), asyncio.Event()
+		def enabled_toggle(state):
+			if state:
+				if enabled.is_set() and not disabled.is_set(): return
+				enabled.set(), disabled.clear()
+				daemon.notify('STATUS=Started / connected')
+			else:
+				if not enabled.is_set() and disabled.is_set(): return
+				enabled.clear(), disabled.set()
+				daemon.notify('STATUS=***DISABLED***')
+			log.debug('State: {}', ['disabled', 'enabled'][int(bool(state))])
+
+		if conf.mode == 'hostapd':
+			rx_enable = r'\<3\>(INTERFACE|AP)-ENABLED$'
+			rx_disable = r'\<3\>INTERFACE-DISABLED$'
+			# Doesn't transition ENABLED -> INTERFACE_DISABLED like with
+			#  wpa_supplicant, so it can be lost in a short window before STATUS is first checked
+			# There seem to be no way to actively check interface state with hostpad from wpa_cli
+			rx_state = r'(?:\n|^)state=(\S+)(?:\n|$)', r'^ENABLED$'
+		else:
+			# wpa_supplicant is "enabled" when it is actively
+			#  scanning (connecting) as well as connected, not just the latter
+			rx_enable = r'\<3\>CTRL-EVENT-(SCAN-STARTED|CONNECTED|COMPLETED)\b'
+			# Disconnect with locally_generated=1 means "card is unplugged" or such
+			rx_disable = r'\<3\>CTRL-EVENT-DISCONNECTED\b.*\blocally_generated=1\b'
+			# INTERFACE_DISABLED (state=disabled) -> SCANNING -> CONNECTED -> COMPLETED
+			# There are probably more states in-between these
+			rx_state = r'(?:\n|^)wpa_state=(\S+)(?:\n|$)', r'^(?!INTERFACE_DISABLED).*$'
+
+		wpa.expect(rx(rx_enable), lambda msg: enabled_toggle(True))
+		wpa.expect(rx(rx_disable), lambda msg: enabled_toggle(False))
+		await wpa.req('attach', 'ok')
+
+		state = await wpa.req('status', rx(rx_state[0]))
+		m = re.search(rx_state[0], state)
+		if m and re.search(rx_state[1], m.group(1)): enabled_toggle(True)
+
+		# systemd unit start timeout should account for hostpad init here
+		await enabled.wait()
+		daemon.notify('READY=1')
+
+		while True:
+			ping = wpa.req('ping', 'pong')
+
+			if conf.systemd_wdt:
+				# Ping timeout here will translate into systemd watchdog timeout
+				await asyncio.gather(ping, asyncio.sleep(conf.ping_interval))
+				# Allowing for transient enabled->disabled->enabled transitions here
+				# Watchdog timeout from systemd will determine how long thing can stay disabled
+				if enabled.is_set():
+					log.debug('systemd watchdog ping')
+					daemon.notify('WATCHDOG=1')
+
+			else: # do our own watchdog-crash logic
+				try: await asyncio.wait_for(disabled.wait(), timeout=conf.ping_interval)
+				except asyncio.TimeoutError:
+					if not ping.done():
+						log.error('Watchdog error - ping timeout ({:.1s}s)', conf.ping_interval)
+						break
+				else:
+					log.error('Watchdog error - disabled/disconnected state event')
+					break
+
+
+def main(args=None, conf=None):
+	if not conf: conf = WPAConfig()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Simple systemd wrapper for'
+			' hostapd/wpa_supplicant with start/stop event handlings and watchdog pings.')
+
+	parser.add_argument('iface',
+		help='Network interface name, corresponding to unix socket name in --socket-dir.')
+	parser.add_argument('conf',
+		help='Configuration file for the main daemon process.'
+			' Must have ctrl_interface= configured for this script to access.')
+
+	parser.add_argument('-a', '--ap-mode', action='store_true',
+		help='Run hostapd instead of wpa_supplicant - i.e. toggle'
+			' between ap/sta mode, with sta (wpa_supplicant) being the default.')
+	parser.add_argument('-o', '--cli-opts',
+		metavar='opts', action='append',
+		help='Options to pass to hostapd/wpa_supplicant'
+			' instead of default ones (if any) along with the config.')
+	parser.add_argument('--socket-dir', metavar='path',
+		help='Control interface unix socket directory, i.e. ctrl_interface= option value.'
+			' Default is to use common /run/{binary} path, where {binary} is from "bin" argument.')
+
+	parser.add_argument('-e', '--exit-check',
+		metavar='file-or-suffix:exit-code', action='append',
+		help='Check if file with specified file (abs path) or suffix exist alongside config,'
+				' use specified exit code on initial failure (if any), removing it on successful start.'
+			' This is to allow for special exit code on first run,'
+				' to handle configuration errors and such without restart loops.'
+			f' Default exit code is {conf.exit_code_error}.'
+			' "exit-code" can be a unix os.EX_* constant'
+				' name without the prefix, e.g. ".conf-check:config".'
+			' Can be specified multiple times to check multiple files,'
+				' where only first one will be used if more than one are present.')
+
+	parser.add_argument('-d', '--debug',
+		action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(
+		format='%(name)s %(levelname)s :: %(message)s',
+		level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = get_logger('wpa.main')
+
+	wdt_pid, wdt_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
+	if wdt_pid and wdt_pid.isdigit() and int(wdt_pid) == os.getpid():
+		conf.systemd_wdt = True
+		conf.ping_interval = float(wdt_usec) / 3e6 # 1/3 of interval in seconds
+		assert conf.ping_interval > 0, conf.ping_interval
+		log.debug('Initializing systemd watchdog pinger with interval: {:.1f}s', conf.ping_interval)
+
+	conf.mode = 'wpa_supplicant' if not opts.ap_mode else 'hostapd'
+	if conf.mode == 'hostapd':
+		with open(opts.conf) as src:
+			iface_match = re.findall(r'^\s*interface=(\S+)\s*$', src.read(), re.M)
+		try:
+			iface_match, = iface_match
+			if iface_match != opts.iface: raise ValueError()
+		except Exception as err:
+			parser.error('Failed to match interface= option in hostapd conf against specified one.')
+
+	conf.cmd = opts.cli_opts
+	if conf.cmd is not None:
+		if len(conf.cmd) == 1: conf.cmd = conf.cmd.split()
+	else: conf.cmd = conf.cmd_opts[conf.mode] or list()
+	conf.cmd = [conf.mode] + conf.cmd
+	if conf.mode == 'wpa_supplicant': conf.cmd += ['-i', opts.iface, '-c']
+	conf.cmd += [opts.conf]
+	log.debug(f'Using command line: {conf.cmd!r}')
+
+	conf.ctrl_interface = str(pathlib.Path('/run') / conf.mode / opts.iface)
+	log.debug(f'Using ctrl_interface path: {conf.ctrl_interface!r}')
+
+	exit_file_checks = list()
+	if opts.exit_check:
+		for p in opts.exit_check:
+			p, code = p.rsplit(':', 1)
+			if not p.startswith(os.sep): p = opts.conf + p
+			if not code.isdigit(): code = getattr(os, f'EX_{code.upper()}')
+			else: code = int(code)
+			exit_file_checks.append((p, code))
+
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		exit_code = loop.run_until_complete(run_wpa_proc(loop, conf))
+
+	if exit_file_checks:
+		for p, code in exit_file_checks:
+			if os.path.exists(p):
+				os.unlink(p)
+				exit_code = code
+				log.debug('Using special exit code (file: {}): {}', p, code)
+				break
+
+	if exit_code: log.error('Exiting with error code: {}', exit_code)
+	else: log.debug('Finished')
+	return exit_code
+
+if __name__ == '__main__': sys.exit(main())
