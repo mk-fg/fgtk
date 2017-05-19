@@ -107,7 +107,6 @@ class WPACtrl:
 		await self.connect(sock)
 		transport, self.proto = await self.loop.create_datagram_endpoint(
 			lambda: WPAClientProtocol(self.loop, self.sock_remote), sock=sock )
-		# local_addr=self.sock_local, remote_addr=self.sock_remote, family=socket.AF_UNIX )
 		return self
 
 	async def __aexit__(self, *err):
@@ -178,8 +177,8 @@ async def run_wpa_checks(loop, conf):
 		if conf.mode == 'hostapd':
 			rx_enable = r'\<3\>(INTERFACE|AP)-ENABLED$'
 			rx_disable = r'\<3\>INTERFACE-DISABLED$'
-			# Doesn't transition ENABLED -> INTERFACE_DISABLED like with
-			#  wpa_supplicant, so it can be lost in a short window before STATUS is first checked
+			# state= doesn't transition ENABLED -> INTERFACE_DISABLED like with
+			#  wpa_state=, so it can be lost in a short window before STATUS is first checked
 			# There seem to be no way to actively check interface state with hostpad from wpa_cli
 			rx_state = r'(?:\n|^)state=(\S+)(?:\n|$)', r'^ENABLED$'
 		else:
