@@ -842,7 +842,7 @@ Tunnel server also stores allocated ports in a db file, so that each client gets
 more-or-less persistent listening port.
 
 Each client negotiates port before exec'ing "ssh -R" command, identifying itself
-via -i/--ident string (derived from /etc/machine-id by default), and both
+via --ident-* string (derived from /etc/machine-id by default), and both
 client/server need to use same -s/--auth-secret to create/validate MACs in each
 packet.
 
