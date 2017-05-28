@@ -46,12 +46,11 @@ class TVFConfig:
 
 			f'on-download-complete={opts.hook_done}' ]
 		+ (self.aria2c_opts or list()) + [''] )
-	aria2_term_wait = 20
+	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
 	aria2_startup_checks = 8, 10.0
 	aria2_queue_batch = 50
 	aria2_ws_heartbeat = 20.0
 	aria2_request_debug = False # very noisy
-	aria2_request_debug = True
 
 
 class LogMessage(object):
@@ -193,27 +192,6 @@ def add_stack_wrappers(cls):
 	return cls
 
 
-class asyncio_cancel_on:
-
-	def __init__(self, ev, err=None, loop=None):
-		self.ev, self.err, self.loop = ev, err, loop or asyncio.get_event_loop()
-
-	def __enter__(self):
-		self.ev_cancel, task = False, asyncio.Task.current_task(self.loop)
-		self.ev_wait_task = self.loop.create_task(self.ev_wait(task))
-		return self
-
-	def __exit__(self, exc_type, exc_val, exc_tb):
-		if exc_type is asyncio.CancelledError and self.ev_cancel:
-			if self.err: raise self.err from None
-		else: self.ev_wait_task.cancel()
-
-	async def ev_wait(self, task):
-		await self.ev.wait()
-		self.ev_cancel = True
-		task.cancel()
-
-
 it_adjacent = lambda seq, n, fill=None: it.zip_longest(fillvalue=fill, *([iter(seq)] * n))
 it_adjacent_nofill = lambda seq, n:\
 	( tuple(filter(lambda v: v is not it_adjacent, chunk))
@@ -260,6 +238,12 @@ def parse_pos_spec(pos):
 		raise argparse.ArgumentTypeError(
 			f'Failed to parse {pos!r} as [[hours:]minutes:]seconds value: {err}' )
 
+def suppress_err(exc_type, func, *args, **kws):
+	def _wrapper():
+		try: func(*args, **kws)
+		except exc_type: pass
+	return _wrapper
+
 
 class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
@@ -280,6 +264,7 @@ async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
 		for n, (url, prefix) in enumerate(vod_queue, 1):
 			info_suffix = None if len(vod_queue) == 1 else f' [{n} / {len(vod_queue)}]'
 			try: await fetch(url, prefix, info_suffix=info_suffix)
+			except asyncio.CancelledError as err: break
 			except TVFError as err:
 				if err.args: log.exception('BUG: {}', err)
 				log.error('Failed to fetch VoD #{} {!r} (url: {!r}), exiting', n, prefix, url)
@@ -333,20 +318,25 @@ class TVFAria2Proc:
 		return self
 
 	async def __aexit__(self, *err):
+		proc_term_delay = 0
 		if self.ws_ctx:
-			self.log.debug('Closing aria2 control websocket')
+			if not self.ws_closed.is_set():
+				await self.req('aria2.shutdown', sync=False)
+				proc_term_delay = self.conf.aria2_term_wait[0]
 			await self.ws_ctx.close()
 			if self.ws_handlers:
 				for func in self.ws_handlers.values(): func(StopIteration)
 			if self.ws_poll_task: await self.ws_poll_task
 			self.ws = self.ws_ctx = self.ws_poll_task = self.ws_handlers = None
 		if self.proc:
+			if proc_term_delay > 0:
+				await asyncio.wait_for(self.proc.wait(), proc_term_delay)
 			try:
 				self.proc.send_signal(0)
 				self.log.debug( 'Sending SIGTERM to aria2c pid'
-					' (timeout={:.2f}s): {}', self.conf.aria2_term_wait, self.proc.pid )
+					' (timeout={:.2f}s): {}', self.conf.aria2_term_wait[1], self.proc.pid )
 				self.proc.terminate()
-				try: await asyncio.wait([self.proc.wait()], timeout=self.conf.aria2_term_wait)
+				try: await asyncio.wait_for(self.proc.wait(), timeout=self.conf.aria2_term_wait[1])
 				except asyncio.TimeoutError:
 					self.log.debug('Sending SIGKILL to aria2c pid: {}', self.proc.pid)
 					self.proc.kill()
@@ -371,12 +361,16 @@ class TVFAria2Proc:
 				self.log.debug('Connected to aria2c json-rpc ws')
 				break
 			ts = self.loop.time()
+			if ts_next > ts:
+				await asyncio.sleep(ts_next - ts)
+				ts = self.loop.time()
 			while ts_next < ts:
 				try: ts_next += next(delay_iter)
 				except StopIteration: break
 		if not self.ws:
+			self.ws_closed.set()
 			raise TVFError( 'aria2c connection failed'
-				' (max_tries={}, timeout={})', *self.conf.aria2_startup_checks )
+				' (max_tries={}, timeout={})'.format(*self.conf.aria2_startup_checks) )
 		jrpc_uid_ns = secrets.token_urlsafe(3)
 		self.ws_jrpc_uid_iter = (f'{jrpc_uid_ns}.{n}' for n in range(1, 2**30))
 		self.ws_handlers, self.ws_poll_task = dict(), self.loop.create_task(self._ws_poller())
@@ -437,6 +431,8 @@ class TVFAria2Proc:
 		return fut_or_cb
 
 	async def req(self, method, *params, sync=True):
+		if method != 'system.multicall':
+			params = [self.ws_key] + list(params)
 		res = req_uid = next(self.ws_jrpc_uid_iter)
 		data_req = dict(
 			jsonrpc='2.0', id=req_uid,
@@ -446,8 +442,7 @@ class TVFAria2Proc:
 				'-sync' if sync else '', req_uid, json.dumps(data_req) )
 		await self.ws.send_str(json.dumps(data_req))
 		if sync:
-			with self.ws_close_wrap():
-				res = await self.expect(req_uid)
+			with self.ws_close_wrap(): res = await self.expect(req_uid)
 			if self.conf.aria2_request_debug:
 				self.log.debug('rpc-res-sync [{}]: {}', req_uid, json.dumps(res))
 			res = res['result']
@@ -623,18 +618,17 @@ class TVF:
 		if not os.path.exists(sh_path): sh_path = '/bin/ash' # busybox
 		if not os.path.exists(sh_path): sh_path = '/bin/sh'
 
-		hook_done_file = await ctx.enter(
-			tempfile.NamedTemporaryFile(
-				mode='w', prefix=f'.tvf.{os.getpid()}.', suffix='.done.hook' ) )
-		assert "'" not in str(file_prefix), file_prefix
-		assert "'" not in str(gids_done_path), gids_done_path
-		hook_done_file.write('\n'.join([
-			f'#!{sh_path}',
-			f'mv "$3" \'{file_prefix}\'."$1".mp4.chunk\\',
-			f'  && echo "$1" >>\'{gids_done_path}\'' ]))
-		hook_done_file.flush()
-		os.fchmod(hook_done_file.fileno(), 0o700)
-		hook_done = hook_done_file.name
+		with tempfile.NamedTemporaryFile( mode='w',
+				prefix=f'.tvf.{os.getpid()}.', suffix='.done.hook', delete=False ) as tmp:
+			hook_done = tmp.name
+			ctx.callback(suppress_err(OSError, os.unlink, hook_done))
+			assert "'" not in str(file_prefix), file_prefix
+			assert "'" not in str(gids_done_path), gids_done_path
+			tmp.write('\n'.join([
+				f'#!{sh_path}',
+				f'mv "$3" \'{file_prefix}\'."$1".mp4.chunk\\',
+				f'  && echo "$1" >>\'{gids_done_path}\'' ]))
+			os.fchmod(tmp.fileno(), 0o700)
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
 		with vod_cache('aria2c_conf') as vc:
@@ -652,7 +646,8 @@ class TVF:
 		await aria2c.connect()
 		# XXX: blanket ws_close_wrap from here? maybe use connect as ctx?
 
-		self.log.debug('Starting downloads (rpc-port={})...', port)
+		info = await aria2c.req('aria2.getVersion')
+		self.log.debug('Starting downloads (rpc-port={}, aria2-version={})...', port, info['version'])
 		count, gid_last = await aria2c.queue_chunks(chunks)
 		self.log.info( '\n\n  ------ Started {} downloads,'
 			' last gid: {} ------  \n', count, chunks.gid_format(gid_last) )
