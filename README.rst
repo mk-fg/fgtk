@@ -1699,8 +1699,8 @@ twitch_vod_fetch
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
-This is a unix-ish OS version, github user Choonster has Windows version in
-`Choonster/twitch_vod_fetch repo`_.
+This is a unix-ish OS version, though it might work on windows as well,
+otherwise check out `Choonster/twitch_vod_fetch repo`_ for a patched version.
 
 youtube-dl_ - the usual tool for the job - `doesn't support neither seeking to
 time nor length limits`_, but does a good job of getting a VoD m3u8 playlist
@@ -1708,31 +1708,28 @@ with chunks of the video (--get-url option).
 
 Also, some chunks getting stuck here at ~10-20 KiB/s download rates, making
 "sequentially download each one" approach of mpv/youtube-dl/ffmpeg/etc highly
-inpractical, and there are occasional errors.
+inpractical, and there are occasional errors too.
 
 So this wrapper grabs that playlist, skips chunks according to EXTINF tags
 (specifying exact time length of each) to satisfy --start-pos / --length, and
 then passes all these URLs to aria2_ for parallel downloading with stuff
 like --max-concurrent-downloads=5, --max-connection-per-server=5,
---lowest-speed-limit=100K, etc, also scheduling retries for any failed chunks a
-few times with delays.
+--lowest-speed-limit=100K, etc (see TVFConfig at the start of the script),
+also scheduling retries for any failed chunks a few times with delays.
 
-In the end, chunks get concatenated (literally, with "cat") together into one
+In the end, chunks get concatenated (literally, think "cat") together into one
 resulting mp4 file.
 
-Process is designed to tolerate Ctrl+C and resume from any point, and allows
-whatever tweaks (e.g. update url, change playlist, skip some chunks, etc), as it
-keeps all the state between these in plaintext files, plus all the actual pieces.
+Process is designed to tolerate Ctrl+C (or SIGKILL) and resume from any point,
+keeping some temporary files around for that until file is fully downloaded.
 
 Includes "--scatter" ("-x") mode to download every-X-out-of-Y timespans instead
 of full video, and has source timestamps on seeking in concatenated result
 (e.g. for ``-x 2:00/15:00``, minute 3 in the video should display as "16:00",
 making it easier to pick timespan to download properly).
 
-"--create-part-file" ("-p") option allows to start playback before all chunks
-get downloaded, but can be less efficient wrt fs fragmentation and when
-restarting whole process (as it'll be assembling new part-file from downloaded
-pieces each time).
+Video chunks get concatenated into partial file as they get downloaded, allowing
+to start playback before whole process ends.
 
 General usage examples (wrapped)::
 
@@ -1751,10 +1748,10 @@ General usage examples (wrapped)::
   % twitch_vod_fetch -p \
     http://www.twitch.tv/starcraft/v/24523048 sc2_blizzcon_finals \
     &>sc2_blizzcon_finals.log &
-  % mpv sc2_blizzcon_finals.part.mp4
+  % mpv sc2_blizzcon_finals.mp4   # starts playback before download ends
 
-| Needs youtube-dl_, `requests <http://python-requests.org/>`_ and aria2_.
-| A bit more info on it can be found in `this twitchtv-vods-... blog post`_.
+| Needs Python-3.6+, youtube-dl_, `aiohttp <https://aiohttp.readthedocs.io/>`_ and aria2_.
+| A bit more info (on its previous py2 version) can be found in `this twitchtv-vods-... blog post`_.
 
 .. _Choonster/twitch_vod_fetch repo: https://github.com/Choonster/twitch_vod_fetch/
 .. _youtube-dl: https://rg3.github.io/youtube-dl/

@@ -15,7 +15,7 @@ class TVFConfig:
 	slice_scatter_len = None
 	slice_scatter_interval = None
 
-	aria2c_opts = None # should override opts in aria2_cmd_base
+	aria2c_opts = None # overrides opts in aria2_conf_func
 	ytdl_opts = None
 	aiohttp_opts = dict(read_timeout=30, conn_timeout=60)
 
@@ -24,14 +24,12 @@ class TVFConfig:
 	keep_tempfiles = False
 	file_part_suffix = False
 	file_append_batch = 20
-	file_append_max = 100
-	file_pos_max_size = 5 * 2**20
+	file_append_max = 150 # should not be needed normally
 
 	aria2_cmd = 'aria2c'
 	aria2_conf_func = lambda self, opts: '\n'.join( [
 			'summary-interval=0',
 			f'console-log-level={opts.log_level}',
-			f'console-log-level=warn',
 
 			'enable-rpc=true',
 			f'rpc-listen-port={opts.port}',
@@ -47,10 +45,11 @@ class TVFConfig:
 			'timeout=15',
 			'connect-timeout=10',
 			'lowest-speed-limit=100K',
-			f'user-agent={opts.ua}',
+			f'user-agent={opts.ua}' ]
 
-			f'on-download-complete={opts.hook_done}' ]
+			# f'on-download-complete={opts.hook_done}' ]
 		+ (self.aria2c_opts or list()) + [''] )
+
 	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
 	aria2_startup_checks = 8, 10.0
 	aria2_queue_batch = 50
@@ -317,7 +316,6 @@ class TVFAria2Proc:
 		self.log = get_logger('tvf.aria2')
 
 	async def __aenter__(self):
-		# XXX: enable logging in aria2c only after "downloads started" log line
 		cmd = [self.conf.aria2_cmd, '--conf-path', self.cmd_conf]
 		self.log.debug('Starting aria2c daemon: {}', ' '.join(cmd))
 		self.proc = await asyncio.create_subprocess_exec(*cmd)
@@ -476,9 +474,6 @@ class TVFAria2Proc:
 			raise TVFError(f'Failed to queue chunk URL to aria2c')
 
 	async def queue_batch(self, *gid_urls, pos=None):
-		# aria2 rpc call syntax used here:
-		#   system.multicall(methods)
-		#   aria2.addUri([secret], uris[, options[, position]])
 		if pos is not None: pos = iter(range(pos, 2**30))
 		res = await self.req('system.multicall', list(
 			dict(methodName='aria2.addUri', params=(
@@ -495,7 +490,7 @@ class TVFAria2Proc:
 
 	async def queue_chunks(self, chunks):
 		self.chunks = chunks
-		count, gid_last = 0, None # XXX: track, not just count
+		count, gid_last = 0, None
 		with self.ws_close_wrap():
 			for gid_url_batch in it_adjacent_nofill(chunks, self.conf.aria2_queue_batch):
 				await self.queue_batch(*gid_url_batch)
@@ -505,16 +500,15 @@ class TVFAria2Proc:
 
 class TVFChunkIter:
 
-	def __init__(self, loop, conf, url_base, pls_text, gids_done):
-		self.loop, self.conf = loop, conf
-		self.gid_urls, self.gids_done = self.parse_pls(url_base, pls_text), set(gids_done)
+	def __init__(self, conf, url_base, pls_text, gids_done=None):
+		self.conf = conf
+		self.gid_urls = self.parse_pls(url_base, pls_text)
+		self.gids_done = set(gids_done or list())
 
 	def __iter__(self):
 		for gid, url in self.gid_urls.items():
 			if gid in self.gids_done: continue
 			yield gid, url
-
-	def gid_format(self, gid): return gid[:6]
 
 	def scatter_check_coro(self, *scatter_opts):
 		(a, b), res = scatter_opts, True
@@ -526,16 +520,12 @@ class TVFChunkIter:
 			if b <= 0: (a, b), res = scatter_opts, True
 
 	def parse_pls(self, url_base, pls_text):
-		# gids are assigned from 1-to-N only to chunks that pass scatter_check
-		# This is to have all actually downloaded ones be strictly sequential
-		# Alternatively, can be assigned 1-to-N to each playlist entry,
-		#  so that they can be reliably reused for different scatter options
 		slice_start, slice_len = self.conf.slice_start, self.conf.slice_len
 		scatter_check = self.scatter_check_coro(
 				self.conf.slice_scatter_len, self.conf.slice_scatter_interval )\
 			if self.conf.slice_scatter_len is not None else None
 		if scatter_check: next(scatter_check)
-		# aria2c requires 16-char gid, gid_format fits number in
+		# aria2c requires 16-char gid, format used here fits number in
 		#  first 6 chars because it looks nice in (tuncated) aria2c output
 		gid_iter = iter(map('{:06d}0000000000'.format, range(1, 999999)))
 		chunks = collections.OrderedDict()
@@ -553,7 +543,7 @@ class TVFChunkIter:
 
 	def mark_needed(self, gid, check=True):
 		if check and gid not in self.gids_done:
-			raise TVFError(f'BUG: gid was no marked as done: {gid}')
+			raise TVFError(f'BUG: gid was not marked as done: {gid}')
 		self.gids_done.discard(gid)
 
 	def mark_done(self, gid):
@@ -593,22 +583,28 @@ class TVF:
 			' for VoD {} (url: {}){}', file_prefix, url, info_suffix or '' )
 		return await self.ytdl_run('--list-formats', url, check=False)
 
+
 	async def get(self, ctx: AsyncExitStack, url, file_prefix, info_suffix=None):
 		file_prefix = pathlib.Path(file_prefix)
 		file_dst_path = file_prefix.with_suffix('.mp4')
 
-		if self.conf.file_part_suffix:
-			if file_dst_path.exists():
-				self.log.info( '--- Skipping download'
-					' for existing file: {} (rename/remove it to force)', file_dst_path )
-				return
-			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part')
-
 		if self.conf.use_temp_dirs:
 			name = file_prefix.name
 			file_prefix_dir = file_prefix.with_suffix('.tmp')
-			file_prefix_dir.mkdir(exist_ok=True)
 			file_prefix = file_prefix_dir / name
+
+		# Assuming file_dst is fully downloaded if there's no playlist tempfile around
+		# It's not a problem even with --keep-tempfiles, as file_dst_mark will be kept there too
+		if file_dst_path.exists() and (
+				self.conf.file_part_suffix or not file_prefix.with_suffix('.m3u8').exists() ):
+			self.log.info( '--- Skipping download'
+				' for existing file: {} (rename/remove it to force)', file_dst_path )
+			return
+
+		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
+		if self.conf.file_part_suffix:
+			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part')
+
 		vod_cache = ft.partial(TVFFileCache, file_prefix)
 		http = await ctx.enter(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
@@ -628,41 +624,6 @@ class TVF:
 				self.log.debug('Fetching playlist from URL: {}', url_pls)
 				async with http.get(url_pls, headers={'User-Agent': ua}) as res:
 					pls = vc.update(await res.text())
-		with vod_cache('gids') as vc:
-			gids_done, gids_done_path = vc.cached, vc.path
-			if not gids_done: gids_done = vc.update('')
-			gids_done = gids_done.splitlines()
-		chunks = TVFChunkIter(self.loop, self.conf, url_base, pls, gids_done)
-		chunk_path = lambda gid: file_prefix.with_suffix(f'.{gid}.mp4.chunk')
-		chunk_path_tmp = lambda gid: chunk_path(gid).with_suffix('.tmp')
-		del url_base, pls, gids_done
-
-		# Make sure to re-download recorded-but-missing chunks
-		for gid in list(chunks.gids_done):
-			chunk = chunk_path(gid)
-			if not os.path.exists(chunk):
-				self.log.debug( 'Chunk recorded as downloaded, but is'
-					' missing (gid: {}), re-queueing it: {}', chunks.gid_format(gid), chunk )
-				chunks.mark_needed(gid)
-
-		# XXX: do away with this crap entirely - just download stuff sequentially, catch dl-events
-		# Try to pick leaner shell than bash, since hook is dead-simple
-		# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
-		sh_path = '/bin/dash'
-		if not os.path.exists(sh_path): sh_path = '/bin/ash' # busybox
-		if not os.path.exists(sh_path): sh_path = '/bin/sh'
-
-		with tempfile.NamedTemporaryFile( mode='w',
-				prefix=f'.tvf.{os.getpid()}.', suffix='.done.hook', delete=False ) as tmp:
-			hook_done = tmp.name
-			ctx.callback(suppress_err(OSError, os.unlink, hook_done))
-			assert "'" not in str(file_prefix), file_prefix
-			assert "'" not in str(gids_done_path), gids_done_path
-			tmp.write('\n'.join([
-				f'#!{sh_path}',
-				f'mv "$3" \'{file_prefix}\'."$1".mp4.chunk\\',
-				f'  && echo "$1" >>\'{gids_done_path}\'' ]))
-			os.fchmod(tmp.fileno(), 0o700)
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
 		with vod_cache('aria2c_conf') as vc:
@@ -671,42 +632,19 @@ class TVF:
 				s.bind(('localhost', 0))
 				addr, port = s.getsockname()
 			vc.update(self.conf.aria2_conf_func(adict(
-				log_level='notice' if self.conf.verbose else 'warn',
-				key=key, port=port, ua=ua, hook_done=hook_done )))
+				key=key, port=port, ua=ua,
+				log_level='notice' if self.conf.verbose else 'warn' )))
 			aria2c_conf_path = vc.path
-
-		aria2c = await ctx.enter(TVFAria2Proc( self.loop,
-			self.conf, http, aria2c_conf_path, key, port, chunk_path_tmp ))
-		await aria2c.connect()
-		# XXX: blanket ws_close_wrap from here? maybe use connect as ctx?
-
-		info = await aria2c.req('getVersion')
-		self.log.debug('Starting downloads (rpc-port={}, aria2-version={})...', port, info['version'])
-		count, gid_last = await aria2c.queue_chunks(chunks)
-		self.log.info( '\n\n  ------ Started {} downloads,'
-			' last gid: {} ------  \n', count, chunks.gid_format(gid_last) )
-
-		# Download control strategy:
-		# - listen for aria2.onDownloadComplete event for each gid
-		#   - append sequential gids to partial file, XXX: and remove chunk file
-		#   - non-sequential gids - just remember and check after each append
-		#   - if no seq gid within timeout - check status and prioritize/force it
-		# - listen for XXX: fail event
-		#   - force re-download and prioritize
 
 		# file_dst_mark stores (pos, seq) tuples, appending each update to the end
 		# It is assumed here that such tiny writes will be atomic
 		file_dst_pos = file_dst_seq = 0 # position in dst file, sequential gid int
+
 		file_dst_mark_fmt = '>QI'
 		file_dst_mark = await ctx.enter(file_prefix.with_suffix('.pos').open('a+b'))
 		if file_dst_mark.tell() != 0:
 			file_dst_mark.seek(-struct.calcsize(file_dst_mark_fmt), os.SEEK_END)
 			file_dst_pos, file_dst_seq = struct.unpack(file_dst_mark_fmt, file_dst_mark.read())
-			if file_dst_mark.tell() > self.conf.file_pos_max_size:
-				file_dst_mark_trunc = await ctx.enter(file_prefix.with_suffix('.pos.trunc').open('a+b'))
-				file_dst_mark_trunc.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
-				os.rename(file_dst_mark_trunc.name, file_dst_mark_trunc.name.rsplit('.', 1)[0])
-				file_dst_mark = file_dst_mark_trunc
 
 		if not file_dst_path.exists() and file_dst_pos > 0:
 			raise TVFError( f'Missing partial-dst-file'
@@ -718,28 +656,57 @@ class TVF:
 		file_dst.seek(file_dst_pos)
 		file_dst.truncate()
 
-		seq_heap, seq_chunks = list(), list() # downloaded chunks that weren't appended yet
+		# seq - gid converted to a sequential int, to sort appended chunks
+		seq_heap, seq_chunks = list(), list()
 		gid_to_seq = lambda gid: int(gid[:6])
 		seq_to_gid = lambda seq: f'{seq:06d}0000000000'
+		gid_pretty = lambda gid: gid[:6]
+
+		chunks = TVFChunkIter(self.conf, url_base, pls)
+		for gid, url in chunks:
+			if gid_to_seq(gid) > file_dst_seq: break
+			chunks.mark_done(gid)
+		chunk_path = lambda gid: file_prefix.with_suffix(f'.{gid}.mp4.chunk')
+
+		aria2c = await ctx.enter(TVFAria2Proc( self.loop,
+			self.conf, http, aria2c_conf_path, key, port, chunk_path ))
+		await aria2c.connect()
+
+		# All chunks from iter(chunks) get queued for download here
+		info = await aria2c.req('getVersion')
+		self.log.debug('Starting downloads (rpc-port={}, aria2-version={})...', port, info['version'])
+		count, gid_last = await aria2c.queue_chunks(chunks)
+		if gid_last:
+			self.log.info( '\n\n  ------ Started {} downloads,'
+				' last gid: {} ------  \n', count, gid_pretty(gid_last) )
+		else: self.log.info('No extra downloads were necessary')
+
+		### Main download-control loop ahead
+		# Download control strategy:
+		# - listen for aria2.onDownloadComplete event for each gid
+		#   - append sequential-gid chunk to partial file, update mark-file, remove chunk
+		#   - non-sequential gids - just remember and check/append next time
+		#   - if >file_append_max non-sequential-gid chunks downloaded - abort
+		# - for all error/paused/stopped events: prepend to download queue
+		# - stop on chunks.finished
 
 		ev_t = enum.Enum('ev_type', 'complete stop pause error')
 		evq, ev_tuple = asyncio.Queue(), collections.namedtuple('ev', 't data')
 		for t in ev_t:
-			aria2c.expect(
-				f'onDownload{t.name.title()}',
+			aria2c.expect( f'onDownload{t.name.title()}',
 				lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
 
-		### Main download-control loop
 		while not chunks.finished:
 
 			with aria2c.ws_close_wrap():
 				ev = await evq.get()
 				for e in ev.data['params']:
-					if ev.t == ev_t.complete:
+					if ev.t == ev_t.complete: # completed chunk goes to seq_heap
 						heapq.heappush(seq_heap, gid_to_seq(e['gid']))
 						await aria2c.req('removeDownloadResult', e['gid'], sync=False)
-					else: # stop/pause/error - retry
-						# XXX: some limit on retries for same gid
+						chunks.mark_done(e['gid'])
+					else: # stop/pause/error - retry immediately
+						# Limit on forced retries (on top of what aria2 does) for same gid can be added here
 						if self.log.isEnabledFor(logging.DEBUG):
 							status = await aria2c.req( 'tellStatus', e['gid'],
 								['status', 'errorCode', 'errorMessage', 'completedLength', 'totalLength'] )
@@ -762,7 +729,7 @@ class TVF:
 					file_dst_mark.flush()
 					os.fdatasync(file_dst_mark.fileno())
 					for p in seq_chunks: os.unlink(p)
-					self.log.debug('Extended partial dst file by {} chunk(s)', len(seq_chunks))
+					# self.log.debug('\nExtended partial dst file by {} chunk(s)', len(seq_chunks))
 					seq_chunks.clear()
 
 			if len(seq_heap) > self.conf.file_append_max:
@@ -773,18 +740,20 @@ class TVF:
 					('  first gid among pending: {}', seq_to_gid(seq_heap[0])) ])
 				raise TVFError(err_msg)
 
+		### done!
+
 		if self.conf.file_part_suffix:
 			file_dst_path.rename(file_dst_done)
 			file_dst_path = file_dst_done
 
-		if not opts.conf.keep_tempfiles:
+		if not self.conf.keep_tempfiles:
 			self.log.debug('Cleanup for prefix (dir={}): {}', self.conf.use_temp_dirs, file_prefix)
 			if self.conf.use_temp_dirs: shutil.rmtree(file_prefix_dir)
 			else:
 				for p in file_prefix.parent.glob(f'{file_prefix.name}.*'):
 					if p != file_dst_path: os.unlink(p)
 
-		self.log.info('--- Downloaded VoD file: {}{}', file_dst_path, info_suffix)
+		self.log.info('--- Downloaded VoD file: {}{}', file_dst_path, info_suffix or '')
 
 
 def main(args=None, conf=None):
@@ -832,6 +801,9 @@ def main(args=None, conf=None):
 			' Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"')
 
 	group = parser.add_argument_group('Misc/debug options')
+	group.add_argument('-p', '--use-part-suffix',
+		action='store_true', help='Use .part suffix for'
+			' partial destination file until it is fully downloaded.')
 	group.add_argument('-n', '--no-temp-dirs',
 		action='store_true', help='Do not create temporary'
 			' directories for download parts, keep everything in the destination one.')
@@ -864,7 +836,9 @@ def main(args=None, conf=None):
 	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].strip().split()
 
 	conf.verbose = opts.debug
-	conf.keep_tempfiles, use_temp_dirs = opts.keep_tempfiles, not opts.no_temp_dirs
+	conf.keep_tempfiles = opts.keep_tempfiles
+	conf.use_temp_dirs = not opts.no_temp_dirs
+	conf.file_part_suffix = opts.use_part_suffix
 
 	vod_queue, args = list(),\
 		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
