@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, argparse, logging, secrets, re, json
-import contextlib, inspect, tempfile, pathlib, collections
-import asyncio, asyncio.subprocess, socket, signal
+import os, sys, argparse, logging, secrets, re, json, shutil
+import contextlib, inspect, tempfile, pathlib, collections, enum
+import asyncio, asyncio.subprocess, socket, signal, heapq, struct
 
 import aiohttp
 
@@ -22,11 +22,16 @@ class TVFConfig:
 	verbose = False
 	use_temp_dirs = True
 	keep_tempfiles = False
+	file_part_suffix = False
+	file_append_batch = 20
+	file_append_max = 100
+	file_pos_max_size = 5 * 2**20
 
 	aria2_cmd = 'aria2c'
 	aria2_conf_func = lambda self, opts: '\n'.join( [
 			'summary-interval=0',
 			f'console-log-level={opts.log_level}',
+			f'console-log-level=warn',
 
 			'enable-rpc=true',
 			f'rpc-listen-port={opts.port}',
@@ -50,7 +55,8 @@ class TVFConfig:
 	aria2_startup_checks = 8, 10.0
 	aria2_queue_batch = 50
 	aria2_ws_heartbeat = 20.0
-	aria2_request_debug = False # very noisy
+	aria2_ws_debug = False # very noisy
+	aria2_ws_debug_signals = False
 
 
 class LogMessage(object):
@@ -247,6 +253,7 @@ def suppress_err(exc_type, func, *args, **kws):
 
 class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
+class TVFReqError(TVFError): pass
 
 
 async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
@@ -321,7 +328,7 @@ class TVFAria2Proc:
 		proc_term_delay = 0
 		if self.ws_ctx:
 			if not self.ws_closed.is_set():
-				await self.req('aria2.shutdown', sync=False)
+				await self.req('shutdown', sync=False)
 				proc_term_delay = self.conf.aria2_term_wait[0]
 			await self.ws_ctx.close()
 			if self.ws_handlers:
@@ -395,10 +402,12 @@ class TVFAria2Proc:
 		try:
 			async for msg in self.ws:
 				if msg.type == aiohttp.WSMsgType.TEXT:
-					if self.conf.aria2_request_debug: self.log.debug('rpc-msg: {}', msg.data)
-					msg, hs_discard = json.loads(msg.data), set()
+					if self.conf.aria2_ws_debug: self.log.debug('rpc-msg: {}', msg.data)
+					msg_data, hs_discard = json.loads(msg.data), set()
+					if self.conf.aria2_ws_debug_signals and msg_data.get('method'):
+						self.log.debug('rpc-signal: {}', msg.data)
 					for k, func in self.ws_handlers.items():
-						if func(msg): hs_discard.add(k)
+						if func(msg_data): hs_discard.add(k)
 					for k in hs_discard: del self.ws_handlers[k]
 				elif msg.type == aiohttp.WSMsgType.closed: break
 				elif msg.type == aiohttp.WSMsgType.error:
@@ -419,6 +428,7 @@ class TVFAria2Proc:
 		if callable(uid_or_func) and not uid_or_func(msg): return
 		else:
 			uid = msg.get('id') or msg.get('method')
+			if uid.startswith('aria2.'): uid = uid[6:]
 			if uid != uid_or_func: return
 		if callable(fut_or_cb): fut_or_cb(msg)
 		else: fut_or_cb.set_result(msg)
@@ -432,33 +442,47 @@ class TVFAria2Proc:
 
 	async def req(self, method, *params, sync=True):
 		if method != 'system.multicall':
-			params = [self.ws_key] + list(params)
+			method, params = f'aria2.{method}', [self.ws_key] + list(params)
 		res = req_uid = next(self.ws_jrpc_uid_iter)
 		data_req = dict(
 			jsonrpc='2.0', id=req_uid,
 			method=method, params=params )
-		if self.conf.aria2_request_debug:
+		if self.conf.aria2_ws_debug:
 			self.log.debug( 'rpc-req{} [{}]: {}',
 				'-sync' if sync else '', req_uid, json.dumps(data_req) )
 		await self.ws.send_str(json.dumps(data_req))
 		if sync:
 			with self.ws_close_wrap(): res = await self.expect(req_uid)
-			if self.conf.aria2_request_debug:
+			if self.conf.aria2_ws_debug:
 				self.log.debug('rpc-res-sync [{}]: {}', req_uid, json.dumps(res))
+			if 'result' not in res:
+				raise TVFReqError(f'Request failed (method={method}, params={params}): {res}')
 			res = res['result']
 		return res
 
-	async def queue(self, *gid_urls, pos=None):
+	async def req_ok(self, method, *params):
+		res = await self.req(method, *params)
+		if res != 'OK': raise TVFError(f'aria2c command failed: {method}{params}')
+
+	def _queue_params(self, gid, url, pos=None):
+		return (
+			[[url], dict(gid=gid, out=str(self.path_func(gid)))]
+			+ ([] if not pos else [pos]) )
+
+	async def queue(self, gid, url, pos=None):
+		res = await self.req('addUri', *self._queue_params(gid, url, pos))
+		if res != gid:
+			self.log.error('addUri error (gid={}): {}', gid, res)
+			raise TVFError(f'Failed to queue chunk URL to aria2c')
+
+	async def queue_batch(self, *gid_urls, pos=None):
 		# aria2 rpc call syntax used here:
 		#   system.multicall(methods)
 		#   aria2.addUri([secret], uris[, options[, position]])
 		if pos is not None: pos = iter(range(pos, 2**30))
 		res = await self.req('system.multicall', list(
-			dict(
-				methodName='aria2.addUri',
-				params=[ self.ws_key, [url],
-					dict(gid=gid, out=str(self.path_func(gid))) ]
-					+ ([] if not pos else [next(pos)]) )
+			dict(methodName='aria2.addUri', params=(
+				[self.ws_key] + self._queue_params(gid, url, pos and next(pos)) ))
 			for gid, url in gid_urls ))
 		res_chk = list([gid] for gid, url in gid_urls)
 		if res != res_chk:
@@ -474,7 +498,7 @@ class TVFAria2Proc:
 		count, gid_last = 0, None # XXX: track, not just count
 		with self.ws_close_wrap():
 			for gid_url_batch in it_adjacent_nofill(chunks, self.conf.aria2_queue_batch):
-				await self.queue(*gid_url_batch)
+				await self.queue_batch(*gid_url_batch)
 				count, gid_last = count + len(gid_url_batch), gid_url_batch[-1][0]
 		return count, gid_last
 
@@ -483,12 +507,12 @@ class TVFChunkIter:
 
 	def __init__(self, loop, conf, url_base, pls_text, gids_done):
 		self.loop, self.conf = loop, conf
-		self.chunks, self.gids_done = self.parse_pls(url_base, pls_text), set(gids_done)
+		self.gid_urls, self.gids_done = self.parse_pls(url_base, pls_text), set(gids_done)
 
 	def __iter__(self):
-		for gid, chunk in self.chunks.items():
+		for gid, url in self.gid_urls.items():
 			if gid in self.gids_done: continue
-			yield gid, chunk
+			yield gid, url
 
 	def gid_format(self, gid): return gid[:6]
 
@@ -532,6 +556,13 @@ class TVFChunkIter:
 			raise TVFError(f'BUG: gid was no marked as done: {gid}')
 		self.gids_done.discard(gid)
 
+	def mark_done(self, gid):
+		self.gids_done.add(gid)
+
+	@property
+	def finished(self):
+		return len(self.gid_urls) == len(self.gids_done)
+
 
 @add_stack_wrappers
 class TVF:
@@ -564,18 +595,20 @@ class TVF:
 
 	async def get(self, ctx: AsyncExitStack, url, file_prefix, info_suffix=None):
 		file_prefix = pathlib.Path(file_prefix)
-		file_dst = file_prefix.with_suffix('.mp4')
-		if file_dst.exists():
-			self.log.info( '--- Skipping download'
-				' for existing file: {} (rename/remove it to force)', file_dst )
-			return
+		file_dst_path = file_prefix.with_suffix('.mp4')
+
+		if self.conf.file_part_suffix:
+			if file_dst_path.exists():
+				self.log.info( '--- Skipping download'
+					' for existing file: {} (rename/remove it to force)', file_dst_path )
+				return
+			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part')
 
 		if self.conf.use_temp_dirs:
 			name = file_prefix.name
-			file_prefix = file_prefix.with_suffix('.tmp')
-			file_prefix.mkdir(exist_ok=True)
-			file_prefix = file_prefix / name
-		file_part = file_prefix.with_suffix('.part.mp4')
+			file_prefix_dir = file_prefix.with_suffix('.tmp')
+			file_prefix_dir.mkdir(exist_ok=True)
+			file_prefix = file_prefix_dir / name
 		vod_cache = ft.partial(TVFFileCache, file_prefix)
 		http = await ctx.enter(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
@@ -605,13 +638,14 @@ class TVF:
 		del url_base, pls, gids_done
 
 		# Make sure to re-download recorded-but-missing chunks
-		for gid in chunks.gids_done:
+		for gid in list(chunks.gids_done):
 			chunk = chunk_path(gid)
 			if not os.path.exists(chunk):
 				self.log.debug( 'Chunk recorded as downloaded, but is'
 					' missing (gid: {}), re-queueing it: {}', chunks.gid_format(gid), chunk )
 				chunks.mark_needed(gid)
 
+		# XXX: do away with this crap entirely - just download stuff sequentially, catch dl-events
 		# Try to pick leaner shell than bash, since hook is dead-simple
 		# sh hook(s) assume that gids_*_path fs supports atomic O_APPEND
 		sh_path = '/bin/dash'
@@ -646,14 +680,111 @@ class TVF:
 		await aria2c.connect()
 		# XXX: blanket ws_close_wrap from here? maybe use connect as ctx?
 
-		info = await aria2c.req('aria2.getVersion')
+		info = await aria2c.req('getVersion')
 		self.log.debug('Starting downloads (rpc-port={}, aria2-version={})...', port, info['version'])
 		count, gid_last = await aria2c.queue_chunks(chunks)
 		self.log.info( '\n\n  ------ Started {} downloads,'
 			' last gid: {} ------  \n', count, chunks.gid_format(gid_last) )
 
+		# Download control strategy:
+		# - listen for aria2.onDownloadComplete event for each gid
+		#   - append sequential gids to partial file, XXX: and remove chunk file
+		#   - non-sequential gids - just remember and check after each append
+		#   - if no seq gid within timeout - check status and prioritize/force it
+		# - listen for XXX: fail event
+		#   - force re-download and prioritize
 
+		# file_dst_mark stores (pos, seq) tuples, appending each update to the end
+		# It is assumed here that such tiny writes will be atomic
+		file_dst_pos = file_dst_seq = 0 # position in dst file, sequential gid int
+		file_dst_mark_fmt = '>QI'
+		file_dst_mark = await ctx.enter(file_prefix.with_suffix('.pos').open('a+b'))
+		if file_dst_mark.tell() != 0:
+			file_dst_mark.seek(-struct.calcsize(file_dst_mark_fmt), os.SEEK_END)
+			file_dst_pos, file_dst_seq = struct.unpack(file_dst_mark_fmt, file_dst_mark.read())
+			if file_dst_mark.tell() > self.conf.file_pos_max_size:
+				file_dst_mark_trunc = await ctx.enter(file_prefix.with_suffix('.pos.trunc').open('a+b'))
+				file_dst_mark_trunc.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
+				os.rename(file_dst_mark_trunc.name, file_dst_mark_trunc.name.rsplit('.', 1)[0])
+				file_dst_mark = file_dst_mark_trunc
 
+		if not file_dst_path.exists() and file_dst_pos > 0:
+			raise TVFError( f'Missing partial-dst-file'
+				f' (expecting bytes={file_dst_pos:,} gid-seq={file_dst_seq}): {file_dst_path}' )
+		file_dst = file_dst_path.open('a+b')
+		if file_dst.tell() < file_dst_pos:
+			raise TVFError( f'Missing chunk of partial-dst-file'
+				f' (expecting size>={file_dst_pos:,} actual-size={file_dst.tell():,}): {file_dst_path}' )
+		file_dst.seek(file_dst_pos)
+		file_dst.truncate()
+
+		seq_heap, seq_chunks = list(), list() # downloaded chunks that weren't appended yet
+		gid_to_seq = lambda gid: int(gid[:6])
+		seq_to_gid = lambda seq: f'{seq:06d}0000000000'
+
+		ev_t = enum.Enum('ev_type', 'complete stop pause error')
+		evq, ev_tuple = asyncio.Queue(), collections.namedtuple('ev', 't data')
+		for t in ev_t:
+			aria2c.expect(
+				f'onDownload{t.name.title()}',
+				lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
+
+		### Main download-control loop
+		while not chunks.finished:
+
+			with aria2c.ws_close_wrap():
+				ev = await evq.get()
+				for e in ev.data['params']:
+					if ev.t == ev_t.complete:
+						heapq.heappush(seq_heap, gid_to_seq(e['gid']))
+						await aria2c.req('removeDownloadResult', e['gid'], sync=False)
+					else: # stop/pause/error - retry
+						# XXX: some limit on retries for same gid
+						if self.log.isEnabledFor(logging.DEBUG):
+							status = await aria2c.req( 'tellStatus', e['gid'],
+								['status', 'errorCode', 'errorMessage', 'completedLength', 'totalLength'] )
+							self.log.debug('Chunk {} download stopped or failed, retrying: {}', e['gid'], status)
+						await aria2c.req_ok('removeDownloadResult', e['gid'])
+						await aria2c.queue(e['gid'], chunks.gid_urls[e['gid']], 0)
+
+			if chunks.finished or len(seq_heap) > self.conf.file_append_batch:
+				while seq_heap and seq_heap[0] == file_dst_seq + 1:
+					seq = heapq.heappop(seq_heap)
+					chunk = chunk_path(seq_to_gid(seq)).open('rb')
+					# Can be async via aio_write: https://github.com/Tinche/aiofiles
+					shutil.copyfileobj(chunk, file_dst)
+					file_dst_pos, file_dst_seq = file_dst.tell(), seq
+					seq_chunks.append(chunk.name)
+				if seq_chunks:
+					file_dst.flush()
+					file_dst_mark.seek(0)
+					file_dst_mark.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
+					file_dst_mark.flush()
+					os.fdatasync(file_dst_mark.fileno())
+					for p in seq_chunks: os.unlink(p)
+					self.log.debug('Extended partial dst file by {} chunk(s)', len(seq_chunks))
+					seq_chunks.clear()
+
+			if len(seq_heap) > self.conf.file_append_max:
+				err_msg = ( 'Chunk-append sequence is broken'
+					f' (pending={len(seq_heap)} max={self.conf.file_append_max})' )
+				log_lines(self.log.error, [ ('{}:', err_msg),
+					('  expecting gid: {}', seq_to_gid(file_dst_seq)),
+					('  first gid among pending: {}', seq_to_gid(seq_heap[0])) ])
+				raise TVFError(err_msg)
+
+		if self.conf.file_part_suffix:
+			file_dst_path.rename(file_dst_done)
+			file_dst_path = file_dst_done
+
+		if not opts.conf.keep_tempfiles:
+			self.log.debug('Cleanup for prefix (dir={}): {}', self.conf.use_temp_dirs, file_prefix)
+			if self.conf.use_temp_dirs: shutil.rmtree(file_prefix_dir)
+			else:
+				for p in file_prefix.parent.glob(f'{file_prefix.name}.*'):
+					if p != file_dst_path: os.unlink(p)
+
+		self.log.info('--- Downloaded VoD file: {}{}', file_dst_path, info_suffix)
 
 
 def main(args=None, conf=None):
