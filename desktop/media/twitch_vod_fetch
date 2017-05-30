@@ -586,7 +586,7 @@ class TVF:
 				while ts >= ts_retry: ts_retry += self.conf.file_unlink_retry_delay
 			try:
 				path = await asyncio.wait_for(
-					self.chunk_cleanup_queue.get(), timeout=ts_retry-self.loop.time() )
+					self.chunk_cleanup_queue.get(), timeout=ts_retry-ts )
 				chunks_to_unlink.add(path)
 				unlink_attempt(path)
 			except asyncio.TimeoutError: pass
