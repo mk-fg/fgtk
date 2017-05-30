@@ -25,6 +25,7 @@ class TVFConfig:
 	file_part_suffix = False
 	file_append_batch = 20
 	file_append_max = 150 # should not be needed normally
+	compat_windows = sys.platform == 'win32'
 
 	aria2_cmd = 'aria2c'
 	aria2_conf_func = lambda self, opts: '\n'.join( [
@@ -263,8 +264,9 @@ async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
 		nonlocal exit_code
 		exit_code = code
 		task.cancel()
-	for sig, code in ('INT', 1), ('TERM', 0):
-		loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ft.partial(sig_handler, sig, code))
+	if not conf.compat_windows:
+		for sig, code in ('INT', 1), ('TERM', 0):
+			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ft.partial(sig_handler, sig, code))
 	async with TVF(loop, conf, log) as fetcher:
 		fetch = fetcher.get if not list_formats_only else fetcher.ytdl_probe_formats
 		for n, (url, prefix) in enumerate(vod_queue, 1):
@@ -574,7 +576,7 @@ class TVF:
 		proc = await asyncio.create_subprocess_exec(*cmd, **popen_kws)
 		if out: proc_stdout = (await proc.stdout.read()).strip()
 		exit_code = await proc.wait()
-		if check and exit_code != os.EX_OK:
+		if check and exit_code != 0:
 			raise TVFError(f'"youtube-dl {ytdl_op}" command exited with error (code: {exit_code})')
 		return exit_code if not out else proc_stdout.decode()
 
@@ -727,7 +729,6 @@ class TVF:
 					file_dst_mark.seek(0)
 					file_dst_mark.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
 					file_dst_mark.flush()
-					os.fdatasync(file_dst_mark.fileno())
 					for p in seq_chunks: os.unlink(p)
 					# self.log.debug('\nExtended partial dst file by {} chunk(s)', len(seq_chunks))
 					seq_chunks.clear()
@@ -857,6 +858,11 @@ def main(args=None, conf=None):
 			parser.error( 'Provided URL appears to be for the unsupported'
 				f' VoD format (only /user/v/ or /videos/ VoDs are supported): {url}' )
 		vod_queue.append((url, prefix))
+
+	if conf.compat_windows:
+		# Use the Proactor event loop on Windows for subprocess support
+		loop = asyncio.ProactorEventLoop()
+		asyncio.set_event_loop(loop)
 
 	log.debug('Starting vod_fetch loop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
