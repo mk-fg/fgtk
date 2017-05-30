@@ -632,12 +632,12 @@ class TVF:
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
 		if self.conf.file_part_suffix:
-			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part')
+			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part.mp4')
 
 		vod_cache = ft.partial(TVFFileCache, file_prefix)
 		http = await ctx.enter(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
-		self.log.info('--- Downloading VoD {} (url: {}){}', file_prefix, url, info_suffix or '')
+		self.log.info('--- Downloading VoD {} (url: {}){}', file_dst_path, url, info_suffix or '')
 
 		with vod_cache('m3u8.url') as vc:
 			url_pls = vc.cached or vc.update(await self.ytdl_run('--get-url', url, out=True))
