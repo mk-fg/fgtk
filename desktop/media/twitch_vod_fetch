@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, argparse, logging, secrets, re, json, shutil
+import os, sys, errno, argparse, logging, secrets, re, json, shutil
 import contextlib, inspect, tempfile, pathlib, collections, enum
 import asyncio, asyncio.subprocess, socket, signal, heapq, struct
 
@@ -577,8 +577,9 @@ class TVF:
 		def unlink_attempt(path=None):
 			for path in [path] if path else list(chunks_to_unlink):
 				try: os.unlink(path)
-				except OSError: pass
-				else: chunks_to_unlink.discard(path)
+				except OSError as err:
+					if err.errno != errno.ENOENT: continue
+				chunks_to_unlink.discard(path)
 		while True:
 			ts = self.loop.time()
 			if ts >= ts_retry:
