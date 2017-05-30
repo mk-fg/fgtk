@@ -201,6 +201,8 @@ def main(args=None, conf=None):
 				' remote ssh port and tunnel listening port, as received from mux-server.')
 
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('--debug-ssh', action='store_true',
+		help='Add verbose-mode options to ssh command line.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	global log
@@ -266,7 +268,9 @@ def main(args=None, conf=None):
 		subprocess.Popen(mux_hook, close_fds=True).wait()
 
 	if opts.ssh_port: ssh_port = opts.ssh_port
-	ssh_cmd = ( ['ssh'] + conf.ssh_opts +
+	ssh_cmd = conf.ssh_opts
+	if opts.debug_ssh: ssh_cmd += ['-vvv']
+	ssh_cmd = ( ['ssh'] + ssh_cmd +
 		[f'-p{ssh_port}', '-R', f'{tun_port}:localhost:22', ssh_login] )
 	log.debug('Resulting ssh command: {!r}', ssh_cmd)
 	os.execvp('ssh', ssh_cmd)
