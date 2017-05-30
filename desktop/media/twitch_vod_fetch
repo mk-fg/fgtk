@@ -25,6 +25,7 @@ class TVFConfig:
 	file_part_suffix = False
 	file_append_batch = 20
 	file_append_max = 150 # should not be needed normally
+	file_unlink_retry_delay = 10 # in case of "file is busy" thing on windows
 	compat_windows = sys.platform == 'win32'
 
 	aria2_cmd = 'aria2c'
@@ -563,9 +564,35 @@ class TVF:
 		self.loop, self.conf = loop, conf
 		self.log = log or get_logget('tvf.fetcher')
 
-	async def __aenter__(self): return self
-	async def __aexit__(self, *err): pass
+	async def __aenter__(self):
+		self.chunk_cleanup_queue = asyncio.Queue()
+		self.chunk_cleanup_task = self.loop.create_task(self.chunk_cleanup())
+		return self
+	async def __aexit__(self, *err):
+		self.chunk_cleanup_task.cancel()
+		await self.chunk_cleanup_task
 
+	async def chunk_cleanup(self):
+		ts_retry, chunks_to_unlink = self.loop.time(), set()
+		def unlink_attempt(path=None):
+			for path in [path] if path else list(chunks_to_unlink):
+				try: os.unlink(path)
+				except OSError: pass
+				else: chunks_to_unlink.discard(path)
+		while True:
+			ts = self.loop.time()
+			if ts >= ts_retry:
+				unlink_attempt()
+				while ts >= ts_retry: ts_retry += self.conf.file_unlink_retry_delay
+			try:
+				path = await asyncio.wait_for(
+					self.chunk_cleanup_queue.get(), timeout=ts_retry-self.loop.time() )
+				chunks_to_unlink.add(path)
+				unlink_attempt(path)
+			except asyncio.TimeoutError: pass
+			except asyncio.CancelledError:
+				unlink_attempt()
+				break
 
 	async def ytdl_run(self, ytdl_op, *args, check=True, out=False, **popen_kws):
 		cmd = ['youtube-dl']
@@ -690,7 +717,7 @@ class TVF:
 		#   - non-sequential gids - just remember and check/append next time
 		#   - if >file_append_max non-sequential-gid chunks downloaded - abort
 		# - for all error/paused/stopped events: prepend to download queue
-		# - stop on chunks.finished
+		# - stop on chunks.finished (all chunks marked as "done")
 
 		ev_t = enum.Enum('ev_type', 'complete stop pause error')
 		evq, ev_tuple = asyncio.Queue(), collections.namedtuple('ev', 't data')
@@ -726,10 +753,9 @@ class TVF:
 					seq_chunks.append(chunk.name)
 				if seq_chunks:
 					file_dst.flush()
-					file_dst_mark.seek(0)
 					file_dst_mark.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
 					file_dst_mark.flush()
-					for p in seq_chunks: os.unlink(p)
+					for p in seq_chunks: self.chunk_cleanup_queue.put_nowait(p)
 					# self.log.debug('\nExtended partial dst file by {} chunk(s)', len(seq_chunks))
 					seq_chunks.clear()
 
