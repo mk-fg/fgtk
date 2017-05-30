@@ -48,8 +48,6 @@ class TVFConfig:
 			'connect-timeout=10',
 			'lowest-speed-limit=100K',
 			f'user-agent={opts.ua}' ]
-
-			# f'on-download-complete={opts.hook_done}' ]
 		+ (self.aria2c_opts or list()) + [''] )
 
 	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
@@ -570,7 +568,8 @@ class TVF:
 		return self
 	async def __aexit__(self, *err):
 		self.chunk_cleanup_task.cancel()
-		await self.chunk_cleanup_task
+		with contextlib.suppress(asyncio.CancelledError):
+			await self.chunk_cleanup_task
 
 	async def chunk_cleanup(self):
 		ts_retry, chunks_to_unlink = self.loop.time(), set()
@@ -704,7 +703,8 @@ class TVF:
 
 			# All chunks from iter(chunks) get queued for download here
 			info = await aria2c.req('getVersion')
-			self.log.debug('Starting downloads (rpc-port={}, aria2-version={})...', port, info['version'])
+			self.log.debug( 'Starting downloads'
+				' (rpc-port={}, aria2-version={})...', port, info['version'] )
 			count, gid_last = await aria2c.queue_chunks(chunks)
 			if gid_last:
 				self.log.info( '\n\n  ------ Started {} downloads,'
@@ -740,16 +740,16 @@ class TVF:
 							if self.log.isEnabledFor(logging.DEBUG):
 								status = await aria2c.req( 'tellStatus', e['gid'],
 									['status', 'errorCode', 'errorMessage', 'completedLength', 'totalLength'] )
-								self.log.debug('Chunk {} download stopped or failed, retrying: {}', e['gid'], status)
+								self.log.debug( 'Chunk {} download'
+									' stopped or failed, retrying: {}', e['gid'], status )
 							await aria2c.req_ok('removeDownloadResult', e['gid'])
 							await aria2c.queue(e['gid'], chunks.gid_urls[e['gid']], 0)
 
 				if chunks.finished or len(seq_heap) > self.conf.file_append_batch:
 					while seq_heap and seq_heap[0] == file_dst_seq + 1:
 						seq = heapq.heappop(seq_heap)
-						chunk = chunk_path(seq_to_gid(seq)).open('rb')
-						# Can be async via aio_write: https://github.com/Tinche/aiofiles
-						shutil.copyfileobj(chunk, file_dst)
+						with chunk_path(seq_to_gid(seq)).open('rb') as chunk:
+							shutil.copyfileobj(chunk, file_dst)
 						file_dst_pos, file_dst_seq = file_dst.tell(), seq
 						seq_chunks.append(chunk.name)
 					if seq_chunks:
