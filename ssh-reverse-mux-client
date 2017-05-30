@@ -225,7 +225,7 @@ def main(args=None, conf=None):
 				ident = hashlib.blake2b(src.read(), key=to_bytes(opts.auth_secret)).digest()
 
 	mux_hook = opts.mux_hook
-	if len(mux_hook) == 1: mux_hook = mux_hook[0].split()
+	if mux_hook and len(mux_hook) == 1: mux_hook = mux_hook[0].split()
 
 	user, host = None, opts.host.rsplit(':', 1)
 	host, port_mux = (host[0], opts.mux_port) if len(host) == 1 else host
