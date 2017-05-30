@@ -770,6 +770,9 @@ class TVF:
 
 		### done!
 
+		file_dst.close()
+		file_dst_mark.close()
+
 		if self.conf.file_part_suffix:
 			file_dst_path.rename(file_dst_done)
 			file_dst_path = file_dst_done
