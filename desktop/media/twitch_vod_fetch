@@ -605,7 +605,7 @@ class TVF:
 					else ['--output', self.conf.ytdl_output_format]
 				ytdl_filename = await self.ytdl_run('--get-filename', *ytdl_output_opts, url, out=True)
 			self.log.debug(
-				'Using youtube-dl output filename (template: {}): {}',
+				'Using youtube-dl output filename (template={}): {}',
 				'[default]' if self.conf.ytdl_output_format
 					is True else self.conf.ytdl_output_format, ytdl_filename )
 			file_dst_done = file_dst_path.parent / ytdl_filename
@@ -856,12 +856,10 @@ def main(args=None, conf=None):
 				' - {opts.scatter!r} - should be in "len/interval" format.' )
 		conf.slice_scatter_len, conf.slice_scatter_interval = map(parse_pos_spec, scatter)
 
-	ytdl_opts = opts.ytdl_opts or list()
-	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
-	conf.ytdl_opts = ytdl_opts
-	aria2c_opts = opts.aria2c_opts or list()
-	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].strip().split()
-	conf.aria2c_opts = aria2c_opts
+	conf.ytdl_opts = opts.ytdl_opts or list()
+	if len(conf.ytdl_opts) == 1: conf.ytdl_opts = conf.ytdl_opts[0].strip().split()
+	conf.aria2c_opts = opts.aria2c_opts or list()
+	if len(conf.aria2c_opts) == 1: conf.aria2c_opts = conf.aria2c_opts[0].strip().split()
 
 	conf.verbose = opts.debug
 	conf.keep_tempfiles = opts.keep_tempfiles
