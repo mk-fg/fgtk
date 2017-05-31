@@ -833,8 +833,10 @@ def main(args=None, conf=None):
 
 	ytdl_opts = opts.ytdl_opts or list()
 	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
+	conf.ytdl_opts = ytdl_opts
 	aria2c_opts = opts.aria2c_opts or list()
 	if len(aria2c_opts) == 1: aria2c_opts = aria2c_opts[0].strip().split()
+	conf.aria2c_opts = aria2c_opts
 
 	conf.verbose = opts.debug
 	conf.keep_tempfiles = opts.keep_tempfiles
