@@ -17,6 +17,7 @@ class TVFConfig:
 
 	aria2c_opts = None # overrides opts in aria2_conf_func
 	ytdl_opts = None
+	ytdl_output_format = None
 	aiohttp_opts = dict(read_timeout=30, conn_timeout=60)
 
 	verbose = False
@@ -586,28 +587,46 @@ class TVF:
 	async def get(self, ctx: AsyncExitStack, url, file_prefix, info_suffix=None):
 		file_prefix = pathlib.Path(file_prefix)
 		file_dst_path = file_prefix.with_suffix('.mp4')
+		file_dst_done = file_dst_path
 
 		if self.conf.use_temp_dirs:
 			name = file_prefix.name
 			file_prefix_dir = file_prefix.with_suffix('.tmp')
 			file_prefix = file_prefix_dir / name
 
+		vod_cache = ft.partial(TVFFileCache, file_prefix)
+
+		if self.conf.ytdl_output_format:
+			ytdl_fn_vc = await ctx.enter(vod_cache('ytdl_filename'))
+			ytdl_filename = ytdl_fn_vc.cached
+			if not ytdl_filename:
+				ytdl_output_opts = list() \
+					if self.conf.ytdl_output_format is True \
+					else ['--output', self.conf.ytdl_output_format]
+				ytdl_filename = await self.ytdl_run('--get-filename', *ytdl_output_opts, url, out=True)
+			self.log.debug(
+				'Using youtube-dl output filename (template: {}): {}',
+				'[default]' if self.conf.ytdl_output_format
+					is True else self.conf.ytdl_output_format, ytdl_filename )
+			file_dst_done = file_dst_path.parent / ytdl_filename
+		elif self.conf.file_part_suffix:
+			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part.mp4')
+
 		# Assuming file_dst is fully downloaded if there's no playlist tempfile around
 		# It's not a problem even with --keep-tempfiles, as file_dst_mark will be kept there too
-		if file_dst_path.exists() and (
-				self.conf.file_part_suffix or not file_prefix.with_suffix('.m3u8').exists() ):
+		if file_dst_done.exists() and (
+				file_dst_path != file_dst_done or not file_prefix.with_suffix('.m3u8').exists() ):
 			self.log.info( '--- Skipping download'
-				' for existing file: {} (rename/remove it to force)', file_dst_path )
+				' for existing file: {} (rename/remove it to force)', file_dst_done )
 			return
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
-		if self.conf.file_part_suffix:
-			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part.mp4')
-
-		vod_cache = ft.partial(TVFFileCache, file_prefix)
+		if self.conf.ytdl_output_format and not ytdl_fn_vc.cached: ytdl_fn_vc.update(ytdl_filename)
 		http = await ctx.enter(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
-		self.log.info('--- Downloading VoD {} (url: {}){}', file_dst_path, url, info_suffix or '')
+		self.log.info( '--- Downloading VoD {} ({}url={}){}',
+			file_dst_path, f'final-name={str(file_dst_done)!r} '
+				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
 		with vod_cache('m3u8.url') as vc:
 			url_pls = vc.cached or vc.update(await self.ytdl_run('--get-url', url, out=True))
@@ -743,7 +762,7 @@ class TVF:
 		file_dst.close()
 		file_dst_mark.close()
 
-		if self.conf.file_part_suffix:
+		if file_dst_done != file_dst_path:
 			file_dst_path.rename(file_dst_done)
 			file_dst_path = file_dst_done
 
@@ -792,8 +811,14 @@ def main(args=None, conf=None):
 			' just list formats available for each specified URL and exit.')
 	group.add_argument('-y', '--ytdl-opts',
 		action='append', metavar='opts',
-		help='Extra opts for youtube-dl --get-url command.'
+		help='Extra opts for youtube-dl --get-url/--get-filename commands.'
 			' Will be split on spaces, unless option is used multiple times.')
+	group.add_argument('-o', '--ytdl-output-format',
+		metavar='ytdl-output-template', const=True, nargs='?',
+		help='Use youtube-dl output filename template.'
+			' Passed to youtube-dl --get-filename as the'
+				' --output argument to get the final file name for the video.'
+			' If option is used, but no format is specified, youtube-dl\'s default format will be used.')
 	group.add_argument('-a', '--aria2c-opts',
 		action='append', metavar='opts',
 		help='Extra options to store in aria2c configuration file.'
@@ -842,6 +867,7 @@ def main(args=None, conf=None):
 	conf.keep_tempfiles = opts.keep_tempfiles
 	conf.use_temp_dirs = not opts.no_temp_dirs
 	conf.file_part_suffix = opts.use_part_suffix
+	conf.ytdl_output_format = opts.ytdl_output_format
 
 	vod_queue, args = list(),\
 		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
