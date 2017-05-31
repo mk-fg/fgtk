@@ -274,7 +274,7 @@ async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
 			except asyncio.CancelledError as err: break
 			except TVFError as err:
 				if err.args: log.exception('BUG: {}', err)
-				log.error('Failed to fetch VoD #{} {!r} (url: {!r}), exiting', n, prefix, url)
+				log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
 				break
 		else: exit_code = 0
 	return exit_code
@@ -575,12 +575,12 @@ class TVF:
 		if out: proc_stdout = (await proc.stdout.read()).strip()
 		exit_code = await proc.wait()
 		if check and exit_code != 0:
-			raise TVFError(f'"youtube-dl {ytdl_op}" command exited with error (code: {exit_code})')
+			raise TVFError(f'"youtube-dl {ytdl_op}" command exited with error (code={exit_code})')
 		return exit_code if not out else proc_stdout.decode()
 
 	async def ytdl_probe_formats(self, url, file_prefix, info_suffix=None):
 		self.log.info( '--- Listing formats available'
-			' for VoD {} (url: {}){}', file_prefix, url, info_suffix or '' )
+			' for VoD {} (url={}){}', file_prefix, url, info_suffix or '' )
 		return await self.ytdl_run('--list-formats', url, check=False)
 
 
@@ -625,7 +625,7 @@ class TVF:
 		http = await ctx.enter(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
 		self.log.info( '--- Downloading VoD {} ({}url={}){}',
-			file_dst_path, f'final-name={str(file_dst_done)!r} '
+			file_dst_path, f'final-name={str(file_dst_done)!r}, '
 				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
 		with vod_cache('m3u8.url') as vc:
