@@ -763,7 +763,7 @@ class TVF:
 		file_dst_mark.close()
 
 		if file_dst_done != file_dst_path:
-			file_dst_path.rename(file_dst_done)
+			shutil.move(file_dst_path, file_dst_done, copy_function=shutil.copy)
 			file_dst_path = file_dst_done
 
 		if not self.conf.keep_tempfiles:
