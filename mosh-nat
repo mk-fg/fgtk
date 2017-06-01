@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+
+import os, sys, re
+import subprocess, socket as s
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Wrapper around mosh-server to punch "hole"'
+			' (initiate udp stream)  to client on the other end before starting it.')
+
+	parser.add_argument('client_host',
+		help='Visible IP address or hostname from which client will be connecting.'
+			' "Visible" here means one that actual UDP packets will be coming'
+				' from, i.e. can be a port of some router that does NAT on the client end.')
+	parser.add_argument('-c', '--client-port',
+		metavar='port', type=int, default=34730,
+		help='UDP port that mosh client will be connecting from.'
+			' Must be fixed one, known in advance, and NOT dynamically selected by mosh-client.'
+			' To make mosh-client bind to a specific port, use some'
+				' force-bind LD_PRELOAD tool, e.g. mosh-nat-bind.c alongside this script.'
+			' Should probably be >32k, as it is not a listening socket. Default: %(default)s')
+
+	parser.add_argument('-s', '--server-port',
+		metavar='port', type=int, default=34730,
+		help='UDP port that mosh-server will be started on, i.e. passed to its -s option.'
+			' This is the port that should be used with mosh-client to connect to this server.'
+			' Default: %(default)s')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	try:
+		addrinfo = s.getaddrinfo( opts.client_host, opts.client_port,
+			family=s.AF_INET, type=s.SOCK_DGRAM, proto=s.IPPROTO_UDP )
+		if not addrinfo: raise s.gaierror(f'No addrinfo for client host: {opts.client_host}')
+	except (s.gaierror, s.error) as err:
+		parser.error( f'Failed to resolve client host parameters (address, family, etc) via'
+			f' getaddrinfo: {(opts.client_host, opts.client_port)} - [{err.__class__.__name__,}] {err}' )
+	sock_af, sock_t, sock_proto, sock_cname, sock_addr = addrinfo[0]
+
+	with s.socket(sock_af, sock_t) as sock:
+		sock.bind(('', opts.server_port))
+		sock.sendto(b'mosh-nat-hole', sock_addr)
+
+	key = subprocess.check_output(
+		['mosh-server', 'new', '-p', str(opts.server_port)],
+		stderr=subprocess.DEVNULL )
+	for line in key.decode().splitlines():
+		m = re.search(fr'^MOSH CONNECT {opts.server_port} (\S+)(\s|$)', line)
+		if not m: continue
+		key = m.group(1)
+		break
+	else: parser.error(f'Failed to parse mosh key from mosh-server output')
+
+	print()
+	print(f'mosh-client command:')
+	print(f'  MNB_PORT={sock_addr[1]} LD_PRELOAD=./mnb.so')
+	print(f'    MOSH_KEY={key} mosh-client <server-addr> {opts.server_port}')
+	print()
+
+if __name__ == '__main__': sys.exit(main())
