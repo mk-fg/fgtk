@@ -243,12 +243,6 @@ def parse_pos_spec(pos):
 		raise argparse.ArgumentTypeError(
 			f'Failed to parse {pos!r} as [[hours:]minutes:]seconds value: {err}' )
 
-def suppress_err(exc_type, func, *args, **kws):
-	def _wrapper():
-		try: func(*args, **kws)
-		except exc_type: pass
-	return _wrapper
-
 
 class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
