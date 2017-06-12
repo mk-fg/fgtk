@@ -873,7 +873,7 @@ def main(args=None, conf=None):
 					f' to be an URL, only first one should be: {url} {prefix}' )
 			prefix, url = url, prefix
 			log.warn( 'Looks like url/prefix args got'
-				' mixed-up, correcting that to prefix=%s url=%s', prefix, url )
+				' mixed-up, correcting that to prefix={} url={}', prefix, url )
 		if not re.search(r'^https?://[^/]+/([^/]+/v|videos)/', url):
 			parser.error( 'Provided URL appears to be for the unsupported'
 				f' VoD format (only /user/v/ or /videos/ VoDs are supported): {url}' )
