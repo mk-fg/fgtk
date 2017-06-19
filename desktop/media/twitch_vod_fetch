@@ -24,8 +24,8 @@ class TVFConfig:
 	use_temp_dirs = True
 	keep_tempfiles = False
 	file_part_suffix = False
-	file_append_batch = 20
-	file_append_max = 150 # should not be needed normally
+	file_append_batch = 10
+	file_append_max = 100 # should not be needed normally
 	compat_windows = sys.platform == 'win32'
 
 	aria2_cmd = 'aria2c'
