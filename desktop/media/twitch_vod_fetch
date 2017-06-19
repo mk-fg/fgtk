@@ -460,7 +460,7 @@ class TVFAria2Proc:
 	def _queue_params(self, gid, url, pos=None):
 		return (
 			[[url], dict(gid=gid, out=str(self.path_func(gid)))]
-			+ ([] if not pos else [pos]) )
+			+ ([] if pos is None else [pos]) )
 
 	async def queue(self, gid, url, pos=None):
 		res = await self.req('addUri', *self._queue_params(gid, url, pos))
