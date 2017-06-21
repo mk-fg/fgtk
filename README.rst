@@ -2095,7 +2095,7 @@ directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-dat
 which lz4 cli tool can't handle due to that mozLz40 header.
 
 Same cli interface as with gzip/xz/lz4 and such, uses `lz4
-<https://github.com/python-lz4/python-lz4/>`_ module.
+<https://github.com/python-lz4/python-lz4/>`_ module (``pip3 install --user lz4``).
 
 bt_agent
 ''''''''

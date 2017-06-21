@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-import os, sys, contextlib, pathlib, logging, tempfile, lz4
+import os, sys, contextlib, pathlib, logging, tempfile
+import lz4.block # https://python-lz4.readthedocs.io/
 
 
 class LogMessage(object):
@@ -85,8 +86,8 @@ def main(args=None):
 		data = (chunk or b'') + src.read()
 		log.debug( 'Starting lz4-op (c={}, d={}),'
 			' src ({}) data len: {}', opts.compress, opts.decompress, src, len(data) )
-		if opts.compress: data = b'mozLz40\0' + lz4.compress(data)
-		if opts.decompress: data = lz4.decompress(data[8:])
+		if opts.compress: data = b'mozLz40\0' + lz4.block.compress(data)
+		if opts.decompress: data = lz4.block.decompress(data[8:])
 		log.debug( 'lz4-op complete (c={}, d={}),'
 			' dst ({}) data len: {}', opts.compress, opts.decompress, dst, len(data) )
 		dst.write(data)
