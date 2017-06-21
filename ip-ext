@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, socket, logging, contextlib, ipaddress
+import os, sys, socket, logging, contextlib, ipaddress, re, subprocess
 
 
 class LogMessage(object):
@@ -99,6 +99,21 @@ def ip_check(opts):
 	log.debug('Assigned address (%s) to interface: %s', addr, opts.iface)
 
 
+def iptables_flush(opts):
+	for ipt in 'iptables', 'ip6tables':
+		tables = subprocess.check_output(f'{ipt}-save')
+		tables_restore = subprocess.Popen(f'{ipt}-restore', stdin=subprocess.PIPE)
+		tables_restore_line = ( lambda line_new=None:
+			tables_restore.stdin.write((line_new or line).encode() + b'\n') )
+		for line in tables.decode().splitlines():
+			if line.startswith('*') or line == 'COMMIT': tables_restore_line()
+			if re.search('^:[A-Z]+', line): tables_restore_line(f'{line.split()[0]} ACCEPT')
+		tables_restore.stdin.close()
+		if tables_restore.wait() != 0:
+			raise RuntimeError(f'{ipt}-restore exited with error status')
+
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -134,6 +149,9 @@ def main(args=None):
 	cmd.add_argument('-d', '--djbdns',
 		action='store_true', help='Convert to canonical djbdns record format instead.')
 
+	cmd = cmds.add_parser('iptables-flush',
+		help='Flush all iptables rules (all chains/tables) using CLI save/restore tools.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 	opts.parser = parser
 
@@ -142,7 +160,7 @@ def main(args=None):
 	log = get_logger('main')
 
 	try:
-		func = dict( ipv6_dns=ipv6_dns,
+		func = dict( ipv6_dns=ipv6_dns, iptables_flush=iptables_flush,
 			ip_check=ip_check, ipv6_lladdr=ipv6_lladdr )[opts.call.replace('-', '_')]
 	except KeyError:
 		parser.error('Action {!r} is not implemented.'.format(opts.call))

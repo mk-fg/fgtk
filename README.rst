@@ -983,6 +983,10 @@ resulting address to the interface, if missing:
 any of the interfaces and/or run "ip add" (with specified parameters) to assign
 it, if not.
 
+``iptables-flush`` removes all iptables/ip6tables rules from all tables,
+including any custom chains, using iptables-save/restore command-line tools, and
+sets policy for default chains to ACCEPT.
+
 hype
 ^^^^
 
