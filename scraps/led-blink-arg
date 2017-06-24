@@ -5,7 +5,8 @@ import os, sys, pathlib, time
 
 
 class BlinkConfig:
-	leds_root = pathlib.Path('/sys/class/leds')
+	leds_root = '/sys/class/leds'
+	duration_factor = 1.0 # multiplies values written to "duration"
 	bit_repr = 1300, 100, 700
 	interval = 1.5, 5.0
 	interval_mark = 100, 100, 5
@@ -41,6 +42,10 @@ def main(args=None, conf=None):
 	parser.add_argument('-l', '--led',
 		metavar='name', required=True,
 		help=f'Name of the led under {conf.leds_root} to use.')
+	parser.add_argument('-c', '--conf', metavar='json-object',
+		help='Overrides for configuration keys, as a single json object.'
+			' See BlinkConfig class in the script for the list of used keys/values.'
+			' Example: {"bit_repr": [2000, 200, 1400], "interval": [2.0, 10.0]}')
 	parser.add_argument('-n', '--arg-num', metavar='n/bits-dec',
 		help='Argument ("1" for first) to use as a number for blinking.'
 			' Can include "/bits" suffix to blink only specified number of last bits.'
@@ -53,7 +58,13 @@ def main(args=None, conf=None):
 	if not opts.arg_num:
 		parser.error('No blink-control options (e.g. -n/--arg-num) specified')
 
-	os.chdir(conf.leds_root / opts.led)
+	if opts.conf:
+		import json
+		for k, v in json.loads(opts.conf).items():
+			if k.startswith('_'): continue
+			setattr(conf, k, v)
+
+	os.chdir(pathlib.Path(conf.leds_root) / opts.led)
 	if opts.fork and os.fork(): return
 
 	n = opts.arg_num
@@ -66,6 +77,7 @@ def main(args=None, conf=None):
 	delay_pre, delay_post = conf.interval
 	bit_1, bit_0, bit_delay = conf.bit_repr
 	flash_on, flash_delay, flash_count = conf.interval_mark
+	sysfs_time_k = conf.duration_factor
 
 	with sysfs_node('trigger') as dst:
 		sysfs_write(dst, b'transient')
@@ -75,7 +87,7 @@ def main(args=None, conf=None):
 				sysfs_write(led_set, b'1')
 
 				while True:
-					sysfs_write(led_time, str(flash_on).encode())
+					sysfs_write(led_time, str(int(flash_on * sysfs_time_k)).encode())
 					for n in range(flash_count):
 						sysfs_write(led_run, b'1')
 						time.sleep((flash_on + flash_delay) / 1000.0)
@@ -87,7 +99,7 @@ def main(args=None, conf=None):
 						bit, v = v & 1, v >> 1
 						delay = bit_1 if bit else bit_0
 						if opts.debug: print(f'  {v:b} {bit} [{delay}ms]')
-						sysfs_write(led_time, str(delay).encode())
+						sysfs_write(led_time, str(int(delay * sysfs_time_k)).encode())
 						sysfs_write(led_run, b'1')
 						time.sleep((delay + bit_delay) / 1000.0)
 					time.sleep(delay_post)
