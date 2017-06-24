@@ -77,7 +77,7 @@ class WPAClientProtocol:
 			if not callable(fut_or_cb): fut_or_cb.cancel()
 			return
 		match = ( msg_or_func(msg) if callable(msg_or_func)
-			else (msg.lower() == self._msg_decode(msg_or_func).lower()) )
+			else (msg.casefold() == self._msg_decode(msg_or_func).casefold()) )
 		if not match: return
 		if callable(fut_or_cb): fut_or_cb(msg)
 		else: fut_or_cb.set_result(msg)
