@@ -1,21 +1,24 @@
 #!/bin/bash
 
-# Author: David Underhill
-# http://dound.com/2009/04/git-forever-remove-files-or-folders-from-history/
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin file [file ...]"
+	echo >&2 "Must be run from a git repo root, acts on HEAD."
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
 
-[[ $# -eq 0 ]] && exit 0
-
-# make sure we're at the root of git repo
-[[ ! -d .git && -z "${GIT_DIR}" ]] && {
+[[ -d .git || -n "$GIT_DIR" ]] || {
 	echo "Error: must run this script from the root of a git repository"
 	exit 1
 }
 
-set -e
+set -e -o pipefail
 
 # remove all paths passed as arguments from the history of the repo
-files=$@
-git filter-branch --index-filter "git rm -rf --cached --ignore-unmatch $files" HEAD
+git filter-branch --index-filter "git rm -rf --cached --ignore-unmatch -- $@" HEAD
 
 # remove the temporary history git-filter-branch otherwise leaves behind for a long time
-rm -rf .git/refs/original/ && git reflog expire --expire-unreachable=now --all && git gc --aggressive --prune=now
+rm -rf .git/refs/original/ \
+	&& git reflog expire --expire-unreachable=now --all \
+	&& git gc --aggressive --prune=now
