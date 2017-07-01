@@ -9,8 +9,9 @@ class BlinkError(Exception): pass
 
 class BlinkConfig:
 
-	leds_root = pathlib.Path('/sys/class/leds')
-	gpio_root = pathlib.Path('/sys/class/gpio')
+	leds_root = '/sys/class/leds'
+	gpio_root = '/sys/class/gpio'
+	duration_factor = 1.0 # multiplies values written to "duration"
 	bit_repr = 1300, 150, 700
 	exit_state, exit_wait = 0, False
 
@@ -29,9 +30,9 @@ class LEDControl(LEDControlBase):
 	led_sysfs = led_gpio = None
 
 	def __init__(self, led, conf):
-		if isinstance(led, str): self.led_sysfs = conf.leds_root / led
-		else: self.led_gpio, self.gpio_root = led, conf.gpio_root
-		self.led_exit_state = conf.exit_state
+		if isinstance(led, str): self.led_sysfs = pathlib.Path(conf.leds_root) / led
+		else: self.led_gpio, self.gpio_root = led, pathlib.Path(conf.gpio_root)
+		self.led_sysfs_k, self.led_exit_state = conf.duration_factor, conf.exit_state
 		self.led_exit_wait = conf.exit_wait or self.led_exit_state
 
 	def file_access_wrap(self, func, checks=12, timeout=1.0):
@@ -93,7 +94,7 @@ class LEDControl(LEDControlBase):
 
 	def state(self, on, ms):
 		if self.led_sysfs and on:
-			self.sysfs_write(self.led_time, str(ms).encode())
+			self.sysfs_write(self.led_time, str(int(ms * self.led_sysfs_k)).encode())
 			self.sysfs_write(self.led_run, b'1')
 		if self.led_gpio:
 			self.sysfs_write(self.led_gpio, str(int(bool(on))).encode())
@@ -211,6 +212,10 @@ def main(args=None, conf=None):
 		help='Fork and exit in main pid after start, i.e. daemonize.')
 	parser.add_argument('-l', '--led', metavar='name',
 		help=f'Name of the sysfs led under {conf.leds_root} to use.')
+	parser.add_argument('-c', '--conf', metavar='json-object',
+		help='Overrides for configuration keys, as a single json object.'
+			' See BlinkConfig class in the script for the list of used keys/values.'
+			' Example: {bit_repr: [2000, 200, 1400], interval: [2.0, 10.0]}')
 	parser.add_argument('-g', '--gpio-pin', type=int, metavar='n',
 		help='GPIO pin number to switch for LED control.')
 	parser.add_argument('-e', '--exit-state', type=int, metavar='1/0',
@@ -227,6 +232,12 @@ def main(args=None, conf=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger('main')
+
+	if opts.conf:
+		import json
+		for k, v in json.loads(opts.conf).items():
+			if k.startswith('_'): continue
+			setattr(conf, k, v)
 
 	conf.exit_state = bool(opts.exit_state)
 	seq = ' '.join(opts.seq).split()

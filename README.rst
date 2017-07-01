@@ -983,6 +983,10 @@ resulting address to the interface, if missing:
 any of the interfaces and/or run "ip add" (with specified parameters) to assign
 it, if not.
 
+``iptables-flush`` removes all iptables/ip6tables rules from all tables,
+including any custom chains, using iptables-save/restore command-line tools, and
+sets policy for default chains to ACCEPT.
+
 hype
 ^^^^
 
@@ -2091,7 +2095,13 @@ directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-dat
 which lz4 cli tool can't handle due to that mozLz40 header.
 
 Same cli interface as with gzip/xz/lz4 and such, uses `lz4
-<https://github.com/python-lz4/python-lz4/>`_ module.
+<https://github.com/python-lz4/python-lz4/>`_ module (``pip3 install --user lz4``).
+
+Usage example (`jq tool <https://stedolan.github.io/jq/>`_ is for pretty json)::
+
+  % ff_mozlz4 < search.json.mozlz4 | jq . > search.json
+  % nano search.json
+  % ff_mozlz4 search.json
 
 bt_agent
 ''''''''
