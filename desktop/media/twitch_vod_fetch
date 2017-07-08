@@ -243,6 +243,10 @@ def parse_pos_spec(pos):
 		raise argparse.ArgumentTypeError(
 			f'Failed to parse {pos!r} as [[hours:]minutes:]seconds value: {err}' )
 
+async def maybe_coro(res):
+	if asyncio.iscoroutine(res): res = await res
+	return res
+
 
 class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
@@ -325,7 +329,7 @@ class TVFAria2Proc:
 				proc_term_delay = self.conf.aria2_term_wait[0]
 			await self.ws_ctx.close()
 			if self.ws_handlers:
-				for func in self.ws_handlers.values(): func(StopIteration)
+				for func in self.ws_handlers.values(): await maybe_coro(func(StopIteration))
 			if self.ws_poll_task: await self.ws_poll_task
 			self.ws = self.ws_ctx = self.ws_poll_task = self.ws_handlers = None
 		if self.proc:
@@ -400,7 +404,8 @@ class TVFAria2Proc:
 					if self.conf.aria2_ws_debug_signals and msg_data.get('method'):
 						self.log.debug('rpc-signal: {}', msg.data)
 					for k, func in self.ws_handlers.items():
-						if func(msg_data): hs_discard.add(k)
+						oneshot = await maybe_coro(func(msg_data))
+						if oneshot: hs_discard.add(k)
 					for k in hs_discard: del self.ws_handlers[k]
 				elif msg.type == aiohttp.WSMsgType.closed: break
 				elif msg.type == aiohttp.WSMsgType.error:
@@ -409,18 +414,29 @@ class TVFAria2Proc:
 				else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
 		except Exception as err:
 			self.log.exception('Unhandled ws handler failure, aborting: {}', err)
+		await self._ws_close()
+
+	async def _ws_close(self):
 		await self.ws.close()
 		self.ws_closed.set()
 
 	def _add_handler(self, func): self.ws_handlers[id(func)] = func
 
-	def _expect_handler(self, uid_or_func, fut_or_cb, oneshot, msg):
-		if msg is StopIteration:
+	async def _expect_handler(self, uid_or_func, fut_or_cb, oneshot, msg):
+		if msg is StopIteration or self.ws_closed.is_set():
 			if not callable(fut_or_cb): fut_or_cb.cancel()
 			return
 		if callable(uid_or_func) and not uid_or_func(msg): return
 		else:
 			uid = msg.get('id') or msg.get('method')
+			if not uid: return # seem to be non-critical/random, bug in aria2?
+				# # Some request got ignored and there's not idea to tell which one.
+				# # No way to handle this error sanely, likely a bug in json or ws protocol.
+				# # How it looks: dict( id=None, jsonrpc='2.0',
+				# #  error=dict(code=-32600, message='Invalid Request.') )
+				# self.log.error( 'Fatal protocol error from aria2'
+				# 	' - probably a bug in this scipt, exiting: {!r}', msg )
+				# return await self._ws_close()
 			if uid.startswith('aria2.'): uid = uid[6:]
 			if uid != uid_or_func: return
 		if callable(fut_or_cb): fut_or_cb(msg)
