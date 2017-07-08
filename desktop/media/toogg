@@ -22,6 +22,8 @@ class LogStyleAdapter(logging.LoggerAdapter):
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
+err_with_type = lambda err: (err.__class__.__name__, err)
+
 
 class FFProc:
 
@@ -213,7 +215,7 @@ class AudioConv:
 			try: await conv
 			except asyncio.CancelledError: pass
 			except Exception as err:
-				log.exception('conv-job crashed during cleanup: [{}] {}', err.__class__.__name__, err)
+				log.exception('conv-job crashed during cleanup: [{}] {}', *err_with_type(err))
 				if raise_errors: raise
 
 	async def conv_list(self):
@@ -270,7 +272,8 @@ class AudioConv:
 					src_duration = float(stream['duration'])
 					break
 			except Exception as err:
-				log.error('[{!r}] ffprobe failed, progress info wont be available: {}', job.name, err)
+				log.error( '[{!r}] ffprobe failed, progress'
+					' info wont be available: [{}] {}', job.name, *err_with_type(err) )
 			if src_duration:
 				if self.start: src_duration = max(0, src_duration - self.start)
 				if self.length: src_duration = min(src_duration, self.length)
