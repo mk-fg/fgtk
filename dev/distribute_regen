@@ -37,10 +37,11 @@ if regen_git: # break immediately if there's no changes
 
 regen_setup = bool(optz.setup)
 regen_docs = dict(
-	readme = exists('README.md')
+	readme=exists('README.md')
 		and not any(map(exists, ['README', 'README.rst']))
 		and exists('README.txt'),
-	doc = exists('doc/Makefile') )
+	readme_rst=exists('README.rst'),
+	doc=exists('doc/Makefile') )
 
 
 ### Do the stuff
@@ -139,6 +140,7 @@ if regen_setup:
 
 
 if any(regen_docs.values()):
+
 	if regen_docs.get('readme'):
 		## Regenerate README.txt (ReST) from README.md (Markdown)
 		from tempfile import NamedTemporaryFile
@@ -154,9 +156,13 @@ if any(regen_docs.values()):
 				raise
 		proc_desc = Popen([ 'python2', 'setup.py',
 			'--long-description' ], stdout=PIPE, env=dict(PATH=os.environ['PATH']))
-		if Popen( ['rst2html.py'], stdin=proc_desc.stdout,
+		if Popen( ['rst2html.py', '--strict'], stdin=proc_desc.stdout,
 				stdout=open(os.devnull, 'w') ).wait() or proc_desc.wait():
 			raise RuntimeError('Failed to validate produced README.txt')
+
+	if regen_docs.get('readme') or regen_docs.get('readme_rst'):
+		proc = Popen(['rst2html.py', '--strict', 'README.rst'], stdout=open(os.devnull, 'w'))
+		if proc.wait(): raise RuntimeError('Failed to validate README.rst')
 
 	if regen_docs.get('doc'):
 		## Rebuild "doc" path
