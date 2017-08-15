@@ -1330,8 +1330,8 @@ so take extra 4 bytes, even when empty.
 Gist is that it's a ton of stuff that's not the actual key, which ssh-keyparse
 extracts.
 
-To produce "expanded" key (seed + public key), as used in ed25519_sk field of
-openssh format, use ``ssh-keyparse --expand-seed`` option.
+To restore key from seed, use -d/--patch-key option on any existing ed25519 key,
+e.g. ``ssh-keygen -t ed25519 -N '' -f test-key && ssh-keyparse -d <seed> test-key``
 
 If key is encrypted with passphrase, ``ssh-keygen -p`` will be run on a
 temporary copy of it to decrypt, with a big warning in case it's not desirable.

@@ -10,12 +10,12 @@ import hashlib, base64, string
 
 class SSHKeyError(Exception): pass
 
-def ssh_key_parse(path):
-	# See PROTOCOL.key and sshkey.c in openssh sources
+def ssh_key_parse(path, patch_sk=None):
 	with tempfile.NamedTemporaryFile(
-			delete=True, dir=dirname(path), prefix=basename(path)+'.' ) as tmp:
+			delete=False, dir=dirname(path), prefix=basename(path)+'.' ) as tmp:
 		tmp.write(open(path).read())
 		tmp.flush()
+
 		with tempfile.TemporaryFile() as stderr:
 			cmd = ['ssh-keygen', '-p', '-P', '', '-N', '', '-f', tmp.name]
 			p = subprocess.Popen( cmd, stdin=open('/dev/null', 'ab+'),
@@ -49,72 +49,114 @@ def ssh_key_parse(path):
 				' see stderr output above for details, command: {}' ).format(path, ' '.join(cmd)))
 
 		tmp.seek(0)
-		lines, key, done = tmp.read().splitlines(), list(), False
-		for line in lines:
-			if line == '-----END OPENSSH PRIVATE KEY-----': done = True
-			if key and not done: key.append(line)
-			if line == '-----BEGIN OPENSSH PRIVATE KEY-----':
-				if done:
-					raise SSHKeyError( 'More than one private'
-						' key detected in file, aborting: {!r}'.format(path) )
-				assert not key
-				key.append('')
-		if not done: raise SSHKeyError('Incomplete or missing key in file: {!r}'.format(path))
-		key_str = ''.join(key).decode('base64')
-		key = io.BytesIO(key_str)
+		try: res = _ssh_key_parse(path, tmp, patch_sk)
+		finally:
+			try: os.unlink(tmp.name)
+			except OSError: pass
 
-		def key_read_str(src=None):
-			if src is None: src = key
-			n, = struct.unpack('>I', src.read(4))
-			return src.read(n)
+	return res
 
-		def key_assert(chk, err, *fmt_args, **fmt_kws):
-			if fmt_args or fmt_kws: err = err.format(*fmt_args, **fmt_kws)
-			err += ' [key file: {!r}, decoded: {!r}]'.format(path, key_str)
-			if not chk: raise SSHKeyError(err)
+def _ssh_key_parse(path, tmp, patch_sk=None):
+	# See PROTOCOL.key and sshkey.c in openssh sources
+	tmp.seek(0)
+	lines, key, done = tmp.read().splitlines(), list(), False
+	for line in lines:
+		if line == '-----END OPENSSH PRIVATE KEY-----': done = True
+		if key and not done: key.append(line)
+		if line == '-----BEGIN OPENSSH PRIVATE KEY-----':
+			if done:
+				raise SSHKeyError( 'More than one private'
+					' key detected in file, aborting: {!r}'.format(path) )
+			assert not key
+			key.append('')
+	if not done: raise SSHKeyError('Incomplete or missing key in file: {!r}'.format(path))
+	key_str = ''.join(key).decode('base64')
+	key_str_wrap = max(map(len, key))
+	key_struct = io.BytesIO(key_str)
 
-		def key_assert_read(field, val, fixed=False):
-			pos, chk = key.tell(), key.read(len(val)) if fixed else key_read_str()
-			key_assert( chk == val, 'Failed to match key field'
-				' {!r} (offset: {}) - expected {!r} got {!r}', field, pos, val, chk )
+	def key_read_str(src=None):
+		if src is None: src = key
+		n, = struct.unpack('>I', src.read(4))
+		return src.read(n)
 
-		key_assert_read('AUTH_MAGIC', 'openssh-key-v1\0', True)
-		key_assert_read('ciphername', 'none')
-		key_assert_read('kdfname', 'none')
-		key_assert_read('kdfoptions', '')
-		(pubkey_count,), pubkeys = struct.unpack('>I', key.read(4)), list()
-		for n in xrange(pubkey_count):
-			line = key_read_str()
-			key_assert(line, 'Empty public key #{}', n)
-			line = io.BytesIO(line)
-			key_t = key_read_str(line)
-			key_assert(key_t == 'ssh-ed25519', 'Unsupported pubkey type: {!r}', key_t)
-			ed2519_pk = key_read_str(line)
-			line = line.read()
-			key_assert(not line, 'Garbage data after pubkey: {!r}', line)
-			pubkeys.append(ed2519_pk)
-		privkey = io.BytesIO(key_read_str())
-		pos, tail = key.tell(), key.read()
-		key_assert( not tail,
-			'Garbage data after private key (offset: {}): {!r}', pos, tail )
+	def key_write_str(s, pos=None, dst=None):
+		if dst is None: dst = key
+		if pos: dst.seek(pos)
+		dst.write(struct.pack('>I', len(s)))
+		return dst.write(s)
 
-		key = privkey
-		n1, n2 = struct.unpack('>II', key.read(8))
-		key_assert(n1 == n2, 'checkint values mismatch in private key spec: {!r} != {!r}', n1, n2)
-		key_t = key_read_str()
-		key_assert(key_t == 'ssh-ed25519', 'Unsupported key type: {!r}', key_t)
-		ed2519_pk = key_read_str()
-		key_assert(ed2519_pk in pubkeys, 'Pubkey mismatch - {!r} not in {}', ed2519_pk, pubkeys)
-		ed2519_sk = key_read_str()
-		key_assert(
-			len(ed2519_pk) == 32 and len(ed2519_sk) == 64,
-			'Key length mismatch: {}/{} != 32/64', len(ed2519_pk), len(ed2519_sk) )
-		comment = key_read_str()
-		padding = key.read()
-		padding, padding_chk = list(bytearray(padding)), range(1, len(padding) + 1)
-		key_assert(padding == padding_chk, 'Invalid padding: {} != {}', padding, padding_chk)
+	def key_assert(chk, err, *fmt_args, **fmt_kws):
+		if fmt_args or fmt_kws: err = err.format(*fmt_args, **fmt_kws)
+		err += ' [key file: {!r}, decoded: {!r}]'.format(path, key_str)
+		if not chk: raise SSHKeyError(err)
 
-	return ed2519_sk
+	def key_assert_read(field, val, fixed=False):
+		pos, chk = key.tell(), key.read(len(val)) if fixed else key_read_str()
+		key_assert( chk == val, 'Failed to match key field'
+			' {!r} (offset: {}) - expected {!r} got {!r}', field, pos, val, chk )
+
+	key = key_struct
+	key_assert_read('AUTH_MAGIC', 'openssh-key-v1\0', True)
+	key_assert_read('ciphername', 'none')
+	key_assert_read('kdfname', 'none')
+	key_assert_read('kdfoptions', '')
+	(pubkey_count,), pubkeys, pos_pk1 = struct.unpack('>I', key.read(4)), list(), list()
+	for n in xrange(pubkey_count):
+		pos_line = key.tell()
+		line = key_read_str()
+		key_assert(line, 'Empty public key #{}', n)
+		line = io.BytesIO(line)
+		key_t = key_read_str(line)
+		key_assert(key_t == 'ssh-ed25519', 'Unsupported pubkey type: {!r}', key_t)
+		pos_pk1.append(pos_line + 4 + line.tell())
+		ed25519_pk = key_read_str(line)
+		line = line.read()
+		key_assert(not line, 'Garbage data after pubkey: {!r}', line)
+		pubkeys.append(ed25519_pk)
+	pos_privkey_struct = key.tell()
+	privkey_struct = io.BytesIO(key_read_str())
+	pos, tail = key.tell(), key.read()
+	key_assert( not tail,
+		'Garbage data after private key (offset: {}): {!r}', pos, tail )
+
+	key = privkey_struct
+	n1, n2 = struct.unpack('>II', key.read(8))
+	key_assert(n1 == n2, 'checkint values mismatch in private key spec: {!r} != {!r}', n1, n2)
+	key_t = key_read_str()
+	key_assert(key_t == 'ssh-ed25519', 'Unsupported key type: {!r}', key_t)
+	pos_pk2 = key.tell()
+	ed25519_pk = key_read_str()
+	pos_pk1_idx = list(n for n, pk in enumerate(pubkeys) if pk == ed25519_pk)
+	key_assert(pos_pk1_idx, 'Pubkey mismatch - {!r} not in {}', ed25519_pk, pubkeys)
+	pos_sk = key.tell()
+	ed25519_sk = key_read_str()
+	key_assert(
+		len(ed25519_pk) == 32 and len(ed25519_sk) == 64,
+		'Key length mismatch: {}/{} != 32/64', len(ed25519_pk), len(ed25519_sk) )
+	comment = key_read_str()
+	padding = key.read()
+	padding, padding_chk = list(bytearray(padding)), range(1, len(padding) + 1)
+	key_assert(padding == padding_chk, 'Invalid padding: {} != {}', padding, padding_chk)
+
+	if patch_sk:
+		assert len(patch_sk) == 64
+		key_write_str(patch_sk[32:], pos_pk2)
+		key_write_str(patch_sk, pos_sk)
+		key_write_str(key.getvalue(), pos_privkey_struct, key_struct)
+		for n in pos_pk1_idx:
+			key_write_str(patch_sk[32:], pos_pk1[n], key_struct)
+		key = key_struct.getvalue()
+
+		tmp.seek(0)
+		tmp.truncate()
+		tmp.write('-----BEGIN OPENSSH PRIVATE KEY-----\n')
+		tmp.write(b64encode(key, key_str_wrap))
+		tmp.write('-----END OPENSSH PRIVATE KEY-----\n')
+		tmp.flush()
+		os.rename(tmp.name, path)
+
+	return ed25519_sk
+
 
 
 def ed25519_pubkey_from_seed(sk):
@@ -245,6 +287,16 @@ def b32encode( v, chunk=4,
 		it_adjacent(base64.b32encode(v).strip().translate(_trans, '='), chunk) )
 	return '{}-{}'.format(res, _check[chksum % 37].lower())
 
+def b64decode(data):
+	return data.replace('-', '+').replace('_', '/').decode('base64')
+
+def b64encode(data, line_len=None):
+	data = base64.b64encode(data)
+	if line_len:
+		lines = list(''.join(filter(None, line)) for line in it_adjacent(data, line_len))
+		data = '\n'.join(lines + [''])
+	return data
+
 
 def main(args=None):
 	path_default = '~/.ssh/id_ed25519'
@@ -266,6 +318,12 @@ def main(args=None):
 		help='Derive expanded 64-byte key from'
 				' specified base64-encoded 32-byte ed25519 seed value.'
 			' "path" argument will be ignored if this option is specified.')
+	group.add_argument('-d', '--patch-key',
+		metavar='b64-encoded-32b-key-seed',
+		help='Replace key specified by path argument with one derived from ed25519 seed value.'
+			' Few bits of (mostly irrelevant) openssh'
+				' non-key-material metadata will be left in the keyfile as-is.'
+			' NOTE: THIS WILL DESTROY OLD SSH PRIVATE KEY IN THAT FILE!!!')
 
 	group.add_argument('-y', '--system', action='store_true',
 		help='Dont use "path" argument and parse sshd key from /etc/ssh.'
@@ -310,21 +368,28 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if not opts.expand_seed:
-		if opts.system:
-			if opts.path: parser.error('--system option cannot be used together with path.')
-			opts.path = path_sys
-		path = expanduser(opts.path or path_default)
+	path = opts.path
+	if opts.system:
+		if path: parser.error('--system option cannot be used together with path.')
+		path = path_sys
+	if not path: path = path_default
+	path = expanduser(path)
+
+	seed = opts.expand_seed or opts.patch_key
+	if seed:
+		if opts.public:
+			parser.error('--public option cannot be used together with --expand-seed/--patch-key.')
+		res = b64decode(seed)
+		res = res + ed25519_pubkey_from_seed(res)
+		if opts.patch_key:
+			ssh_key_parse(path, patch_sk=res)
+			return
+
+	else:
 		if not exists(path): parser.error('Key path does not exists: {!r}'.format(path))
 		res = ssh_key_parse(path)
 		# assert res == res[:32] + ed25519_pubkey_from_seed(res[:32])
 		res = res[:32]
-
-	else:
-		if opts.public:
-			parser.error('--public option cannot be used together with --expand-seed.')
-		res = opts.expand_seed.decode('base64')
-		res = res + ed25519_pubkey_from_seed(res)
 
 	if opts.pbkdf2:
 		algo, rounds, salt = opts.pbkdf2_opts.split('/', 2)
