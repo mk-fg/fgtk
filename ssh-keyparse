@@ -48,7 +48,6 @@ def ssh_key_parse(path, patch_sk=None):
 			raise SSHKeyError(( 'ssh-keygen failed to process key {!r},'
 				' see stderr output above for details, command: {}' ).format(path, ' '.join(cmd)))
 
-		tmp.seek(0)
 		try: res = _ssh_key_parse(path, tmp, patch_sk)
 		finally:
 			try: os.unlink(tmp.name)
@@ -145,18 +144,17 @@ def _ssh_key_parse(path, tmp, patch_sk=None):
 		key_write_str(key.getvalue(), pos_privkey_struct, key_struct)
 		for n in pos_pk1_idx:
 			key_write_str(patch_sk[32:], pos_pk1[n], key_struct)
-		key = key_struct.getvalue()
+		key_str = key_struct.getvalue()
 
 		tmp.seek(0)
 		tmp.truncate()
 		tmp.write('-----BEGIN OPENSSH PRIVATE KEY-----\n')
-		tmp.write(b64encode(key, key_str_wrap))
+		tmp.write(b64encode(key_str, key_str_wrap))
 		tmp.write('-----END OPENSSH PRIVATE KEY-----\n')
 		tmp.flush()
 		os.rename(tmp.name, path)
 
 	return ed25519_sk
-
 
 
 def ed25519_pubkey_from_seed(sk):
@@ -383,7 +381,7 @@ def main(args=None):
 		res = res + ed25519_pubkey_from_seed(res)
 		if opts.patch_key:
 			ssh_key_parse(path, patch_sk=res)
-			return
+			if not opts.expand_seed: return
 
 	else:
 		if not exists(path): parser.error('Key path does not exists: {!r}'.format(path))
