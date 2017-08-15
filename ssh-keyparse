@@ -262,7 +262,7 @@ def main(args=None):
 		help='Path to ssh private key to process. Default: {}'.format(path_default))
 
 	group.add_argument('-s', '--expand-seed',
-		metavar='32-byte-ed25519-key-seed',
+		metavar='b64-encoded-32b-key-seed',
 		help='Derive expanded 64-byte key from'
 				' specified base64-encoded 32-byte ed25519 seed value.'
 			' "path" argument will be ignored if this option is specified.')
