@@ -1829,6 +1829,26 @@ or override these via env / within a script.
 Requires youtube-dl_ and `jq <https://stedolan.github.io/jq/>`_ (to parse URLs
 from json).
 
+streamdump
+''''''''''
+
+Bash wrapper for streamlink_ to make dumping stream to a file more reliable,
+auto-restarting the process with new filename after any "stream ended" events or
+streamlink app exits.
+
+Example use::
+
+  % streamdump --retry-streams 60 --retry-open 99999 \
+    --twitch-disable-hosting --twitch-oauth-token ... \
+    twitch.tv/user 720p -fo dump.mp4
+
+Will create "dump.000.mp4", "dump.001.mp4" and so on for each stream restart.
+
+Intended use is for unreliable streams which go down and back up again in a
+minute or few, or working around streamlink quirks and fatal errors.
+
+.. _streamlink: https://github.com/streamlink/streamlink
+
 
 notifications
 ^^^^^^^^^^^^^

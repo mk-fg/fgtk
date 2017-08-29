@@ -1,0 +1,35 @@
+#!/bin/bash
+
+bin=$(basename $0)
+usage() {
+	echo >&2 "Usage: $bin <streamlink-opts> dump.mp4"
+	echo >&2 "Example:"
+	echo >&2 "  $bin --retry-streams 60 --retry-open 99999 \\"
+	echo >&2 "    --twitch-disable-hosting --twitch-oauth-token ... \\"
+	echo >&2 "    twitch.tv/user 720p -fo dump.mp4"
+	echo >&2
+	echo >&2 "Wrapper for 'streamlink ... -fo dump.mp4' to restart it endlessly"
+	echo >&2 "  with new (indexed) filename when it quits for whatever reason."
+	echo >&2 "Example use-case: stream that ends 'cleanly' due to tech issues and restarts in 1min."
+	exit ${1:-0}
+}
+[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+
+arg= arg_next= args=( streamlink )
+for arg_next in "$@"; do
+	[[ -z "$arg" ]] || args+=( "$arg" )
+	arg=$arg_next
+done
+[[ -n "$arg_next" ]] || usage
+
+fn=$arg_next
+fn_base=${fn%.*} fn_ext=${fn##*.}
+
+n=0
+while :; do
+	fn="$fn_base.$(printf %03d $n).$fn_ext"
+	echo "[$bin] using dump name: $fn"
+	eval -- "${args[@]}" "$fn"
+	n=$(( $n + 1 ))
+	sleep 1
+done
