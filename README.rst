@@ -1317,9 +1317,9 @@ For example::
   % ssh-keyparse test-key
   HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
 
-That one line at the end contains 32-byte ed25519 seed - "secret key" - all the
-necessary info to restore the blob above, without extra openssh wrapping (as per
-PROTOCOL.key).
+That one line at the end contains 32-byte ed25519 seed (with urlsafe-base64
+encoding) - "secret key" - all the necessary info to restore the blob above,
+without extra openssh wrapping (as per PROTOCOL.key).
 
 Original OpenSSH format (as produced by ssh-keygen) stores "magic string",
 ciphername ("none"), kdfname ("none"), kdfoptions (empty string), public key and
@@ -1339,7 +1339,7 @@ temporary copy of it to decrypt, with a big warning in case it's not desirable.
 There's also an option (--pbkdf2) to run the thing through PBKDF2 (tunable via
 --pbkdf2-opts) and various output encodings available::
 
-  % ssh-keyparse test-key
+  % ssh-keyparse test-key  # default is urlsafe-base64 encoding
   HOSEWmGJtkrOBOuTGGOFXsMIsMqlnQTWAGcRIWXvRqQ=
 
   % ssh-keyparse test-key --hex
