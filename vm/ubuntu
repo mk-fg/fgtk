@@ -60,6 +60,22 @@ EOF
 	*)
 		echo >&2 "Usage: $0 [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
+		cat >&2 <<EOF
+
+Cheatsheet for qemu-img:
+  qemu-img create -b cloudimg.server-16.04-amd64.qcow2 -f qcow2 cloudimg.server-16.04-amd64.qcow2.inc
+  qemu-img commit cloudimg.server-16.04-amd64.qcow2.inc && rm cloudimg.server-16.04-amd64.qcow2.inc
+
+Cheatsheet to init new cloudimg:
+  qemu-nbd -c /dev/nbd0 cloudimg.server-16.04-amd64.qcow2.inc && fsck -a /dev/nbd0 && mount /mnt/nbd
+   && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
+   && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
+   && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
+   && touch /mnt/nbd/etc/cloud/cloud-init.disabled
+   && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
+   && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
+
+EOF
 		exit 1 ;;
 esac
 
@@ -104,9 +120,7 @@ done
 
 ### Get latest kernel/initrd from vm
 
-# qemu-nbd -c /dev/nbd0 someimg.qcow2.inc && mount /mnt/nbd
-#  && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
-#  && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
+# For new cloud images, see cheatsheet in -h/--help output
 
 fs_opts=()
 [[ -z "$fs" ]] || {
@@ -123,7 +137,7 @@ fs_opts=()
 	fs_opts+=(
 		-kernel ubuntu/"$img".kernel
 		-initrd ubuntu/"$img".initramfs
-		-append 'root=LABEL=cloudimg-rootfs'
+		-append 'root=LABEL=cloudimg-rootfs cloudinit=disabled'
 	)
 }
 
