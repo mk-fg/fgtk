@@ -149,7 +149,7 @@ def _ssh_key_parse(path, tmp, patch_sk=None):
 		tmp.seek(0)
 		tmp.truncate()
 		tmp.write('-----BEGIN OPENSSH PRIVATE KEY-----\n')
-		tmp.write(b64encode(key_str, key_str_wrap))
+		tmp.write(b64encode(key_str, line_len=key_str_wrap))
 		tmp.write('-----END OPENSSH PRIVATE KEY-----\n')
 		tmp.flush()
 		os.rename(tmp.name, path)
@@ -288,8 +288,9 @@ def b32encode( v, chunk=4,
 def b64decode(data):
 	return data.replace('-', '+').replace('_', '/').decode('base64')
 
-def b64encode(data, line_len=None):
-	data = base64.b64encode(data)
+def b64encode(data, urlsafe=False, line_len=None):
+	enc = base64.b64encode if not urlsafe else base64.urlsafe_b64encode
+	data = enc(data)
 	if line_len:
 		lines = list(''.join(filter(None, line)) for line in it_adjacent(data, line_len))
 		data = '\n'.join(lines + [''])
@@ -400,7 +401,7 @@ def main(args=None):
 	enc_sum = sum(map( bool,
 		[opts.base64, opts.hex, opts.base32, opts.base32_nodashes, opts.raw] ))
 	if enc_sum > 1: parser.error('At most one encoding option can be used at the same time.')
-	if not enc_sum or opts.base64: res = base64.urlsafe_b64encode(res)
+	if not enc_sum or opts.base64: res = b64encode(res, urlsafe=True)
 	elif opts.hex: res = res.encode('hex')
 	elif opts.base32: res = b32encode(res)
 	elif opts.base32_nodashes: res = b32encode(res).replace('-', '')
