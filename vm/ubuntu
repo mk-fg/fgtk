@@ -11,6 +11,13 @@ vde_path=~/tmp/vde
 dump_inc=
 restore=
 net_only=
+img=install
+video=( -nographic )
+fs=
+
+[[ "$1" = -i || "$1" = --img ]] && { img="$2"; shift; shift; }
+[[ "$1" = -g || "$1" = --graphic ]] && { video=( -vga std ); shift; }
+[[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
 case "$1" in
 	d|dump)
@@ -51,7 +58,8 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
+		echo >&2 "Usage: $0 [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
+		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		exit 1 ;;
 esac
 
@@ -94,12 +102,38 @@ done
 [[ -n "$net_only" ]] && exit 0
 
 
+### Get latest kernel/initrd from vm
+
+# qemu-nbd -c /dev/nbd0 someimg.qcow2.inc && mount /mnt/nbd
+#  && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
+#  && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
+
+fs_opts=()
+[[ -z "$fs" ]] || {
+	mountpoint -q /mnt/nbd || {
+		modprobe nbd || exit 1
+		sudo qemu-nbd -c /dev/nbd0 ubuntu/"$img".qcow2.inc
+		mount /mnt/nbd || exit 1
+	}
+	rsync -Lt --inplace /mnt/nbd/vmlinuz ubuntu/"$img".kernel \
+		&& rsync -Lt --inplace /mnt/nbd/initrd.img ubuntu/"$img".initramfs \
+		&& umount /mnt/nbd \
+		&& sudo qemu-nbd -d /dev/nbd0 \
+		|| { echo >&2 "Failed to get kernel/initramfs from vm image"; exit 1; }
+	fs_opts+=(
+		-kernel ubuntu/"$img".kernel
+		-initrd ubuntu/"$img".initramfs
+		-append 'root=LABEL=cloudimg-rootfs'
+	)
+}
+
+
 ### Run qemu
 
 qemu_opts=(
 	-name "$(basename "$0")"
 
-	-m 512
+	-m 4096
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
 	-net nic,macaddr=${vde_mac},name=vde
@@ -109,10 +143,11 @@ qemu_opts=(
 	-enable-kvm
 	-cpu host
 	-smp 2
-	-vga std
+	"${video[@]}"
+	"${fs_opts[@]}"
 
-	-cdrom ubuntu/ubuntu-12.04.4-desktop-i386.iso
-	-drive file=ubuntu/install_inc.qcow2,if=virtio,aio=native,cache=writeback
+	# -cdrom ubuntu/ubuntu-12.04.4-desktop-i386.iso
+	-drive file=ubuntu/"$img".qcow2.inc,if=virtio,aio=native,cache=writeback,cache.direct=on
 )
 
 ulimit -c 0
