@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, re, socket, logging, pathlib
+import os, sys, re, socket, logging, pathlib, collections
 import jinja2
 
 
@@ -19,6 +19,40 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class ConfigError(Exception): pass
+
+class Config(collections.ChainMap):
+	maps = None
+	def __init__(self, *maps, **map0):
+		if map0 or not maps: maps = [map0] + list(maps)
+		super().__init__(*maps)
+	def __repr__(self):
+		return ( f'<{self.__class__.__name__}'
+			f' {id(self):x} {repr(self._asdict())}>' )
+	def _asdict(self):
+		items = dict()
+		for k, v in self.items():
+			if isinstance(v, self.__class__): v = v._asdict()
+			items[k] = v
+		return items
+	def __getitem__(self, k, empty=True):
+		k_maps = list()
+		for m in self.maps:
+			if k in m:
+				if isinstance(m[k], collections.Mapping): k_maps.append(m[k])
+				elif not (m[k] is None and k_maps):
+					if not empty and m[k] is None: continue
+					return m[k]
+		if not k_maps: raise KeyError(k)
+		return self.__class__(*k_maps)
+	def __getattr__(self, k):
+		try: return self[k]
+		except KeyError: raise ConfigError(k)
+	def get_nonempty(self, k, default=None):
+		try: return self.__getitem__(k, empty=False)
+		except KeyError: return default
 
 
 import ctypes as ct
@@ -56,15 +90,15 @@ def get_iface_addrs(ipv4=False, ipv6=False, mac=False, ifindex=False):
 		addrs = ifaces.setdefault(ifaddr_p.contents.ifa_name.decode(), list())
 		addr = ifaddr_p.contents.ifa_addr
 		if addr:
-			ac, af = addr.contents, addr.contents.sa_family
+			af = addr.contents.sa_family
 			if ipv4 and af == socket.AF_INET:
-				addr = ct.cast(addr, ct.POINTER(sockaddr_in))
+				ac = ct.cast(addr, ct.POINTER(sockaddr_in)).contents
 				addrs.append(socket.inet_ntop(af, ac.sin_addr))
 			elif ipv6 and af == socket.AF_INET6:
-				addr = ct.cast(addr, ct.POINTER(sockaddr_in6))
+				ac = ct.cast(addr, ct.POINTER(sockaddr_in6)).contents
 				addrs.append(socket.inet_ntop(af, ac.sin6_addr))
 			elif (mac or ifindex) and af == socket.AF_PACKET:
-				addr = ct.cast(addr, ct.POINTER(sockaddr_ll))
+				ac = ct.cast(addr, ct.POINTER(sockaddr_ll)).contents
 				if mac:
 					addrs.append('mac-' + ':'.join(
 						map('{:02x}'.format, ac.sll_addr[:ac.sll_halen]) ))
@@ -211,8 +245,16 @@ def main(args=None):
 	parser = argparse.ArgumentParser(
 		description='Process specified input template with jinja2.')
 
-	parser.add_argument('--conf-file', metavar='path',
-		help='YAML config to pass to template context as "conf" var.')
+	parser.add_argument('-c', '--conf-file', action='append', metavar='path',
+		help='YAML config to pass to template context as "conf" var.'
+			' Can be used multiple times, with matching mapping'
+				' values (on any level) in later files overriding values from former ones.')
+	parser.add_argument('--conf-dir', action='append', metavar='path',
+		help='Use all files in specified directory in'
+				' alphasort order as extra --conf-file paths.'
+			' Can be used multiple times, with files'
+				' from later dirs used strictly after files from'
+				' former ones, all after --conf-file paths, if any.')
 	parser.add_argument('--ls-prefix',
 		default='%%', metavar='prefix',
 		help='Jinja2 line-statement prefix. Default: %(default)s')
@@ -251,9 +293,14 @@ def main(args=None):
 		(flag.lstrip('+-'), not flag.startswith('-'))
 		for flag in opts.hosts_opts.replace(',', ' ').split() ).items() if v))
 	tpl_ctx = dict(hosts=hosts, iface=get_iface_addrs())
-	if opts.conf_file:
+
+	conf_files = list(map(pathlib.Path, opts.conf_file or list()))
+	for p in map(pathlib.Path, opts.conf_dir or list()):
+		if p.exists(): conf_files.extend(p for p in p.iterdir() if p.is_file() or p.is_fifo())
+	if conf_files:
 		import yaml
-		tpl_ctx['conf'] = yaml.safe_load(pathlib.Path(opts.conf_file).open())
+		tpl_ctx['conf'] = Config(*reversed(
+			list(yaml.safe_load(p.read_text()) for p in conf_files) ))
 	else: tpl_ctx['conf'] = None
 
 	tpl = jinja_env.from_string(

@@ -413,7 +413,7 @@ Jinja2 env for template has following filters and values:
 - ``it`` - itertools, ``_v``/``v_``/``_v_`` - global funcs for adding spaces
   before/after/around non-empty strings.
 
-- Whatever is loaded from ``--conf-file`` (YAML), if specified.
+- Whatever is loaded from ``--conf-file/--conf-dir`` (YAML files), if specified.
 
 Use-case is a simple conf-file pre-processor for autonomous templating on
 service startup with a minimal toolbox on top of jinja2, without huge dep-tree
