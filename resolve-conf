@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import os, sys, re, socket, logging, pathlib, collections
-import jinja2
+import jinja2, jinja2.ext
 
 
 class LogMessage(object):
@@ -240,6 +240,34 @@ def tpl_resolve(host, af=0, proto=0, sock=0, default=None, force_unique=True):
 	return addr
 
 
+
+class BlockCommentOutExtension(jinja2.ext.Extension):
+
+	tags = {'comment_out_if'}
+
+	def __init__(self, env):
+		super().__init__(env)
+		env.extend(block_comment_prefix='#', block_comment_spacing='{} ')
+
+	def parse(self, parser):
+		lineno = next(parser.stream).lineno
+		args = [ parser.parse_expression(), parser.parse_expression()
+			if parser.stream.skip_if('comma') else jinja2.nodes.Const(None) ]
+		body = parser.parse_statements(['name:comment_out_end'], drop_needle=True)
+		return jinja2.nodes.CallBlock(self.call_method(
+			'_block_comment', args ), [], [], body).set_lineno(lineno)
+
+	def _block_comment(self, check, pre, caller):
+		lines = caller()
+		if not check: return lines
+		pre = self.environment.block_comment_spacing\
+			.format(pre or self.environment.block_comment_prefix)
+		lines = lines.split('\n')
+		for n, line in enumerate(lines):
+			if line: lines[n] = pre + line
+		return '\n'.join(lines)
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -283,7 +311,8 @@ def main(args=None):
 	jinja_env = jinja2.Environment(
 		loader=jinja2.FileSystemLoader('/var/empty'),
 		line_statement_prefix=opts.ls_prefix, line_comment_prefix=opts.lc_prefix,
-		keep_trailing_newline=True )
+		extensions=[BlockCommentOutExtension], keep_trailing_newline=True )
+
 	jinja_env.filters['dns'] = tpl_resolve
 	jinja_env.globals.update(
 		it=it, dns=tpl_resolve, _v_=lambda v: v and ' {} '.format(v),

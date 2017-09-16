@@ -410,10 +410,19 @@ Jinja2 env for template has following filters and values:
   Probably a good idea to use this stuff only when IPs are static and get
   assigned strictly before templating.
 
+- ``{% comment_out_if value[, comment-prefix] %}...{% comment_out_end %}``
+
+  Custom template block to prefix each non-empty line within it with specified
+  string (defaults to "#") if value is not false-y.
+
+  Can be used when format doesn't have block comments, but it's still desirable
+  to keep disabled things in dst file (e.g. for manual tinkering) instead of
+  using if-blocks around these, or to make specific lines easier to uncomment manually.
+
 - ``it`` - itertools, ``_v``/``v_``/``_v_`` - global funcs for adding spaces
   before/after/around non-empty strings.
 
-- Whatever is loaded from ``--conf-file/--conf-dir`` (YAML files), if specified.
+- Whatever is loaded from ``--conf-file/--conf-dir`` (JSON/YAML files), if specified.
 
 Use-case is a simple conf-file pre-processor for autonomous templating on
 service startup with a minimal toolbox on top of jinja2, without huge dep-tree
