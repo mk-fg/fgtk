@@ -47,7 +47,7 @@ while [[ $n -le $ns ]]; do
 
 	echo "---- $dst [$n/$ns, $s-$e]"
 
-	ffmpeg -loglevel warning -y -i "$src" "${opts[@]}" -ss $s -to $e "$dst"
+	ffmpeg -loglevel warning -y -i "$src" "${opts[@]}" -ss $s -to $e "$dst" </dev/null
 	(( n += 1 ))
 done
 
