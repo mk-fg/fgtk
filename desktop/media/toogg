@@ -137,7 +137,7 @@ class FFProc:
 class AudioConvError(Exception): pass
 
 class AudioConvJob:
-	__slots__ = 'name src dst input_opts tmp_file ffmpeg'.split()
+	__slots__ = 'name src dst input_opts tmp_file ffmpeg can_copy_stream'.split()
 	def __init__(self, *args, **kws):
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
@@ -259,30 +259,36 @@ class AudioConv:
 		job = AudioConvJob(src_base, src, dst, job_input_opts, tmp_file)
 
 		async with FFProc( self.loop, job.name,
-				['ffprobe', '-v', 'error', '-show_entries',
-					'stream=codec_type,duration', '-print_format', 'json', job.src],
+				[ 'ffprobe', '-v', 'error', '-show_entries',
+					'stream=codec_type,codec_name,duration:format=duration',
+					'-print_format', 'json', job.src ],
 				stdout=subprocess.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
-			src_duration = None
+			src_duration = src_codec = None
 			try:
 				src_info = json.loads(src_info)
 				for stream in src_info['streams']:
 					if stream.get('codec_type') != 'audio': continue
-					src_duration = float(stream['duration'])
+					src_duration = float(stream.get('duration', 0))
+					src_codec = stream.get('codec_name')
 					break
+				if not src_duration:
+					src_duration = float(src_info['format']['duration'])
 			except Exception as err:
 				log.error( '[{!r}] ffprobe failed, progress'
 					' info wont be available: [{}] {}', job.name, *err_with_type(err) )
 			if src_duration:
 				if self.start: src_duration = max(0, src_duration - self.start)
 				if self.length: src_duration = min(src_duration, self.length)
-			log.debug('[{!r}] Detected audio stream duration: {}', job.name, src_duration)
+			log.debug('[{!r}] Detected audio stream duration: {:.1f}s', job.name, src_duration)
+			log.debug('[{!r}] Detected audio stream codec: {!r}', job.name, src_codec)
 
 		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, src_base, ffmpeg_cmd + cmd_ext, stream_len=src_duration,
 			prefix=pre, progress_func=self.status_line_set, **kws )
+		job.can_copy_stream = src_codec == 'vorbis'
 
 		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
 		try:
@@ -295,8 +301,10 @@ class AudioConv:
 
 
 	async def conv_src_simple(self, job):
-		await job.ffmpeg( 'to-ogg',
-			['-i', job.src] + job.input_opts + ['-vn', '-f', 'ogg', job.dst] ).run()
+		coding_opts = ['-vn']
+		if job.can_copy_stream: coding_opts += ['-codec:a', 'copy']
+		await job.ffmpeg( 'to-ogg', ['-i', job.src]
+			+ job.input_opts + coding_opts + ['-f', 'ogg', job.dst] ).run()
 
 	async def conv_src_loudnorm(self, job):
 		await job.ffmpeg( 'to-wav [1/3]',
