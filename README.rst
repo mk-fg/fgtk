@@ -1551,8 +1551,16 @@ Host/port names specified on the command line are resolved synchronously on
 script startup (same as with e.g. "ping" tool), so it can't be used to wait
 until hostname resolves, only for connection itself.
 
-Uses Python-3.5+ stdlib stuff, namely asyncio, to juggle multiple connections in
-an efficient manner.
+Above example can also be shortened via -s/--ssh option, e.g.::
+
+  % tping -s myhost 1234
+  % tping -s myhost:1234 # same thing as above
+  % tping -s -p1234 myhost # same thing as above
+
+Will exec ``ssh -p1234 myhost`` immediately after successful tcp connection.
+
+Uses python3 stdlib stuff, namely asyncio, to juggle multiple connections in an
+efficient manner.
 
 bindfs-idmap
 ^^^^^^^^^^^^

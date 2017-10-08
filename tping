@@ -91,28 +91,36 @@ def main(args=None):
 				' e.g. waiting for when ssh port is accessible after remote host reboots.'
 			' Unlike common icmp ping tools, does not need elevated privileges.')
 
-	parser.add_argument('host',
+	group = parser.add_argument_group('Destination spec')
+	group.add_argument('host',
 		help='Host or address (to be resolve via gai) or host:port spec.')
-	parser.add_argument('port_arg', nargs='?',
+	group.add_argument('port_arg', nargs='?',
 		help='TCP service/port name/number to connect to.'
 			' Can also be specified as part of the host or -p/--port option.'
 			' Default: {}'.format(port_default))
-	parser.add_argument('-p', '--port', metavar='tcp-port',
+	group.add_argument('-p', '--port', metavar='tcp-port',
 		help='TCP service/port name/number to connect to.'
 			' Can also be specified as part of the host or a second positional argument.'
 			' Default: {}'.format(port_default))
 
-	parser.add_argument('-r', '--retry-delay',
+	group = parser.add_argument_group('Delays/timeouts')
+	group.add_argument('-r', '--retry-delay',
 		type=float, metavar='seconds', default=1.0,
 		help='Delay between trying to establish new connections.'
 			' Does not take any other started connections/handshakes into account.'
 			' Default: %(default)ss')
-	parser.add_argument('-t', '--timeout',
+	group.add_argument('-t', '--timeout',
 		type=float, metavar='seconds', default=3.0,
 		help='Delay after which to consider establishing'
 			' connection as timed-out and cancel it. Default: %(default)ss')
 
-	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group = parser.add_argument_group('Extra actions')
+	group.add_argument('-s', '--ssh', action='store_true',
+		help='Exec "ssh -p<port> <host>" after successful tcp connection instead of exit.')
+
+	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	global log
@@ -142,7 +150,14 @@ def main(args=None):
 		host, port, sock_addr, sockopt_resolve('af_', sock_af), sockopt_resolve('sock_', sock_t) )
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		return loop.run_until_complete(run_tping(
+		err = loop.run_until_complete(run_tping(
 			loop, sock_addr, sock_af, opts.retry_delay, opts.timeout ))
+	if err: return err
+
+	if opts.ssh:
+		host, port = sock_addr[:2]
+		cmd = ['ssh', f'-p{port:d}', host]
+		log.debug('Running ssh command: {}', ' '.join(cmd))
+		os.execvp('ssh', cmd)
 
 if __name__ == '__main__': sys.exit(main())
