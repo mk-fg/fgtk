@@ -50,11 +50,12 @@ def main(argv=None):
 		usage='%(prog)s [opts] src dst',
 		description='Randomly pick and copy tracks from source to destination.')
 
-	group = parser.add_argument_group('Source/destination specs')
+	group = parser.add_argument_group('Source/destination')
 	group.add_argument('src', nargs='*', help='Source path(s).')
 	group.add_argument('dst', nargs='?', help='Destination path.')
 	group.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
+	group.add_argument('-m', '--move', action='store_true', help='Move files instead of copying.')
 
 	group = parser.add_argument_group('Filename generation')
 	group.add_argument('--raw-names', action='store_true',
@@ -365,7 +366,10 @@ def main(argv=None):
 				df_path = (os.stat(path).st_size + 1*2**20) * 1.2 # for any possible fs overhead
 				if df < df_path: do_cleanup(df_path)
 			if not optz.dry_run:
-				try: local['rsync']('--inplace', '--size-only', path, path_dst)
+				rsync_opts = ['--inplace', '--size-only', '--append-verify']
+				if optz.move: rsync_opts += ['--remove-source-files']
+				rsync_opts.extend([path, path_dst])
+				try: local['rsync'](*rsync_opts)
 				except commands.processes.ProcessExecutionError as err:
 					if not optz.ignore_errors: raise
 					log.warn('File transfer error: %s', err)

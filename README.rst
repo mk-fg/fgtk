@@ -2012,11 +2012,10 @@ Use-case is simple - insert an SD card from a player and do::
 "--debug" also keeps track of what's being done and calculates how much time is
 left based on df-goal and median rate.
 
-Source dir has like `3k files`_ in many
-dirs, and cp/rsync will do the dumb "we'll copy same first things every
-time", while this tool will create the dst path for you, copy always-new
-selection there and - due to "-s 200" - leave 200 MiB there for podcasts
-you might want to also upload.
+Source dir has like `3k files`_ in many dirs, and cp/rsync will do the dumb
+"we'll copy same first things every time", while this tool will create the dst
+path for you, copy always-new selection there and - due to "-s 200" - leave 200
+MiB there for podcasts you might want to also upload.
 
 As with "cp", ``pick_tracks /path1 /path2 /dst`` is perfectly valid.
 
@@ -2029,7 +2028,8 @@ Cleanup (if requested) also picks stuff at random up to necessary df.
 "--shuffle" option allows to shuffle paths on fat by temporarily copying them
 off the media to some staging area and back in random order.
 
-Use-case is dumb mp3 players that don't have that option.
+Use-case is dumb mp3 players that don't have that option (see also vfat_shuffler
+script for these, which is way more efficient).
 
 Uses plumbum_ to call "rsync --inplace" (faster than "cp" in most cases) and
 "find" to do the actual copy/listing.
