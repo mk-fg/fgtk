@@ -117,7 +117,7 @@ qemu_opts=(
 	-drive file="$name"/install_inc.qcow2,if=virtio,aio=native,cache.direct=on
 )
 
-[[ -z "$restore" ]] || qemu_opts+=( -incoming "exec:excat $dst" )
+[[ -z "$restore" ]] || qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
 [[ -z "$VM_TMP" ]] || qemu_opts+=( -snapshot )
 

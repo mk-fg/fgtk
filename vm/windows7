@@ -118,6 +118,6 @@ qemu_opts=(
 ulimit -c 0
 export QEMU_AUDIO_DRV=none
 
-[[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:excat $dst" )
+[[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
 exec nice ionice -c3 cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
