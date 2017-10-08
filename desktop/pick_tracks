@@ -49,58 +49,61 @@ def main(argv=None):
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [opts] src dst',
 		description='Randomly pick and copy tracks from source to destination.')
-	parser.add_argument('src', nargs='*', help='Source path(s).')
-	parser.add_argument('dst', nargs='?', help='Destination path.')
 
-	parser.add_argument('-l', '--src-list', action='store_true',
+	group = parser.add_argument_group('Source/destination specs')
+	group.add_argument('src', nargs='*', help='Source path(s).')
+	group.add_argument('dst', nargs='?', help='Destination path.')
+	group.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
 
-	parser.add_argument('--raw-names', action='store_true',
+	group = parser.add_argument_group('Filename generation')
+	group.add_argument('--raw-names', action='store_true',
 		help='Do not rename tracks according to --name-format.')
-	parser.add_argument('-f', '--name-format',
+	group.add_argument('-f', '--name-format',
 		metavar='py_format_tpl', default='{0[title]}_[{0[tracknumber]}]_--_{0[artist]}',
 		help='Format to rename tracks to when copying to destination.'
 			' Same syntax as for python str.format, with keys'
 				' from mutagenwrapper (see docs for full list of these).'
 			' Will not be used if mutagenwrapper is not available.')
-	parser.add_argument('--name-format-check',
+	group.add_argument('--name-format-check',
 		metavar='key1[,key2,...]', default='title',
 		help='Comma-separated list of keys to check before'
 				' renaming file according to --name-format.'
 			' If any of them is empty or missing, rename will not be performed.'
 			' Can be empty. Default: %(default)s')
-	parser.add_argument('--name-format-mappings',
+	group.add_argument('--name-format-mappings',
 		metavar='k1=v1[,v2,...][|k2=v3[v4,...]|...]',
 		default=(
 			'artist=albumartist,artist,TPE2'
 				',TPE1,TPE2,TSOP,TXXX:Album Artist Credit,TXXX:Artist Credit,xxx|'
 			'title=title,TIT2|' 'album=album,TALB,xxx|' 'tracknumber=tracknumber,TRCK,x|' ),
 		help='Fallback keys to use if direct match is empty. Default: %(default)s')
-	parser.add_argument('--name-format-raw', action='store_true',
+	group.add_argument('--name-format-raw', action='store_true',
 		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
-	parser.add_argument('--name-len-max',
+	group.add_argument('--name-len-max',
 		type=int, metavar='number', default=160,
 		help='Trim name to specified length.'
 			' No collision-detection afterwards. Default: %(default)s')
 
-	parser.add_argument('-s', '--min-df', metavar='float [ B | K | M | G | T ]',
+	group = parser.add_argument_group('Free space cleanup')
+	group.add_argument('-s', '--min-df', metavar='float [ B | K | M | G | T ]',
 		help='Threshold of df on dst path to stop on.'
 			' Simple number (float) will be interpreted as MiB, but unit letter'
 				' (B, K, M, G, T) can be specified immediately after, e.g. "2.2G" for 2.2 GiB.')
-
-	parser.add_argument('-c', '--clean-df', metavar='float [ B | K | M | G | T ]',
+	group.add_argument('-c', '--clean-df', metavar='float [ B | K | M | G | T ]',
 		help='Before copying stuff, clean up files from'
 				' destination path (also see --clean-path) up to specified free-space'
 				' threshold (or until theres nothing left). Files to remove are picked at random.'
 			' Same value spec format as with --min-df.')
-	parser.add_argument('-a', '--clean-as-necessary',
+	group.add_argument('-a', '--clean-as-necessary',
 		action='store_true', help='Clean up files from destination path'
 			' (also see --clean-path) as necessary to copy *all* the source files.'
 			' Files to remove are picked at random. Mutually exclusive with --min-df.')
-	parser.add_argument('-r', '--clean-path', metavar='path',
+	group.add_argument('-r', '--clean-path', metavar='path',
 		help='Clean stuff from the specified path instead of destination.')
 
-	parser.add_argument('--shuffle',
+	group = parser.add_argument_group('Shuffle options')
+	group.add_argument('--shuffle',
 		nargs='?', metavar='percentage', default=False,
 		help=( 'Special operation mode, which will:'
 				' (1) Lookup all paths in src, build a set of basenames for these.'
@@ -109,16 +112,17 @@ def main(argv=None):
 				' (4) Remove random files in dst, leaving specified count percentage (default: {:.1f}%%).'
 				' (5) Pick random files from src and staging area and upload to dst.' )\
 			.format(default_shuffle_percentage))
-	parser.add_argument('-t', '--shuffle-staging',
+	group.add_argument('-t', '--shuffle-staging',
 		nargs='?', metavar='path', default='/var/tmp/pick_tracks.XXXXXX',
 		help='Path to temporarily copy files from dst during --shuffle operation, removed afterwards.'
 			' Will be generated in mktemp(1)-fashion if name contains >4 X letters in a row.')
 
-	parser.add_argument('-i', '--ignore-errors', action='store_true',
+	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-i', '--ignore-errors', action='store_true',
 		help='Dont abort on any errors from rsync.'
 			' These can usually happen due to e.g. fs name restrictions and whatever other io errors.')
-	parser.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
 	import logging
