@@ -798,12 +798,20 @@ def main(args=None, conf=None):
 
 	import argparse
 	parser = argparse.ArgumentParser(
-		usage='%(prog)s [options] url file_prefix [url-2 file_prefix-2 ...]',
-		description='Grab a VoD or a specified slice of it from twitch.tv, properly.')
-	parser.add_argument('url', help='URL for a VoD to fetch.')
-	parser.add_argument('file_prefix', help='File prefix to assemble temp files under.')
+		usage='%(prog)s [options] { url-1 [url-2 ...] | url file_prefix [url-2 file_prefix-2 ...] }',
+		description='Download VoD (or a specified slice of it) from twitch.tv.')
+	parser.add_argument('url',
+		help='URL for a VoD to fetch.'
+			' Can be either followed by file_prefix argument'
+				' (and any number of such url/prefix pairs after that),'
+				' or any number of urls (detected by "http(s):" prefix)'
+				' to use simple sequential prefixes like "vod-001".'
+			' See also -o/--ytdl-output-format option wrt destination filenames for urls.')
+	parser.add_argument('file_prefix', nargs='?',
+		help='File prefix for destination file and temp dir.'
+			' Used even with -o/--ytdl-output-format while download is in progress.')
 	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
-		help='Any number of extra "url file_prefix" arguments can be specified.')
+		help='Any number of extra urls or url/file_prefix pairs can be specified.')
 
 	group = parser.add_argument_group('Download slice options')
 	group.add_argument('-s', '--start-pos',
@@ -884,23 +892,27 @@ def main(args=None, conf=None):
 	conf.file_part_suffix = opts.use_part_suffix
 	conf.ytdl_output_format = opts.ytdl_output_format
 
-	vod_queue, args = list(),\
-		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list())
-	if len(args) % 2:
-		parser.error( 'Odd number of url/prefix args specified'
-			f' ({len(args)}), while these should always come in pairs.' )
-	for url, prefix in it_adjacent(args, 2):
-		if re.search(r'^https?:', prefix):
-			if re.search(r'^https?:', url):
-				parser.error( 'Both url/file_prefix args seem'
-					f' to be an URL, only first one should be: {url} {prefix}' )
-			prefix, url = url, prefix
-			log.warn( 'Looks like url/prefix args got'
-				' mixed-up, correcting that to prefix={} url={}', prefix, url )
-		if not re.search(r'^https?://[^/]+/([^/]+/v|videos)/', url):
-			parser.error( 'Provided URL appears to be for the unsupported'
-				f' VoD format (only /user/v/ or /videos/ VoDs are supported): {url}' )
-		vod_queue.append((url, prefix))
+	vod_queue = list()
+	args = list(filter( None,
+		[opts.url, opts.file_prefix] + (opts.more_url_and_prefix_pairs or list()) ))
+	if all(re.search(r'^https?:', arg) for arg in args):
+		vod_queue.extend((url, f'vod-{n:03d}') for n, url in enumerate(args, 1))
+	else:
+		if len(args) % 2:
+			parser.error( 'Odd number of url/prefix args specified'
+				f' ({len(args)}), while these should always come in pairs.' )
+		for url, prefix in it_adjacent(args, 2):
+			if re.search(r'^https?:', prefix):
+				if re.search(r'^https?:', url):
+					parser.error( 'Both url/file_prefix args seem'
+						f' to be an URL, only first one should be: {url} {prefix}' )
+				prefix, url = url, prefix
+				log.warn( 'Looks like url/prefix args got'
+					' mixed-up, correcting that to prefix={} url={}', prefix, url )
+			if not re.search(r'^https?://[^/]+/([^/]+/v|videos)/', url):
+				parser.error( 'Provided URL appears to be for the unsupported'
+					f' VoD format (only /user/v/ or /videos/ VoDs are supported): {url}' )
+			vod_queue.append((url, prefix))
 
 	if conf.compat_windows:
 		# Use the Proactor event loop on Windows for subprocess support
