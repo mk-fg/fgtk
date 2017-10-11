@@ -74,6 +74,12 @@ async def _run_tping(loop, conns, sock_addr, sock_af, delay_retry, timeout):
 		ts_retry += delay_retry
 
 
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
 def sockopt_resolve(prefix, v):
 	prefix = prefix.upper()
 	for k in dir(socket):
@@ -93,7 +99,8 @@ def main(args=None):
 
 	group = parser.add_argument_group('Destination spec')
 	group.add_argument('host',
-		help='Host or address (to be resolve via gai) or host:port spec.')
+		help='Host/address (to be resolve via gai) or [user@]host[:port] spec.'
+			' User part can be specified for -s/--ssh option and is ignored otherwise.')
 	group.add_argument('port_arg', nargs='?',
 		help='TCP service/port name/number to connect to.'
 			' Can also be specified as part of the host or -p/--port option.'
@@ -116,7 +123,8 @@ def main(args=None):
 
 	group = parser.add_argument_group('Extra actions')
 	group.add_argument('-s', '--ssh', action='store_true',
-		help='Exec "ssh -p<port> <host>" after successful tcp connection instead of exit.')
+		help='Exec "ssh -p<port> <user@host>" after successful tcp connection instead of exit.'
+			' Default user is "root", if not specified in the "host" argument.')
 
 	group = parser.add_argument_group('Debug/misc')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -127,8 +135,8 @@ def main(args=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = get_logger('main')
 
-	host = opts.host.rsplit(':', 1)
-	host, port = (host[0], None) if len(host) == 1 else host
+	user, host = str_part(opts.host, '<@', 'root')
+	host, port = str_part(host, ':>')
 
 	ports = set(filter(None, [opts.port_arg, opts.port, port]))
 	if ports:
@@ -156,7 +164,7 @@ def main(args=None):
 
 	if opts.ssh:
 		host, port = sock_addr[:2]
-		cmd = ['ssh', f'-p{port:d}', host]
+		cmd = ['ssh', f'-p{port:d}', f'{user}@{host}']
 		log.debug('Running ssh command: {}', ' '.join(cmd))
 		os.execvp('ssh', cmd)
 
