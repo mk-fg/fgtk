@@ -4,56 +4,56 @@ dir_linux=/usr/src/linux
 dir_distfiles=/usr/src/distfiles
 
 usage() {
-	echo >&2 "Usage: $0 [-t] ver_to"
+	echo >&2 "Usage: $0 [ver_to]"
 	echo >&2
-	echo >&2 '"-t" option uses "fs" and "rsync" tools to make sure only actually'
-	echo >&2 'changed files get mtime-bumped (to avoid huge rebuilds on higher-numbered patches).'
+	echo >&2 'If version is not specified, latest patchset for same'
+	echo >&2 ' major version is scraped from kernel.org and downloaded.'
 	exit 1
 }
-
-times=
-[[ "$1" = -t ]] && { times=t; shift; }
-[[ -z "$1" || -n "$2" || "$1" = -h || "$1" = --help ]] && usage
+[[ "$#" -gt 1 || "$1" = -h || "$1" = --help ]] && usage
+v1=$1
 
 cd "$dir_linux" && [[ -e Makefile ]]\
-	|| { echo >&2 "Failed to find Makefile in /usr/src/linux"; exit 1; }
+	|| { echo >&2 "ERROR: Failed to find Makefile in /usr/src/linux"; exit 1; }
 
 v0=$( awk '$1=="VERSION" {v1=$3}
 	$1=="PATCHLEVEL" {v2=$3}
 	$1=="SUBLEVEL" {v3=$3; v3_set=1}
 	v1 && v2 && v3_set {print v1 "." v2 "." v3; exit}' Makefile )
+[[ -n "$v0" ]] || { echo >&2 "ERROR: Failed to get current sources version"; exit 1; }
 
-[[ -z "$v0" ]] && { echo >&2 "Failed to get current sources version"; exit 1; }
-[[ "$v0" = "$1" ]] && exit 0
+[[ -n "$v1" ]] || {
+	releases=(  )
+	for v1 in $(
+		curl -SsL 'https://www.kernel.org' |
+			grep -oP '(?<=<strong>)[0-9.]+(?=</strong>)' ) fail
+	do [[ ${v1%.*} != ${v0%.*} ]] || break
+	done
+	[[ "$v1" != fail ]] || {
+		echo >&2 "ERROR: Failed to scrape matching release from kernel.org"; exit 1; }
+}
+[[ "$v0" != "$v1" ]] || exit 0
 
-[[ -n "$times" ]] && {
-	src=$(realpath .)
-	[[ $? -ne 0 || -z "$src" ]] && exit 1
-	pushd /var/empty >/dev/null
-	mv "$src"{,.patch_tmp}\
-		&& fs ln -f --relative "$src"{.patch_tmp,} || exit 1
-	popd >/dev/null
+patch0="$dir_distfiles"/patch-$v0.xz
+patch1="$dir_distfiles"/patch-$v1.xz
+
+[[ -e "$patch1" ]] \
+	|| curl -SsL -o  "$patch1" \
+		"https://cdn.kernel.org/pub/linux/kernel/v${v1%%.*}.x/patch-$v1.xz" \
+	|| { echo >&2 "ERROR: Failed to download patch: $v1"; exit 1; }
+
+[[ "${v0##*.}" == 0 ]] || {
+	xzcat "$patch0" | patch --batch --follow-symlinks -p1 -R --dry-run
+	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
+	xzcat "$patch0" | patch --batch --follow-symlinks -p1 -R
+	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
 }
 
-[[ "${v0##*.}" != 0 ]] && {
-	xzcat "${dir_distfiles}"/patch-${v0}.xz | patch --batch --follow-symlinks -p1 -R --dry-run
-	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
-	xzcat "${dir_distfiles}"/patch-${v0}.xz | patch --batch --follow-symlinks -p1 -R
-	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
-}
-
-xzcat "${dir_distfiles}"/patch-${1}.xz | patch --batch --follow-symlinks -p1 --dry-run
+xzcat "$patch1" | patch --batch --follow-symlinks -p1 --dry-run
 [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
-xzcat "${dir_distfiles}"/patch-${1}.xz | patch --batch --follow-symlinks -p1
+xzcat "$patch1" | patch --batch --follow-symlinks -p1
 [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
 
 [[ -e .config ]] && make oldconfig
-
-[[ -n "$times" ]] && {
-	pushd /var/empty >/dev/null
-	rsync -qrtc --omit-dir-times "$src"{,.patch_tmp}/.\
-		&& rm -rf "$src" && mv "$src"{.patch_tmp,} || exit 1
-	popd >/dev/null
-}
 
 exit 0

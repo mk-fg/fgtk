@@ -1162,9 +1162,12 @@ Python script, uses "twisted.conch" for ssh.
 kernel-patch
 ^^^^^^^^^^^^
 
-Script to update sources in /usr/src/linux to some (specified) stable
-version. Reuires "patch-X.Y.Z.xz" files (as provided on kernel.org) to be
-available under /usr/src/distfiles (configurable at the top of the script).
+Simple stateless script to update sources in /usr/src/linux to some (specified)
+stable version.
+
+Looks for "patch-X.Y.Z.xz" files (as provided on kernel.org) under
+/usr/src/distfiles (configurable at the top of the script), or downloads them
+there from kernel.org.
 
 Does update (or rollback) by grabbing current patchset version from Makefile and
 doing essentially ``patch -R < <patch-current> && patch < <patch-new>`` - i.e.
@@ -1173,14 +1176,9 @@ rolling-back the current patchset, then applying new patch.
 Always does ``patch --dry-run`` first to make sure there will be no mess left
 over by the tool and updates will be all-or-nothing.
 
-When updates get to e.g. 3.14.21 -> 3.14.22, there's a good chance such update
-will mtime-bump a lot of files (because it'll be 3.14.21 -> 3.14.0 -> 3.14.22),
-so there's "-t" option to efficiently symlink the whole sources tree, do ``patch
---follow-symlinks`` and ``rsync -c`` only actually-changed (between .21 and .22)
-stuff back.
-
 In short, allows to run e.g. ``kernel-patch 3.14.22`` to get 3.14.22 in
-``/usr/src/linux`` from any other clean 3.14.\* version there.
+``/usr/src/linux`` from any other clean 3.14.\* version, or just
+``kernel-patch`` to have the latest 3.14 patchset.
 
 kernel-conf-check
 ^^^^^^^^^^^^^^^^^
