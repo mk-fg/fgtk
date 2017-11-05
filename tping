@@ -125,6 +125,12 @@ def main(args=None):
 	group.add_argument('-s', '--ssh', action='store_true',
 		help='Exec "ssh -p<port> <user@host>" after successful tcp connection instead of exit.'
 			' Default user is "root", if not specified in the "host" argument.')
+	group.add_argument('-o', '--ssh-opts', action='append',
+		help='Extra options for ssh command, if -s/--ssh flag is used.'
+			' Will be split on spaces, unless option is used multiple times.'
+			' Can contain special "@@@" token (as a separate arg) to'
+				' substitute user@host in its place, otherwise it will be appended.'
+			" Example: -o='-NnT -i mykey @@@ -- cat /etc/hosts'")
 
 	group = parser.add_argument_group('Debug/misc')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -146,6 +152,9 @@ def main(args=None):
 		port = ports.pop()
 	else: port = port_default
 
+	ssh_opts = opts.ssh_opts or list()
+	if len(ssh_opts) == 1: ssh_opts = ssh_opts[0].strip().split()
+
 	try:
 		addrinfo = socket.getaddrinfo(
 			host, str(port), type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
@@ -164,7 +173,9 @@ def main(args=None):
 
 	if opts.ssh:
 		host, port = sock_addr[:2]
-		cmd = ['ssh', f'-p{port:d}', f'{user}@{host}']
+		cmd = ['ssh', f'-p{port:d}'] + ssh_opts
+		if '@@@' not in cmd: cmd.append('@@@')
+		cmd[cmd.index('@@@')] = f'{user}@{host}'
 		log.debug('Running ssh command: {}', ' '.join(cmd))
 		os.execvp('ssh', cmd)
 
