@@ -56,6 +56,8 @@ def main(argv=None):
 	group.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
 	group.add_argument('-m', '--move', action='store_true', help='Move files instead of copying.')
+	group.add_argument('--any-ext', action='store_true',
+		help='Disable filtering for mp3/ogg files only (by filename extension) and copy any files.')
 
 	group = parser.add_argument_group('Filename generation')
 	group.add_argument('--raw-names', action='store_true',
@@ -286,7 +288,9 @@ def main(argv=None):
 					continue
 				src_files.append(path)
 		else:
-			code, src_files, err = local['find'].run(list(optz.src) + ['-type', 'f'])
+			src_files = ['-type', 'f']
+			if not optz.any_ext: src_files += '( -name *.mp3 -o -name *.ogg )'.split()
+			code, src_files, err = local['find'].run(list(optz.src) + src_files)
 			if code or err:
 				sys.stderr.write(err)
 				raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
