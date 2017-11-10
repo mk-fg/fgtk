@@ -3,8 +3,7 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from datetime import timedelta
-import os, sys, math, re, subprocess
+import os, sys, math, re, subprocess, datetime as dt
 
 
 def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
@@ -18,11 +17,12 @@ def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
 def naturaltime_diff( ts, ts0=None, ext=None,
 		_units=dict( h=3600, m=60, s=1,
 			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
-	delta = abs(
-		(ts - (ts0 or datetime.now()))
-		if not isinstance(ts, timedelta) else ts )
-
-	res, s = list(), delta.total_seconds()
+	if ts0 is None: ts0 = dt.datetime.now()
+	if not isinstance(ts0, dt.datetime): ts0 = dt.datetime.fromtimestamp(ts0)
+	if not isinstance(ts, dt.timedelta):
+		if not isinstance(ts, dt.datetime): ts = dt.datetime.fromtimestamp(ts)
+		ts = abs(ts - ts0)
+	res, s = list(), ts.total_seconds()
 	for unit, unit_s in sorted(_units.viewitems(), key=op.itemgetter(1), reverse=True):
 		val = math.floor(s / float(unit_s))
 		if not val: continue
@@ -115,16 +115,15 @@ def main(args=None):
 		meta['title_raw'] = meta['title']
 		if not opts.name_format_raw: meta['title'] = title_subs_apply(meta['title'])
 		dst_path = opts.name_format.format(**meta)
+		log.info(
+			'Copying slice %s - %s (len: %s, start: %s, title: %s) to file: %s',
+			meta['a'], meta['b'],
+			naturaltime_diff(meta['b'] - meta['a'], 0),
+			naturaltime_diff(meta['a'], 0), meta['title_raw'], dst_path )
 		if not opts.dry_run:
-			log.info(
-				'Copying slice %s - %s (len: %s, title: %s) to file: %s',
-				meta['a'], meta['b'],
-				naturaltime_diff(timedelta(0, meta['b'] - meta['a'])),
-				meta['title_raw'], dst_path )
 			subprocess.check_call([ 'ffmpeg', '-loglevel', 'warning',
 				'-y', '-i', opts.path, '-acodec', 'copy',
 				'-ss', ts_fmt.format(meta['a']), '-to', ts_fmt.format(meta['b']), dst_path ])
-		else: print(dst_path)
 
 	log.debug('Finished')
 
