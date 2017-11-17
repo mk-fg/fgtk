@@ -4,7 +4,15 @@ import itertools as it, operator as op, functools as ft
 import os, sys, stat, pathlib, contextlib, logging
 
 
-class ContainerIDMismatch(Exception): pass
+class ContainerIDMismatch(Exception):
+
+	def __init__(self, p, cid_set, cid2):
+		self.p, self.cid_set, self.cid2 = p, cid_set, cid2
+
+	def __str__(self):
+		cid_set = ', '.join(f'{cid:x}' for cid in sorted(self.cid_set))
+		return f'{self.p} :: {self.cid2:x} not in [{cid_set}]'
+
 
 def assert_cid_match(p, cid_or_set, n=None, s=None):
 	if s is not None:
@@ -28,6 +36,9 @@ def id_repr(uid_gid, gid=None, as_hex=False):
 
 
 def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False):
+	log.debug( 'Patch-lines format: <path> :: <src-uid/gid-dec>'
+		' [<src-uid/gid-hex>-<src-uid/gid-base>] -> <src-uid/gid-dec> [<src-uid/gid-hex>]' )
+
 	cid_patch = ft.partial(patch, cid)
 	def shift_node(p):
 		s = p.lstat()
@@ -45,14 +56,14 @@ def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False):
 				os.chmod(p, stat.S_IMODE(s.st_mode))
 	for top, dirs, files in os.walk(path):
 		p = pathlib.Path(top)
-		shift_node(p)
+		for fn in dirs: shift_node(p / fn)
 		for fn in files: shift_node(p / fn)
 
 
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Tool to shift ("patch") uid/gid values recursively for path.'
+		description='Tool to shift ("patch") uid/gid values recursively for a path.'
 			' Does same thing that nspawn-patch-uid.c'
 				' does in systemd, except without ACLs and standalone.'
 			' Shift/patch is NOT simply adding some value to all uid/gids, resulting'
@@ -85,7 +96,7 @@ def main(args=None):
 	if (opts.container_id is not None) ^ bool(opts.reference) != 1:
 		parser.error('Either --container-id or --reference must be specified, but not both.')
 	cid = opts.container_id
-	if not cid:
+	if cid is None:
 		p = pathlib.Path(opts.reference)
 		s = p.lstat()
 		cid = id_cid(s.st_uid)
