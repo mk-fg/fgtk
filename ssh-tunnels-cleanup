@@ -65,10 +65,10 @@ if [[ -z "$kill" ]]
 then
 	[[ ${#pids_to_kill[@]} -eq 0 ]] || echo "${pids_to_kill[@]}"
 else
-	[[ ${#pids_to_kill[@]} -eq 0 ]] || kill "${pids_to_kill[@]}" 2>/dev/null
+	[[ ${#pids_to_kill[@]} -eq 0 ]] || kill "${pids_to_kill[@]}" 2>/dev/null ||:
 	[[ -z "$sessions" ]]\
 		|| while read s; do
 			[[ "$(loginctl show-session -p State --value "$s" 2>/dev/null ||:)" = closing ]] || continue
-			loginctl terminate-session "$s"
+			loginctl terminate-session "$s" ||:
 		done < <(loginctl  list-sessions --no-legend | awk '$3~/'"$prefix"'/ {print $1}')
 fi
