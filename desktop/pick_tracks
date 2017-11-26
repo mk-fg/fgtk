@@ -105,7 +105,9 @@ def main(argv=None):
 	group.add_argument('-r', '--clean-path', metavar='path',
 		help='Clean stuff from the specified path instead of destination.')
 
-	group = parser.add_argument_group('Shuffle options')
+	group = parser.add_argument_group('Sort/shuffle options')
+	group.add_argument('-o', '--ordering', action='store_true',
+		help='Copy tracks in (alphanumeric) order of their full path.')
 	group.add_argument('--shuffle',
 		nargs='?', metavar='percentage', default=False,
 		help=( 'Special operation mode, which will:'
@@ -201,7 +203,8 @@ def main(argv=None):
 		return float(df.f_bavail * df.f_bsize)
 
 	def pop_path(path_list):
-		idx = random.randint(0, len(path_list) - 1)
+		idx = ( 0 if optz.ordering
+			else random.randint(0, len(path_list) - 1) )
 		path = path_list.pop(idx)
 		return path
 
@@ -296,6 +299,7 @@ def main(argv=None):
 				raise RuntimeError('find (paths: {!r}) exited with non-zero status'.format(optz.src))
 			src_files = src_files.splitlines()
 	else: src_files = list()
+	src_files.sort()
 	log.debug(' - found {} files'.format(len(src_files)))
 
 	### Shuffle operation
@@ -325,6 +329,7 @@ def main(argv=None):
 			((local['rsync'] << '\n'.join(it.imap(basename, cleanup_move))) > sys.stdout)(*rsync_opts)
 			local['sync']() # so that fat will purge these entries from old places reliably
 			src_files.extend(join(optz.shuffle_staging, basename(p)) for p in cleanup_move)
+			src_files.sort()
 			# cleanup_move paths should be removed by rsync's --remove-source-files by now
 			cleanup = list(p for p in cleanup if p not in cleanup_move)
 		# remove src-matching stuff
