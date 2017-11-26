@@ -1,28 +1,180 @@
-#!/usr/bin/env python2
-#-*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
 from systemd import daemon
 import os, sys, time, subprocess, tempfile
+import resource, socket, struct, ctypes as ct
 
 
-p_err = lambda tpl,*a,**k: print(tpl.format(*a, **kw), file=sys.stderr)
-dev_null = open(os.devnull, 'wb')
+p_err = lambda tpl,*a,**k: print(tpl.format(*a, **k), file=sys.stderr)
+bound_func = lambda func: func.__get__(func, type(func))
 
 
-def actions():
+class sockaddr_in(ct.Structure):
+	_fields_ = [('sin_family', ct.c_short), ('sin_port', ct.c_ushort), ('sin_addr', ct.c_byte*4)]
+
+class sockaddr_in6(ct.Structure):
+	_fields_ = [ ('sin6_family', ct.c_short), ('sin6_port', ct.c_ushort),
+		('sin6_flowinfo', ct.c_uint32), ('sin6_addr', ct.c_byte * 16) ]
+
+class sockaddr_ll(ct.Structure):
+	_fields_ = [ ('sll_family', ct.c_ushort), ('sll_protocol', ct.c_ushort),
+		('sll_ifindex', ct.c_int), ('sll_hatype', ct.c_ushort), ('sll_pkttype', ct.c_uint8),
+		('sll_halen', ct.c_uint8), ('sll_addr', ct.c_uint8 * 8) ]
+
+class sockaddr(ct.Structure):
+	_fields_ = [('sa_family', ct.c_ushort)]
+
+class ifaddrs(ct.Structure): pass
+ifaddrs._fields_ = [ # recursive
+	('ifa_next', ct.POINTER(ifaddrs)), ('ifa_name', ct.c_char_p),
+	('ifa_flags', ct.c_uint), ('ifa_addr', ct.POINTER(sockaddr)) ]
+
+@bound_func
+def get_iface_addrs(self, ipv4=False, ipv6=False, mac=False, ifindex=False):
+	libc = getattr(self, '_libc', None)
+	if not libc:
+		libc = self._libc = ct.CDLL('libc.so.6', use_errno=True)
+		libc.getifaddrs.restype = ct.c_int
+
+	if not (ipv4 or ipv6 or mac or ifindex): ipv4 = ipv6 = True
+	ifaddr_p = head = ct.pointer(ifaddrs())
+	ifaces, err = dict(), libc.getifaddrs(ct.pointer(ifaddr_p))
+	if err != 0:
+		err = ct.get_errno()
+		raise OSError(err, os.strerror(err), 'getifaddrs()')
+	while ifaddr_p:
+		addrs = ifaces.setdefault(ifaddr_p.contents.ifa_name.decode(), list())
+		addr = ifaddr_p.contents.ifa_addr
+		if addr:
+			af = addr.contents.sa_family
+			if ipv4 and af == socket.AF_INET:
+				ac = ct.cast(addr, ct.POINTER(sockaddr_in)).contents
+				addrs.append(socket.inet_ntop(af, ac.sin_addr))
+			elif ipv6 and af == socket.AF_INET6:
+				ac = ct.cast(addr, ct.POINTER(sockaddr_in6)).contents
+				addrs.append(socket.inet_ntop(af, ac.sin6_addr))
+			elif (mac or ifindex) and af == socket.AF_PACKET:
+				ac = ct.cast(addr, ct.POINTER(sockaddr_ll)).contents
+				if mac:
+					addrs.append('mac-' + ':'.join(
+						map('{:02x}'.format, ac.sll_addr[:ac.sll_halen]) ))
+				if ifindex: addrs.append(ac.sll_ifindex)
+		ifaddr_p = ifaddr_p.contents.ifa_next
+	libc.freeifaddrs(head)
+	return ifaces
+
+
+class nlmsghdr(ct.Structure):
+	_fields_ = [
+		('len', ct.c_uint32),
+		('type', ct.c_uint16), ('flags', ct.c_uint16),
+		('seq', ct.c_uint32), ('pid', ct.c_uint32) ]
+
+class nlattr(ct.Structure):
+	_fields_ = [('len', ct.c_uint16), ('type', ct.c_uint16)]
+
+class rtmsg(ct.Structure):
+	_fields_ = ( list( (k, ct.c_uint8) for k in
+			'family dst_len src_len tos table protocol scope type'.split() )
+		+ [('flags', ct.c_int)] )
+
+class mnl_socket(ct.Structure):
+	_fields_ = [('fd', ct.c_int), ('sockaddr_nl', ct.c_int)]
+
+@bound_func
+def get_route_gw(self, addr='8.8.8.8'):
+	libmnl = getattr(self, '_libmnl', None)
+	if not libmnl:
+		libmnl = self._libmnl = ct.CDLL('libmnl.so.0.2.0', use_errno=True)
+		def _check(chk=lambda v: bool(v)):
+			def _check(res, func=None, args=None):
+				if not chk(res):
+					errno_ = ct.get_errno()
+					raise OSError(errno_, os.strerror(errno_))
+				return res
+			return _check
+		libmnl.mnl_nlmsg_put_header.restype = ct.POINTER(nlmsghdr)
+		libmnl.mnl_nlmsg_put_extra_header.restype = ct.POINTER(rtmsg)
+		libmnl.mnl_attr_put_u32.argtypes = [ct.POINTER(nlmsghdr), ct.c_uint16, ct.c_uint32]
+		libmnl.mnl_socket_open.restype = mnl_socket
+		libmnl.mnl_socket_open.errcheck = _check()
+		libmnl.mnl_socket_bind.argtypes = [mnl_socket, ct.c_uint, ct.c_int32]
+		libmnl.mnl_socket_bind.errcheck = _check(lambda v: v >= 0)
+		libmnl.mnl_socket_get_portid.restype = ct.c_uint
+		libmnl.mnl_socket_get_portid.argtypes = [mnl_socket]
+		libmnl.mnl_socket_sendto.restype = ct.c_ssize_t
+		libmnl.mnl_socket_sendto.argtypes = [mnl_socket, ct.POINTER(nlmsghdr), ct.c_size_t]
+		libmnl.mnl_socket_sendto.errcheck = _check(lambda v: v >= 0)
+		libmnl.mnl_socket_recvfrom.restype = ct.c_ssize_t
+		libmnl.mnl_nlmsg_get_payload.restype = ct.POINTER(rtmsg)
+		libmnl.mnl_attr_validate.errcheck = _check(lambda v: v >= 0)
+		libmnl.mnl_attr_get_payload.restype = ct.POINTER(ct.c_uint32)
+
+	if '/' in addr: addr, cidr = addr.rsplit('/', 1)
+	else: cidr = 32
+
+	buf = ct.create_string_buffer(min(resource.getpagesize(), 8192))
+	nlh = libmnl.mnl_nlmsg_put_header(buf)
+	nlh.contents.type = 26 # RTM_GETROUTE
+	nlh.contents.flags = 1 # NLM_F_REQUEST
+	# nlh.contents.flags = 1 | (0x100|0x200) # NLM_F_REQUEST | NLM_F_DUMP
+	nlh.contents.seq = seq = int(time.time())
+	rtm = libmnl.mnl_nlmsg_put_extra_header(nlh, ct.sizeof(rtmsg))
+	rtm.contents.family = socket.AF_INET
+
+	addr, = struct.unpack('=I', socket.inet_aton(addr))
+	libmnl.mnl_attr_put_u32(nlh, 1, addr) # 1=RTA_DST
+	rtm.contents.dst_len = int(cidr)
+
+	nl = libmnl.mnl_socket_open(0) # NETLINK_ROUTE
+	libmnl.mnl_socket_bind(nl, 0, 0) # nl, 0, 0=MNL_SOCKET_AUTOPID
+	port_id = libmnl.mnl_socket_get_portid(nl)
+	libmnl.mnl_socket_sendto(nl, nlh, nlh.contents.len)
+
+	addr_gw = None
+
+	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlattr), ct.c_void_p)
+	def data_ipv4_attr_cb(attr, data):
+		nonlocal addr_gw
+		if attr.contents.type == 5: # RTA_GATEWAY
+			libmnl.mnl_attr_validate(attr, 3) # MNL_TYPE_U32
+			addr = libmnl.mnl_attr_get_payload(attr)
+			addr_gw = socket.inet_ntoa(struct.pack('=I', addr[0]))
+		return 1 # MNL_CB_OK
+
+	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlmsghdr), ct.c_void_p)
+	def data_cb(nlh, data):
+		rtm = libmnl.mnl_nlmsg_get_payload(nlh).contents
+		if rtm.family == socket.AF_INET and rtm.type == 1: # RTN_UNICAST
+			libmnl.mnl_attr_parse(nlh, ct.sizeof(rtm), data_ipv4_attr_cb, None)
+		return 1 # MNL_CB_OK
+
+	while True:
+		ret = libmnl.mnl_socket_recvfrom(nl, buf, ct.sizeof(buf))
+		if ret <= 0: break
+		ret = libmnl.mnl_cb_run(buf, ret, seq, port_id, data_cb, None)
+		if ret <= 0: break # 0=MNL_CB_STOP
+		break # MNL_CB_OK for NLM_F_REQUEST, don't use with NLM_F_DUMP!!!
+	if ret == -1: raise OSError(ct.get_errno(), os.strerror(ct.get_errno()))
+	libmnl.mnl_socket_close(nl)
+
+	return addr_gw
+
+
+def actions(check_net_gw=False):
 	## Any crash or hang here will be treated as a fatal failure
 	## These actions must take less time than systemd watchdog interval
 
 	# Processes can be forked and exec'ed and fs doesn't hang
-	subprocess.check_call(['/bin/true'])
+	subprocess.check_call(['/usr/bin/true'])
 	subprocess.check_call(
-		['/bin/ls', '-lah', '/', '/usr', '/var', '/etc', '/srv', '/home', '/dev'], stdout=dev_null )
+		['/usr/bin/ls', '-lah', '/', '/usr', '/var', '/etc', '/srv', '/home', '/dev'],
+		stdout=subprocess.DEVNULL )
 
 	# tmpfs can be written to and urandom works
 	with tempfile.NamedTemporaryFile() as tmp:
-		for n in xrange(10):
+		for n in range(10):
 			tmp.write(os.urandom(200 * 2**10))
 			tmp.flush()
 			time.sleep(0.2)
@@ -34,6 +186,19 @@ def actions():
 		os.fsync(tmp.fileno())
 		assert tmp.tell() == 0, tmp.tell()
 
+	if check_net_gw:
+		addr_gw = get_route_gw(check_net_gw)
+		assert addr_gw, 'No gateway to ping!'
+		# Make sure gateway address is not local, even for RTA_UNICAST routes
+		iface_addrs = get_iface_addrs(ipv4=True)
+		addr_gw_chk = socket.inet_aton(addr_gw)
+		for addr in it.chain.from_iterable(iface_addrs.values()):
+			assert socket.inet_aton(addr) != addr_gw_chk, [addr, addr_gw]
+		# Make sure gw address is reachable
+		subprocess.check_call(['/usr/bin/fping', '-q', addr_gw])
+
+
+
 
 def main(args=None):
 	import argparse
@@ -43,6 +208,14 @@ def main(args=None):
 	parser.add_argument('-i', '--interval',
 		type=float, default=60, metavar='seconds',
 		help='Interval between running actions, in seconds (default: %(default)s).')
+	parser.add_argument('-n', '--check-net-gw',
+		nargs='?', metavar='route-dst-addr', const='8.8.8.8',
+		help='Check network gateway availability as well.'
+			' Gets gateway IPv4 address, checks it against all local IPs, pings it.'
+			' Optional dst-addr argument can be used to pick specific gateway'
+				' (and only for that, NOT for pinging)'
+				' by it (similar to "ip ro get <addr>"), default: %(default)s.'
+			' Uses/requires fping binary to do the actual availability check.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	wd_interval = None
@@ -57,32 +230,33 @@ def main(args=None):
 			p_err('Invalid watchdog interval spec {!r}: {}', wd_usec, err)
 			sys.exit(1)
 	else:
-		print('Systemd watchdog seem to be disabled (wd_pid: {!r}, pid: {!r})'.format(wd_pid, pid))
+		p_err('Systemd watchdog seem to be disabled (wd_pid: {!r}, pid: {!r})', wd_pid, pid)
 
 	daemon.notify('READY=1')
 	daemon.notify(
 		'STATUS=Main loop, action/systemd-watchdog interval: {:.1f}/{}'\
 		.format(opts.interval, '{:.1f}'.format(wd_interval) if wd_interval else 'disabled') )
 
-	ts_actions = ts_wd = None
+	ts_func = time.monotonic
+	ts_actions = ts_wd = ts_func()
 	while True:
-		ts = time.time()
-
-		if ts_actions is None: ts_actions = ts + opts.interval
 		ts_delay = ts_actions
-		if ts_actions <= ts:
-			actions()
-			ts_actions = None
+		if ts_actions <= ts_func():
+			actions(check_net_gw=opts.check_net_gw)
+			ts_actions = ts_delay = ts_func() + opts.interval
 
 		if wd_interval:
-			if ts_wd is None: ts_wd = ts + wd_interval
-			ts_delay = min(ts_delay, ts_wd)
-			if ts_wd <= ts:
+			if ts_wd <= ts_func():
 				daemon.notify('WATCHDOG=1')
-				ts_wd = None
+				ts_wd = ts_func() + wd_interval
+			ts_delay = min(ts_delay, ts_wd)
 
-		delay = ts_delay - ts
+		delay = ts_delay - ts_func()
 		if delay > 0: time.sleep(delay)
 
 
-if __name__ == '__main__': sys.exit(main())
+if __name__ == '__main__':
+	import signal
+	for sig in 'int term'.upper().split():
+		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
+	sys.exit(main())

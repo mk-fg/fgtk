@@ -1207,10 +1207,8 @@ Trivial script to ping systemd watchdog and do some trivial actions in-between
 to make sure os still works.
 
 Wrote it after yet another silent non-crash, where linux kernel refuses to
-create new pids (with some backtraces) and seem to hang on some fs ops. In these
-cases network works, most running daemons kinda-work, while syslog/journal get
-totally jammed and backtraces (or any errors) never make it to remote logging
-sinks.
+create new pids (with some backtraces) and seem to hang on some fs ops, blocking
+syslog/journal, but leaving most simple daemons running ok-ish for a while.
 
 So this trivial script, tied into systemd-controlled watchdog timers, tries to
 create pids every once in a while, with either hang or crash bubbling-up to
@@ -1230,7 +1228,21 @@ Example watchdog.service::
   [Install]
   WantedBy=multi-user.target
 
-Useless without systemd and requires systemd python module.
+Can optionally get IP of (non-local) gateway to 8.8.8.8 (or any specified IPv4)
+via libmnl (also used by iproute2, so always available) and check whether it
+responds to `fping <http://fping.org/>`_ probes, crashing if it does not - see
+-n/--check-net-gw option.
+
+That's mainly for remote systems which can become unreachable if kernel network
+stack, local firewall, dhcp, ethernet or whatever other link fails (usually due
+to some kind of local tinkering), ignoring more mundane internet failures.
+
+To avoid reboot loops (in abscence of any networking), it might be a good idea
+to only start script with this option manually (e.g. right before messing up
+with the network, or on first successful access).
+
+Useless without systemd and requires systemd python3 module, plus fping tool if
+-n/--check-net-gw option is used.
 
 bt-pan
 ^^^^^^
