@@ -33,10 +33,7 @@ ifaddrs._fields_ = [ # recursive
 @bound_func
 def get_iface_addrs(self, ipv4=False, ipv6=False, mac=False, ifindex=False):
 	libc = getattr(self, '_libc', None)
-	if not libc:
-		libc = self._libc = ct.CDLL('libc.so.6', use_errno=True)
-		libc.getifaddrs.restype = ct.c_int
-
+	if not libc: libc = self._libc = ct.CDLL('libc.so.6', use_errno=True)
 	if not (ipv4 or ipv6 or mac or ifindex): ipv4 = ipv6 = True
 	ifaddr_p = head = ct.pointer(ifaddrs())
 	ifaces, err = dict(), libc.getifaddrs(ct.pointer(ifaddr_p))

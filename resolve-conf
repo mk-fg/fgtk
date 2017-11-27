@@ -80,7 +80,6 @@ ifaddrs._fields_ = [ # recursive
 def get_iface_addrs(ipv4=False, ipv6=False, mac=False, ifindex=False):
 	if not (ipv4 or ipv6 or mac or ifindex): ipv4 = ipv6 = True
 	libc = ct.CDLL('libc.so.6', use_errno=True)
-	libc.getifaddrs.restype = ct.c_int
 	ifaddr_p = head = ct.pointer(ifaddrs())
 	ifaces, err = dict(), libc.getifaddrs(ct.pointer(ifaddr_p))
 	if err != 0:
