@@ -1064,7 +1064,7 @@ Misc pubkey/ipv6 representation/conversion helpers.
 adhocapd
 ^^^^^^^^
 
-Picks first wireless dev from ``iw dev`` and runs hostapd + udhcpd (from
+Picks first wireless dev from ``iw dev`` and runs hostapd_ + udhcpd (from
 busybox) on it.
 
 Use-case is plugging wifi usb dongle and creating temporary AP on it - kinda
@@ -1100,7 +1100,7 @@ usb-wlan interfaces will be named according to NAME there)::
 wpa-systemd-wrapper
 ^^^^^^^^^^^^^^^^^^^
 
-Systemd wrapper for wpa_supplicant or hostapd, enabling either to work with
+Systemd wrapper for `wpa_supplicant`_ or hostapd_, enabling either to work with
 Type=notify, support WatchdogSec=, different exit codes and all that goodness.
 
 Starts the daemon as a subprocess, connecting to its management interface and
@@ -2667,6 +2667,20 @@ Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
 
 One command instead of bunch of them, with some built-in templating to make it
 easier to use on identical remote hosts.
+
+wifi-client-match
+^^^^^^^^^^^^^^^^^
+
+Basic script to automate `wpa_supplicant`_ matching AP in a python3 script
+(e.g. by ssid regexp or any other parameters), pick best/working BSSID and
+connect to it.
+
+For cases when wpa_supplicant.conf is not powerful enough.
+
+Python3, uses dbus-python module and its glib eventloop.
+
+.. _wpa_supplicant: https://w1.fi/wpa_supplicant/
+.. _hostapd: https://w1.fi/hostapd/
 
 
 License (WTFPL)
