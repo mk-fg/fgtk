@@ -108,21 +108,21 @@ def get_route_gw(self, addr='8.8.8.8'):
 		libmnl.mnl_attr_validate.errcheck = _check(lambda v: v >= 0)
 		libmnl.mnl_attr_get_payload.restype = ct.POINTER(ct.c_uint32)
 
-	if '/' in addr: addr, cidr = addr.rsplit('/', 1)
-	else: cidr = 32
-
 	buf = ct.create_string_buffer(min(resource.getpagesize(), 8192))
 	nlh = libmnl.mnl_nlmsg_put_header(buf)
 	nlh.contents.type = 26 # RTM_GETROUTE
 	nlh.contents.flags = 1 # NLM_F_REQUEST
-	# nlh.contents.flags = 1 | (0x100|0x200) # NLM_F_REQUEST | NLM_F_DUMP
+	if not addr: nlh.contents.flags |= 0x100|0x200 # NLM_F_DUMP
 	nlh.contents.seq = seq = int(time.time())
 	rtm = libmnl.mnl_nlmsg_put_extra_header(nlh, ct.sizeof(rtmsg))
 	rtm.contents.family = socket.AF_INET
 
-	addr, = struct.unpack('=I', socket.inet_aton(addr))
-	libmnl.mnl_attr_put_u32(nlh, 1, addr) # 1=RTA_DST
-	rtm.contents.dst_len = int(cidr)
+	if addr:
+		if '/' in addr: addr, cidr = addr.rsplit('/', 1)
+		else: cidr = 32
+		addr, = struct.unpack('=I', socket.inet_aton(addr))
+		libmnl.mnl_attr_put_u32(nlh, 1, addr) # 1=RTA_DST
+		rtm.contents.dst_len = int(cidr)
 
 	nl = libmnl.mnl_socket_open(0) # NETLINK_ROUTE
 	libmnl.mnl_socket_bind(nl, 0, 0) # nl, 0, 0=MNL_SOCKET_AUTOPID
@@ -152,7 +152,7 @@ def get_route_gw(self, addr='8.8.8.8'):
 		if ret <= 0: break
 		ret = libmnl.mnl_cb_run(buf, ret, seq, port_id, data_cb, None)
 		if ret <= 0: break # 0=MNL_CB_STOP
-		break # MNL_CB_OK for NLM_F_REQUEST, don't use with NLM_F_DUMP!!!
+		break # MNL_CB_OK for NLM_F_REQUEST, breaks after first IP for NLM_F_DUMP
 	if ret == -1: raise OSError(ct.get_errno(), os.strerror(ct.get_errno()))
 	libmnl.mnl_socket_close(nl)
 
@@ -210,8 +210,12 @@ def main(args=None):
 			' Optional dst-addr argument can be used to pick specific gateway'
 				' (and only for that, NOT for pinging)'
 				' by it (similar to "ip ro get <addr>"), default: %(default)s.'
+			' Special "-" value can be used to grab any default gateway.'
 			' Uses/requires fping binary to do the actual availability check.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	route_gw_addr = opts.check_net_gw
+	if route_gw_addr == '-': route_gw_addr = None
 
 	wd_interval = None
 	wd_pid, wd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
@@ -237,7 +241,7 @@ def main(args=None):
 	while True:
 		ts_delay = ts_actions
 		if ts_actions <= ts_func():
-			actions(check_net_gw=opts.check_net_gw)
+			actions(check_net_gw=route_gw_addr)
 			ts_actions = ts_delay = ts_func() + opts.interval
 
 		if wd_interval:
