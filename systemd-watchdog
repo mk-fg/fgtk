@@ -7,59 +7,6 @@ import resource, socket, struct, ctypes as ct
 
 
 p_err = lambda tpl,*a,**k: print(tpl.format(*a, **k), file=sys.stderr)
-bound_func = lambda func: func.__get__(func, type(func))
-
-
-class sockaddr_in(ct.Structure):
-	_fields_ = [('sin_family', ct.c_short), ('sin_port', ct.c_ushort), ('sin_addr', ct.c_byte*4)]
-
-class sockaddr_in6(ct.Structure):
-	_fields_ = [ ('sin6_family', ct.c_short), ('sin6_port', ct.c_ushort),
-		('sin6_flowinfo', ct.c_uint32), ('sin6_addr', ct.c_byte * 16) ]
-
-class sockaddr_ll(ct.Structure):
-	_fields_ = [ ('sll_family', ct.c_ushort), ('sll_protocol', ct.c_ushort),
-		('sll_ifindex', ct.c_int), ('sll_hatype', ct.c_ushort), ('sll_pkttype', ct.c_uint8),
-		('sll_halen', ct.c_uint8), ('sll_addr', ct.c_uint8 * 8) ]
-
-class sockaddr(ct.Structure):
-	_fields_ = [('sa_family', ct.c_ushort)]
-
-class ifaddrs(ct.Structure): pass
-ifaddrs._fields_ = [ # recursive
-	('ifa_next', ct.POINTER(ifaddrs)), ('ifa_name', ct.c_char_p),
-	('ifa_flags', ct.c_uint), ('ifa_addr', ct.POINTER(sockaddr)) ]
-
-@bound_func
-def get_iface_addrs(self, ipv4=False, ipv6=False, mac=False, ifindex=False):
-	libc = getattr(self, '_libc', None)
-	if not libc: libc = self._libc = ct.CDLL('libc.so.6', use_errno=True)
-	if not (ipv4 or ipv6 or mac or ifindex): ipv4 = ipv6 = True
-	ifaddr_p = head = ct.pointer(ifaddrs())
-	ifaces, err = dict(), libc.getifaddrs(ct.pointer(ifaddr_p))
-	if err != 0:
-		err = ct.get_errno()
-		raise OSError(err, os.strerror(err), 'getifaddrs()')
-	while ifaddr_p:
-		addrs = ifaces.setdefault(ifaddr_p.contents.ifa_name.decode(), list())
-		addr = ifaddr_p.contents.ifa_addr
-		if addr:
-			af = addr.contents.sa_family
-			if ipv4 and af == socket.AF_INET:
-				ac = ct.cast(addr, ct.POINTER(sockaddr_in)).contents
-				addrs.append(socket.inet_ntop(af, ac.sin_addr))
-			elif ipv6 and af == socket.AF_INET6:
-				ac = ct.cast(addr, ct.POINTER(sockaddr_in6)).contents
-				addrs.append(socket.inet_ntop(af, ac.sin6_addr))
-			elif (mac or ifindex) and af == socket.AF_PACKET:
-				ac = ct.cast(addr, ct.POINTER(sockaddr_ll)).contents
-				if mac:
-					addrs.append('mac-' + ':'.join(
-						map('{:02x}'.format, ac.sll_addr[:ac.sll_halen]) ))
-				if ifindex: addrs.append(ac.sll_ifindex)
-		ifaddr_p = ifaddr_p.contents.ifa_next
-	libc.freeifaddrs(head)
-	return ifaces
 
 
 class nlmsghdr(ct.Structure):
@@ -71,6 +18,9 @@ class nlmsghdr(ct.Structure):
 class nlattr(ct.Structure):
 	_fields_ = [('len', ct.c_uint16), ('type', ct.c_uint16)]
 
+class rtgenmsg(ct.Structure):
+	_fields_ = [('family', ct.c_uint8)]
+
 class rtmsg(ct.Structure):
 	_fields_ = ( list( (k, ct.c_uint8) for k in
 			'family dst_len src_len tos table protocol scope type'.split() )
@@ -79,84 +29,165 @@ class rtmsg(ct.Structure):
 class mnl_socket(ct.Structure):
 	_fields_ = [('fd', ct.c_int), ('sockaddr_nl', ct.c_int)]
 
-@bound_func
-def get_route_gw(self, addr='8.8.8.8'):
-	libmnl = getattr(self, '_libmnl', None)
-	if not libmnl:
-		libmnl = self._libmnl = ct.CDLL('libmnl.so.0.2.0', use_errno=True)
-		def _check(chk=lambda v: bool(v)):
-			def _check(res, func=None, args=None):
-				if not chk(res):
-					errno_ = ct.get_errno()
-					raise OSError(errno_, os.strerror(errno_))
-				return res
-			return _check
-		libmnl.mnl_nlmsg_put_header.restype = ct.POINTER(nlmsghdr)
-		libmnl.mnl_nlmsg_put_extra_header.restype = ct.POINTER(rtmsg)
-		libmnl.mnl_attr_put_u32.argtypes = [ct.POINTER(nlmsghdr), ct.c_uint16, ct.c_uint32]
-		libmnl.mnl_socket_open.restype = mnl_socket
-		libmnl.mnl_socket_open.errcheck = _check()
-		libmnl.mnl_socket_bind.argtypes = [mnl_socket, ct.c_uint, ct.c_int32]
-		libmnl.mnl_socket_bind.errcheck = _check(lambda v: v >= 0)
-		libmnl.mnl_socket_get_portid.restype = ct.c_uint
-		libmnl.mnl_socket_get_portid.argtypes = [mnl_socket]
-		libmnl.mnl_socket_sendto.restype = ct.c_ssize_t
-		libmnl.mnl_socket_sendto.argtypes = [mnl_socket, ct.POINTER(nlmsghdr), ct.c_size_t]
-		libmnl.mnl_socket_sendto.errcheck = _check(lambda v: v >= 0)
-		libmnl.mnl_socket_recvfrom.restype = ct.c_ssize_t
-		libmnl.mnl_nlmsg_get_payload.restype = ct.POINTER(rtmsg)
-		libmnl.mnl_attr_validate.errcheck = _check(lambda v: v >= 0)
-		libmnl.mnl_attr_get_payload.restype = ct.POINTER(ct.c_uint32)
+class ifaddrmsg(ct.Structure):
+	_fields_ = [ ('family', ct.c_uint8), ('prefixlen', ct.c_uint8),
+		('flags', ct.c_uint8), ('scope', ct.c_uint8), ('index', ct.c_uint32) ]
 
-	buf = ct.create_string_buffer(min(resource.getpagesize(), 8192))
-	nlh = libmnl.mnl_nlmsg_put_header(buf)
-	nlh.contents.type = 26 # RTM_GETROUTE
-	nlh.contents.flags = 1 # NLM_F_REQUEST
-	if not addr: nlh.contents.flags |= 0x100|0x200 # NLM_F_DUMP
-	nlh.contents.seq = seq = int(time.time())
-	rtm = libmnl.mnl_nlmsg_put_extra_header(nlh, ct.sizeof(rtmsg))
-	rtm.contents.family = socket.AF_INET
+class LibMNL:
 
+	class c:
+		error = -1
+		netlink_route = 0
+		mnl_cb_error = -1
+		mnl_cb_stop = 0
+		mnl_cb_ok = 1
+		mnl_socket_autopid = 0
+		mnl_type_u32 = 3
+		mnl_type_binary = 11
+		nlm_f_request = 1
+		nlm_f_multi = 2
+		nlm_f_dump = 0x100|0x200
+		rta_dst = 1
+		rta_src = 2
+		rta_gateway = 5
+		rtm_getaddr = 22
+		rtm_getroute = 26
+		rtn_unicast = 1
+		rtn_local = 2
+		rtn_broadcast = 3
+		ifa_address = 1
+
+	_libmnl = None
+	@classmethod
+	def _get_lib(cls):
+		if cls._libmnl is None:
+			libmnl = cls._libmnl = ct.CDLL('libmnl.so.0.2.0', use_errno=True)
+			def _check(chk=lambda v: bool(v)):
+				def _check(res, func=None, args=None):
+					if not chk(res):
+						errno_ = ct.get_errno()
+						raise OSError(errno_, os.strerror(errno_))
+					return res
+				return _check
+			libmnl.mnl_nlmsg_put_header.restype = ct.POINTER(nlmsghdr)
+			libmnl.mnl_nlmsg_put_extra_header.restype = ct.POINTER(ct.c_void_p)
+			libmnl.mnl_nlmsg_next = ct.POINTER(nlmsghdr)
+			libmnl.mnl_attr_put_u32.argtypes = [ct.POINTER(nlmsghdr), ct.c_uint16, ct.c_uint32]
+			libmnl.mnl_socket_open.restype = mnl_socket
+			libmnl.mnl_socket_open.errcheck = _check()
+			libmnl.mnl_socket_bind.argtypes = [mnl_socket, ct.c_uint, ct.c_int32]
+			libmnl.mnl_socket_bind.errcheck = _check(lambda v: v >= 0)
+			libmnl.mnl_socket_get_portid.restype = ct.c_uint
+			libmnl.mnl_socket_get_portid.argtypes = [mnl_socket]
+			libmnl.mnl_socket_sendto.restype = ct.c_ssize_t
+			libmnl.mnl_socket_sendto.argtypes = [mnl_socket, ct.POINTER(nlmsghdr), ct.c_size_t]
+			libmnl.mnl_socket_sendto.errcheck = _check(lambda v: v >= 0)
+			libmnl.mnl_socket_recvfrom.restype = ct.c_ssize_t
+			libmnl.mnl_nlmsg_get_payload.restype = ct.POINTER(ct.c_void_p)
+			libmnl.mnl_attr_validate.errcheck = _check(lambda v: v >= 0)
+			libmnl.mnl_attr_get_payload.restype = ct.POINTER(ct.c_uint32)
+		return cls._libmnl
+
+	def __init__(self):
+		self._lib, self.nl = self._get_lib(), None
+		self.buf = ct.create_string_buffer(min(resource.getpagesize(), 8192))
+
+	def __getattr__(self, k):
+		if k.startswith('mnl_'): return getattr(self._lib, k)
+		raise AttributeError(k)
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+	def open(self):
+		self.nl = self.mnl_socket_open(self.c.netlink_route)
+		self.mnl_socket_bind(self.nl, 0, self.c.mnl_socket_autopid)
+		self.nl_port = self.mnl_socket_get_portid(self.nl)
+
+	def close(self):
+		if self.nl:
+			self.mnl_socket_close(self.nl)
+			self.nl = None
+
+	def make_req_nlh(self, req, msg_type, dump=False, family=socket.AF_INET):
+		nlh = self.mnl_nlmsg_put_header(self.buf)
+		nlh.contents.type = req
+		nlh.contents.flags = self.c.nlm_f_request
+		if dump: nlh.contents.flags |= self.c.nlm_f_dump
+		nlh.contents.seq = int(time.time())
+		rtm = self.mnl_nlmsg_put_extra_header(nlh, ct.sizeof(msg_type))
+		rtm = ct.cast(rtm, ct.POINTER(msg_type))
+		rtm.contents.family = family
+		return nlh, rtm
+
+	def send(self, nlh):
+		self.mnl_socket_sendto(self.nl, nlh, nlh.contents.len)
+
+	def recv(self, data_cb, seq, oneshot=False):
+		while True:
+			ret = self.mnl_socket_recvfrom(self.nl, self.buf, ct.sizeof(self.buf))
+			if ret <= 0: break
+			ret = self.mnl_cb_run(self.buf, ret, seq, self.nl_port, data_cb, None)
+			if oneshot or ret <= self.c.mnl_cb_stop: break
+		if ret == self.c.error: raise OSError(ct.get_errno(), os.strerror(ct.get_errno()))
+
+	def req(self, nlh, data_cb=None, **recv_kws):
+		seq = nlh.contents.seq
+		self.send(nlh)
+		self.recv(data_cb, seq, **recv_kws)
+
+	def cb_data_cast(self, data, load=False):
+		return ( ct.cast(ct.pointer(ct.py_object(data)), ct.c_void_p)
+			if not isinstance(data, ct.c_void_p) else
+			ct.cast(data, ct.POINTER(ct.py_object)).contents.value )
+
+
+def get_route_gw(libmnl, addr='8.8.8.8'):
+	addr_gw = None
+	nlh, rtm = libmnl.make_req_nlh(libmnl.c.rtm_getroute, rtmsg, dump=not addr)
 	if addr:
 		if '/' in addr: addr, cidr = addr.rsplit('/', 1)
 		else: cidr = 32
 		addr, = struct.unpack('=I', socket.inet_aton(addr))
-		libmnl.mnl_attr_put_u32(nlh, 1, addr) # 1=RTA_DST
+		libmnl.mnl_attr_put_u32(nlh, libmnl.c.rta_dst, addr)
 		rtm.contents.dst_len = int(cidr)
-
-	nl = libmnl.mnl_socket_open(0) # NETLINK_ROUTE
-	libmnl.mnl_socket_bind(nl, 0, 0) # nl, 0, 0=MNL_SOCKET_AUTOPID
-	port_id = libmnl.mnl_socket_get_portid(nl)
-	libmnl.mnl_socket_sendto(nl, nlh, nlh.contents.len)
-
-	addr_gw = None
-
 	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlattr), ct.c_void_p)
 	def data_ipv4_attr_cb(attr, data):
 		nonlocal addr_gw
-		if attr.contents.type == 5: # RTA_GATEWAY
-			libmnl.mnl_attr_validate(attr, 3) # MNL_TYPE_U32
+		if attr.contents.type == libmnl.c.rta_gateway:
+			libmnl.mnl_attr_validate(attr, libmnl.c.mnl_type_u32)
 			addr = libmnl.mnl_attr_get_payload(attr)
 			addr_gw = socket.inet_ntoa(struct.pack('=I', addr[0]))
-		return 1 # MNL_CB_OK
-
+		return libmnl.c.mnl_cb_ok
 	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlmsghdr), ct.c_void_p)
 	def data_cb(nlh, data):
-		rtm = libmnl.mnl_nlmsg_get_payload(nlh).contents
-		if rtm.family == socket.AF_INET and rtm.type == 1: # RTN_UNICAST
+		rtm = ct.cast(libmnl.mnl_nlmsg_get_payload(nlh), ct.POINTER(rtmsg)).contents
+		if rtm.family == socket.AF_INET and rtm.type == libmnl.c.rtn_unicast:
 			libmnl.mnl_attr_parse(nlh, ct.sizeof(rtm), data_ipv4_attr_cb, None)
-		return 1 # MNL_CB_OK
-
-	while True:
-		ret = libmnl.mnl_socket_recvfrom(nl, buf, ct.sizeof(buf))
-		if ret <= 0: break
-		ret = libmnl.mnl_cb_run(buf, ret, seq, port_id, data_cb, None)
-		if ret <= 0: break # 0=MNL_CB_STOP
-		break # MNL_CB_OK for NLM_F_REQUEST, breaks after first IP for NLM_F_DUMP
-	if ret == -1: raise OSError(ct.get_errno(), os.strerror(ct.get_errno()))
-	libmnl.mnl_socket_close(nl)
-
+		return libmnl.c.mnl_cb_ok
+	libmnl.req(nlh, data_cb, oneshot=True)
 	return addr_gw
+
+def get_iface_addrs(libmnl):
+	iface_addrs = dict()
+	nlh, rtm = libmnl.make_req_nlh(libmnl.c.rtm_getaddr, rtgenmsg, dump=True)
+	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlattr), ct.c_int)
+	def data_ipv4_attr_cb(attr, iface_idx):
+		if attr.contents.type == libmnl.c.ifa_address:
+			libmnl.mnl_attr_validate(attr, libmnl.c.mnl_type_binary)
+			addr = socket.inet_ntoa(struct.pack('=I', libmnl.mnl_attr_get_payload(attr)[0]))
+			iface_addrs.setdefault(socket.if_indextoname(iface_idx), list()).append(addr)
+		return libmnl.c.mnl_cb_ok
+	@ct.CFUNCTYPE(ct.c_int, ct.POINTER(nlmsghdr), ct.c_void_p)
+	def data_cb(nlh, data):
+		ifa = ct.cast(libmnl.mnl_nlmsg_get_payload(nlh), ct.POINTER(ifaddrmsg)).contents
+		libmnl.mnl_attr_parse(nlh, ct.sizeof(ifa), data_ipv4_attr_cb, ifa.index)
+		return libmnl.c.mnl_cb_ok
+	libmnl.req(nlh, data_cb)
+	return iface_addrs
 
 
 def actions(check_net_gw=False):
@@ -184,10 +215,11 @@ def actions(check_net_gw=False):
 		assert tmp.tell() == 0, tmp.tell()
 
 	if check_net_gw:
-		addr_gw = get_route_gw(check_net_gw)
-		assert addr_gw, 'No gateway to ping!'
+		with LibMNL() as libmnl:
+			addr_gw = get_route_gw(libmnl, check_net_gw)
+			assert addr_gw, 'No gateway to ping!'
+			iface_addrs = get_iface_addrs(libmnl)
 		# Make sure gateway address is not local, even for RTA_UNICAST routes
-		iface_addrs = get_iface_addrs(ipv4=True)
 		addr_gw_chk = socket.inet_aton(addr_gw)
 		for addr in it.chain.from_iterable(iface_addrs.values()):
 			assert socket.inet_aton(addr) != addr_gw_chk, [addr, addr_gw]
