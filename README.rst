@@ -1217,16 +1217,22 @@ systemd (pid-1), which should reliably reboot/crash the system via hardware wdt.
 Example watchdog.service::
 
   [Service]
-  WatchdogSec=60s
-  Restart=on-failure
-  StartLimitInterval=10min
-  StartLimitBurst=10
-  StartLimitAction=reboot-force
   Type=notify
-  ExecStart=/usr/local/bin/systemd-watchdog
+  ExecStart=/usr/local/bin/systemd-watchdog -i30 -n
+
+  WatchdogSec=60
+  TimeoutStartSec=15
+  Restart=on-failure
+  RestartSec=20
+  StartLimitInterval=10min
+  StartLimitBurst=5
+  StartLimitAction=reboot-force
 
   [Install]
   WantedBy=multi-user.target
+
+(be sure to tweak timeouts and test without "reboot-force" first though, be sure
+to set some RestartSec= for transient failures to not trigger StartLimitAction)
 
 Can optionally get IP of (non-local) gateway to 8.8.8.8 (or any specified IPv4)
 via libmnl (also used by iproute2, so always available) and check whether it
