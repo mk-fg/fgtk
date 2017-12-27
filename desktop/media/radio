@@ -12,7 +12,7 @@ tracks_global = os.path.expanduser('~/tracks.txt')
 
 # --no-cache to prevent any audio/meta de-sync, so mute would work nicely
 # Alternative: '--cache=1024', '--cache-initial=0'
-mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache']
+mpv_args_base = ['--shuffle', '--loop=inf', '--no-cache', '--vo=null']
 
 # radios_conf example (yaml):
 #   rmnrelax:
