@@ -4,6 +4,7 @@ import itertools as it, operator as op, functools as ft
 from systemd import daemon
 import os, sys, time, subprocess, tempfile
 import resource, socket, struct, ctypes as ct
+import traceback, pathlib
 
 
 p_err = lambda tpl,*a,**k: print(tpl.format(*a, **k), file=sys.stderr)
@@ -190,6 +191,40 @@ def get_iface_addrs(libmnl):
 	return iface_addrs
 
 
+def fail_log_open(p):
+	p = pathlib.Path(p)
+	boot_id = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text(errors='replace').strip()
+	fail_log = p.open(mode='ab+', buffering=0)
+	fail_log.seek(0)
+	boot_id_chk = fail_log.readline()
+	if boot_id_chk:
+		boot_id_chk = boot_id_chk.split()[-1].decode()
+		if boot_id != boot_id_chk:
+			fail_log.close()
+			p.rename(p.with_suffix('.log.old'))
+			fail_log = p.open(mode='ab+', buffering=0)
+			boot_id_chk = None
+		else: fail_log.seek(0, os.SEEK_END)
+	if not boot_id_chk: fail_log.write(f'----- boot-id: {boot_id}\n'.encode())
+	return fail_log
+
+def fail_log_write(fail_log, cmd_list):
+	fail_log.write(f'----- Failure ctime: {time.ctime()}\n'.encode())
+	uptime = pathlib.Path('/proc/uptime').read_text(errors='replace').strip()
+	fail_log.write(f'----- Failure uptime: {uptime}\n'.encode())
+	if cmd_list:
+		path = os.environ['PATH'].split(':')
+		for p in '/bin /usr/bin /usr/local/bin /opt/bin'.split():
+			if p not in path: path.append(p)
+		os.environ['PATH'] = ':'.join(path)
+		for cmd in cmd_list:
+			cmd = cmd.split()
+			fail_log.write('---------- cmd: {}\n'.format(' '.join(cmd)).encode())
+			subprocess.run(cmd, stdout=fail_log, stderr=fail_log)
+			fail_log.write('\n---------- cmd end\n'.encode())
+	fail_log.close()
+
+
 def actions(check_net_gw=False):
 	## Any crash or hang here will be treated as a fatal failure
 	## These actions must take less time than systemd watchdog interval
@@ -244,10 +279,33 @@ def main(args=None):
 				' by it (similar to "ip ro get <addr>"), default: %(default)s.'
 			' Special "-" value can be used to grab any default gateway.'
 			' Uses/requires fping binary to do the actual availability check.')
+
+	parser.add_argument('-f', '--fail-log', metavar='path',
+		help='Log ctime/uptime and output of -x/--fail-log-commands'
+				' upon any python exception (!!!) in the script to specified file.'
+			' Note that on e.g. kernel hangs/bugs, there will be no python exceptions.'
+			' File is appended-to within same boot,'
+				' will be pre-opened on start and marked with boot-id,'
+				' rotating any previous-boot contents into .old file (replacing if necessary).'
+			' Failure to open/write-to the file is logged (to stderr), but NOT a fatal error (!!!).'
+			' Can be useful to dump whatever debug info right before reboot.')
+	parser.add_argument('-x', '--fail-log-cmd',
+		metavar='cmd', action='append',
+		help='Command(s) to run to populate -f/--fail-log file on python exceptions.'
+			' Commands are run without shell, but arguments are split on spaces.'
+			' Can be specified multiple times to run multiple commands.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	route_gw_addr = opts.check_net_gw
 	if route_gw_addr == '-': route_gw_addr = None
+
+	fail_log = None
+	if opts.fail_log:
+		try: fail_log = fail_log_open(opts.fail_log)
+		except Exception as err:
+			p_err('ERROR: Failed to open/create -f/--fail-log file - {}', err)
+			traceback.print_exception()
 
 	wd_interval = None
 	wd_pid, wd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
@@ -273,7 +331,15 @@ def main(args=None):
 	while True:
 		ts_delay = ts_actions
 		if ts_actions <= ts_func():
-			actions(check_net_gw=route_gw_addr)
+			try: actions(check_net_gw=route_gw_addr)
+			except Exception as err_actions:
+				p_err('ERROR: watchdog-checks failure - {}', err_actions)
+				if fail_log:
+					try: fail_log_write(fail_log, opts.fail_log_cmd or list())
+					except Exception as err:
+						p_err('ERROR: Failed to populate -f/--fail-log file - {}', err)
+						traceback.print_exception()
+				raise err_actions
 			ts_actions = ts_delay = ts_func() + opts.interval
 
 		if wd_interval:

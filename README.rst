@@ -1218,7 +1218,9 @@ Example watchdog.service::
 
   [Service]
   Type=notify
-  ExecStart=/usr/local/bin/systemd-watchdog -i30 -n
+  ExecStart=/usr/local/bin/systemd-watchdog -i30 -n \
+    -f /var/log/wdt-fail.log \
+    -x 'ip link' -x 'ip addr' -x 'ip ro' -x 'journalctl -an30'
 
   WatchdogSec=60
   TimeoutStartSec=15
@@ -1231,8 +1233,8 @@ Example watchdog.service::
   [Install]
   WantedBy=multi-user.target
 
-(be sure to tweak timeouts and test without "reboot-force" first though, be sure
-to set some RestartSec= for transient failures to not trigger StartLimitAction)
+(be sure to tweak timeouts and test without "reboot-force" first though,
+e.g. pick RestartSec= for transient failures to not trigger StartLimitAction)
 
 Can optionally get IP of (non-local) gateway to 8.8.8.8 (or any specified IPv4)
 via libmnl (also used by iproute2, so always available) and check whether it
@@ -1246,6 +1248,11 @@ to some kind of local tinkering), ignoring more mundane internet failures.
 To avoid reboot loops (in abscence of any networking), it might be a good idea
 to only start script with this option manually (e.g. right before messing up
 with the network, or on first successful access).
+
+-f/--fail-log option is to log date/time of any failures for latest boot
+and run -x/--fail-log-cmd command(s) on any python exceptions (note: kernel
+hangs probably won't cause these), logging their stdout/stderr there -
+e.g. to dump network configuration info as in example above.
 
 Useless without systemd and requires systemd python3 module, plus fping tool if
 -n/--check-net-gw option is used.
