@@ -128,6 +128,8 @@ def main(args=None):
 	group.add_argument('-o', '--ssh-opts', action='append',
 		help='Extra options for ssh command, if -s/--ssh flag is used.'
 			' Will be split on spaces, unless option is used multiple times.'
+			' If has no spaces and does not start with a dash, single dash is prepended,'
+				" e.g. -o=NnT -> -o=-NnT, purely for convenience with few short options."
 			' Can contain special "@@@" token (as a separate arg) to'
 				' substitute user@host in its place, otherwise it will be appended.'
 			" Example: -o='-NnT -i mykey @@@ -- cat /etc/hosts'")
@@ -153,7 +155,9 @@ def main(args=None):
 	else: port = port_default
 
 	ssh_opts = opts.ssh_opts or list()
-	if len(ssh_opts) == 1: ssh_opts = ssh_opts[0].strip().split()
+	if len(ssh_opts) == 1:
+		ssh_opts = ssh_opts[0].strip().split()
+		if len(ssh_opts) == 1 and not ssh_opts[0].startswith('-'): ssh_opts[0] = f'-{ssh_opts[0]}'
 
 	try:
 		addrinfo = socket.getaddrinfo(
