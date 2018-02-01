@@ -164,7 +164,19 @@ class AudioConvJob:
 	def __init__(self, *args, **kws):
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
+
 class AudioConvSubResult(pathlib.PosixPath): pass
+
+class AudioConvProbed(AudioConvSubResult):
+
+	def __new__(cls, path, cleanup=False, duration=None, codec=None):
+		if isinstance(path, AudioConvProbed): return path
+		self = super().__new__(cls, path)
+		self.cleanup, self.duration, self.codec = cleanup, duration, codec
+		return self
+
+class AudioConvChunk(AudioConvProbed): pass
+
 
 class AudioConv:
 
@@ -247,16 +259,26 @@ class AudioConv:
 
 	async def conv_list(self):
 		src_stack = list(reversed(self.src_list))
-		start, length = self.start, self.length
 		while True:
 
 			while src_stack and len(self.conv_jobs) < self.max_parallel:
 				src = src_stack.pop()
-				if isinstance(src, pathlib.Path):
+
+				if not isinstance(src, pathlib.Path):
+					conv = self.conv_ytdl(src, self.ytdl_opts)
+				elif not isinstance(src, AudioConvProbed):
+					conv = self.conv_probe(src, self.start, self.length)
+				# elif self.chunks and not isinstance(src, AudioConvChunk):
+				# 	dst_name = src.name.rsplit('.', 1)[0]
+				# 	pathlib.Path(dst_name).mkdir() # XXX: gc
+				# 	...
+				# 	continue
+				else:
+					start, length = self.start, self.length
+					# if isinstance(src, AudioConvChunk):
 					dst = src.name.rsplit('.', 1)[0] + '.ogg'
 					conv = self.conv_src(src, dst, start, length)
-				else:
-					conv = self.conv_ytdl(src, self.ytdl_opts)
+
 				log.debug('Scheduling new conv-job for src: {}', src)
 				conv = self.conv_jobs[src] = self.loop.create_task(conv)
 				conv.src = src
@@ -300,21 +322,9 @@ class AudioConv:
 		return AudioConvSubResult(src)
 
 
-	async def conv_src(self, src, dst, start=None, length=None):
-		paths = {dst}
-		if isinstance(src, AudioConvSubResult): paths.add(src)
-
-		def tmp_file(ext):
-			p = '{}.{}'.format(dst, ext)
-			paths.add(p)
-			return p
-
-		job_input_opts = list()
-		if start: job_input_opts.extend(['-ss', str(start)])
-		if length: job_input_opts.extend(['-t', str(length)])
-		job = AudioConvJob(src.name, src, dst, job_input_opts, tmp_file)
-
-		async with FFProc( self.loop, job.name,
+	async def conv_probe(self, src, start=None, length=None):
+		src_name, src_cleanup = src.name, isinstance(src, AudioConvSubResult)
+		async with FFProc( self.loop, src_name,
 				[ 'ffprobe', '-v', 'error', '-show_entries',
 					'stream=codec_type,codec_name,duration:format=duration',
 					'-print_format', 'json', str(src) ],
@@ -333,18 +343,35 @@ class AudioConv:
 					src_duration = float(src_info['format']['duration'])
 			except Exception as err:
 				log.error( '[{!r}] ffprobe failed, progress'
-					' info wont be available: [{}] {}', job.name, *err_with_type(err) )
+					' info wont be available: [{}] {}', src_name, *err_with_type(err) )
 			if src_duration:
 				if start: src_duration = max(0, src_duration - start)
 				if length: src_duration = min(src_duration, length)
-			log.debug('[{!r}] Detected audio stream duration: {:.1f}s', job.name, src_duration)
-			log.debug('[{!r}] Detected audio stream codec: {!r}', job.name, src_codec)
+			log.debug('[{!r}] Detected audio stream duration: {:.1f}s', src_name, src_duration)
+			log.debug('[{!r}] Detected audio stream codec: {!r}', src_name, src_codec)
+		return AudioConvProbed(src, src_cleanup, src_duration, src_codec)
+
+
+	async def conv_src(self, src, dst, start=None, length=None):
+		paths = {dst}
+		src = AudioConvProbed(src)
+		if src.cleanup: paths.add(src)
+
+		def tmp_file(ext):
+			p = '{}.{}'.format(dst, ext)
+			paths.add(p)
+			return p
+
+		job_input_opts = list()
+		if start: job_input_opts.extend(['-ss', str(start)])
+		if length: job_input_opts.extend(['-t', str(length)])
+		job = AudioConvJob(src.name, src, dst, job_input_opts, tmp_file)
 
 		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y -progress pipe:1'.split()
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
-			self.loop, src.name, ffmpeg_cmd + cmd_ext, stream_len=src_duration,
+			self.loop, src.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
 			prefix=pre, progress_func=self.status_line_set, **kws )
-		job.can_copy_stream = src_codec == 'vorbis'
+		job.can_copy_stream = src.codec == 'vorbis'
 
 		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
 		try:
