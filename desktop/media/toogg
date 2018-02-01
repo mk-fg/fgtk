@@ -164,6 +164,8 @@ class AudioConvJob:
 	def __init__(self, *args, **kws):
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
+class AudioConvSubResult(pathlib.PosixPath): pass
+
 class AudioConv:
 
 	@classmethod
@@ -171,10 +173,10 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, loop, src_list,
-			start=None, length=None, loudnorm=False,
+			start=None, length=None, chunks=None, loudnorm=False,
 			loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
-		self.start, self.length = start, length
+		self.start, self.length, self.chunks = start, length, chunks
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
 		self.status_lines = dict()
@@ -244,15 +246,19 @@ class AudioConv:
 				if raise_errors: raise
 
 	async def conv_list(self):
-		src_iter = iter(self.src_list)
+		src_stack = list(reversed(self.src_list))
+		start, length = self.start, self.length
 		while True:
-			while src_iter and len(self.conv_jobs) < self.max_parallel:
-				try: src = next(src_iter)
-				except StopIteration:
-					src_iter = None
-					break
+
+			while src_stack and len(self.conv_jobs) < self.max_parallel:
+				src = src_stack.pop()
+				if isinstance(src, pathlib.Path):
+					dst = src.name.rsplit('.', 1)[0] + '.ogg'
+					conv = self.conv_src(src, dst, start, length)
+				else:
+					conv = self.conv_ytdl(src, self.ytdl_opts)
 				log.debug('Scheduling new conv-job for src: {}', src)
-				conv = self.conv_jobs[src] = self.loop.create_task(self.conv_src(src))
+				conv = self.conv_jobs[src] = self.loop.create_task(conv)
 				conv.src = src
 			if not self.conv_jobs: break
 
@@ -260,42 +266,43 @@ class AudioConv:
 				self.conv_jobs.values(), return_when=asyncio.FIRST_COMPLETED )
 			for res in done:
 				dst_path = await res
-				log.debug('conv-job done (dst file: {!r}) for src: {!r}', dst_path, src)
+				dst_sub = isinstance(dst_path, AudioConvSubResult)
+				log.debug( 'conv-job done (sub={},'
+					' dst-file={!r}) for src: {!r}', int(dst_sub), dst_path, src )
 				await self.conv_cleanup(res.src, raise_errors=True)
-				self.src_done[res.src] = dst_path
+				if dst_sub: src_stack.append(dst_path)
+				else: self.src_done[res.src] = dst_path
 
 		assert len(self.src_done) == len(self.src_list)
 		self.success = True
 
 
-	async def conv_src(self, src):
-		paths = set()
-
-		if not isinstance(src, pathlib.Path):
-			url, ytdl_opts = src, self.ytdl_opts
-			if not ytdl_opts:
-				# Preference should be for something with vorbis-encoded audio,
-				#  but audio-only downloads are very slow for whatever reason (caching? throttling?)
-				ytdl_opts = ['-f', '43/18/480p/bestaudio[ext=ogg]/bestaudio[ext=webm]/bestaudio/best']
-			ytdl_opts = ['youtube-dl', '--newline'] + ytdl_opts
-			async with YTDLProc( self.loop, url,
-					ytdl_opts + ['--get-filename', url],
-					stdout=subprocess.PIPE ) as proc:
-				src = (await proc.stdout.read()).strip().decode()
+	async def conv_ytdl(self, url, ytdl_opts=None):
+		if not ytdl_opts:
+			# Preference should be for something with vorbis-encoded audio,
+			#  but audio-only downloads are very slow for whatever reason (caching? throttling?)
+			ytdl_opts = ['-f', '43/18/480p/bestaudio[ext=ogg]/bestaudio[ext=webm]/bestaudio/best']
+		ytdl_opts = ['youtube-dl', '--newline'] + ytdl_opts
+		async with YTDLProc( self.loop, url,
+				ytdl_opts + ['--get-filename', url],
+				stdout=subprocess.PIPE ) as proc:
+			src = (await proc.stdout.read()).strip().decode()
+			await proc.finished
+		if not src or '\n' in src:
+			raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
+		src, src_part = map(pathlib.Path, [src, f'{src}.part'])
+		try:
+			async with YTDLProc( self.loop, src.name,
+					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
 				await proc.finished
-			if not src or '\n' in src:
-				raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-			src, src_part = map(pathlib.Path, [src, f'{src}.part'])
-			try:
-				async with YTDLProc( self.loop, src.name,
-						ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
-					await proc.finished
-			finally:
-				with contextlib.suppress(OSError): src_part.unlink()
-			paths.add(src)
+		finally:
+			with contextlib.suppress(OSError): src_part.unlink()
+		return AudioConvSubResult(src)
 
-		dst = src.name.rsplit('.', 1)[0] + '.ogg'
-		paths.add(dst)
+
+	async def conv_src(self, src, dst, start=None, length=None):
+		paths = {dst}
+		if isinstance(src, AudioConvSubResult): paths.add(src)
 
 		def tmp_file(ext):
 			p = '{}.{}'.format(dst, ext)
@@ -303,8 +310,8 @@ class AudioConv:
 			return p
 
 		job_input_opts = list()
-		if self.start: job_input_opts.extend(['-ss', str(self.start)])
-		if self.length: job_input_opts.extend(['-t', str(self.length)])
+		if start: job_input_opts.extend(['-ss', str(start)])
+		if length: job_input_opts.extend(['-t', str(length)])
 		job = AudioConvJob(src.name, src, dst, job_input_opts, tmp_file)
 
 		async with FFProc( self.loop, job.name,
@@ -328,12 +335,12 @@ class AudioConv:
 				log.error( '[{!r}] ffprobe failed, progress'
 					' info wont be available: [{}] {}', job.name, *err_with_type(err) )
 			if src_duration:
-				if self.start: src_duration = max(0, src_duration - self.start)
-				if self.length: src_duration = min(src_duration, self.length)
+				if start: src_duration = max(0, src_duration - start)
+				if length: src_duration = min(src_duration, length)
 			log.debug('[{!r}] Detected audio stream duration: {:.1f}s', job.name, src_duration)
 			log.debug('[{!r}] Detected audio stream codec: {!r}', job.name, src_codec)
 
-		ffmpeg_cmd = ['ffmpeg', '-v', 'error', '-hide_banner', '-y', '-progress', 'pipe:1']
+		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y -progress pipe:1'.split()
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, src.name, ffmpeg_cmd + cmd_ext, stream_len=src_duration,
 			prefix=pre, progress_func=self.status_line_set, **kws )
@@ -351,7 +358,7 @@ class AudioConv:
 
 	async def conv_src_simple(self, job):
 		coding_opts = ['-vn']
-		if job.can_copy_stream: coding_opts += ['-codec:a', 'copy']
+		if job.can_copy_stream: coding_opts += ['-c:a', 'copy']
 		await job.ffmpeg( 'to-ogg', ['-i', str(job.src)]
 			+ job.input_opts + coding_opts + ['-f', 'ogg', job.dst] ).run()
 
@@ -454,6 +461,11 @@ def main(args=None):
 	group.add_argument('-l', '--length', metavar='((hh:)mm:)ss(.ms)',
 		help='Convert only specified length of src file(s). Can be combined with -s/--start.'
 			' Passed to ffmpeg -t option, see "Time duration" in ffmpeg-utils(1) manpage.')
+	group.add_argument('-c', '--chunks',
+		nargs='?', metavar='((hh:)mm:)ss(.ms)', const='15:00',
+		help='Create dst directory instead of file with'
+				' output pre-split into chunks of specified length.'
+			' Length argument is optional and defaults to 15:00 (15 min).')
 
 	group = parser.add_argument_group('Debug/misc')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -464,7 +476,7 @@ def main(args=None):
 		(pathlib.Path(src).resolve() if os.path.exists(src) or ':' not in src else src)
 		for src in opts.src )
 	if opts.dst_dir: os.chdir(opts.dst_dir)
-	start, length = map(parse_pos_spec, [opts.start, opts.length])
+	start, length, chunks = map(parse_pos_spec, [opts.start, opts.length, opts.chunks])
 
 	ytdl_opts = opts.ytdl_opts or list()
 	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
@@ -483,7 +495,7 @@ def main(args=None):
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
-			AudioConv.run_async( loop, src_list, start=start, length=length,
+			AudioConv.run_async( loop, src_list, start=start, length=length, chunks=chunks,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts, ytdl_opts=ytdl_opts ) )
 	if success and opts.remove_src:
 		for src in src_list: os.unlink(src)
