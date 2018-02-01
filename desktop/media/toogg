@@ -274,7 +274,9 @@ class AudioConv:
 		if not isinstance(src, pathlib.Path):
 			url, ytdl_opts = src, self.ytdl_opts
 			if not ytdl_opts:
-				ytdl_opts = ['-f', '171/bestaudio[ext=ogg]/bestaudio[ext=webm]/bestaudio/480p/best']
+				# Preference should be for something with vorbis-encoded audio,
+				#  but audio-only downloads are very slow for whatever reason (caching? throttling?)
+				ytdl_opts = ['-f', '43/18/480p/bestaudio[ext=ogg]/bestaudio[ext=webm]/bestaudio/best']
 			ytdl_opts = ['youtube-dl', '--newline'] + ytdl_opts
 			async with YTDLProc( self.loop, url,
 					ytdl_opts + ['--get-filename', url],
