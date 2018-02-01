@@ -285,13 +285,13 @@ class AudioConv:
 				await proc.finished
 			if not src or '\n' in src:
 				raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-			src = pathlib.Path(src)
+			src, src_part = map(pathlib.Path, [src, f'{src}.part'])
 			try:
 				async with YTDLProc( self.loop, src.name,
 						ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
 					await proc.finished
 			finally:
-				with contextlib.suppress(OSError): os.unlink(src.with_suffix('.part'))
+				with contextlib.suppress(OSError): src_part.unlink()
 			paths.add(src)
 
 		dst = src.name.rsplit('.', 1)[0] + '.ogg'
