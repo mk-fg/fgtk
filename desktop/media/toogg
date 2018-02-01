@@ -169,13 +169,34 @@ class AudioConvSubResult(pathlib.PosixPath): pass
 
 class AudioConvProbed(AudioConvSubResult):
 
-	def __new__(cls, path, cleanup=False, duration=None, codec=None):
+	def __new__(cls, path, cleanup=False, duration=None, codec=None, label=None):
 		if isinstance(path, AudioConvProbed): return path
 		self = super().__new__(cls, path)
+		self.label = label or self.name
 		self.cleanup, self.duration, self.codec = cleanup, duration, codec
 		return self
 
-class AudioConvChunk(AudioConvProbed): pass
+	def _repr(self, ext=''):
+		return ( f'<{self.__class__.__name__} {self.label!r}'
+			f' [del={self.cleanup} d={self.duration} c={self.codec}{ext}]>' )
+	def __repr__(self): return self._repr()
+
+class AudioConvChunk(AudioConvProbed):
+
+	def __new__(cls, path, dst, start, duration=None, codec=None, label=None):
+		self = super().__new__(cls, str(path), False, duration, codec, label)
+		self.dst, self.start = dst, start
+		return self
+
+	def _repr(self, ext=''): return super()._repr(f' ss={self.start}')
+
+class AudioConvChunkDir(pathlib.PosixPath):
+
+	def __new__(cls, path, src, chunks):
+		self = super().__new__(cls, path)
+		self.src, self.chunks = src, chunks
+		return self
+
 
 
 class AudioConv:
@@ -191,7 +212,7 @@ class AudioConv:
 		self.start, self.length, self.chunks = start, length, chunks
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
-		self.status_lines = dict()
+		self.status_lines, self.chunk_dirs = dict(), set()
 
 	async def __aenter__(self):
 		self.conv_jobs, self.status_line_task = OrderedDict(), None
@@ -205,6 +226,15 @@ class AudioConv:
 			self.status_line_task.cancel()
 			await self.status_line_task
 			self.status_line_task = None
+		if self.chunk_dirs:
+			for p in self.chunk_dirs:
+				chunks_done = self.src_done.get(p.src, set())
+				if chunks_done != p.chunks:
+					for c in chunks_done:
+						with contextlib.suppress(OSError): c.unlink()
+				with contextlib.suppress(OSError): p.rmdir()
+				with contextlib.suppress(OSError): p.src.unlink()
+			self.chunk_dirs.clear()
 
 	async def run(self):
 		self.conv = self.loop.create_task(self.conv_list())
@@ -246,10 +276,10 @@ class AudioConv:
 		elif key in self.status_lines: self.status_lines[key] += '\n'
 
 
-	async def conv_cleanup(self, *src, raise_errors=False):
-		if not src: src = list(self.conv_jobs.keys())
-		for src in src:
-			conv = self.conv_jobs.pop(src)
+	async def conv_cleanup(self, *task_ids, raise_errors=False):
+		if not task_ids: task_ids = list(self.conv_jobs.keys())
+		for task_id in task_ids:
+			conv = self.conv_jobs.pop(task_id)
 			conv.cancel()
 			try: await conv
 			except asyncio.CancelledError: pass
@@ -263,25 +293,41 @@ class AudioConv:
 
 			while src_stack and len(self.conv_jobs) < self.max_parallel:
 				src = src_stack.pop()
+				start, length = self.start, self.length
 
 				if not isinstance(src, pathlib.Path):
 					conv = self.conv_ytdl(src, self.ytdl_opts)
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
-				# elif self.chunks and not isinstance(src, AudioConvChunk):
-				# 	dst_name = src.name.rsplit('.', 1)[0]
-				# 	pathlib.Path(dst_name).mkdir() # XXX: gc
-				# 	...
-				# 	continue
+				elif self.chunks and not isinstance(src, AudioConvChunk):
+					if not src.duration:
+						raise AudioConvError( 'Cannot split src'
+							f' into chunks due to unknown duration: {src}' )
+					src_chunks, chunk_len, dst_name = list(), self.chunks, src.name.rsplit('.', 1)[0]
+					start, length = start or 0, src.duration
+					dst_dir = AudioConvChunkDir(dst_name, src, src_chunks)
+					dst_dir.mkdir(exist_ok=True)
+					while length > 0:
+						n = len(src_chunks) + 1
+						dst_file = f'{n:03d}__{dst_name}.ogg'
+						dst = f'{dst_name}/{dst_file}'
+						src_chunks.append(AudioConvChunk(
+							src, dst, start, min(chunk_len, length), src.codec, dst_file ))
+						start += chunk_len; length -= chunk_len
+					dst_dir.chunks = set(pathlib.Path(c.dst) for c in dst_dir.chunks)
+					self.chunk_dirs.add(dst_dir)
+					src_stack.extend(reversed(src_chunks))
+					continue
 				else:
-					start, length = self.start, self.length
-					# if isinstance(src, AudioConvChunk):
-					dst = src.name.rsplit('.', 1)[0] + '.ogg'
+					if isinstance(src, AudioConvChunk):
+						dst, start, length = src.dst, src.start, src.duration
+					else: dst = src.name.rsplit('.', 1)[0] + '.ogg'
 					conv = self.conv_src(src, dst, start, length)
 
 				log.debug('Scheduling new conv-job for src: {}', src)
-				conv = self.conv_jobs[src] = self.loop.create_task(conv)
-				conv.src = src
+				conv = self.loop.create_task(conv)
+				conv.src, conv.task_id = src, id(conv)
+				self.conv_jobs[conv.task_id] = conv
 			if not self.conv_jobs: break
 
 			done, pending = await asyncio.wait(
@@ -291,11 +337,12 @@ class AudioConv:
 				dst_sub = isinstance(dst_path, AudioConvSubResult)
 				log.debug( 'conv-job done (sub={},'
 					' dst-file={!r}) for src: {!r}', int(dst_sub), dst_path, src )
-				await self.conv_cleanup(res.src, raise_errors=True)
+				await self.conv_cleanup(res.task_id, raise_errors=True)
 				if dst_sub: src_stack.append(dst_path)
-				else: self.src_done[res.src] = dst_path
+				else: self.src_done.setdefault(res.src, set()).add(pathlib.Path(dst_path))
 
 		assert len(self.src_done) == len(self.src_list)
+		assert all((self.src_done[p.src] == p.chunks) for p in self.chunk_dirs)
 		self.success = True
 
 
@@ -365,11 +412,11 @@ class AudioConv:
 		job_input_opts = list()
 		if start: job_input_opts.extend(['-ss', str(start)])
 		if length: job_input_opts.extend(['-t', str(length)])
-		job = AudioConvJob(src.name, src, dst, job_input_opts, tmp_file)
+		job = AudioConvJob(src.label, src, dst, job_input_opts, tmp_file)
 
 		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y -progress pipe:1'.split()
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
-			self.loop, src.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
+			self.loop, job.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
 			prefix=pre, progress_func=self.status_line_set, **kws )
 		job.can_copy_stream = src.codec == 'vorbis'
 
