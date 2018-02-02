@@ -1733,13 +1733,13 @@ its `loudnorm filter`_ (EBU R128 loudness normalization) in double-pass mode.
 Main purpose is to turn anything that has audio track in it into podcast for an
 audio player.
 
-Can process several source files or URLs (either audio content-type or URL for
-youtube-dl) in parallel, displays progress (from ``ffmpeg -progress`` pipe),
-python3/asyncio.
+Can process several source files or URLs (whatever youtube-dl accepts) in
+parallel, split large files into chunks (processed concurrently), displays
+progress (from ``ffmpeg -progress`` pipe), python3/asyncio.
 
 loudnorm filter and libebur128 are fairly recent additions to ffmpeg
 (3.1 release, 2016-06-27), and might not be enabled/available in distros by
-default (e.g. not enabled on Arch as of 2016-09-27).
+default (e.g. not enabled on Arch as of 2017-02-02).
 
 Needs youtube-dl installed if URLs are specified instead of regular files.
 

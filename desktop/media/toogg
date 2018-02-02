@@ -539,6 +539,7 @@ def main(args=None):
 		nargs='?', metavar='((hh:)mm:)ss(.ms)', const='15:00',
 		help='Create dst directory instead of file with'
 				' output pre-split into chunks of specified length.'
+			' Can be used for enable faster parallel encoding.'
 			' Length argument is optional and defaults to 15:00 (15 min).')
 
 	group = parser.add_argument_group('Debug/misc')
