@@ -192,9 +192,9 @@ class AudioConvChunk(AudioConvProbed):
 
 class AudioConvChunkDir(pathlib.PosixPath):
 
-	def __new__(cls, path, src, chunks):
+	def __new__(cls, path, src, chunks, cleanup=False):
 		self = super().__new__(cls, path)
-		self.src, self.chunks = src, chunks
+		self.src, self.chunks, self.cleanup = src, chunks, cleanup
 		return self
 
 
@@ -233,7 +233,8 @@ class AudioConv:
 					for c in chunks_done:
 						with contextlib.suppress(OSError): c.unlink()
 				with contextlib.suppress(OSError): p.rmdir()
-				with contextlib.suppress(OSError): p.src.unlink()
+				if p.cleanup:
+					with contextlib.suppress(OSError): p.src.unlink()
 			self.chunk_dirs.clear()
 
 	async def run(self):
@@ -305,7 +306,7 @@ class AudioConv:
 							f' into chunks due to unknown duration: {src}' )
 					src_chunks, chunk_len, dst_name = list(), self.chunks, src.name.rsplit('.', 1)[0]
 					start, length = start or 0, src.duration
-					dst_dir = AudioConvChunkDir(dst_name, src, src_chunks)
+					dst_dir = AudioConvChunkDir(dst_name, src, src_chunks, cleanup=src.cleanup)
 					dst_dir.mkdir(exist_ok=True)
 					while length > 0:
 						n = len(src_chunks) + 1
