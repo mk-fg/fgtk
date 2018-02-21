@@ -35,7 +35,7 @@ echo "$$" >"$lock"
 		&& state_now=1 || state_now=0
 }
 check=x$(cat "$state" 2>/dev/null)
-[[ "$check" != x"$state_now" ]] || exit
+[[ "$check" = x"$state_now" ]] && exit
 echo "$state_now" >$state
 
 
