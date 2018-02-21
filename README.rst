@@ -1929,9 +1929,22 @@ on some "magnet:..." link was successfully processed or discarded.
 power
 '''''
 
-Script to spam sounds and desktop-notifications upon detecting low battery
-level. Not the only one to do somethng like that on my system, but saved me some
-work on many occasions.
+Script to spam `desktop-notifications`_ when charger gets plugged/unplugged via
+udev rules on an old laptop with somewhat flaky power connector.
+
+Useful to save a few battery/power cycles due to random electrical contact loss
+in charger or just plain negligence, if nothing else in DE has good indication
+for that already.
+
+Example udev rule (in e.g. ``/etc/udev/rules.d/70-power-supply.rules``)::
+
+  SUBSYSTEM=="power_supply", RUN+="/usr/local/bin/notify.power $env{POWER_SUPPLY_PRESENT}"
+
+Uses "notify-net" script from `notification-thing`_ daemon to avoid dbus session
+bus auth and socket location mess, and some other configuration (paths,
+debouncing, locks, etc) via vars at the top.
+
+.. _notification-thing: https://github.com/mk-fg/notification-thing
 
 logtail
 '''''''

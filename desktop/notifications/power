@@ -1,66 +1,64 @@
 #!/bin/bash
 
-PW_FLAG=/tmp/i_dont_give_a_fuck
+# Example udev rule:
+#  SUBSYSTEM=="power_supply", RUN+="/usr/local/bin/notify.power $env{POWER_SUPPLY_PRESENT}"
 
-cleanup() {
-	[[ -f "$PW_FLAG" ]] || return 0
-	rm -f "$PW_FLAG"
-	return 0
+state=/tmp/.de.note.power.state
+state_now=$1
+
+debounce=2
+battery=/sys/class/power_supply/BAT0
+lock=/tmp/.de.note.power
+lock_timeout=30
+notify='notify-net -d 0.0.0.0:8158 -u critical -i nwn -n power'
+test=
+
+
+# Mutex
+exec 4>>"$lock"
+flock -n 4 || {
+	# Check if lock holder pid got stuck somehow
+	ts=$(printf '%(%s)T' -1)
+	ts_lock=$(stat --format=%Y "$lock" 2>/dev/null || echo 0)
+	[[ $(( $ts - $ts_lock )) -lt "$lock_timeout" ]] && exit || {
+		rm "$lock"
+		logger "BUG: removing stale but still open lock for power notifications: $lock"
+	}
+}
+echo "$$" >"$lock"
+
+
+# Change tracking
+[[ -n "$test" || "$debounce" -eq 0 ]] || {
+	sleep "$debounce"
+	grep -qF -e Charging -e Full "$battery"/status \
+		&& state_now=1 || state_now=0
+}
+check=x$(cat "$state" 2>/dev/null)
+[[ "$check" != x"$state_now" ]] || exit
+echo "$state_now" >$state
+
+
+# Notification
+power_div() {
+	pw=$(bc <<< "scale=2; $1 / $2")
+	pw=${pw#*.} pw=${pw#0}
+	[[ $pw -ne 0 ]] || pw=100
+	echo $pw
 }
 
-## Shows either "Unknwon" or "Discharging"
-grep -e Charging -e Full\
-		/sys/class/power_supply/BAT0/status >/dev/null\
-	&& cleanup && exit
+pw_full=$(< "$battery"/charge_full)
+pw_left=$(cat "$battery"/charge_now)
+pw_new=$(cat "$battery"/charge_full_design)
 
-## Now thats seem reliable enough
-PW_LEFT=$(cat /sys/class/power_supply/BAT0/charge_now)
-PW=$(cat /sys/class/power_supply/BAT0/charge_full)
-PW=$(echo -e "scale=2\n" "$PW_LEFT" / "$PW" | bc)
-PW=${PW#*.}
-PW=${PW#0}
-[[ $PW -eq 0 ]] && PW=100
+export LC_ALL=en_US.UTF8 # for printf digit groups
+pw=$(power_div $pw_left $pw_full)
+pw_cap=$(power_div $pw_full $pw_new)
+pw_full=$(printf "%'d" $pw_full) pw_new=$(printf "%'d" $pw_new)
+pw_cap_linux=$(< "$battery"/capacity) pw_cap_level=$(< "$battery"/capacity_level)
 
-
-## Phase 1: Sound
-if [[ $PW -lt 12 ]]; then aplay -q ~/media/appz/batt_down.wav
-else if [[ $PW -lt 17 ]]; then aplay -q ~/media/appz/batt_warn.wav
-else if [[ $PW -lt 25 ]]; then aplay -q ~/media/appz/batt_low.wav
-else if [[ -O "$PW_FLAG" ]]; then cleanup && exit
-fi; fi; fi; fi
-
-
-## Phase 2: Visuals
-pgrep -x Xorg >/dev/null\
-	|| pgrep -x X >/dev/null\
-	|| exit 0 # no X - no visual notifications
-
-if [[ ! -O "$PW_FLAG" && $PW -lt 10 ]]; then
-	# Force-enable the display
-	xset dpms force on 2>/dev/null
-
-	if [[ -z "$DBUS_SESSION_BUS_ADDRESS" ]]; then
-		# Get DBUS_SESSION_BUS_ADDRESS if anything knows about it
-		WC=( $(pgrep notification-) )
-		[[ "${#WC[@]}" -eq 0 ]] && WC=('*')
-		for pid in "${WC[@]}"; do
-			export DBUS_SESSION_BUS_ADDRESS="$(
-			 grep --color=never -ao -m1 -h -P\
-				'(?<=DBUS_SESSION_BUS_ADDRESS=).*?\0'\
-				/proc/$pid/environ 2>/dev/null | head -1 )"
-			[[ -z "$DBUS_SESSION_BUS_ADDRESS" ]] || break
-		done
-	 fi
-
-	# Format message and send it
-	MSG=$(cat << EOF
-Battery charge level critical (${PW}%)!
-Do something about it NOW or touch $PW_FLAG
+alarm=$(< "$battery"/alarm) status=$(< "$battery"/status)
+$notify -s "Charger state: $status" <<EOF
+Battery state: <b>${pw}%</b> (cap=$pw_cap_linux, level=$pw_cap_level, alarm=$alarm)
+Battery max charge state: ${pw_cap}% ($pw_full / $pw_new)
 EOF
-)
-	notify-send -u critical -i nwn "Low power alert" "$MSG"
-fi
-
-
-## Mail won't be read in time
-exit 0
