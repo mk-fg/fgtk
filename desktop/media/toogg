@@ -347,6 +347,22 @@ class AudioConv:
 		self.success = True
 
 
+	conv_ytdl_name_len_max = 100
+
+	def conv_ytdl_fix_name(self, name, len_max, len_slug=20):
+		if len(name) <= len_max: return name
+		name, ext = name.rsplit('.', 1) if '.' in name else (name, None)
+		if len(ext) >= len_slug: name, ext = f'{name}.{ext}', None
+		name_list = name.split()
+		for n, slug in sorted(enumerate(name_list), key=lambda v: -len(v[1])):
+			if len(slug) > len_slug: name_list[n] = slug[:len_slug-3] + '---'
+			else: break
+		name = ' '.join(name_list)
+		if len(name) > len_max: name = name[:len_max]
+		if ext: name = f'{name}.{ext}'
+		assert len(name) < len_max + len_slug, [len(name), name]
+		return name
+
 	async def conv_ytdl(self, url, ytdl_opts=None):
 		if not ytdl_opts:
 			# Preference should be for something with vorbis-encoded audio,
@@ -360,7 +376,11 @@ class AudioConv:
 			await proc.finished
 		if not src or '\n' in src:
 			raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-		src, src_part = map(pathlib.Path, [src, f'{src}.part'])
+		src = pathlib.Path(src)
+		if len(src.name) > self.conv_ytdl_name_len_max:
+			src = src.parent / self.conv_ytdl_fix_name(src.name, self.conv_ytdl_name_len_max)
+		src_part = pathlib.Path(src.parent) / f'{src.name}.part'
+		ytdl_opts.extend(['-o', str(src).replace('%', '%%')])
 		try:
 			async with YTDLProc( self.loop, src.name,
 					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
