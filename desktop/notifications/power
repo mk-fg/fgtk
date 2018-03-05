@@ -10,7 +10,7 @@ debounce=2
 battery=/sys/class/power_supply/BAT0
 lock=/tmp/.de.note.power
 lock_timeout=30
-notify='notify-net -d 0.0.0.0:8158 -u critical -i nwn -n power'
+notify='notify-net -d 0.0.0.0:8158 -u critical -t0 -i nwn -n power'
 test=
 
 
@@ -35,7 +35,7 @@ echo "$$" >"$lock"
 		&& state_now=1 || state_now=0
 }
 check=x$(cat "$state" 2>/dev/null)
-[[ "$check" != x"$state_now" ]] || exit
+[[ "$check" = x"$state_now" ]] && exit
 echo "$state_now" >$state
 
 
