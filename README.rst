@@ -303,6 +303,23 @@ Unlike tool from coreutils, can overwrite files with sorted results
 for splitting fields and sorting by one of these (example: ``pysort -d: -f2 -n
 /etc/passwd``).
 
+repr
+''''
+
+Even needed to check if file has newlines on BOM in it, yet every editor is
+user-friendly by default and hides these from actual file contents?
+
+One fix is hexdump or switching to binary mode, but these are usually terrible
+for looking at text, and tend to display all non-ASCII as "." instead of nicer
+\\r \\t \\n ... escapes, not to mention unicode chars.
+
+This trivial script prints each line in a file via python3's repr(), which is
+usually very nice, has none of the above issues and doesn't dump byte codes on
+you for anything it can interpret as char/codepoint or some neat escape code.
+
+Has opts for text/byte mode and stripping "universal newlines" (see newline= in
+built-in open() func).
+
 color
 '''''
 
