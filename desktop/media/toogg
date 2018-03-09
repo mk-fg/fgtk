@@ -43,6 +43,7 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 		return ' '.join(res)
 
 
+
 class FFProc:
 
 	proc = finished = None
@@ -171,7 +172,6 @@ class YTDLProc(FFProc):
 				msg = self.print_progress_prefix(f'{line[10:].strip()}')
 				print_progress(msg)
 		finally: print_progress()
-
 
 
 
