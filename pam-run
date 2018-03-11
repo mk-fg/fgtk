@@ -204,14 +204,16 @@ def parse_user_spec(spec):
 	try: uname, gid = spec.split(':', 1)
 	except ValueError: uname, gid = spec, None
 	try: uid = int(uname)
-	except ValueError: uent = pwd.getpwnam(uname)
+	except ValueError: uent = None
 	else: uent = pwd.getpwuid(uid)
+	if uent is None: uent = pwd.getpwnam(uname)
 	uname, uid, home, shell = (
 		getattr(uent, 'pw_{}'.format(k)) for k in ['name', 'uid', 'dir', 'shell'] )
 	if not gid: gid = uent.pw_gid
 	else:
 		try: gid = int(spec)
-		except ValueError: gid = grp.getgrnam(spec).gr_gid
+		except ValueError: gid = None
+		if gid is None: gid = grp.getgrnam(spec).gr_gid
 	return uname, uid, gid, home, shell
 
 
