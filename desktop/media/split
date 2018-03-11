@@ -1,54 +1,84 @@
 #!/bin/bash
 
-step=15
-opts=( -acodec copy -vn )
+step=15 ext=
+opts_default=( -acodec copy -vn )
 
 [[ -z "$1" || -z "$2" || "$1" = -h || "$1" = --help ]] && {
 	cmd=$(basename "$0")
-	echo >&2 "Usage: $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ]"
+	echo >&2 "Usage:"
+	echo >&2 "  $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ]"
+	echo >&2 "  $cmd prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ] -- file1.mp3 file2.mp3 ..."
 	echo >&2 "Example: $cmd some-long-book.mp3 slb"
 	echo >&2 "  Resulting files will be: slb-001.mp3 slb-002.mp3 ..."
 	echo >&2 "  Default length: $step minutes"
-	echo >&2 "  Default ffmpeg opts (only good for audio files!): ${opts[@]}"
+	echo >&2 "  Default ffmpeg opts (only good for audio files!): ${opts_default[@]}"
 	echo >&2 "  Special ffmpeg opts (must be before others, if any, only one at a time):"
-	echo >&2 "    -: don't pass any"
+	echo >&2 "    -: don't pass default ones"
 	echo >&2 "    -v: -c copy -bsf:a aac_adtstoasc"
 	echo >&2 "Example (transcode to ogg): $cmd some-file.m4b sf-split 30 ogg -f ogg"
 	exit 1
 }
 
 set -e -o pipefail
-src=$1 prefix=$2
-shift; shift
-[[ -z "$1" ]] || { step=$1; shift; }
-[[ -z "$1" ]] || { ext=$1; shift; }
+
+
+arg_opts=() arg_src=() arg_src_flag=
+for arg in "$@"; do
+	[[ "$arg" != -- ]] || { arg_src_flag=t; continue; }
+	[[ -z "$arg_src_flag" ]]\
+		&& arg_opts+=( "$arg" ) || arg_src+=( "$arg" )
+done
+[[ -n "$arg_src_flag" || "${#arg_opts[@]}" -eq 0 ]] || {
+	arg_src+=( "${arg_opts[0]}" )
+	arg_opts=( "${arg_opts[@]:1}" )
+}
+
+prefix=${arg_opts[0]}
+[[ -n "$prefix" ]] || { echo >&2 "ERROR: no prefix specified"; exit 1; }
+[[ -z "${arg_opts[1]}" ]] || step=${arg_opts[1]}
+[[ -z "${arg_opts[2]}" ]] || ext=${arg_opts[2]}
 step=$(( $step * 60 ))
 
-
-if [[ $# -ge 1 ]]
-then
-	opts=( "$@" )
-	[[ "${opts[0]}" != - ]] || opts=( "${opts[@]:1}" )
+opts=()
+[[ -z "${arg_opts[3]}" ]] || {
+	opts=( "${arg_opts[@]:3}" )
+	[[ "${opts[0]}" != - ]] || { opts_default=(); opts=( "${opts[@]:1}" ); }
 	[[ "${opts[0]}" != -v ]] || opts=( -c copy -bsf:a aac_adtstoasc "${opts[@]:1}" )
-fi
+}
+opts=( "${opts_default[@]}" "${opts[@]}" )
 
-len=$( ffprobe "$src" 2>&1 |
-	awk 'match($0,/Duration: (\S+)\./,a) {split(a[1],b,":");print b[1]*3600+b[2]*60+b[3]}' )
-[[ -n "$len" && "$len" -gt 0 ]] || { echo >&2 "ERROR: Failed to get source duration"; exit 1; }
-[[ -n "$ext" ]] || ext=${src##*.}
 
-n=1
-ns=$(( ($len / $step) + 1 ))
+src_lens=()
+for src in "${arg_src[@]}"; do
+	len=$( ffprobe "$src" 2>&1 |
+		awk 'match($0,/Duration: (\S+)\./,a) {split(a[1],b,":");print b[1]*3600+b[2]*60+b[3]}' )
+	[[ -n "$len" && "$len" -gt 0 ]] || {
+		echo >&2 "ERROR: Failed to get duration for: $src"; exit 1; }
+	src_lens+=( "$len" )
+done
 
-while [[ $n -le $ns ]]; do
-	s=$(( ($n-1) * $step ))
-	e=$(( $n * $step ))
-	dst="${prefix}-$(printf '%03d' $n).${ext}"
+[[ "${#arg_src[@]}" -eq 1 ]] && n_src= || n_src=0
+for src in "${arg_src[@]}"; do
+	len=${src_lens[${n_src:-0}]}
+	[[ -n "$ext" ]] || ext=${src##*.}
 
-	echo "---- $dst [$n/$ns, $s-$e]"
+	n=1
+	ns=$(( ($len / $step) + 1 ))
 
-	ffmpeg -loglevel warning -y -i "$src" "${opts[@]}" -ss $s -to $e "$dst" </dev/null
-	(( n += 1 ))
+	while [[ $n -le $ns ]]; do
+		s=$(( ($n-1) * $step ))
+		e=$(( $n * $step ))
+		[[ -z "$n_src" ]] && dst= || dst="$(printf '%03d' $(( $n_src + 1 )))."
+		dst+=$(printf '%03d' $n)
+		dst="${prefix}-${dst}.${ext}"
+
+		echo "---- $dst [$n/$ns, $s-$e]"
+
+		ffmpeg -loglevel warning -y -i "$src" "${opts[@]}" -ss $s -to $e "$dst" </dev/null
+		(( n += 1 ))
+	done
+
+	[[ -z "$n_src" ]] || (( n_src += 1 ))
 done
 
 :

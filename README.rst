@@ -1777,9 +1777,11 @@ split
 '''''
 
 Simple bash script to split media files into chunks of specified length (in
-minutes), e.g.: ``split some-long-audiobook.mp3 sla 20`` will produce
+minutes), e.g. ``split some-long-audiobook.mp3 sla 20`` will produce
 20-min-long sla-001.mp3, sla-002.mp3, sla-003.mp3, etc.
-Last length arg can be omitted, and defaults to 15 min.
+
+| Last length arg can be omitted, and defaults to 15 min.
+| Can split/rename multiple files when used as e.g.: ``split prefix -- *.mp3``
 
 Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
 (default, changed by passing these after duration arg) to grab only audio chunks
