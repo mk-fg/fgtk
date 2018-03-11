@@ -1536,7 +1536,8 @@ some command there.
 
 My use-case is to emulate proper "login" session for systemd-logind, which
 neither "su" nor "sudo" can do (nor should do!) in default pam configurations
-for them, as they don't (and shouldn't) load pam_systemd.so.
+for them, as they don't load pam_systemd.so (as opposed to something like
+``machinectl shell myuser@ -- ...``).
 
 This script can load any pam stack however, so e.g. running it as::
 
@@ -1551,15 +1552,11 @@ logind with the session).
 Can be used as a GDM-less way to start/keep such sessions (with proper
 display/tty and class/type from env) without much hassle or other weirdness like
 "agetty --autologin" or "login" in some pty (see also `mk-fg/de-setup
-<https://github.com/mk-fg/de-setup>`_ repo), or for whatever other pam-session
-wrapping, as script has nothing specific (or even related) to desktops.
+<https://github.com/mk-fg/de-setup>`_ repo), or for whatever other pam wrapping
+or testing (e.g. try logins with passwords from file), as it has nothing
+specific (or even related) to desktops.
 
 Self-contained python-3 script, using libpam via ctypes.
-
-``machinectl shell myuser@ some-command`` seem to do very similar if not same
-exact thing, so maybe a good idea to use that instead, if possible.
-Didn't think it'd work for root container like that at the time of writing this
-script.
 
 Warning: this script is no replacement for su/sudo wrt uid/gid-switching, and
 doesn't implement all the checks and sanitization these tools do, so only

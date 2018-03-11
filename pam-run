@@ -23,8 +23,10 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 class pam_handle_t(c.Structure):
 	_fields_ = [('handle', c.c_void_p)]
 
-class pam_message_t(c.Structure): pass
-class pam_response_t(c.Structure): pass
+class pam_message_t(c.Structure):
+	_fields_ = [('msg_style', c.c_int), ('msg', c.c_char_p)]
+class pam_response_t(c.Structure):
+	_fields_ = [('resp', c.c_void_p), ('resp_retcode', c.c_int)]
 
 pam_conv_func_t = c.CFUNCTYPE(
 	c.c_int, c.c_int, c.POINTER(c.POINTER(pam_message_t)),
@@ -53,11 +55,6 @@ class pam_t(enum.IntEnum):
 
 	success = 0
 	conv_err = 19
-
-
-@pam_conv_func_t
-def pam_conv_null(num_msg, msg, resp, appdata_ptr):
-	return pam_t.conv_err
 
 
 def force_str(s): return s.decode() if isinstance(s, bytes) else s
@@ -126,10 +123,19 @@ class PAMSession:
 						if isinstance(v, list): args = v
 						else: res_proc = v
 				setattr(lib_pam, k, cls._func_wrapper(k, func, args, res_proc))
-		if cls._libc is None: cls._libc = c.CDLL('libc.so.6')
+		if cls._libc is None:
+			cls._libc = c.CDLL('libc.so.6')
+			cls._libc.malloc.restype = c.c_void_p
 		return cls._lib_pam
 
+	def __init__(self, service, user, tty=None, password=None, skip=None):
+		self.service, self.user, self.tty, self.pw = service, user, tty, password
+		self.skip = set(skip or list())
+		if self.pw is None: self.skip |= {'authenticate'}
+		self._lib = self._get_lib()
+
 	def _pam(self, func, *args, no_handle=False, raw=False):
+		if func in self.skip: return
 		if not no_handle: args = (self._pam_h,) + args
 		if not func.startswith('pam_'): func = 'pam_{}'.format(func)
 		log.debug('libpam call: {} {}', func, args)
@@ -139,18 +145,13 @@ class PAMSession:
 			self._pam_err = res
 			raise PAMError(res, self._lib.pam_strerror(self._pam_h, res))
 
-	def __init__(self, service, user, tty=None):
-		self.service, self.user, self.tty = service, user, tty
-		self._lib = self._get_lib()
-
 	def open(self):
 		self._pam_h = pam_handle_t()
-		self._conv = pam_conv_t(pam_conv_null, None)
+		self._conv = pam_conv_t(pam_conv_func_t(self.conv_func), None)
 		self._pam( 'start', self.service,
 			self.user, c.pointer(self._conv), c.pointer(self._pam_h), no_handle=True )
-
 		if self.tty: self._pam('set_item', pam_t.tty, self.tty)
-
+		self._pam('authenticate', 0)
 		self._pam('acct_mgmt', 0)
 		self._pam('open_session', 0)
 		self.session = True
@@ -176,6 +177,21 @@ class PAMSession:
 			self._pam('end', self._pam_err or pam_t.success)
 			self._pam_h = self._pam_err = None
 		if self._lib: self._lib = None
+
+	def conv_func(self, num_msg, msg, resp, appdata_ptr):
+		if self.pw is not None:
+			# Pointers allocated in python doesn't work with free() in pam, hence libc.malloc
+			pw = self.pw.encode('utf-8')
+			pw_buff_len = len(pw) + 1
+			pw_buff = self._libc.malloc(pw_buff_len)
+			(c.c_char * pw_buff_len).from_address(pw_buff)[:] = pw + b'\0'
+			resp[0] = resp_struct_p = c.cast(
+				self._libc.malloc(c.sizeof(pam_response_t)), c.POINTER(pam_response_t) )
+			resp_struct = resp_struct_p.contents
+			resp_struct.resp = pw_buff
+			resp_struct.resp_retcode = 0
+			return pam_t.success
+		return pam_t.conv_err
 
 	def __enter__(self):
 		self.open()
@@ -207,9 +223,9 @@ def main(args=None):
 	parser.add_argument('command', nargs='?', help='Binary (command) to run.')
 	parser.add_argument('args', nargs='*', help='Command arguments.')
 
-	parser.add_argument('-s', '--session',
-		default='system-login', metavar='pam-session-name',
-		help='PAM session name (matching'
+	parser.add_argument('-s', '--service',
+		default='system-login', metavar='pam-service-name',
+		help='PAM service name (matching'
 			' configuration file in /etc/pam.d) to use. Default: %(default)s')
 	parser.add_argument('-u', '--user', metavar='{uname|uid}[:{gname|gid}]',
 		help='Username to pass to PAM and switch to before running command.'
@@ -220,9 +236,15 @@ def main(args=None):
 			' /dev/ttyX or :0 for console or X session, respectively. Not set by default.')
 	parser.add_argument('-n', '--no-env', action='store_true',
 		help='Do not set/update USER, HOME, PATH and such login env vars for --user.')
+	parser.add_argument('-x', '--no-session', action='store_true',
+		help='Disable open_session() call, which would usually start "user@..." and such.')
+	parser.add_argument('-p', '--password-file', metavar='path',
+		help='Read space-stripped first line of'
+			' a specified file as a password for PAM authentication.')
 
 	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('--debug', action='store_true', help='Same as --verbose, but even more info.')
+	parser.add_argument('--debug',
+		action='store_true', help='Same as --verbose, but even more info.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	global log
@@ -232,7 +254,11 @@ def main(args=None):
 	logging.basicConfig(level=log)
 	log = get_logger('main')
 
-	sname = opts.session
+	pw, tty = None, opts.tty
+	if opts.password_file:
+		with open(opts.password_file) as src: pw = src.readline().strip()
+
+	sname = opts.service
 	if not opts.user: opts.user = os.getuid()
 	uname, uid, gid, home, shell = parse_user_spec(opts.user)
 
@@ -248,9 +274,11 @@ def main(args=None):
 			os.kill(child_pid, sig)
 	for sig, sig_name in sig_trap.items(): signal.signal(sig, ft.partial(sig_pass, sig_name))
 
-	log.info( 'Starting PAM session'
-		' {!r} for user {!r} (uid={}, gid={})...', sname, uname, uid, gid )
-	with PAMSession(sname, uname) as s:
+	log.info(
+		'Starting PAM session {!r} for user {!r} (uid={}, gid={}, tty={}, pw={})...',
+		sname, uname, uid, gid, tty, pw is not None )
+	skip = ['open_session'] if opts.no_session else []
+	with PAMSession(sname, uname, tty=tty, password=pw, skip=skip) as s:
 		if s.user != uname:
 			log.info('Updated uname from PAM: {!r} -> {!r}', uname, s.user)
 			uname, uid, gid, home, shell = parse_user_spec(s.user)
