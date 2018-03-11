@@ -1754,9 +1754,9 @@ Can process several source files or URLs (whatever youtube-dl accepts) in
 parallel, split large files into chunks (processed concurrently), displays
 progress (from ``ffmpeg -progress`` pipe), python3/asyncio.
 
-loudnorm filter and libebur128 are fairly recent additions to ffmpeg
-(3.1 release, 2016-06-27), and might not be enabled/available in distros by
-default (e.g. not enabled on Arch as of 2017-02-02).
+loudnorm filter is fairly recent addition to ffmpeg (added in 3.1 release of
+2016-06-27, has libebur128 built-in in 3.2+), and might not be available in
+distros by default.
 
 Needs youtube-dl installed if URLs are specified instead of regular files.
 

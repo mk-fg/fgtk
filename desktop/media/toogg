@@ -610,12 +610,25 @@ def main(args=None):
 	log = get_logger('main')
 
 	if opts.loudnorm:
-		from subprocess import run, PIPE
-		ffmpeg_info = run(['ffmpeg', '-version'], stdout=PIPE, check=True)
+		import subprocess, distutils.version
+		ffmpeg_info = subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, check=True)
+		ffmpeg_ver = check = None
 		for line in ffmpeg_info.stdout.decode().splitlines():
-			if line.startswith('configuration:') and '--enable-libebur128' in line.split(): break
-		else:
+			if line.startswith('ffmpeg version'):
+				ffmpeg_ver = distutils.version.LooseVersion(line.split()[2])
+				if ffmpeg_ver >= '3.2.0': check = True
+				elif ffmpeg_ver < '3.1.0': check = False
+				else: continue
+				break
+			if ffmpeg_ver and line.startswith('configuration:'):
+				assert ffmpeg_ver >= '3.1.0' and ffmpeg_ver < '3.1.999', ffmpeg_ver
+				check = '--enable-libebur128' in line.split()
+				break
+		if check is False:
 			parser.error('--loudnorm option is used, but libebur128 support in ffmpeg is not detected')
+		elif check is None:
+			log.warning( 'Failed to conclusively check ffmpeg (detected version: {})'
+				' for libebur128 support, script can fail at volume normalization steps', ffmpeg_ver )
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
