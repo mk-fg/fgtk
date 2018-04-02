@@ -2330,6 +2330,27 @@ read access to specified evdev(s) and rw to /dev/uinput.
 
 .. _python-evdev: http://python-evdev.readthedocs.org/
 
+exclip
+''''''
+
+Small standalone C binary based on xclip_ code to copy primary X11 selection
+from terminal (or whatever else) to clipboard as a single line, stripping any
+stray newlines that might get in there (due to terminal quirks, e.g. with
+screen/tmux/ncurses) and spaces at the start/end.
+
+Basically what something like "xclip -out | <process> | xclip -in" would do,
+except as a tiny fast-to-run binary (to bind to a key), and with multiplexing
+(to clipboard and back to primary).
+
+Build with: ``gcc -O2 -lX11 -lXmu exclip.c -o exclip``
+
+Should break on primary selections (sources) with stray \\0 bytes in them (libc
+strlen() will cut these short) and non-utf-8 stuff (as it replaces \\n ascii
+bytes, not multibyte stuff), but these are garbage in terminals anyway, not
+something one'd want to copy-paste.
+
+.. _xclip: https://github.com/astrand/xclip
+
 
 
 VM
