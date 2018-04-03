@@ -314,9 +314,8 @@ void parse_opts( int argc, char *argv[], int *opt_verbatim) {
 	extern int optind, opterr, optopt;
 
 	void usage(int err) {
-		FILE *usage_dst = stdout;
-		if (err) usage_dst = stderr;
-		fprintf(usage_dst,
+		FILE *dst = !err ? stdout : stderr;
+		fprintf(dst,
 "Usage: %s [-h|--help] [-x|--verbatim]\n\n"
 "\"Copies\" (actually forks pids"
 	" to hold/own that stuff) primary X11 selection\n"
@@ -326,19 +325,22 @@ void parse_opts( int argc, char *argv[], int *opt_verbatim) {
 			, argv[0]);
 		exit(err); }
 
-	int ch, err = 0;
+	int ch;
 	static struct option opt_list[] = {
 		{"help", no_argument, NULL, 1},
 		{"verbatim", no_argument, NULL, 2} };
-	while ((ch = getopt_long(argc, argv, ":hx", opt_list, NULL)) != -1) {
+	while ((ch = getopt_long(argc, argv, ":hx", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
+			case 'h': case 1: usage(0);
+			case '?':
+				P(0, "unrecognized option - %s\n", argv[optind-1]);
+				usage(1);
 			case ':':
 				if (optopt >= 32) P(0, "missing argument for -%c\n", optopt);
 				else P(0, "missing argument for --%s\n", opt_list[optopt-1].name);
-				err = 1;
-			case 'h': case 1: default: usage(err); }
-	}
+				usage(1);
+			default: usage(1); }
 	if (optind < argc) {
 		P(0, "unrecognized argument value - %s\n", argv[optind]);
 		usage(1); }
