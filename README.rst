@@ -2345,10 +2345,9 @@ except as a tiny fast-to-run binary (to bind to a key), and with multiplexing
 
 Build with: ``gcc -O2 -lX11 -lXmu exclip.c -o exclip``
 
-Should break on primary selections (sources) with stray \\0 bytes in them (libc
-strlen() will cut these short) and non-utf-8 stuff (as it replaces \\n ascii
-bytes, not multibyte stuff), but these are garbage in terminals anyway, not
-something one'd want to copy-paste.
+Safe wrt NUL-bytes, but should not be used without -x/--verbatim on multi-byte
+non-utf-8 encodings (where \\n byte can mean something else), and won't strip
+any weird non-ascii utf-8 spaces.
 
 .. _xclip: https://github.com/astrand/xclip
 

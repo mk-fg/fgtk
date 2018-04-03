@@ -294,23 +294,19 @@ void update_selection(
 }
 
 
-char *str_strip(char *s) {
-	size_t size;
+void str_strip(char **s, unsigned long *len) {
 	char *end;
-	size = strlen(s);
-	if (!size) return s;
-	end = s + size - 1;
-	while (end >= s && isspace(*end)) end--;
+	if (!*len) return;
+	end = *s + *len - 1;
+	while (*len && isspace(*end)) { end--; (*len)--; };
 	*(end + 1) = '\0';
-	while (*s && isspace(*s)) s++;
-	return s;
+	while (*len && isspace(**s)) { (*s)++; (*len)--; }
 }
 
-char *str_rmchar(char* str, char c) {
-	char *pr = str, *pw = str;
-	while (*pr) { *pw = *pr++; pw += (*pw != c); }
-	*pw = '\0';
-	return str;
+void str_rmchar(char* str, char c, unsigned long *len) {
+	char *pr = str, *pw = str; int n;
+	for (n=0; n<*len; n++) { *pw = *pr++; pw += (*pw != c); }
+	*pw = '\0'; *len -= (unsigned long) pr - (unsigned long) pw;
 }
 
 void parse_opts( int argc, char *argv[], int *opt_verbatim) {
@@ -359,9 +355,8 @@ int main(int argc, char *argv[]) {
 	if (read_primary(&buff, &buff_len)) P(1, "failed to read primary selection");
 
 	if (!opt_verbatim) {
-		buff = str_rmchar(buff, '\n');
-		buff = str_strip(buff);
-		buff_len = strlen(buff);
+		str_rmchar(buff, '\n', &buff_len);
+		str_strip(&buff, &buff_len);
 	}
 
 	update_selection(buff, buff_len, 1);
