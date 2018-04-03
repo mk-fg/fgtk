@@ -8,6 +8,8 @@
 #include <X11/Xatom.h>
 #include <X11/Xmu/Atoms.h>
 
+#include <getopt.h>
+
 
 #define P(err, fmt, arg...)\
 	do {\
@@ -311,22 +313,56 @@ char *str_rmchar(char* str, char c) {
 	return str;
 }
 
+void parse_opts( int argc, char *argv[], int *opt_verbatim) {
+	extern char *optarg;
+	extern int optind, opterr, optopt;
+
+	void usage(int err) {
+		FILE *usage_dst = stdout;
+		if (err) usage_dst = stderr;
+		fprintf(usage_dst,
+"Usage: %s [-h|--help] [-x|--verbatim]\n\n"
+"\"Copies\" (actually forks pids"
+	" to hold/own that stuff) primary X11 selection\n"
+" back to primary and clipboard, stripping start/end spaces\n"
+" and removing newlines"
+	" by default (unless -x/--verbatim is specified).\n"
+			, argv[0]);
+		exit(err); }
+
+	int ch, err = 0;
+	static struct option opt_list[] = {
+		{"help", no_argument, NULL, 1},
+		{"verbatim", no_argument, NULL, 2} };
+	while ((ch = getopt_long(argc, argv, ":hx", opt_list, NULL)) != -1) {
+		switch (ch) {
+			case 'x': case 2: *opt_verbatim = 1; break;
+			case ':':
+				if (optopt >= 32) P(0, "missing argument for -%c\n", optopt);
+				else P(0, "missing argument for --%s\n", opt_list[optopt-1].name);
+				err = 1;
+			case 'h': case 1: default: usage(err); }
+	}
+	if (optind < argc) {
+		P(0, "unrecognized argument value - %s\n", argv[optind]);
+		usage(1); }
+}
+
 int main(int argc, char *argv[]) {
+	int opt_verbatim = 0;
+	parse_opts(argc, argv, &opt_verbatim);
+
 	char *buff;
 	unsigned long buff_len;
 
-	if (chdir("/") == -1) P(1, "chdir(/) failed");
+	if (chdir("/") == -1) P(1, "chdir(/) failed"); // for leftover child pids
 	if (read_primary(&buff, &buff_len)) P(1, "failed to read primary selection");
 
-	buff = str_rmchar(buff, '\n');
-	buff = str_strip(buff);
-	buff_len = strlen(buff);
-
-	/* setbuf(stdout, NULL); */
-	/* fprintf(stdout, "Buff len: %d\n", buff_len); */
-	/* write(1, "-----\n", 6); */
-	/* write(1, buff, buff_len); */
-	/* write(1, "-----\n", 6); */
+	if (!opt_verbatim) {
+		buff = str_rmchar(buff, '\n');
+		buff = str_strip(buff);
+		buff_len = strlen(buff);
+	}
 
 	update_selection(buff, buff_len, 1);
 	update_selection(buff, buff_len, 0);

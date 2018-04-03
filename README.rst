@@ -2336,7 +2336,8 @@ exclip
 Small standalone C binary based on xclip_ code to copy primary X11 selection
 from terminal (or whatever else) to clipboard as a single line, stripping any
 stray newlines that might get in there (due to terminal quirks, e.g. with
-screen/tmux/ncurses) and spaces at the start/end.
+screen/tmux/ncurses) and spaces at the start/end, unless -x/--verbatim is
+specified.
 
 Basically what something like "xclip -out | <process> | xclip -in" would do,
 except as a tiny fast-to-run binary (to bind to a key), and with multiplexing
