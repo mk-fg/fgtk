@@ -303,35 +303,46 @@ void str_strip(char **s, unsigned long *len) {
 	while (*len && isspace(**s)) { (*s)++; (*len)--; }
 }
 
-void str_rmchar(char* str, char c, unsigned long *len) {
-	char *pr = str, *pw = str; int n;
+void str_rmchar(char* s, unsigned long *len, char c) {
+	char *pr = s, *pw = s; int n;
 	for (n=0; n<*len; n++) { *pw = *pr++; pw += (*pw != c); }
 	*pw = '\0'; *len -= (unsigned long) pr - (unsigned long) pw;
 }
 
-void parse_opts( int argc, char *argv[], int *opt_verbatim) {
+void str_subchar(char* s, unsigned long len, char c0, char c1) {
+	int n;
+	for (n=0; n<len; n++)
+		if (*(s + n) == c0) *(s + n) = c1;
+}
+
+void parse_opts( int argc, char *argv[],
+		int *opt_verbatim, int *opt_slashes_to_dots ) {
 	extern char *optarg;
 	extern int optind, opterr, optopt;
 
 	void usage(int err) {
 		FILE *dst = !err ? stdout : stderr;
 		fprintf(dst,
-"Usage: %s [-h|--help] [-x|--verbatim]\n\n"
+"Usage: %s [-h|--help] [-x|--verbatim] [-d|--slashes-to-dots]\n\n"
 "\"Copies\" (actually forks pids"
 	" to hold/own that stuff) primary X11 selection\n"
 " back to primary and clipboard, stripping start/end spaces\n"
 " and removing newlines"
-	" by default (unless -x/--verbatim is specified).\n"
+	" by default (unless -x/--verbatim is specified).\n\n"
+"-d/--slashes-to-dots flag replaces all forward slashes [/] with dots [.],\n"
+" and can be used with or without -x/--verbatim to strip/keep other stuff.\n\n"
 			, argv[0]);
 		exit(err); }
 
 	int ch;
 	static struct option opt_list[] = {
 		{"help", no_argument, NULL, 1},
-		{"verbatim", no_argument, NULL, 2} };
-	while ((ch = getopt_long(argc, argv, ":hx", opt_list, NULL)) != -1)
+		{"verbatim", no_argument, NULL, 2},
+		{"slashes-to-dots", no_argument, NULL, 3} };
+	while ((ch = getopt_long(argc, argv, ":hxd", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
+			case 'd': case 3: *opt_slashes_to_dots = 1; break;
 			case 'h': case 1: usage(0);
 			case '?':
 				P(0, "unrecognized option - %s\n", argv[optind-1]);
@@ -347,8 +358,8 @@ void parse_opts( int argc, char *argv[], int *opt_verbatim) {
 }
 
 int main(int argc, char *argv[]) {
-	int opt_verbatim = 0;
-	parse_opts(argc, argv, &opt_verbatim);
+	int opt_verbatim = 0, opt_slashes_to_dots = 0;
+	parse_opts(argc, argv, &opt_verbatim, &opt_slashes_to_dots);
 
 	char *buff;
 	unsigned long buff_len;
@@ -357,9 +368,10 @@ int main(int argc, char *argv[]) {
 	if (read_primary(&buff, &buff_len)) P(1, "failed to read primary selection");
 
 	if (!opt_verbatim) {
-		str_rmchar(buff, '\n', &buff_len);
+		str_rmchar(buff, &buff_len, '\n');
 		str_strip(&buff, &buff_len);
 	}
+	if (opt_slashes_to_dots) str_subchar(buff, buff_len, '/', '.');
 
 	update_selection(buff, buff_len, 1);
 	update_selection(buff, buff_len, 0);

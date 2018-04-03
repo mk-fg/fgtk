@@ -2349,6 +2349,9 @@ Safe wrt NUL-bytes, but should not be used without -x/--verbatim on multi-byte
 non-utf-8 encodings (where \\n byte can mean something else), and won't strip
 any weird non-ascii utf-8 spaces.
 
+Has -d/--slashes-to-dots option to copy paths as dotted prefixes, with same
+caveats as above.
+
 .. _xclip: https://github.com/astrand/xclip
 
 
