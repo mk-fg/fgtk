@@ -1,3 +1,9 @@
+// Small standalone C binary based on xclip code to grab
+//   primary X11 selection from terminal (or whatever else)
+//   and re-host it as primary/clipboard with some processing.
+// Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -o exclip
+// More info: ./exclip -h
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,13 +36,13 @@ static size_t mach_itemsize(int format) {
 void *xcmalloc(size_t size) {
 	void *mem;
 	if ((mem = malloc(size)) == NULL)
-		P(1, "malloc(%d) failed", size);
+		P(1, "malloc(%ld) failed", size);
 	return mem;
 }
 void *xcrealloc(void *ptr, size_t size) {
 	void *mem;
 	if ((mem = realloc(ptr, size)) == NULL)
-		P(1, "realloc(%d) failed", size);
+		P(1, "realloc(%ld) failed", size);
 	return mem;
 }
 
@@ -55,7 +61,7 @@ int xcout(
 	int pty_format;
 	unsigned char *buffer;
 	unsigned long pty_size, pty_items, pty_machsize;
-	unsigned char *ltxt = *txt;
+	unsigned char *ltxt = (unsigned char *) txt;
 	if (!pty) pty = XInternAtom(dpy, "XCLIP_OUT", False);
 	if (!inc) inc = XInternAtom(dpy, "INCR", False);
 
@@ -89,7 +95,7 @@ int xcout(
 			ltxt = (unsigned char *) xcmalloc(pty_machsize);
 			memcpy(ltxt, buffer, pty_machsize);
 			*len = pty_machsize;
-			*txt = ltxt;
+			*txt = (char *) ltxt;
 			XFree(buffer);
 
 			*context = XCLIB_XCOUT_NONE;
@@ -119,7 +125,7 @@ int xcout(
 				*len += pty_machsize;
 				ltxt = (unsigned char *) xcrealloc(ltxt, *len); }
 			memcpy(&ltxt[*len - pty_machsize], buffer, pty_machsize);
-			*txt = ltxt;
+			*txt = (char *) ltxt;
 			XFree(buffer);
 
 			XDeleteProperty(dpy, win, pty);
@@ -258,7 +264,7 @@ static int read_primary(char **buff, unsigned long *buff_len) {
 }
 
 void update_selection(
-		unsigned char *buff, unsigned long buff_len, int sel_primary ) {
+		char *buff, unsigned long buff_len, int sel_primary ) {
 	pid_t pid;
 	pid = fork(); // child will own and hold selection buffer
 	if (pid) return; // parent
@@ -281,7 +287,7 @@ void update_selection(
 
 			XNextEvent(dpy, &evt);
 			finished = xcin( dpy, &cwin, evt,
-				&pty, target, buff, buff_len, &sel_pos, &context );
+				&pty, target, (unsigned char *) buff, buff_len, &sel_pos, &context );
 
 			if (evt.type == SelectionClear) clear = 1;
 			if ((context == XCLIB_XCIN_NONE) && clear) break;
@@ -322,7 +328,7 @@ void parse_opts( int argc, char *argv[],
 
 	void usage(int err) {
 		FILE *dst = !err ? stdout : stderr;
-		fprintf(dst,
+		fprintf( dst,
 "Usage: %s [-h|--help] [-x|--verbatim] [-d|--slashes-to-dots]\n\n"
 "\"Copies\" (actually forks pids"
 	" to hold/own that stuff) primary X11 selection\n"
@@ -331,7 +337,7 @@ void parse_opts( int argc, char *argv[],
 	" by default (unless -x/--verbatim is specified).\n\n"
 "-d/--slashes-to-dots flag replaces all forward slashes [/] with dots [.],\n"
 " and can be used with or without -x/--verbatim to strip/keep other stuff.\n\n"
-			, argv[0]);
+			, argv[0] );
 		exit(err); }
 
 	int ch;
@@ -369,8 +375,7 @@ int main(int argc, char *argv[]) {
 
 	if (!opt_verbatim) {
 		str_rmchar(buff, &buff_len, '\n');
-		str_strip(&buff, &buff_len);
-	}
+		str_strip(&buff, &buff_len); }
 	if (opt_slashes_to_dots) str_subchar(buff, buff_len, '/', '.');
 
 	update_selection(buff, buff_len, 1);
