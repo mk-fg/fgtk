@@ -1,7 +1,7 @@
 // Small standalone C binary based on xclip code to grab
 //   primary X11 selection from terminal (or whatever else)
 //   and re-host it as primary/clipboard with some processing.
-// Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -o exclip
+// Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -o exclip && strip exclip
 // More info: ./exclip -h
 
 #include <stdio.h>

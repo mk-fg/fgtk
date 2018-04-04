@@ -2343,7 +2343,7 @@ Basically what something like "xclip -out | <process> | xclip -in" would do,
 except as a tiny fast-to-run binary (to bind to a key), and with multiplexing
 (to clipboard and back to primary).
 
-Build with: ``gcc -O2 -lX11 -lXmu exclip.c -o exclip``
+Build with: ``gcc -O2 -lX11 -lXmu exclip.c -o exclip && strip exclip``
 
 Safe wrt NUL-bytes, but should not be used without -x/--verbatim on multi-byte
 non-utf-8 encodings (where \\n byte can mean something else), and won't strip
