@@ -1253,7 +1253,7 @@ Example watchdog.service::
 (be sure to tweak timeouts and test without "reboot-force" first though,
 e.g. pick RestartSec= for transient failures to not trigger StartLimitAction)
 
-Can optionally get IP of (non-local) gateway to 8.8.8.8 (or any specified IPv4)
+Can optionally get IP of (non-local) gateway to 1.1.1.1 (or any specified IPv4)
 via libmnl (also used by iproute2, so always available) and check whether it
 responds to `fping <http://fping.org/>`_ probes, crashing if it does not - see
 -n/--check-net-gw option.
