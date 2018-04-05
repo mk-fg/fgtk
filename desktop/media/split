@@ -9,13 +9,15 @@ opts_default=( -acodec copy -vn )
 	echo >&2 "  $cmd file-to-split.mp3 prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ]"
 	echo >&2 "  $cmd prefix [ chunk-len-in-minutes ] [ ext ] [ ffmpeg opts ] -- file1.mp3 file2.mp3 ..."
 	echo >&2 "Example: $cmd some-long-book.mp3 slb"
+	echo >&2 "Example: $cmd slb -- some-long-book-p1.mp3 some-long-book-p2.mp3 ..."
 	echo >&2 "  Resulting files will be: slb-001.mp3 slb-002.mp3 ..."
 	echo >&2 "  Default length: $step minutes"
 	echo >&2 "  Default ffmpeg opts (only good for audio files!): ${opts_default[@]}"
-	echo >&2 "  Special ffmpeg opts (must be before others, if any, only one at a time):"
+	echo >&2 "  Special ffmpeg opts (must be before others, if any, in the same order):"
 	echo >&2 "    -: don't pass default ones"
 	echo >&2 "    -v: -c copy -bsf:a aac_adtstoasc"
 	echo >&2 "Example (transcode to ogg): $cmd some-file.m4b sf-split 30 ogg -f ogg"
+	echo >&2 "Example: $cmd sf-split 30 ogg - -new -ffmpeg -opts -f ogg -- some-file-1.m4b ..."
 	exit 1
 }
 
