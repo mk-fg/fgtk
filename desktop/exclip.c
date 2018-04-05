@@ -1,8 +1,10 @@
 // Small standalone C binary based on xclip code to grab
-//   primary X11 selection from terminal (or whatever else)
-//   and re-host it as primary/clipboard with some processing.
+//   primary X11 selection text (utf-8) from terminal (or whatever else)
+//   and re-host it as primary/clipboard after some (optional) processing.
 // Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -o exclip && strip exclip
 // More info: ./exclip -h
+// More info on X11 selections:
+//   https://www.uninformativ.de/blog/postings/2017-04-02/0/POSTING-en.html
 
 #include <stdio.h>
 #include <stdlib.h>
