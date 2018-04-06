@@ -146,7 +146,7 @@ class LibMNL:
 			ct.cast(data, ct.POINTER(ct.py_object)).contents.value )
 
 
-def get_route_gw(libmnl, addr='8.8.8.8'):
+def get_route_gw(libmnl, addr='1.1.1.1'):
 	addr_gw = None
 	nlh, rtm = libmnl.make_req_nlh(libmnl.c.rtm_getroute, rtmsg, dump=not addr)
 	if addr:
@@ -271,7 +271,7 @@ def main(args=None):
 		type=float, default=60, metavar='seconds',
 		help='Interval between running actions, in seconds (default: %(default)s).')
 	parser.add_argument('-n', '--check-net-gw',
-		nargs='?', metavar='route-dst-addr', const='8.8.8.8',
+		nargs='?', metavar='route-dst-addr', const='1.1.1.1',
 		help='Check network gateway availability as well.'
 			' Gets gateway IPv4 address, checks it against all local IPs, pings it.'
 			' Optional dst-addr argument can be used to pick specific gateway'
