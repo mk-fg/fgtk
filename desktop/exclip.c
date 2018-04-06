@@ -232,20 +232,26 @@ void dpy_init() {
 	win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0);
 	XSelectInput(dpy, win, PropertyChangeMask);
 }
+void dpy_close() {
+	XCloseDisplay(dpy);
+}
 
 
 static int read_primary(char **buff, unsigned long *buff_len) {
 	dpy_init();
+
 	XEvent evt;
 	unsigned int context = XCLIB_XCOUT_NONE;
 	Atom sel_src = XA_PRIMARY, sel_type = None;
 	Atom target = XA_UTF8_STRING(dpy);
 	int err = 0;
+	char *xcbuff = NULL;
 
+	*buff_len = 0;
 	while (1) {
 		if (context != XCLIB_XCOUT_NONE) XNextEvent(dpy, &evt);
 		xcout( dpy, win, evt,
-			sel_src, target, &sel_type, buff, buff_len, &context );
+			sel_src, target, &sel_type, &xcbuff, buff_len, &context );
 
 		if (context == XCLIB_XCOUT_BAD_TARGET) {
 			if (target == XA_UTF8_STRING(dpy)) {
@@ -261,7 +267,14 @@ static int read_primary(char **buff, unsigned long *buff_len) {
 		if (context == XCLIB_XCOUT_NONE) break;
 	}
 
-	XCloseDisplay(dpy);
+	dpy_close();
+
+	// Next XOpenDisplay() will try to free() xcbuff, not sure why
+	*buff = xcmalloc(*buff_len+1);
+	memcpy(*buff, xcbuff, *buff_len);
+	*(*buff + *buff_len) = '\0';
+	free(xcbuff);
+
 	return err;
 }
 
@@ -272,6 +285,7 @@ void update_selection(
 	if (pid) return; // parent
 
 	dpy_init();
+
 	XEvent evt;
 	int dloop = 0, sloop = 0;
 	Atom target = XA_UTF8_STRING(dpy);
@@ -297,7 +311,7 @@ void update_selection(
 		}
 		dloop++; }
 
-	XCloseDisplay(dpy);
+	dpy_close();
 	exit(0);
 }
 
