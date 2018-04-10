@@ -42,6 +42,12 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 		if ext: res.append(ext)
 		return ' '.join(res)
 
+class Path(pathlib.PosixPath):
+	'PosixPath with a fix for resolving to "//stuff" nonsense.'
+	def resolve(self, strict=False):
+		p = super().resolve(strict=strict)
+		return Path('/' + str(p).strip('/'))
+
 
 
 class FFProc:
@@ -87,9 +93,10 @@ class FFProc:
 			await self.proc.wait()
 			if progress_task: await progress_task
 			if self.proc.returncode != 0:
-				cmd_repr = '' if not self.cmd_repr else ': {}'.format(self.cmd_repr)
-				raise AudioConvError(( 'Command for src {!r} exited with'
-					' non-zero status ({}){}' ).format(self.src, self.proc.returncode, cmd_repr))
+				cmd_repr = '' if not self.cmd_repr else f': {self.cmd_repr}'
+				raise AudioConvError(
+					f'Command for src {self.src!r} exited with'
+						f' non-zero status ({self.proc.returncode}){cmd_repr}' )
 		finally:
 			if progress_task and not progress_task.done():
 				progress_task.cancel()
@@ -183,7 +190,7 @@ class AudioConvJob:
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
 
-class AudioConvSubResult(pathlib.PosixPath): pass
+class AudioConvSubResult(Path): pass
 
 class AudioConvProbed(AudioConvSubResult):
 
@@ -208,7 +215,7 @@ class AudioConvChunk(AudioConvProbed):
 
 	def _repr(self, ext=''): return super()._repr(f' ss={self.start}')
 
-class AudioConvChunkDir(pathlib.PosixPath):
+class AudioConvChunkDir(Path):
 
 	def __new__(cls, path, src, chunks, cleanup=False):
 		self = super().__new__(cls, path)
@@ -224,10 +231,11 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, loop, src_list,
-			start=None, length=None, chunks=None, loudnorm=False,
-			loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
+			start=None, length=None, chunks=None, inplace=False, remove_src=False,
+			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
 		self.start, self.length, self.chunks = start, length, chunks
+		self.inplace, self.remove_src = inplace, remove_src
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
 		self.status_lines, self.chunk_dirs = dict(), set()
@@ -263,7 +271,7 @@ class AudioConv:
 			self.conv.cancel()
 		for sig in 'int', 'term':
 			self.loop.add_signal_handler(
-				getattr(signal, 'SIG{}'.format(sig.upper())), ft.partial(sig_handler, sig) )
+				getattr(signal, f'SIG{sig.upper()}'), ft.partial(sig_handler, sig) )
 		with contextlib.suppress(asyncio.CancelledError): await self.conv
 		return self.success
 
@@ -321,7 +329,7 @@ class AudioConv:
 				src = src_stack.pop()
 				start, length = self.start, self.length
 
-				if not isinstance(src, pathlib.Path):
+				if not isinstance(src, Path):
 					conv = self.conv_ytdl(src, self.ytdl_opts)
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
@@ -332,16 +340,17 @@ class AudioConv:
 					src_chunks, chunk_len, dst_name = list(), self.chunks, src.name.rsplit('.', 1)[0]
 					start, length = start or 0, src.duration
 					length_total = length - start
-					dst_dir = AudioConvChunkDir(dst_name, src, src_chunks, cleanup=src.cleanup)
-					dst_dir.mkdir(exist_ok=True)
+					dst_dir = ( dst_name if not self.inplace
+						else str(src.parent.resolve()).strip(os.sep) + f'/{dst_name}' )
+					dst_dir = AudioConvChunkDir(dst_dir, src, src_chunks, cleanup=src.cleanup)
+					dst_dir.mkdir(parents=True, exist_ok=True)
 					while length > 0:
 						n = len(src_chunks) + 1
 						dst_file = f'{n:03d}__{dst_name}.ogg'
-						dst = f'{dst_name}/{dst_file}'
 						src_chunks.append(AudioConvChunk(
-							src, dst, start, min(chunk_len, length), src.codec, dst_file ))
+							src, dst_dir / dst_file, start, min(chunk_len, length), src.codec, dst_file ))
 						start += chunk_len; length -= chunk_len
-					dst_dir.chunks = set(pathlib.Path(c.dst) for c in dst_dir.chunks)
+					dst_dir.chunks = set(Path(c.dst) for c in dst_dir.chunks)
 					self.chunk_dirs.add(dst_dir)
 					src_stack.extend(reversed(src_chunks))
 					print( f'Splitting {src.label!r}: {len(src_chunks)} chunks'
@@ -352,8 +361,14 @@ class AudioConv:
 						dst, start, length = src.dst, src.start, src.duration
 					else:
 						dst_base = src.name.rsplit('.', 1)[0]
-						dst = dst_base + '.ogg'
-						if pathlib.Path(dst).resolve() == src.resolve(): dst = dst_base + '.copy.ogg'
+						if self.inplace: dst_base = str(src.parent.resolve()).strip(os.sep) + f'/{dst_base}'
+						dst = Path(dst_base + '.ogg')
+						if dst.resolve() == src.resolve():
+							for n in it.chain([''], range(2**30)):
+								dst = Path(f'{dst_base}.copy{n}.ogg')
+								if not dst.exists(): break
+							else: raise AudioConvError(f'Failed to generate copy-path for dst: {dst}')
+						dst.parent.mkdir(parents=True, exist_ok=True)
 					conv = self.conv_src(src, dst, start, length)
 
 				log.debug('Scheduling new conv-job for src: {}', src)
@@ -371,10 +386,21 @@ class AudioConv:
 					' dst-file={!r}) for src: {!r}', int(dst_sub), dst_path, src )
 				await self.conv_cleanup(res.task_id, raise_errors=True)
 				if dst_sub: src_stack.append(dst_path)
-				else: self.src_done.setdefault(res.src, set()).add(pathlib.Path(dst_path))
+				else: self.src_done.setdefault(res.src, set()).add(Path(dst_path))
 
 		assert len(self.src_done) == len(self.src_list)
 		assert all((self.src_done[p.src] == p.chunks) for p in self.chunk_dirs)
+
+		if self.remove_src:
+			for src, dst_set in self.src_done.items():
+				if len(dst_set) == 1:
+					dst = list(dst_set)[0]
+					if dst.resolve() == src.resolve(): src = None
+					elif dst.parent.resolve() == src.parent.resolve():
+						os.rename(dst, src)
+						src = None
+				if src: os.unlink(src)
+
 		self.success = True
 
 
@@ -407,10 +433,10 @@ class AudioConv:
 			await proc.finished
 		if not src or '\n' in src:
 			raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-		src = pathlib.Path(src)
+		src = Path(src)
 		if len(src.name) > self.conv_ytdl_name_len_max:
 			src = src.parent / self.conv_ytdl_fix_name(src.name, self.conv_ytdl_name_len_max)
-		src_part = pathlib.Path(src.parent) / f'{src.name}.part'
+		src_part = Path(src.parent) / f'{src.name}.part'
 		ytdl_opts.extend(['-o', str(src).replace('%', '%%')])
 		try:
 			async with YTDLProc( self.loop, src.name,
@@ -457,7 +483,7 @@ class AudioConv:
 		if src.cleanup: paths.add(src)
 
 		def tmp_file(ext):
-			p = '{}.{}'.format(dst, ext)
+			p = f'{dst}.{ext}'
 			paths.add(p)
 			return p
 
@@ -486,7 +512,7 @@ class AudioConv:
 		coding_opts = ['-vn']
 		if job.can_copy_stream: coding_opts += ['-c:a', 'copy']
 		await job.ffmpeg( 'to-ogg', ['-i', str(job.src)]
-			+ job.input_opts + coding_opts + ['-f', 'ogg', job.dst] ).run()
+			+ job.input_opts + coding_opts + ['-f', 'ogg', str(job.dst)] ).run()
 
 	async def conv_src_loudnorm(self, job):
 		await job.ffmpeg( 'to-wav [1/3]',
@@ -499,7 +525,7 @@ class AudioConv:
 
 		async with job.ffmpeg( 'loudnorm-info [2/3]',
 				[ '-v', 'info', '-i', job.tmp_file('src.wav'),
-					'-af', 'loudnorm={}print_format=json'.format(opts), '-f', 'null', '/dev/null' ],
+					'-af', f'loudnorm={opts}print_format=json', '-f', 'null', '/dev/null' ],
 				env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
 			norm_info, ffmpeg_stderr = list(), list()
 			while True:
@@ -522,7 +548,7 @@ class AudioConv:
 			log.debug('[{!r}] detected audio normalization info: {!r}', job.name, norm_info)
 			if not norm_info:
 				raise AudioConvError( 'ffmpeg failed to produce'
-					' normalization info json (source file: {!r})'.format(job.name) )
+					f' normalization info json (source file: {job.name!r})' )
 			norm_info = json.loads(norm_info)
 			with open(job.tmp_file('loudnorm.json'), 'w') as dst:
 				json.dump(norm_info, dst, sort_keys=True, indent=2, separators=(',', ': '))
@@ -533,7 +559,7 @@ class AudioConv:
 			).format(*op.itemgetter(
 				'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
 		await job.ffmpeg( 'to-ogg [3/3]', [ '-i', job.tmp_file('src.wav'), '-af',
-				'loudnorm={}{}'.format(opts, opts_ext), '-ar', '48k', '-f', 'ogg', job.dst ]).run()
+				f'loudnorm={opts}{opts_ext}', '-ar', '48k', '-f', 'ogg', str(job.dst) ]).run()
 
 
 def parse_pos_spec(pos):
@@ -559,8 +585,14 @@ def main(args=None):
 				' will be treated as URLs (to be processed with youtube-dl first).')
 	group.add_argument('-x', '--remove-src', action='store_true',
 		help='Remove source file(s) on success of the whole operation.')
+	group.add_argument('-i', '--inplace', action='store_true',
+		help='Recursively (following symlinks) replace source files'
+				' with .ogg ones in the same dir(s) where they are found.'
+			' All "src" args must be paths.'
+			' Does not imply --remove-src (creates copies next to src files), unless specified.')
 	group.add_argument('-t', '--dst-dir', metavar='path',
-		help='Path to store resulting files in. Defaults to current one.')
+		help='Path to store resulting files in. Defaults to current one.'
+			' With --inplace also specified, full dst realpath will be re-created under this dir.')
 	group.add_argument('-y', '--ytdl-opts',
 		action='append', metavar='opts',
 		help='Extra opts for youtube-dl command.'
@@ -600,9 +632,20 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list(
-		(pathlib.Path(src).resolve() if os.path.exists(src) or ':' not in src else src)
+		(Path(src).resolve() if os.path.exists(src) or ':' not in src else src)
 		for src in opts.src )
-	if opts.dst_dir: os.chdir(opts.dst_dir)
+
+	if opts.inplace:
+		src_list, src_list_old = list(), src_list
+		for p in src_list_old:
+			if not isinstance(p, Path):
+				parser.error(f'Source arg is not a path (with --inplace specified): {p}')
+			if p.is_dir():
+				for root, dirs, files, dir_fd in os.fwalk(p, follow_symlinks=True):
+					root = Path(root)
+					for p in files: src_list.append(root / p)
+		os.chdir(opts.dst_dir or '/')
+	elif opts.dst_dir: os.chdir(opts.dst_dir)
 	start, length, chunks = map(parse_pos_spec, [opts.start, opts.length, opts.chunks])
 
 	ytdl_opts = opts.ytdl_opts or list()
@@ -635,10 +678,10 @@ def main(args=None):
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
-			AudioConv.run_async( loop, src_list, start=start, length=length, chunks=chunks,
+			AudioConv.run_async(
+				loop, src_list, start=start, length=length, chunks=chunks,
+				inplace=opts.inplace, remove_src=opts.remove_src,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts, ytdl_opts=ytdl_opts ) )
-	if success and opts.remove_src:
-		for src in src_list: os.unlink(src)
 
 	return int(not success)
 
