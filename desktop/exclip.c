@@ -306,11 +306,12 @@ void update_selection(
 				&pty, target, (unsigned char *) buff, buff_len, &sel_pos, &context );
 
 			if (evt.type == SelectionClear) clear = 1;
-			if ((context == XCLIB_XCIN_NONE) && clear) break;
+			if ((context == XCLIB_XCIN_NONE) && clear) goto exit; // no longer needed
 			if (finished) break;
 		}
 		dloop++; }
 
+exit:
 	dpy_close();
 	exit(0);
 }
