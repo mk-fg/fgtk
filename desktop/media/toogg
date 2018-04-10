@@ -350,7 +350,10 @@ class AudioConv:
 				else:
 					if isinstance(src, AudioConvChunk):
 						dst, start, length = src.dst, src.start, src.duration
-					else: dst = src.name.rsplit('.', 1)[0] + '.ogg'
+					else:
+						dst_base = src.name.rsplit('.', 1)[0]
+						dst = dst_base + '.ogg'
+						if pathlib.Path(dst).resolve() == src.resolve(): dst = dst_base + '.copy.ogg'
 					conv = self.conv_src(src, dst, start, length)
 
 				log.debug('Scheduling new conv-job for src: {}', src)
