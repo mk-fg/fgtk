@@ -341,7 +341,7 @@ class AudioConv:
 					start, length = start or 0, src.duration
 					length_total = length - start
 					dst_dir = ( dst_name if not self.inplace
-						else str(src.parent.resolve()).strip(os.sep) + f'/{dst_name}' )
+						else (str(src.parent.resolve()).strip(os.sep) + f'/{dst_name}') )
 					dst_dir = AudioConvChunkDir(dst_dir, src, src_chunks, cleanup=src.cleanup)
 					dst_dir.mkdir(parents=True, exist_ok=True)
 					while length > 0:
@@ -396,8 +396,10 @@ class AudioConv:
 				if len(dst_set) == 1:
 					dst = list(dst_set)[0]
 					if dst.resolve() == src.resolve(): src = None
-					elif dst.parent.resolve() == src.parent.resolve():
-						os.rename(dst, src)
+					elif ( self.inplace
+							and dst.parent.resolve() == src.parent.resolve()
+							and src.name.lower().endswith('.ogg') ):
+						os.rename(dst, src) # special case for .copyX.ogg files in the same dir
 						src = None
 				if src: os.unlink(src)
 
