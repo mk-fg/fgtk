@@ -17,21 +17,41 @@ def main(args=None):
 		help='Enables "universal newlines" translation and strips last \\n from each line.'
 			' Whether this is sufficient for mismatched line endings'
 				' depends on how aggressive that mode is in converting newlines.')
+	parser.add_argument('-c', '--convert', metavar='(enc-src:)enc-dst(+opts)',
+		help='Instead of repr-output, convert encoding'
+				' from enc-src (default=utf-8) to enc-dst (utf-8) and output the result.'
+			' [enc-src:]enc-dst spec can be followed by +r to output windows \\r\\n newlines.'
+			' Allows to use stuff like utf-8-sig or any other codec supported by python.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	file_list = opts.file
+	file_list, file_nl = opts.file, None
 	if not file_list: file_list = ['-']
-	file_mode = 'r' if not opts.binary else 'rb'
-	file_nl = ('' if not opts.hide_newlines else None) if not opts.binary else None
-	repr_start = 1 if not opts.binary else 2 # b'' vs ''
-	line_end_hide = ('\n' if not opts.binary else b'\n') if opts.hide_newlines else None
 
-	newline='' if not opts.hide_newlines else None
+	if opts.convert:
+		file_mode = 'rb'
+		file_dst = open(sys.stdout.fileno(), 'wb')
+		enc_src, enc_dst, enc_opts = 'utf-8', opts.convert, ''
+		if ':' in enc_dst: enc_src, enc_dst = enc_dst.split(':', 1)
+		if '+' in enc_dst: enc_dst, enc_opts = enc_dst.split('+', 1)
+		if not enc_src: enc_src = 'utf-8'
+		if not enc_dst: enc_dst = 'utf-8'
+		assert not set(enc_opts).difference('r'), enc_opts
+	else:
+		file_mode = 'r' if not opts.binary else 'rb'
+		repr_start = 1 if not opts.binary else 2 # b'' vs ''
+		file_nl = ('' if not opts.hide_newlines else None) if not opts.binary else None
+		line_end_hide = ('\n' if not opts.binary else b'\n') if opts.hide_newlines else None
+		newline='' if not opts.hide_newlines else None
 
 	for p in file_list:
 		with open(p if p != '-' else sys.stdin.fileno(), mode=file_mode, newline=file_nl) as src:
-			for line in src:
-				if line_end_hide and line.endswith(line_end_hide): line = line[:-1]
-				print(repr(line)[repr_start:-1])
+			if opts.convert:
+				text = src.read().decode(enc_src).encode(enc_dst)
+				if 'r' in enc_opts: text = text.replace(b'\n', b'\r\n')
+				file_dst.write(text)
+			else:
+				for line in src:
+					if line_end_hide and line.endswith(line_end_hide): line = line[:-1]
+					print(repr(line)[repr_start:-1])
 
 if __name__ == '__main__': sys.exit(main())
