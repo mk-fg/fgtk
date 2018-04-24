@@ -306,7 +306,7 @@ for splitting fields and sorting by one of these (example: ``pysort -d: -f2 -n
 repr
 ''''
 
-Even needed to check if file has newlines on BOM in it, yet every editor is
+Ever needed to check if file has newlines or BOM in it, yet every editor is
 user-friendly by default and hides these from actual file contents?
 
 One fix is hexdump or switching to binary mode, but these are usually terrible
@@ -319,6 +319,11 @@ you for anything it can interpret as char/codepoint or some neat escape code.
 
 Has opts for text/byte mode and stripping "universal newlines" (see newline= in
 built-in open() func).
+
+Can also do encoding/newline conversion via -c option, as iconv can't do BOM or
+newlines, and sometimes you just want "MS utf-8 mode" (``repr -c utf-8-sig+r``).
+Using that with +i flag as e.g. ``repr -c utf-8-sig+ri file1 file2 ...``
+converts encoding+newlines+BOM for files in-place at no extra hassle.
 
 color
 '''''

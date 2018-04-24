@@ -20,7 +20,8 @@ def main(args=None):
 	parser.add_argument('-c', '--convert', metavar='(enc-src:)enc-dst(+opts)',
 		help='Instead of repr-output, convert encoding'
 				' from enc-src (default=utf-8) to enc-dst (utf-8) and output the result.'
-			' [enc-src:]enc-dst spec can be followed by +r to output windows \\r\\n newlines.'
+			' [enc-src:]enc-dst spec can be followed by +r to output windows \\r\\n newlines,'
+				' and +i option to overwrite file in-place, same as sed -i would do.'
 			' Allows to use stuff like utf-8-sig or any other codec supported by python.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -29,13 +30,14 @@ def main(args=None):
 
 	if opts.convert:
 		file_mode = 'rb'
-		file_dst = open(sys.stdout.fileno(), 'wb')
 		enc_src, enc_dst, enc_opts = 'utf-8', opts.convert, ''
 		if ':' in enc_dst: enc_src, enc_dst = enc_dst.split(':', 1)
 		if '+' in enc_dst: enc_dst, enc_opts = enc_dst.split('+', 1)
 		if not enc_src: enc_src = 'utf-8'
 		if not enc_dst: enc_dst = 'utf-8'
-		assert not set(enc_opts).difference('r'), enc_opts
+		assert not set(enc_opts).difference('ri'),\
+			f'Not all encoding options recognized: {enc_opts}'
+		file_dst = open(sys.stdout.fileno(), 'wb')
 	else:
 		file_mode = 'r' if not opts.binary else 'rb'
 		repr_start = 1 if not opts.binary else 2 # b'' vs ''
@@ -44,11 +46,14 @@ def main(args=None):
 		newline='' if not opts.hide_newlines else None
 
 	for p in file_list:
-		with open(p if p != '-' else sys.stdin.fileno(), mode=file_mode, newline=file_nl) as src:
+		p_file = p != '-'
+		with open(p if p_file else sys.stdin.fileno(), mode=file_mode, newline=file_nl) as src:
 			if opts.convert:
 				text = src.read().decode(enc_src).encode(enc_dst)
 				if 'r' in enc_opts: text = text.replace(b'\n', b'\r\n')
-				file_dst.write(text)
+				if 'i' in enc_opts and p_file:
+					with open(p, 'wb') as dst: dst.write(text)
+				else: file_dst.write(text)
 			else:
 				for line in src:
 					if line_end_hide and line.endswith(line_end_hide): line = line[:-1]
