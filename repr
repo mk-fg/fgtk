@@ -17,9 +17,12 @@ def main(args=None):
 		help='Enables "universal newlines" translation and strips last \\n from each line.'
 			' Whether this is sufficient for mismatched line endings'
 				' depends on how aggressive that mode is in converting newlines.')
-	parser.add_argument('-c', '--convert', metavar='(enc-src:)enc-dst(+opts)',
+	parser.add_argument('-x', '--error-replace', action='store_true',
+		help='When decoding stuff (non-binary mode, convert), replace non-decodable chars.')
+	parser.add_argument('-c', '--convert',
+		const='utf-8', nargs='?', metavar='(enc-src:)enc-dst(+opts)',
 		help='Instead of repr-output, convert encoding'
-				' from enc-src (default=utf-8) to enc-dst (utf-8) and output the result.'
+				' from enc-src (default=utf-8-sig) to enc-dst (utf-8) and output the result.'
 			' [enc-src:]enc-dst spec can be followed by +r to output windows \\r\\n newlines,'
 				' and +i option to overwrite file in-place, same as sed -i would do.'
 			' Allows to use stuff like utf-8-sig or any other codec supported by python.')
@@ -30,26 +33,31 @@ def main(args=None):
 
 	if opts.convert:
 		file_mode = 'rb'
-		enc_src, enc_dst, enc_opts = 'utf-8', opts.convert, ''
+		enc_src, enc_dst, enc_opts = 'utf-8-sig', opts.convert, ''
 		if ':' in enc_dst: enc_src, enc_dst = enc_dst.split(':', 1)
 		if '+' in enc_dst: enc_dst, enc_opts = enc_dst.split('+', 1)
-		if not enc_src: enc_src = 'utf-8'
+		if not enc_src: enc_src = 'utf-8-sig'
 		if not enc_dst: enc_dst = 'utf-8'
 		assert not set(enc_opts).difference('ri'),\
 			f'Not all encoding options recognized: {enc_opts}'
 		file_dst = open(sys.stdout.fileno(), 'wb')
+		enc, dec_errors = dict(), 'strict' if not opts.error_replace else 'replace'
 	else:
 		file_mode = 'r' if not opts.binary else 'rb'
 		repr_start = 1 if not opts.binary else 2 # b'' vs ''
 		file_nl = ('' if not opts.hide_newlines else None) if not opts.binary else None
 		line_end_hide = ('\n' if not opts.binary else b'\n') if opts.hide_newlines else None
 		newline='' if not opts.hide_newlines else None
+		enc = dict(encoding='utf-8-sig', errors='replace') if opts.error_replace else dict()
 
 	for p in file_list:
 		p_file = p != '-'
-		with open(p if p_file else sys.stdin.fileno(), mode=file_mode, newline=file_nl) as src:
+		with open(
+				p if p_file else sys.stdin.fileno(),
+				mode=file_mode, newline=file_nl, **enc) as src:
 			if opts.convert:
-				text = src.read().decode(enc_src).encode(enc_dst)
+				text = src.read().decode(enc_src, dec_errors).encode(enc_dst)
+				while b'\r\n' in text: text = text.replace(b'\r\n', b'\n')
 				if 'r' in enc_opts: text = text.replace(b'\n', b'\r\n')
 				if 'i' in enc_opts and p_file:
 					with open(p, 'wb') as dst: dst.write(text)
