@@ -2753,6 +2753,17 @@ Python3, uses dbus-python module and its glib eventloop.
 .. _wpa_supplicant: https://w1.fi/wpa_supplicant/
 .. _hostapd: https://w1.fi/hostapd/
 
+mem-search-replace
+^^^^^^^^^^^^^^^^^^
+
+Unfinished simple python3 script to search/replace memory of a process via
+process_vm_readv / process_vm_writev calls while it's running.
+
+Useful for hacks to update stuff in running binary apps without having to
+restart or disrupt them in any way, but found that this approach was too tedious
+in my specific case due to how stuff is stored there, so didn't bother with
+process_vm_writev part.
+
 
 License (WTFPL)
 ---------------

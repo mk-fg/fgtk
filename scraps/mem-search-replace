@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+
+# import resource, socket, struct, ctypes as ct
+import ctypes as ct
+import os, sys, re
+
+
+p_err = lambda tpl,*a,**k: print(tpl.format(*a, **k), file=sys.stderr)
+
+class iovec(ct.Structure):
+	_fields_ = [('base', ct.c_void_p), ('len', ct.c_size_t)]
+
+pid_t = ct.c_int
+
+as_void = lambda buff: ct.cast(buff, ct.c_void_p)
+def errno_check(chk=lambda v: bool(v)):
+	def _check(res, func=None, args=None):
+		if not chk(res):
+			errno_ = ct.get_errno()
+			raise OSError(errno_, os.strerror(errno_))
+		return res
+	return _check
+
+
+
+libc = ct.CDLL('libc.so.6', use_errno=True)
+
+# ssize_t process_vm_readv(
+#  pid_t pid,
+#  const struct iovec *local_iov,
+#  unsigned long liovcnt,
+#  const struct iovec *remote_iov,
+#  unsigned long riovcnt,
+#  unsigned long flags);
+# iov_remote -> iov_local
+
+libc.process_vm_readv.restype = ct.c_ssize_t
+libc.process_vm_readv.errcheck = errno_check(lambda v: v >= 0)
+libc.process_vm_readv.argtypes = [
+	pid_t, ct.POINTER(iovec), ct.c_ulong,
+	ct.POINTER(iovec), ct.c_ulong, ct.c_ulong ]
+
+def proc_mem_iter(pid, bs=10*2**20, vm_read=libc.process_vm_readv):
+	buff = ct.create_string_buffer(bs)
+	iov_dst = iovec(as_void(buff), bs)
+	iov_src = iovec(0, 0)
+	iov_dst_n, iov_src_n, flags = 1, 1, 0
+
+	with open(f'/proc/{pid}/maps', 'r') as src: maps = src.readlines()
+	for line in maps:
+		m = re.match( r'([0-9A-Fa-f]+)-([0-9A-Fa-f]+)'
+			r' ([-r][-w])\S+ (\S+) (\S+) (\S+)(\s+\S+)?', line )
+		addr1, addr2, access, offset, dev, inode = m.groups()[:6]
+		src = m.group(7)
+		checks = [ 'w' in access,
+			not src or src.lstrip()[0] != '/',
+			offset == '00000000', dev == '00:00', inode == '0' ]
+		if not all(checks): continue
+		addr1, addr2 = (int(a, 16) for a in [addr1, addr2])
+
+		while True:
+			n_max = min(bs, addr2 - addr1)
+			if n_max <= 0: break
+			iov_src.base = as_void(addr1)
+			iov_src.len = n_max
+			try: n = libc.process_vm_readv(
+				pid, iov_dst, iov_dst_n, iov_src, iov_src_n, flags )
+			except: break
+			assert n > 0, [n, n_max]
+			yield [addr1, buff.raw[:n]]
+			addr1 += n
+
+
+# ssize_t process_vm_writev(
+#  pid_t pid,
+#  const struct iovec *local_iov,
+#  unsigned long liovcnt,
+#  const struct iovec *remote_iov,
+#  unsigned long riovcnt,
+#  unsigned long flags);
+# iov_local -> iov_remote
+
+libc.process_vm_writev.restype = ct.c_ssize_t
+libc.process_vm_writev.errcheck = errno_check(lambda v: v >= 0)
+libc.process_vm_writev.argtypes = [
+	pid_t, ct.POINTER(iovec), ct.c_ulong,
+	ct.POINTER(iovec), ct.c_ulong, ct.c_ulong ]
+
+def proc_mem_poke(pid, addr, buff):
+	raise NotImplementedError
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Run search and replace on process memory.')
+	parser.add_argument('pid', type=int, help='Process id to scan.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	for addr, buff in proc_mem_iter(opts.pid):
+		n_mib = len(buff) / 2**20
+		print(f'{addr:x} {n_mib:,.1f} MiB')
