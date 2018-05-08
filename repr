@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 
+import itertools as it, operator as op, functools as ft
 import os, sys
 
 
 def main(args=None):
-	import argparse
+	import argparse, textwrap
+
+	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join(indent + line for line in text.splitlines(keepends=True))
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).splitlines()
+
 	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
 		description='Run python repr() to stdout on every (text) line of an input file.')
 	parser.add_argument('file', nargs='*',
 		help='Input file path(s). Stdin is used if none specified or in place of "-".')
@@ -20,12 +34,16 @@ def main(args=None):
 	parser.add_argument('-x', '--error-replace', action='store_true',
 		help='When decoding stuff (non-binary mode, convert), replace non-decodable chars.')
 	parser.add_argument('-c', '--convert',
-		const='utf-8', nargs='?', metavar='(enc-src:)enc-dst(+opts)',
-		help='Instead of repr-output, convert encoding'
-				' from enc-src (default=utf-8-sig) to enc-dst (utf-8) and output the result.'
-			' [enc-src:]enc-dst spec can be followed by +r to output windows \\r\\n newlines,'
-				' and +i option to overwrite file in-place, same as sed -i would do.'
-			' Allows to use stuff like utf-8-sig or any other codec supported by python.')
+		const='utf-8', nargs='?', metavar='((enc-src:)enc-dst)(+opts)',
+		help='''
+			Instead of repr-output, convert encoding
+				from enc-src (default=utf-8-sig) to enc-dst (utf-8) and output the result.
+			[[enc-src:]enc-dst] spec can be followed by + and any of the following options:
+				+r - output windows \\r\\n newlines,
+				+i - overwrite file in-place, same as sed -i would do
+				+t - trim whitespace from line endings, and ensure final newline
+			Examples: -c utf-8-sig+ri, -c +t, -c cp1251:utf-8+it
+			Allows to use stuff like utf-8-sig or any other codec supported by python.''')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	file_list, file_nl = opts.file, None
@@ -38,9 +56,9 @@ def main(args=None):
 		if '+' in enc_dst: enc_dst, enc_opts = enc_dst.split('+', 1)
 		if not enc_src: enc_src = 'utf-8-sig'
 		if not enc_dst: enc_dst = 'utf-8'
-		assert not set(enc_opts).difference('ri'),\
+		assert not set(enc_opts).difference('rit'),\
 			f'Not all encoding options recognized: {enc_opts}'
-		file_dst = open(sys.stdout.fileno(), 'wb')
+		dst_stdout = open(sys.stdout.fileno(), 'wb')
 		enc, dec_errors = dict(), 'strict' if not opts.error_replace else 'replace'
 	else:
 		file_mode = 'r' if not opts.binary else 'rb'
@@ -58,10 +76,13 @@ def main(args=None):
 			if opts.convert:
 				text = src.read().decode(enc_src, dec_errors).encode(enc_dst)
 				while b'\r\n' in text: text = text.replace(b'\r\n', b'\n')
+				if 't' in enc_opts:
+					text = b'\n'.join(it.chain(
+						(line.rstrip() for line in text.rstrip().split(b'\n')), [b''] ))
 				if 'r' in enc_opts: text = text.replace(b'\n', b'\r\n')
 				if 'i' in enc_opts and p_file:
 					with open(p, 'wb') as dst: dst.write(text)
-				else: file_dst.write(text)
+				else: dst_stdout.write(text)
 			else:
 				for line in src:
 					if line_end_hide and line.endswith(line_end_hide): line = line[:-1]
