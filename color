@@ -1,43 +1,58 @@
 #!/bin/bash
 
-if [[ "$1" = '-h' ]]; then
- echo >&2 "Usage: $0 COLOR [BOLD] [-]"
- exit 1
-fi
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin COLOR [BOLD] [ '-' | 'p' ]"
+	echo >&2
+	echo >&2 '"BOLD" can be passed as any non-empty arg.'
+	echo >&2 'Using "-" arg at the end will turn on follow-mode, wrapping each'
+	echo >&2 ' stdin line in color-on/color-off markers, instead of using these only once.'
+	echo >&2 'Specifying "p" arg at the end will print color code escaped for use in a bash script.'
+	echo >&2
+	exit ${1:-0}
+}
+[[ "$1" = -h || "$1" = --help ]] && usage
+[[ $# -ge 1 && $# -le 3 ]] || { echo >&2 -e "\nERROR: invalid number of arguments\n"; usage 1; }
 
 case "$1" in
- black) CC=30;;
- red|r) CC=31;;
- green|g) CC=32;;
- yellow|y) CC=33;;
- dark_blue) CC=34;;
- magneta|m) CC=35;;
- blue|b) CC=36;;
- white|w) CC=37;;
- *) CC=;;
+	black) CC=30;;
+	red|r) CC=31;;
+	green|g) CC=32;;
+	yellow|y) CC=33;;
+	dark_blue) CC=34;;
+	magneta|m) CC=35;;
+	blue|b) CC=36;;
+	white|w) CC=37;;
+	*) CC=;;
 esac
 shift
 
-FOLLOW=
-CB=
+CB= follow= print=
 while [[ -n "$1" ]]; do
- case "$1" in
-  -) FOLLOW=true;;
-  *) CB='1;'
- esac
- shift
+	case "$1" in
+		-) follow=t;;
+		p) print=t;;
+		*) CB='1;';;
+	esac
+	shift
 done
+# echo "-$CC -$CB -$follow -$print"
 
 CM="\\033[${CB}${CC}m"
 CT="\\033[0m"
 unset CC CB
 
-if [[ -z "$FOLLOW" ]]
+if [[ -n "$print" ]]; then
+	echo "echo -e \"\\$CM\" my stuff \"\\$CT\""
+	exit 0
+fi
+
+if [[ -z "$follow" ]]
 then echo -ne "$CM"
 else
- while read line; do
-  echo -ne "$CM"
-  echo "$line"
-  echo -ne "$CT"
- done
+	while read line; do
+		echo -ne "$CM"
+		echo "$line"
+		echo -ne "$CT"
+	done
 fi

@@ -337,6 +337,8 @@ terminal::
   % t -f /var/log/app2.log | color green - &
   % t -f /var/log/app2.log | color blue - &
 
+Or to get color-escape-magic for your bash script: ``color red bold p``
+
 resolve-hostnames
 '''''''''''''''''
 
