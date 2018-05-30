@@ -40,6 +40,11 @@ def color_rgba(c, opacity=255):
 	r,g,b,a = (int(''.join(v), 16) for v in it_adjacent(cs, 2))
 	return 'rgba({},{},{},{})'.format(r,g,b,a / 255.0)
 
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
 
 class BlindsConf:
 
@@ -138,20 +143,26 @@ class BlindsWindow(Gtk.ApplicationWindow):
 		if ev_done:
 			if ev_done in self.ev_discard: return
 			self.ev_discard.add(ev_done)
-		s = w.get_screen()
-		sw, sh = s.width(), s.height()
+		s, sg = w.get_screen(), adict(x=0, y=0, w=0, h=0)
+		geom = dict(S=sg)
+		for n in range(s.get_n_monitors()):
+			rct = s.get_monitor_geometry(n)
+			mg = geom[f'M{n+1}'] = adict(x=rct.x, y=rct.y, w=rct.width, h=rct.height)
+			sg.w, sg.h = max(sg.w, mg.x + mg.w), max(sg.h, mg.y + mg.h)
 		ww = wh = None
 		if self.conf.win_w and self.conf.win_h:
-			get_val = lambda v,sv: int(v) if v != 'S' else sv
-			ww, wh = get_val(self.conf.win_w, sw), get_val(self.conf.win_h, sh)
+			get_val = lambda v,k: int(v) if v.isdigit() else geom[v][k]
+			ww, wh = get_val(self.conf.win_w, 'w'), get_val(self.conf.win_h, 'h')
 			w.resize(ww, wh)
 			self.log.debug('win-resize: {} {}', ww, wh)
 		if self.conf.win_x or self.conf.win_y:
 			if not (ww or wh): ww, wh = w.get_size()
 			wx, wy = w.get_position()
-			get_pos = lambda v,sv,wv: int(v[1:]) if v[0] != '-' else (sv - wv - int(v[1:]))
-			if self.conf.win_x: wx = get_pos(self.conf.win_x, sw, ww)
-			if self.conf.win_y: wy = get_pos(self.conf.win_y, sh, wh)
+			get_pos = lambda v,k,wv: (
+				(int(v[1:]) if v[0] != '-' else (sg[k] - wv - int(v[1:])))
+				if v[0] in '+-' else geom[v][k] )
+			if self.conf.win_x: wx = get_pos(self.conf.win_x, 'x', ww)
+			if self.conf.win_y: wy = get_pos(self.conf.win_y, 'y', wh)
 			self.log.debug('win-move: {} {}', wx, wy)
 			w.move(wx, wy)
 
@@ -192,65 +203,96 @@ def main(args=None, conf=None):
 	if not conf: conf = BlindsConf()
 
 	import argparse
+
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join(indent + line for line in text.splitlines(keepends=True))
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).replace('\t', '  ').splitlines()
+
 	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
 		description='Create semi-transparent window just to cover stuff.')
 
 	group = parser.add_argument_group('Controls')
 	group.add_argument('-q', '--key-quit',
 		metavar='key', action='append',
-		help='Keys or combos to make app exit, when focused.'
-			' Will override defaults if specified. Override to e.g. non-existent "xxx" key to disable.'
-			' See -d/--debug output for list of pressed keys, as the app sees them.'
-			' Can be used more than once. Default: {}.'.format(', '.join(conf.quit_keys)) )
+		help='''
+			Keys or combos to make app exit, when focused.
+			Will override defaults if specified. Override to e.g. non-existent "xxx" key to disable.
+			See -d/--debug output for list of pressed keys, as the app sees them.
+			Can be used more than once. Default: {}.'''.format(', '.join(conf.quit_keys)))
 
 	group = parser.add_argument_group('Appearance')
 	group.add_argument('-c', '--color',
 		metavar='hex', default='#022710',
-		help='Hex color for window background, e.g. #6ad468.'
-			' Can have alpha component at the end, e.g. #6ad46870. Default: %(default)s.')
+		help='''
+			Hex color for window background, example: #6ad468.
+			Can have alpha component at the end, e.g. #6ad46870.
+			Can use shorter 3/4-char forms (e.g. #fff), leading sharp character is optional.
+			Default: %(default)s.''')
 	group.add_argument('-o', '--opacity',
 		type=float, metavar='0-1.0', default=0.5,
-		help='Opacity of the window - float value in 0-1.0'
-				' range, with 0 being fully-transparent and 1.0 fully opaque.'
-			' Only used if -c/--color does not have alpha component in it.'
-			' Should only have any effect with compositing Window Manager.'
-			' Default: %(default)s.')
+		help='''
+			Opacity of the window - float value in 0-1.0 range,
+				with 0 being fully-transparent and 1.0 fully opaque.
+			Only used if -c/--color does not have alpha component in it.
+			Should only have any effect with compositing Window Manager.
+			Default: %(default)s.''')
 
 	group = parser.add_argument_group('Window')
 	group.add_argument('-p', '--pos', metavar='(WxH)(+X)(+Y)',
-		help='Set window size and/or position hints for WM (usually followed).'
-			' W/H values can be special "S" to use screen size, e.g. SxS is "fullscreen".'
-			' X/Y offsets must be specified in that order, if at all, with positive'
-				' values (prefixed with "+") meaning offset from top-left corner'
-				' of the screen, and negative - bottom-right.'
-			' If not specified (default), all are left for Window Manager to decide/remember.'
-			' Examples: 800x600, -0+0 (move to top-right corner), 200xS+0.')
+		help='''
+			Set window size and/or position hints for WM (usually followed).
+			W/H values can be special "S" to use screen size,
+				e.g. "SxS" (or just "S") is "fullscreen".
+			X/Y offsets must be specified in that order, if at all, with positive
+				values (prefixed with "+") meaning offset from top-left corner
+				of the screen, and negative - bottom-right.
+			Special values like "M1" (or M2, M3, etc) can
+				be used to specify e.g. monitor-1 width/heigth/offsets,
+				and if size is just "M1" or "M2", then x/y offsets default to that monitor too.
+			If not specified (default), all are left for Window Manager to decide/remember.
+			Examples: 800x600, -0+0 (move to top-right corner),
+				S (full screen), 200xS+0, M2 (full monitor 2), M2+M1, M2x500+M1+524.
+			"slop" tool - https://github.com/naelstrof/slop - can be used
+				used to get this value interactively via mouse selection (e.g. "-p $(slop)").''')
 	group.add_argument('-x', '--wm-hints', metavar='(+|-)hint(,...)',
-		help=( 'Comma or space-separated list of WM hints to set/unset for the window.'
-				' All of these can have boolean yes/no or unspecified/default values.'
-				' Specifying hint name in the list will have it explicity set (i.e. "yes/true" value),'
-					' and preceding name with "-" will have it explicitly unset instead ("no/false").'
-				' List of recognized hints: [ {} ].'
-				' Example: keep_top -decorated skip_taskbar skip_pager -accept_focus.' )\
-			.format(', '.join(conf.wm_hints_all)))
+		help='''
+			Comma or space-separated list of WM hints to set/unset for the window.
+			All of these can have boolean yes/no or unspecified/default values.
+			Specifying hint name in the list will have it explicity set (i.e. "yes/true" value),
+				and preceding name with "-" will have it explicitly unset instead ("no/false").
+			List of recognized hints:
+				{}.
+			Example: keep_top -decorated skip_taskbar skip_pager -accept_focus.'''\
+			.format('\n\t\t\t\t'.join(textwrap.wrap(', '.join(conf.wm_hints_all), 75))))
 	group.add_argument('-t', '--wm-type-hints', metavar='hint(,...)',
-		help=( 'Comma or space-separated list of window type hints for WM.'
-				' Similar to --wm-hints in general, but are'
-					' combined separately to set window type hint value.'
-				' List of recognized type-hints: [ {} ], all are unset by default.'
-				' Probably does not make sense to use multiple of these at once.' )\
-			.format(', '.join(conf.wm_type_hints_all)))
+		help='''
+			Comma or space-separated list of window type hints for WM.
+			Similar to --wm-hints in general, but are
+				combined separately to set window type hint value.
+			List of recognized type-hints (all unset by default):
+				{}.
+			Probably does not make sense to use multiple of these at once.'''\
+			.format('\n\t\t\t\t'.join(textwrap.wrap(', '.join(conf.wm_type_hints_all), 75))))
 	group.add_argument('-i', '--icon-name', metavar='icon',
-		help='Name of the XDG icon to use for the window.'
-			' Can be icon from a theme, one of the default gtk ones, and such.'
-			' See XDG standards for how this name gets resolved into actual file path.'
-			' Example: image-x-generic.')
+		help='''
+			Name of the XDG icon to use for the window.
+			Can be icon from a theme, one of the default gtk ones, and such.
+			See XDG standards for how this name gets resolved into actual file path.
+			Example: image-x-generic.''')
 
 	group = parser.add_argument_group('Misc / debug')
 	group.add_argument('-n', '--no-register-session', action='store_true',
-		help='Do not try register app with any session manager.'
-			' Can be used to get rid of Gtk-WARNING messages'
-				' about these and to avoid using dbus, but not sure how/if it actually works.')
+		help='''
+			Do not try register app with any session manager.
+			Can be used to get rid of Gtk-WARNING messages
+				about these and to avoid using dbus, but not sure how/if it actually works.''')
 	group.add_argument('--dump-css', action='store_true',
 		help='Print css that is used for windows by default and exit.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -268,12 +310,18 @@ def main(args=None, conf=None):
 	if opts.dump_css: return print(conf.win_css.replace('\t', '  '), end='')
 
 	if opts.pos:
-		m = re.search(r'^((?:\d+|S)x(?:\d+|S))?([-+]\d+)?([-+]\d+)?$', opts.pos)
-		if not m: parser.error('Invalid size/position spec: {!r}', opts.pos)
+		m = re.search(
+			r'^((?:M?\d+|S)(?:x(?:M?\d+|S))?)?'
+			r'([-+]M?\d+)?([-+]M?\d+)?$', opts.pos )
+		if not m: parser.error(f'Invalid size/position spec: {opts.pos!r}')
 		size, x, y = m.groups()
-		if size: conf.win_w, conf.win_h = size.split('x', 1)
+		size_fs = size if 'x' not in size else None
+		if size:
+			if size_fs: size = f'{size}x{size}'
+			conf.win_w, conf.win_h = size.split('x', 1)
 		if x: conf.win_x = x
 		if y: conf.win_y = y
+		if size_fs and not (x or y): conf.win_x = conf.win_y = size_fs
 	if opts.wm_hints:
 		conf.wm_hints = dict(
 			(hint.lstrip('+-'), not hint.startswith('-'))
