@@ -219,7 +219,7 @@ let pos = {
 	left: 40, right: 40, top: 10, bottom: 20, gap: 20,
 	w_svg: document.getElementById('chart').offsetWidth,
 	h_focus: 400, h_context: 100, h_hist: 200,
-	ax_label_top: 15, ax_label_horiz: 10 }
+	ax_label_top: 20, ax_label_horiz: -5 }
 pos.w = pos.w_svg - pos.left - pos.right
 pos.w_hist = (pos.w - pos.gap) / 2
 pos.h = pos.h_focus + pos.h_context + pos.gap
@@ -298,7 +298,7 @@ let chart_init = (ds) => {
 		.attr('transform',
 			`translate(${0 - pos.ax_label_horiz},${pos.h_focus + pos.ax_label_top})` )
 		.attr('text-anchor', 'end')
-		.style('fill', color.t).text('t, °C')
+		.style('fill', color.t).text('▣ t,°C')
 	focus.append('g')
 		.attr('class', 'y axis rh')
 		.attr('transform', `translate(${pos.w},0)`)
@@ -306,7 +306,7 @@ let chart_init = (ds) => {
 		.attr('transform',
 			`translate(${pos.w + pos.ax_label_horiz},${pos.h_focus + pos.ax_label_top})` )
 		.attr('text-anchor', 'start')
-		.style('fill', color.rh).text('%RH')
+		.style('fill', color.rh).text('%RH ▣')
 	focus.append('g').attr('class', 'x grid')
 	focus.append('g').attr('class', 'y grid rh')
 
