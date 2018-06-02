@@ -545,7 +545,7 @@ let handle_uploads = ev => {
 					ev.target.result,
 					d => {
 						try {
-							let [ts, t, rh] = d
+							let [ts, t, rh] = d.map(v => v.replace(/\0/g, ''))
 							if (!ts.match(/([-+]\d{2}:\d{2}|Z)$/)) ts += opts.ts_suffix
 							let row = {ts: d3.isoParse(ts), t: parseFloat(t), rh: parseFloat(rh)}
 							rows += 1
