@@ -544,11 +544,13 @@ let handle_uploads = ev => {
 				else d3.tsvParseRows(
 					ev.target.result,
 					d => {
-						let [ts, t, rh] = d
-						if (!ts.match(/([-+]\d{2}:\d{2}|Z)$/)) ts += opts.ts_suffix
-						let row = {ts: d3.isoParse(ts), t: parseFloat(t), rh: parseFloat(rh)}
-						rows += 1
-						data.set(row.ts.getTime(), row) })
+						try {
+							let [ts, t, rh] = d
+							if (!ts.match(/([-+]\d{2}:\d{2}|Z)$/)) ts += opts.ts_suffix
+							let row = {ts: d3.isoParse(ts), t: parseFloat(t), rh: parseFloat(rh)}
+							rows += 1
+							data.set(row.ts.getTime(), row) }
+						catch (err) { console.log(`Failed to parse tsv row from d3: ${d} - ${err}`) } })
 				if (rows > 0) res = `done (${repr_num_raw(rows)} rows)`
 				output_status.innerHTML = html_enc(res)
 				resolve()
