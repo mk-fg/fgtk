@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<meta charset='utf-8'>
+<style>
+
+body {
+	margin: 0 auto;
+	padding: 1em;
+	max-width: 1000px;
+}
+svg text { font: 15px 'Liberation Sans', 'Luxi Sans', sans-serif; }
+
+.axis text { fill: black; }
+.line { fill: none; stroke: steelblue; stroke-width: 1.5px; }
+
+.overlay { fill: none; pointer-events: all; }
+.focus circle { fill: none; stroke: steelblue; }
+.focus tspan { paint-order: stroke; stroke: white; stroke-width: 10px; }
+
+</style>
+<body>
+
+<!-- XXX: always use local copy -->
+<!-- <script src="d3.v4.min.js"></script> -->
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script>
+'use strict'
+window.onload = () => {
+
+
+// Basic d3 boilerplate
+
+let
+	margin = {top: 50, right: 100, bottom: 50, left: 100},
+	width = 960 - margin.left - margin.right,
+	height = 700 - margin.top - margin.bottom,
+	x = d3.scaleLinear().range([0, width]),
+	y = d3.scaleLinear().range([height, 0])
+
+let vis = d3.select('body')
+	.append('svg')
+		.attr('width', width + margin.left + margin.right)
+		.attr('height', height + margin.top + margin.bottom)
+	.append('g')
+		.attr('transform', `translate(${margin.left},${margin.top})`)
+
+
+// Data
+
+let data = [], offset = 0, offset_max = 3 * 3600 / 59
+
+while (offset <= offset_max) {
+	let chance = 0.05, chance_neg = 1 - chance,
+		state = !data.length ? chance_neg : data[data.length-1].state * chance_neg
+	data.push({offset: offset, state: state})
+	offset += 1
+}
+
+
+// Axes and chart
+
+let kx = 'offset', ky = 'state',
+	line = d3.line().x(d => x(d[kx])).y(d => y(d[ky]))
+
+x.domain(d3.extent(data, d => d[kx]))
+y.domain([0, 1])
+
+vis
+	.call(s => s.append('path').data([data]).attr('class', 'line') .attr('d', line))
+	.call( s => s
+		.append('g')
+			.attr('class', 'x axis').attr('transform', `translate(0,${height})`)
+			.call(d3.axisBottom(x))
+		.append('text')
+			.attr('transform', `translate(${width},0)`)
+			.attr('dx', '-1em').attr('dy', '3em')
+			.style('text-anchor', 'end').text(kx) )
+	.call( s => s
+		.append('g').attr('class', 'y axis').call(d3.axisLeft(y))
+		.append('text')
+			.attr('transform', 'rotate(-90)').attr('dx', '-1em').attr('dy', '-3em')
+			.style('text-anchor', 'end').text(ky) )
+
+
+// Focus data on mouseover
+
+let side = -1, // 1 or -1
+	x_bisect = d3.bisector(d => d[kx]).left,
+	y_format = d3.format(",.3f"),
+	focus = vis
+		.append('g').attr('class', 'focus').style('display', 'none')
+		.call(s => s.append('circle').attr('r', 4.5)),
+	focus_label = focus.append('text')
+		.attr('x', 10).attr('dy', '.3em')
+		.attr('text-anchor', side > 0 ? 'start' : 'end')
+
+vis.append('rect')
+	.attr('class', 'overlay').attr('width', width).attr('height', height)
+	.on('mouseover', (d, n, ns) => focus.style('display', null))
+	.on('mouseout', (d, n, ns) => focus.style('display', 'none'))
+	.on('mousemove', (d, n, ns) => {
+		let x0 = x.invert(d3.mouse(ns[n])[0]),
+			i = x_bisect(data, x0, 1), d0 = data[i-1], d1 = data[i]
+		d = x0 - d0[kx] > d1[kx] - x0 ? d1 : d0
+		focus.attr('transform', `translate(${x(d[kx])},${y(d[ky])})`)
+		focus_label.selectAll('tspan').call( s => s
+			.data([`${kx}: ${d[kx]}`, `${ky}: ${y_format(d[ky])}`])
+			.call(s => s.exit().remove())
+			.enter().append('tspan').attr('dy', '1.5em').attr('x', `${side}em`).merge(s).text(d => d) ) })
+
+
+}
+</script>
+</body>
