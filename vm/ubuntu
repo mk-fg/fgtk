@@ -16,8 +16,14 @@ video=( -nographic )
 fs=
 
 [[ "$1" = -i || "$1" = --img ]] && { img="$2"; shift; shift; }
-[[ "$1" = -g || "$1" = --graphic ]] && { video=( -vga std ); shift; }
 [[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
+
+[[ "$1" = -g || "$1" = --graphic ]] && {
+	video=( -vga std )
+	# video+=( -display gtk )
+	# video+=( -display vnc 0 )
+	shift
+}
 
 case "$1" in
 	d|dump)
@@ -63,11 +69,12 @@ EOF
 		cat >&2 <<EOF
 
 Cheatsheet for qemu-img:
-  qemu-img create -b cloudimg.server-16.04-amd64.qcow2 -f qcow2 cloudimg.server-16.04-amd64.qcow2.inc
-  qemu-img commit cloudimg.server-16.04-amd64.qcow2.inc && rm cloudimg.server-16.04-amd64.qcow2.inc
+  qemu-img create -f qcow2 install.qcow2 10G
+  qemu-img create -b install.qcow2 -f qcow2 install.qcow2.inc
+  qemu-img commit install.qcow2.inc && rm install.qcow2.inc
 
 Cheatsheet to init new cloudimg:
-  qemu-nbd -c /dev/nbd0 cloudimg.server-16.04-amd64.qcow2.inc && fsck -a /dev/nbd0 && mount /mnt/nbd
+  qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0 && mount /mnt/nbd
    && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
    && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
    && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
@@ -147,9 +154,10 @@ fs_opts=()
 qemu_opts=(
 	-name "$(basename "$0")"
 
-	-m 4096
+	-m 4096M
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
+	-usb -device usb-kbd -device usb-mouse
 	-net nic,macaddr=${vde_mac},name=vde
 	-net vde,sock="$vde_path"/link.sock
 	-k en-us
@@ -160,8 +168,9 @@ qemu_opts=(
 	"${video[@]}"
 	"${fs_opts[@]}"
 
-	# -cdrom ubuntu/ubuntu-12.04.4-desktop-i386.iso
 	-drive file=ubuntu/"$img".qcow2.inc,if=virtio,aio=native,cache=writeback,cache.direct=on
+	# -cdrom ubuntu/ubuntu-18.04-desktop-amd64.iso
+	# -drive id=disk,file=ubuntu/"$img".qcow2.inc,if=none -device ahci,id=ahci -device ide-drive,drive=disk,bus=ahci.0
 )
 
 ulimit -c 0
