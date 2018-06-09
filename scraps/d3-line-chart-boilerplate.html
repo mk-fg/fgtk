@@ -11,6 +11,8 @@ svg text { font: 15px 'Liberation Sans', 'Luxi Sans', sans-serif; }
 
 .axis text { fill: black; }
 .line { fill: none; stroke: steelblue; stroke-width: 1.5px; }
+.grid line { stroke: #ddd; }
+.grid .domain { stroke: none; }
 
 .overlay { fill: none; pointer-events: all; }
 .focus circle { fill: none; stroke: steelblue; }
@@ -66,6 +68,11 @@ y.domain([0, 1])
 
 vis
 	.call(s => s.append('path').data([data]).attr('class', 'line') .attr('d', line))
+	.call(s => {
+		s.append('g').attr('class', 'x grid').call(
+			d3.axisBottom(x).tickSize(height, 0).tickFormat('') )
+		s.append('g').attr('class', 'y grid').call(
+			d3.axisLeft(y).tickSize(-width, 0).tickFormat('') ) })
 	.call( s => s
 		.append('g')
 			.attr('class', 'x axis').attr('transform', `translate(0,${height})`)

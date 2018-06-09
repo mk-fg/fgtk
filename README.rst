@@ -2638,7 +2638,7 @@ d3-line-chart-boilerplate
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Boilerplate `d3.js`_ page for basic line chart to plot arbitrary JS function
-outputs or data array with mouseover datapoint tooltip.
+outputs or data array with axii, grid, mouseover datapoint tooltips and such.
 
 Useful when for a quick chart to figure out some data or function output,
 or make it into a useful non-static link to someone,
