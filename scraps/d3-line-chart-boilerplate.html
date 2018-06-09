@@ -22,12 +22,35 @@ svg text { font: 15px 'Liberation Sans', 'Luxi Sans', sans-serif; }
 </style>
 <body>
 
-<!-- XXX: always use local copy -->
-<!-- <script src='d3.v4.min.js'></script> -->
-<script src='https://d3js.org/d3.v4.min.js'></script>
+<!-- Always use local d3 copy -->
+<!-- <script src='https://d3js.org/d3.v4.min.js'></script> -->
+<script src='d3.v4.min.js'></script>
 <script>
+
+let d3js_url = 'https://d3js.org/d3.v4.min.js',
+	d3js_loaded = new Promise((resolve, reject) => {
+		if (window.d3) return resolve(window.d3)
+		let include = (url) => {
+			let req = new XMLHttpRequest()
+			req.open('GET', url)
+			req.onreadystatechange = d => {
+				if (req.status != 200 || req.readyState != 4) return
+				eval(req.responseText)
+				resolve(window.d3) }
+			req.send() }
+		console.log(`WARNING: loading d3 from ${d3js_url}`)
+		include(d3js_url) })
+
+window.onload = () => d3js_loaded.then((d3) => {
 'use strict'
-window.onload = () => {
+
+if (!d3) {
+	document.body.innerHTML = `
+		<h2>ERROR: failed to load d3.js library</h2>
+		<p>Check uMatrix/NoScript/adblocker setttings or download
+			<a href='${d3js_url}'>d3.v4.min.js</a> into same dir as this html.</p>`
+	return
+}
 
 
 // Data
@@ -126,6 +149,6 @@ vis.append('rect')
 			.enter().append('tspan').attr('dy', '1.5em').attr('x', `${side}em`).merge(s).text(d => d) ) })
 
 
-}
+})
 </script>
 </body>
