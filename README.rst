@@ -2138,7 +2138,7 @@ driver code, which (fortunately) isn't that complicated.
 
 Tool takes path to device and directory to operate on as arguments (see --help)
 and has -l/--list (simply list files, default), -s/--shuffle (shuffle
-operation), -r/--rename plus some other action-opts, and ``--debug --dry-run``
+operation), --rename plus some other action-opts, and ``--debug --dry-run``
 can be useful to check what script does without making any fs changes.
 
 One limitation is that it only works with FAT32 "vfat" fs type, which can be

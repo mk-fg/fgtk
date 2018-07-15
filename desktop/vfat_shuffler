@@ -443,47 +443,70 @@ def op_reorder(path, src, dry_run=False, **reorder_kws):
 
 
 def main(args=None):
-	import argparse
-	parser = argparse.ArgumentParser(
-		description='Raw FAT32 manipulation tool.'
-			' Simply lists files in specified directory by default.'
-			' Use options like -s/--shuffle and -r/--rename to specify other actions.')
+	import argparse, textwrap
 
-	parser.add_argument('dev', help='Path to FAT32 device.')
-	parser.add_argument('path',
+	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join(indent + line for line in text.splitlines(keepends=True))
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).splitlines()
+
+	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
+		description=dedent('''
+			Raw FAT32 manipulation tool.
+			Simply lists files in specified directory by default.
+			Use options like -s/--shuffle and --rename to specify other actions.'''))
+
+	group = parser.add_argument_group('Device and path')
+	group.add_argument('dev', help='Path to FAT32 device.')
+	group.add_argument('path',
 		help='File/directory to operate on. Must start from /, example: /some/my/dir')
 
-	parser.add_argument('-l', '--list', action='store_true',
-		help='List path without shuffling anything, in entry-order.'
-			' Default action, if no other options are specified.')
+	group = parser.add_argument_group('Operations')
+	group.add_argument('-l', '--list', action='store_true',
+		help='''
+			List path without shuffling anything, in entry-order.
+			Default action, if no other options are specified.''')
+	group.add_argument('-s', '--shuffle', action='store_true',
+		help='''
+			Shuffle entries in specified directory.'
+			This reads all direntries there and writes them back in randomized order.
+			Intended for stupid devices (e.g. mp3 players) which rely on that.''')
+	group.add_argument('-o', '--order', action='store_true',
+		help='''
+			Alpha-sort entries in specified directory.
+			Same idea as -s/--shuffle, but does the opposite ordering-wise.''')
+	group.add_argument('--rename', metavar='template',
+		help='''
+			Rename specified node (file/dir) according to the template.
+			Only changes utf-16 name in LFNs, as that is all modern OSes seem to care about.
+			Template is for python str.format. Example: {name}.bak''')
 
-	parser.add_argument('-s', '--shuffle', action='store_true',
-		help='Shuffle entries in specified directory.'
-			' This reads all direntries there and writes them back in randomized order.'
-			' Intended for stupid devices (e.g. mp3 players) which rely on that.')
-	parser.add_argument('-o', '--order', action='store_true',
-		help='Alpha-sort entries in specified directory.'
-			' Same idea as -s/--shuffle, but does the opposite ordering-wise.')
-	parser.add_argument('-c', '--case-insensitive', action='store_true',
+	group = parser.add_argument_group('Operation tweaks/options')
+	group.add_argument('-c', '--case-insensitive', action='store_true',
 		help='Use case-insensitive ordering for'
 			' files/dirs with -o/--order and -g/--group-dirs options.')
-	parser.add_argument('-g', '--group-dirs',
+	group.add_argument('-g', '--group-dirs',
 		default='first', choices=['no', 'first', 'last'], metavar='type',
-		help='Group and alpha-sort directories at the beginning/end of the file entries.'
-			' Possible values: first (default), last, no.'
-			' Only used with -s/--shuffle and -o/--order operations.')
+		help='''
+			Group and alpha-sort directories at the beginning/end of the file entries.
+			Possible values: first (default), last, no.
+			Only used with -s/--shuffle and -o/--order operations.''')
+	group.add_argument('--rename-inside', action='store_true',
+		help='Rename all entries in specified directory'
+			' instead of directory itself. Used with --rename only.')
 
-	parser.add_argument('-r', '--rename', metavar='template',
-		help='Rename specified node (file/dir) according to the template.'
-			' Only changes utf-16 name in LFNs, as that is all modern OSes seem to care about.'
-			' Template is for python str.format. Example: {name}.bak')
-	parser.add_argument('--rename-inside', action='store_true',
-		help='Rename all entries in specified directory instead of directory itself.')
-
-	parser.add_argument('-n', '--dry-run',
+	group = parser.add_argument_group('Debug/output options')
+	group.add_argument('-n', '--dry-run',
 		action='store_true', help='Dont write the data out, only print what goes where.')
-	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('-d', '--debug', action='store_true', help='Even more verbose operation.')
+	group.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
+	group.add_argument('-d', '--debug', action='store_true', help='Even more verbose operation.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
