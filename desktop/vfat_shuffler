@@ -6,9 +6,8 @@ from construct import (
 from construct.core import StreamError
 
 import itertools as it, operator as op, functools as ft
-from io import BytesIO, BufferedReader
-from os.path import normpath
-import os, sys, types, random
+from io import BytesIO
+import os, sys, random, collections
 
 
 Fat32Header = Struct(
@@ -131,6 +130,8 @@ def PreDataRegion(fsinfo=False, fats=True):
 
 class File(object):
 
+	name_long = None
+
 	def __init__(self, de, fs):
 		self.de, self.fs = de, fs
 
@@ -207,16 +208,16 @@ class File(object):
 	def firstCluster(self):
 		return (self.de.firstCluster_high << 16) + self.de.firstCluster_low
 
-	@property
-	def name(self): return self.name_tpl.format(self.de, self)
-	def __str__(self): return self.name
-
-	name_tpl = '[{1.firstCluster}] {0.name_long}'
+	def __str__(self): return f'[{self.firstCluster:3d}] {self.de.name_long}'
+	def __repr__(self):
+		return ( f'<{self.__class__.__name__}'
+			f' {self.firstCluster}:[{self.de.name_long!r}]>' )
 
 
 class DotEntry(File):
 
-	name_tpl = '[ ] {0.name_long}'
+	def __str__(self): return f'[   ] {self.de.name_long}'
+	def __repr__(self): return f'<{self.__class__.__name__} [{self.de.name_long.strip()}]>'
 
 
 class Directory(File):
@@ -225,27 +226,26 @@ class Directory(File):
 		super(Directory, self).__init__(de, fs)
 		self.children = list(self.parse_des(self.fs.get_des(self.firstCluster), fs))
 
-	def shuffled_structs( self,
-			group_dirs='first',
-			order_func=random.shuffle,
-			order_dirs=lambda dirs: sorted(dirs, key=op.attrgetter('de.name_long')) ):
+	def reordered_structs(self, sort_func, group_dirs=None, group_dirs_sort_func=None):
 		assert group_dirs in [None, False, 'first', 'last'], group_dirs
+		if not group_dirs_sort_func: group_dirs_sort_func = sort_func
 
-		parts = [list(), list(), list(), list()]
+		parts = collections.namedtuple( 'Parts',
+			'dots dirs_first whatever dirs_last' )(list(), list(), list(), list())
 		for obj in self.children:
 			if group_dirs and isinstance(obj, Directory):
-				if group_dirs == 'first': dst = parts[1]
-				elif group_dirs == 'last': dst = parts[3]
+				if group_dirs == 'first': dst = parts.dirs_first
+				elif group_dirs == 'last': dst = parts.dirs_last
 				else: raise ValueError(group_dirs)
-			elif isinstance(obj, DotEntry): dst = parts[0]
-			else: dst = parts[2]
+			elif isinstance(obj, DotEntry): dst = parts.dots
+			else: dst = parts.whatever
 			dst.append(obj)
 
-		for n, entries in enumerate(parts):
-			if n == 0: continue # dotentries
-			res = (order_func if n == 2 else order_dirs)(entries)
-			if res is None: continue # assuming it's in-place list sorter
-			parts[n] = res
+		for k, entries in parts._asdict().items():
+			if k == 'dots': continue # dotentries
+			res = (sort_func if k == 'whatever' else group_dirs_sort_func)(entries)
+			if res is None: continue # assuming it's an in-place list sorter
+			entries[:] = res
 
 		log.debug('Resulting order:')
 		for obj in it.chain(*parts):
@@ -261,7 +261,7 @@ class Directory(File):
 	def __iter__(self):
 		return iter(self.children)
 
-	name_tpl = '[{1.firstCluster}] {0.name_long}/'
+	def __str__(self): return f'[{self.firstCluster:3d}] {self.de.name_long}/'
 
 
 class FatFs(Directory):
@@ -388,6 +388,59 @@ class FatFs(Directory):
 	name_tpl = '[{1.pdr.clusterOfRoot}] /'
 
 
+def op_navigate(root, path):
+	path, slugs = root, os.path.normpath(path).lstrip(os.sep).split(os.sep)
+	for k in filter(None, slugs): path = path[k]
+	return path
+
+def op_list(path):
+	for entry in path: print(entry)
+
+def op_rename(path, tpl, dry_run=False):
+	name = tpl.decode('utf-8').format(name=path.de.name_long)
+	log.debug('Renaming %s -> %r', path, name)
+	with BytesIO((name + '\0').encode('utf-16')) as name_raw:
+		name_raw.seek(0)
+		assert name_raw.read(2) == b'\xff\xfe' # BOM
+		for lfn in path.de.lfns:
+			for field in LFNEntry.subcons:
+				if field.name in ['name1', 'name2', 'name3']:
+					field_len = field.sizeof()
+					data = name_raw.read(field_len)
+					lfn[field.name] = data + b'\xff' * (field_len - len(data))
+			fs.write_struct(LFNEntry, lfn, dry_run=dry_run)
+
+def op_reorder(path, src, dry_run=False, **reorder_kws):
+	path_structs = path.reordered_structs(**reorder_kws)
+
+	with BytesIO() as mem:
+		# Dump all path_structs to mem
+		for struct, data in path_structs:
+			# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
+			try: struct.build_stream(data, mem)
+			except StreamError:
+				log.error('Failed to serialize construct: %s', data)
+				raise
+		slice_map = path.get_slice_map()
+		len_structs, len_clusters = mem.tell(), sum(map(op.itemgetter(1), slice_map))
+		assert len_structs <= len_clusters, [len_structs, len_clusters]
+
+		# Actual write operation
+		mem.seek(0)
+		for start, length in slice_map:
+			src.seek(start)
+			chunk = mem.read(length)
+			log.info(
+				'Writing %sB to offset: %s (hex: %s, len_left: %s)',
+				len(chunk), start, hex(start), length )
+			if not dry_run: src.write(chunk)
+			length -= len(chunk)
+			if length > 0:
+				chunk = b'\0'*length
+				log.info('Padding remaining %sB with zeroes', len(chunk))
+				if not dry_run: src.write(chunk)
+		assert mem.tell() == len_structs, [mem.tell(), len_structs]
+
 
 def main(args=None):
 	import argparse
@@ -408,10 +461,17 @@ def main(args=None):
 		help='Shuffle entries in specified directory.'
 			' This reads all direntries there and writes them back in randomized order.'
 			' Intended for stupid devices (e.g. mp3 players) which rely on that.')
-	parser.add_argument('-g', '--group-dirs', default='first', metavar='type',
-		help='Group and sort directories at the beginning/end of the file entries.'
-			' Possible values: no, first, last. Only used with -s/--shuffle option.'
-			' Default: %(default)s')
+	parser.add_argument('-o', '--order', action='store_true',
+		help='Alpha-sort entries in specified directory.'
+			' Same idea as -s/--shuffle, but does the opposite ordering-wise.')
+	parser.add_argument('-c', '--case-insensitive', action='store_true',
+		help='Use case-insensitive ordering for'
+			' files/dirs with -o/--order and -g/--group-dirs options.')
+	parser.add_argument('-g', '--group-dirs',
+		default='first', choices=['no', 'first', 'last'], metavar='type',
+		help='Group and alpha-sort directories at the beginning/end of the file entries.'
+			' Possible values: first (default), last, no.'
+			' Only used with -s/--shuffle and -o/--order operations.')
 
 	parser.add_argument('-r', '--rename', metavar='template',
 		help='Rename specified node (file/dir) according to the template.'
@@ -432,8 +492,8 @@ def main(args=None):
 		parser.error( 'Path argument must begin with'
 			' slash (for typo-safety reasons): {!r}'.format(opts.path) )
 
-	if not (opts.shuffle or opts.rename): opts.list = True
-	if sum(map(bool, [opts.shuffle, opts.rename, opts.list])) != 1:
+	if not (opts.shuffle or opts.order or opts.rename): opts.list = True
+	if sum(map(bool, [opts.shuffle, opts.order, opts.rename, opts.list])) != 1:
 		parser.error('Only one action can be specified at the same time.')
 
 	global log
@@ -444,60 +504,29 @@ def main(args=None):
 	logging.basicConfig(level=log)
 	log = logging.getLogger()
 
-	with open(opts.dev, 'rb' if opts.list else 'rb+') as src:
-		fs = path = FatFs(src)
+	src_mode = 'rb' if not opts.dry_run and opts.list else 'rb+'
+	with open(opts.dev, src_mode) as src:
+		fs = FatFs(src)
+		path = op_navigate(fs, opts.path)
 
-		for k in filter(None, normpath(opts.path).lstrip(os.sep).split(os.sep)): path = path[k]
-
-		if opts.list:
-			for entry in path: print(entry)
-			return 0
+		if opts.list: return op_list(path)
 
 		if opts.rename:
-			def rename(path, tpl):
-				name = tpl.decode('utf-8').format(name=path.de.name_long)
-				log.debug('Renaming %s -> %r', path, name)
-				with BytesIO((name + '\0').encode('utf-16')) as name_raw:
-					name_raw.seek(0)
-					assert name_raw.read(2) == b'\xff\xfe' # BOM
-					for lfn in path.de.lfns:
-						for field in LFNEntry.subcons:
-							if field.name in ['name1', 'name2', 'name3']:
-								field_len = field.sizeof()
-								data = name_raw.read(field_len)
-								lfn[field.name] = data + b'\xff' * (field_len - len(data))
-						fs.write_struct(LFNEntry, lfn, dry_run=opts.dry_run)
-			if not opts.rename_inside: rename(path, opts.rename)
+			if not opts.rename_inside: op_rename(path, opts.rename)
 			else:
-				for entry in path: rename(entry, opts.rename)
-			return 0
+				for entry in path:
+					op_rename(entry, opts.rename, dry_run=opts.dry_run)
+			return
 
-		with BytesIO() as mem:
-			for struct, data in path.shuffled_structs(group_dirs=opts.group_dirs):
-				# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
-				try: struct.build_stream(data, mem)
-				except StreamError:
-					log.error('Failed to serialize construct: %s', data)
-					raise
-			slice_map = path.get_slice_map()
-			len_structs, len_clusters = mem.tell(), sum(map(op.itemgetter(1), slice_map))
-			assert len_structs <= len_clusters, [len_structs, len_clusters]
-
-			# Actual write operation
-			mem.seek(0)
-			for start, length in slice_map:
-				src.seek(start)
-				chunk = mem.read(length)
-				log.info(
-					'Writing %sB to offset: %s (hex: %s, len_left: %s)',
-					len(chunk), start, hex(start), length )
-				if not opts.dry_run: src.write(chunk)
-				length -= len(chunk)
-				if length > 0:
-					chunk = b'\0'*length
-					log.info('Padding remaining %sB with zeroes', len(chunk))
-					if not opts.dry_run: src.write(chunk)
-
-			assert mem.tell() == len_structs, [mem.tell(), len_structs]
+		if opts.shuffle or opts.order:
+			alphasort_func = op.attrgetter('de.name_long')
+			if opts.case_insensitive:
+				alphasort_func = lambda e,_f=alphasort_func: _f(e).lower()
+			alphasort_func = ft.partial(sorted, key=alphasort_func)
+			if opts.shuffle: sort_func = random.shuffle
+			elif opts.order: sort_func = alphasort_func
+			return op_reorder( path, src,
+				dry_run=opts.dry_run, sort_func=sort_func,
+				group_dirs=opts.group_dirs, group_dirs_sort_func=alphasort_func )
 
 if __name__ == '__main__': sys.exit(main())
