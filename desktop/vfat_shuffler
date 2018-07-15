@@ -208,7 +208,7 @@ class File(object):
 	def firstCluster(self):
 		return (self.de.firstCluster_high << 16) + self.de.firstCluster_low
 
-	def __str__(self): return f'[{self.firstCluster:3d}] {self.de.name_long}'
+	def __str__(self): return f'[{self.firstCluster:7d}] {self.de.name_long}'
 	def __repr__(self):
 		return ( f'<{self.__class__.__name__}'
 			f' {self.firstCluster}:[{self.de.name_long!r}]>' )
@@ -388,6 +388,37 @@ class FatFs(Directory):
 	name_tpl = '[{1.pdr.clusterOfRoot}] /'
 
 
+def run_proc(cmd, sudo=False, out=True, **kws):
+	import subprocess
+	if isinstance(cmd, str): cmd = cmd.split()
+	else: cmd = list(map(str, cmd))
+	if sudo: cmd = ['sudo', '-n'] + cmd
+	log.debug('Command: %s', ' '.join(cmd))
+	if out is ...:
+		kws.update(
+			stdout=subprocess.DEVNULL,
+			stderr=subprocess.DEVNULL )
+	elif out: kws.update(check=True, stdout=subprocess.PIPE)
+	res = subprocess.run(cmd, **kws)
+	return res.stdout.decode() if out is True else res
+
+def op_resolve_mp(vfs_path):
+	import json, pathlib as pl
+	path = pl.Path(vfs_path)
+	lsblk = json.loads(run_proc('lsblk --json --paths'.split()))
+	mp_list, lsblk = list(), collections.deque(lsblk['blockdevices'])
+	while lsblk:
+		dev = lsblk.popleft()
+		lsblk.extend(dev.get('children') or list())
+		mp = dev.get('mountpoint')
+		if not mp: continue
+		try: p = path.relative_to(mp)
+		except ValueError: pass
+		else: mp_list.append((dev['name'], str(p), str(mp)))
+	dev, path, mp = sorted(mp_list, key=lambda dev: len(dev[2]))[-1]
+	if mp == '/': parser.error(f'Failed to resolve path to non-root mountpoint: {path}')
+	return dev, path, mp
+
 def op_navigate(root, path):
 	path, slugs = root, os.path.normpath(path).lstrip(os.sep).split(os.sep)
 	for k in filter(None, slugs): path = path[k]
@@ -401,6 +432,7 @@ def op_recurse(*paths):
 		paths.append(p)
 		path_queue.extend(p.children)
 	return paths
+
 
 def op_list(path, recursive=False, indent=0, print_line=None):
 	if print_line is None:
@@ -486,8 +518,13 @@ def main(args=None):
 			Use options like -s/--shuffle and --rename to specify other actions.'''))
 
 	group = parser.add_argument_group('Device and path')
-	group.add_argument('dev', help='Path to FAT32 device.')
-	group.add_argument('path',
+	group.add_argument('dev_or_vfs_path',
+		help='''
+			Path to FAT32 device or mountpoint path.
+			If only path inside mountpoint is specified,
+			  device-name/path will be resolved using "lsblk" tool (util-linux) from it,
+			  device unmounted, acted upon, and remounted (default opts) to same mountpoint.''')
+	group.add_argument('path', nargs='?',
 		help='File/directory to operate on. Must start from /, example: /some/my/dir')
 
 	group = parser.add_argument_group('Operations')
@@ -527,6 +564,10 @@ def main(args=None):
 			Rename all entries inside specified directory instead of directory itself.
 			When -r/--recursive is also specified, only renames files inside directories.
 			Used with --rename only.''')
+	group.add_argument('-x', '--sudo', action='store_true',
+		help='''
+			Use sudo for mount/umount commands
+				when vfs path is specified instead of device+path.''')
 
 	group = parser.add_argument_group('Debug/output options')
 	group.add_argument('-n', '--dry-run',
@@ -535,10 +576,6 @@ def main(args=None):
 	group.add_argument('-d', '--debug', action='store_true', help='Even more verbose operation.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
-
-	if not opts.path.startswith(os.sep):
-		parser.error( 'Path argument must begin with'
-			' slash (for typo-safety reasons): {!r}'.format(opts.path) )
 
 	if not (opts.shuffle or opts.order or opts.rename): opts.list = True
 	if sum(map(bool, [opts.shuffle, opts.order, opts.rename, opts.list])) != 1:
@@ -563,21 +600,37 @@ def main(args=None):
 	logging.basicConfig(level=log)
 	log = logging.getLogger()
 
-	src_mode = 'rb' if not opts.dry_run and opts.list else 'rb+'
-	with open(opts.dev, src_mode) as src:
-		fs = FatFs(src)
-		paths = [op_navigate(fs, opts.path)]
+	dev, path, mp = opts.dev_or_vfs_path, opts.path, None
+	try:
+		if not path:
+			dev, path, mount = op_resolve_mp(dev)
+			run_proc(['umount', mount], sudo=opts.sudo)
+			mp = mount
+		elif not path.startswith(os.sep):
+			parser.error( 'Path argument must begin with'
+				' slash (for typo-safety reasons): {!r}'.format(path) )
 
-		if opts.list: return op_list(paths[0], recursive=opts.recursive)
-		if opts.recursive: paths = op_recurse(*paths)
+		src_mode = 'rb' if not opts.dry_run and opts.list else 'rb+'
+		with open(dev, src_mode) as src:
+			fs = FatFs(src)
+			paths = [op_navigate(fs, path)]
 
-		for path in paths:
-			if opts.rename:
-				if not opts.rename_inside: op_rename(path, opts.rename)
-				else:
-					for entry in path:
-						op_rename(entry, opts.rename, dry_run=opts.dry_run)
-			elif opts.shuffle or opts.order:
-				op_reorder(path, src, dry_run=opts.dry_run, **sort_opts)
+			if opts.list: return op_list(paths[0], recursive=opts.recursive)
+			if opts.recursive: paths = op_recurse(*paths)
+
+			for path in paths:
+				if opts.rename:
+					if not opts.rename_inside: op_rename(path, opts.rename)
+					else:
+						for entry in path:
+							op_rename(entry, opts.rename, dry_run=opts.dry_run)
+				elif opts.shuffle or opts.order:
+					op_reorder(path, src, dry_run=opts.dry_run, **sort_opts)
+
+	finally:
+		if mp:
+			res = run_proc(['mount', mp], sudo=opts.sudo, out=...) # fstab check
+			if res.returncode: res = run_proc(['mount', dev, mp], sudo=opts.sudo, out=...)
+			if res.returncode: res.check_returncode()
 
 if __name__ == '__main__': sys.exit(main())

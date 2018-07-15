@@ -2125,24 +2125,25 @@ positions or current (`auto-rotated`_) wallpaper path.
 vfat_shuffler
 '''''''''''''
 
-Python3 script to list/shuffle/order and do some other things to LFN entries
+Python script to list/shuffle/order and do some other things to LFN entries
 inside vfat filesystem directory without mounting the thing.
 
 Implemented to work around limitations of crappy cheap mp3 players that don't
 have shuffle (or any ordering) functionality and cycle tracks in the same order
 as their dentries_ appear on fs.
 
-Easy way to "shuffle" stuff for these in quick and efficient manner is to swap
+Easy way to "shuffle" stuff for these in a quick and efficient manner is to swap
 dentries' places, which (unfortunately) requires re-implementing a bit of vfat
 driver code, which (fortunately) isn't that complicated.
 
 Tool takes path to device and directory to operate on as arguments (see --help)
 and has -l/--list (simply list files, default), -s/--shuffle (shuffle
-operation), --rename plus some other action-opts, and ``--debug --dry-run``
-can be useful to check what script does without making any fs changes.
+operation), ---o/order, --rename plus some other action-opts (all support
+-r/--recursive operation), and ``--debug --dry-run`` can be useful to check what
+script does without making any fs changes (opens device read-only).
 
 One limitation is that it only works with FAT32 "vfat" fs type, which can be
-created with "mkfs.vfat" tool, *not* the stuff that "mkdosfs" tool creates,
+created via "mkfs.vfat" tool, *not* the stuff that "mkdosfs" tool creates,
 *not* FAT16, FAT12, exFAT or whatever other variations are out there (they're
 slightly different and I didn't need any of them, so not implemented).
 
@@ -2153,6 +2154,8 @@ create infinite dir loops, undelete tool, etc.
 Due to bunch of heavy parsing done inside, can take a few seconds to process
 whole fs structure, and works ~5x faster with `pypy <http://pypy.org/>`_
 (e.g. 1.5s instead of 9s).
+
+Uses python/pypy 3.x and `construct module <https://construct.readthedocs.io/>`_.
 
 Somewhat similar project (which I didn't find at the time of implementing this
 back in 2013) - `maxpat78/FATtools <https://github.com/maxpat78/FATtools/>`_.
