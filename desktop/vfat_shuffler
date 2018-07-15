@@ -247,7 +247,7 @@ class Directory(File):
 			if res is None: continue # assuming it's an in-place list sorter
 			entries[:] = res
 
-		log.debug('Resulting order:')
+		log.debug('Resulting directory order:')
 		for obj in it.chain(*parts):
 			log.debug('  %s', obj)
 			for lfn in obj.de.lfns: yield (LFNEntry, lfn)
@@ -393,8 +393,30 @@ def op_navigate(root, path):
 	for k in filter(None, slugs): path = path[k]
 	return path
 
-def op_list(path):
-	for entry in path: print(entry)
+def op_recurse(*paths):
+	paths, path_queue = list(), collections.deque(paths)
+	while path_queue:
+		p = path_queue.popleft()
+		if not isinstance(p, Directory): continue
+		paths.append(p)
+		path_queue.extend(p.children)
+	return paths
+
+def op_list(path, recursive=False, indent=0, print_line=None):
+	if print_line is None:
+		def print_line(line='', pad_in=False, pad_out=False):
+			if pad_in and not print_line.pad_state: print()
+			if line: print(line)
+			if pad_out: print()
+			print_line.pad_state = pad_out
+		print_line.pad_state = True
+	for p in path:
+		if isinstance(p, DotEntry): continue
+		recurse = recursive and isinstance(p, Directory)
+		print_line(indent*' ' + str(p), pad_in=recurse)
+		if recurse:
+			op_list(p, recursive=True, indent=indent+3, print_line=print_line)
+			print_line(pad_out=True)
 
 def op_rename(path, tpl, dry_run=False):
 	name = tpl.decode('utf-8').format(name=path.de.name_long)
@@ -489,6 +511,8 @@ def main(args=None):
 			Template is for python str.format. Example: {name}.bak''')
 
 	group = parser.add_argument_group('Operation tweaks/options')
+	group.add_argument('-r', '--recursive', action='store_true',
+		help='Operate on all subdirectories recursively.')
 	group.add_argument('-c', '--case-insensitive', action='store_true',
 		help='Use case-insensitive ordering for'
 			' files/dirs with -o/--order and -g/--group-dirs options.')
@@ -499,8 +523,10 @@ def main(args=None):
 			Possible values: first (default), last, no.
 			Only used with -s/--shuffle and -o/--order operations.''')
 	group.add_argument('--rename-inside', action='store_true',
-		help='Rename all entries in specified directory'
-			' instead of directory itself. Used with --rename only.')
+		help='''
+			Rename all entries inside specified directory instead of directory itself.
+			When -r/--recursive is also specified, only renames files inside directories.
+			Used with --rename only.''')
 
 	group = parser.add_argument_group('Debug/output options')
 	group.add_argument('-n', '--dry-run',
@@ -510,7 +536,6 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if opts.group_dirs == 'no': opts.group_dirs = None
 	if not opts.path.startswith(os.sep):
 		parser.error( 'Path argument must begin with'
 			' slash (for typo-safety reasons): {!r}'.format(opts.path) )
@@ -518,6 +543,17 @@ def main(args=None):
 	if not (opts.shuffle or opts.order or opts.rename): opts.list = True
 	if sum(map(bool, [opts.shuffle, opts.order, opts.rename, opts.list])) != 1:
 		parser.error('Only one action can be specified at the same time.')
+
+	if opts.shuffle or opts.order:
+		group_dirs = None if opts.group_dirs == 'no' else opts.group_dirs
+		alphasort_func = op.attrgetter('de.name_long')
+		if opts.case_insensitive:
+			alphasort_func = lambda e,_f=alphasort_func: _f(e).lower()
+		alphasort_func = ft.partial(sorted, key=alphasort_func)
+		if opts.shuffle: sort_func = random.shuffle
+		elif opts.order: sort_func = alphasort_func
+		sort_opts = dict( sort_func=sort_func,
+			group_dirs=group_dirs, group_dirs_sort_func=alphasort_func )
 
 	global log
 	import logging
@@ -530,26 +566,18 @@ def main(args=None):
 	src_mode = 'rb' if not opts.dry_run and opts.list else 'rb+'
 	with open(opts.dev, src_mode) as src:
 		fs = FatFs(src)
-		path = op_navigate(fs, opts.path)
+		paths = [op_navigate(fs, opts.path)]
 
-		if opts.list: return op_list(path)
+		if opts.list: return op_list(paths[0], recursive=opts.recursive)
+		if opts.recursive: paths = op_recurse(*paths)
 
-		if opts.rename:
-			if not opts.rename_inside: op_rename(path, opts.rename)
-			else:
-				for entry in path:
-					op_rename(entry, opts.rename, dry_run=opts.dry_run)
-			return
-
-		if opts.shuffle or opts.order:
-			alphasort_func = op.attrgetter('de.name_long')
-			if opts.case_insensitive:
-				alphasort_func = lambda e,_f=alphasort_func: _f(e).lower()
-			alphasort_func = ft.partial(sorted, key=alphasort_func)
-			if opts.shuffle: sort_func = random.shuffle
-			elif opts.order: sort_func = alphasort_func
-			return op_reorder( path, src,
-				dry_run=opts.dry_run, sort_func=sort_func,
-				group_dirs=opts.group_dirs, group_dirs_sort_func=alphasort_func )
+		for path in paths:
+			if opts.rename:
+				if not opts.rename_inside: op_rename(path, opts.rename)
+				else:
+					for entry in path:
+						op_rename(entry, opts.rename, dry_run=opts.dry_run)
+			elif opts.shuffle or opts.order:
+				op_reorder(path, src, dry_run=opts.dry_run, **sort_opts)
 
 if __name__ == '__main__': sys.exit(main())
