@@ -1,11 +1,9 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python3
 
 from construct import (
-	Struct, Byte, Bytes, ULInt8, ULInt16, ULInt32, Enum, Array,
-	Padding, Embed, Pass, BitStruct, Flag, Const, ExprAdapter )
-from construct.core import FieldError
+	Struct, Byte, Bytes, Int8ul, Int16ul, Int32ul, Enum, Array,
+	Padding, Embedded, Pass, BitStruct, Flag, Const, ExprAdapter )
+from construct.core import StreamError
 
 import itertools as it, operator as op, functools as ft
 from io import BytesIO, BufferedReader
@@ -13,62 +11,45 @@ from os.path import normpath
 import os, sys, types, random
 
 
-def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
-	if not isinstance(bytes_or_unicode, types.StringTypes):
-		return bytes(bytes_or_unicode)
-	elif isinstance(bytes_or_unicode, bytes):
-		return bytes_or_unicode
-	return bytes_or_unicode.encode(encoding, errors)
+Fat32Header = Struct(
+	'jumpInstruction' / Bytes(3), # Boot Sector start
+	'creatingSystemId' / Bytes(8),
+	'sectorSize' / Int16ul, # FAT32 Extended BIOS Parameter Block start
+	'sectorsPerCluster' / Byte,
+	'reservedSectorCount' / Int16ul,
+	'fatCount' / Byte,
+	'rootdirEntryCount' / Int16ul,
+	'sectorCount_small' / Int16ul,
+	'mediaId' / Byte,
+	'sectorsPerFat' / Int16ul, # 0 for FAT32, BIOS Parameter Block end
+	'sectorsPerTrack' / Int16ul,
+	'sideCount' / Int16ul,
+	'hiddenSectorCount' / Int32ul,
+	'sectorCount_large' / Int32ul, # DOS 3.31 BPB end
+	'sectorsPerFat_large' / Int32ul,
+	'driveFlags' / Bytes(2),
+	'Version' / Bytes(2),
+	'clusterOfRoot' / Int32ul,
+	'fsInfoSectorNo' / Int16ul,
+	'bsCopySectorNo' / Int16ul,
+	'Reserved' / Bytes(12),
+	'physicalDriveNumber' / Byte,
+	'currentHead' / Byte,
+	'extendedBootSignature' / Byte,
+	'volumeId' / Bytes(4),
+	'volumeLabel' / Bytes(11),
+	'fsType' / Const(b'FAT32   '), # FAT32 Extended BIOS Parameter Block end
+	'bootCode' / Bytes(419),
+	'physicalDriveNumber_old' / Byte,
+	'bootSectorSignature' / Const(b'\x55\xaa') )
 
-def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
-	if not isinstance(bytes_or_unicode, types.StringTypes):
-		return unicode(bytes_or_unicode)
-	elif isinstance(bytes_or_unicode, unicode):
-		return bytes_or_unicode
-	return bytes_or_unicode.decode(encoding, errors)
-
-f2uni = lambda field: force_unicode(field.rstrip()).rstrip()
-
-
-Fat32Header = Struct( 'fat_header',
-	Bytes('jumpInstruction', 3), # Boot Sector start
-	Bytes('creatingSystemId', 8),
-	ULInt16('sectorSize'), # FAT32 Extended BIOS Parameter Block start
-	Byte('sectorsPerCluster'),
-	ULInt16('reservedSectorCount'),
-	Byte('fatCount'),
-	ULInt16('rootdirEntryCount'),
-	ULInt16('sectorCount_small'),
-	Byte('mediaId'),
-	ULInt16('sectorsPerFat'), # 0 for FAT32, BIOS Parameter Block end
-	ULInt16('sectorsPerTrack'),
-	ULInt16('sideCount'),
-	ULInt32('hiddenSectorCount'),
-	ULInt32('sectorCount_large'), # DOS 3.31 BPB end
-	ULInt32('sectorsPerFat_large'),
-	Bytes('driveFlags', 2),
-	Bytes('Version', 2),
-	ULInt32('clusterOfRoot'),
-	ULInt16('fsInfoSectorNo'),
-	ULInt16('bsCopySectorNo'),
-	Bytes('Reserved', 12),
-	Byte('physicalDriveNumber'),
-	Byte('currentHead'),
-	Byte('extendedBootSignature'),
-	Bytes('volumeId', 4),
-	Bytes('volumeLabel', 11),
-	Const(Bytes('fsType', 8), 'FAT32   '), # FAT32 Extended BIOS Parameter Block end
-	Bytes('bootCode', 419),
-	Byte('physicalDriveNumber_old'),
-	Const(Bytes('bootSectorSignature', 2), '\x55\xaa') )
-
-BootSector = Struct( 'boot_sector',
-	Embed(Fat32Header),
+BootSector = Struct(
+	Embedded(Fat32Header),
 	Padding(lambda ctx: ctx.sectorSize - Fat32Header.sizeof()) )
 
 FatEntry = Enum(
 	ExprAdapter(
-		ULInt32('fats'),
+		'fats' / Int32ul,
 		encoder=lambda obj,ctx: obj,
 		decoder=lambda obj,ctx: obj & 0x0fffffff ), # upper nibble is reserved
 	free=0x0000000,
@@ -78,76 +59,74 @@ FatEntry = Enum(
 	_default_=Pass )
 
 
-def ts_hms(name):
-	return ExprAdapter(
-		ULInt16(name),
-		encoder=lambda ts,ctx: (ts[0] << 11) + (ts[1] << 5) + ts[2] / 2,
-		decoder=lambda n,ctx: (n >> 11, (n >> 5) & (2**6 - 1), (n & (2**5 - 1)) * 2) )
+ts_hms = ExprAdapter(
+	Int16ul,
+	encoder=lambda ts,ctx: (ts[0] << 11) + (ts[1] << 5) + ts[2] // 2,
+	decoder=lambda n,ctx: (n >> 11, (n >> 5) & (2**6 - 1), (n & (2**5 - 1)) * 2) )
 
-def ts_ymd(name):
-	return ExprAdapter(
-		ULInt16(name),
+ts_ymd = ExprAdapter(
+		Int16ul,
 		encoder=lambda ts,ctx: ((ts[0] - 1980) << 9) + (ts[1] << 5) + ts[2],
 		decoder=lambda n,ctx: (1980 + (n >> 9), (n >> 5) & (2**4 - 1), n & (2**5 - 1)) )
 
 # Should have Switch in it for LFN, but not sure how to integrate it
-DirEntry = Struct( 'dir_entry',
-	Bytes('name', 8),
-	Bytes('extension', 3),
-	BitStruct( 'attributes',
-		Flag('unused'),
-		Flag('device'),
-		Flag('archive'),
-		Flag('subDirectory'),
-		Flag('volumeLabel'),
-		Flag('system'),
-		Flag('hidden'),
-		Flag('readonly') ),
-	Byte('reserved_flags'),
-	Byte('undelete_char_or_ctime_ms'),
-	ts_hms('ctime_hms'),
-	ts_ymd('ctime_ymd'),
-	ts_ymd('atime_ymd'),
-	ULInt16('firstCluster_high'),
-	ts_hms('mtime_hms'),
-	ts_ymd('mtime_ymd'),
-	ULInt16('firstCluster_low'),
-	ULInt32('fileSize') )
+DirEntry = Struct(
+	'name' / Bytes(8),
+	'extension' / Bytes(3),
+	'attributes' / BitStruct(
+		'unused' / Flag,
+		'device' / Flag,
+		'archive' / Flag,
+		'subDirectory' / Flag,
+		'volumeLabel' / Flag,
+		'system' / Flag,
+		'hidden' / Flag,
+		'readonly' / Flag ),
+	'reserved_flags' / Byte,
+	'undelete_char_or_ctime_ms' / Byte,
+	'ctime_hms' / ts_hms,
+	'ctime_ymd' / ts_ymd,
+	'atime_ymd' / ts_ymd,
+	'firstCluster_high' / Int16ul,
+	'mtime_hms' / ts_hms,
+	'mtime_ymd' / ts_ymd,
+	'firstCluster_low' / Int16ul,
+	'fileSize' / Int32ul )
 
-LFNEntry = Struct( 'lfn_entry',
-	ULInt8('seq'),
-	Bytes('name1', 10),
-	BitStruct( 'attributes', # always 0xfd for LFN
-		Flag('unused'),
-		Flag('device'),
-		Flag('archive'),
-		Flag('subDirectory'),
-		Flag('volumeLabel'),
-		Flag('system'),
-		Flag('hidden'),
-		Flag('readonly') ),
-	Byte('type'), # always 0x00
-	ULInt8('checksum'),
-	Bytes('name2', 12),
-	Bytes('first_cluster', 2), # always 0x0000
-	Bytes('name3', 4) )
+LFNEntry = Struct(
+	'seq' / Int8ul,
+	'name1' / Bytes(10),
+	'attributes' / BitStruct( # always 0xfd for LFN
+		'unused' / Flag,
+		'device' / Flag,
+		'archive' / Flag,
+		'subDirectory' / Flag,
+		'volumeLabel' / Flag,
+		'system' / Flag,
+		'hidden' / Flag,
+		'readonly' / Flag ),
+	'type' / Byte, # always 0x00
+	'checksum' / Int8ul,
+	'name2' / Bytes(12),
+	'first_cluster' / Bytes(2), # always 0x0000
+	'name3' / Bytes(4) )
 
 
 def PreDataRegion(fsinfo=False, fats=True):
-	entries = [Embed(BootSector)]
+	entries = [Embedded(BootSector)]
 	reserved_padding = Padding(lambda ctx: (ctx.reservedSectorCount - 1) * ctx.sectorSize)
 	if fsinfo:
 		entries.append(Padding(lambda ctx: (ctx.fsInfoSectorNo - 1) * ctx.sectorSize))
 		# https://en.wikipedia.org/wiki/File_Allocation_Table#FS_Information_Sector
-		# entries.append(Embed(FSInfoSector('fsInfoSector')))
+		# entries.append(Embedded(FSInfoSector('fsInfoSector')))
 		reserved_padding = Padding(
 			lambda ctx: (ctx.reservedSectorCount - ctx.fsInfoSectorNo - 1) * ctx.sectorSize )
 		raise NotImplementedError
 	if fats:
 		entries.append(reserved_padding)
-		entries.append(Array( lambda ctx: ctx.fatCount,
-			Array(lambda ctx: ctx.sectorsPerFat_large * ctx.sectorSize / FatEntry.sizeof(), FatEntry) ))
-	return Struct('pdr', *entries)
+		entries.append('fats' / Array( lambda ctx: ctx.fatCount,
+			Array(lambda ctx: ctx.sectorsPerFat_large * ctx.sectorSize // FatEntry.sizeof(), FatEntry) ))
+	return Struct(*entries)
 
 
 class File(object):
@@ -164,13 +143,13 @@ class File(object):
 		for entry in de_list:
 			entry_id = 'DirEntry[{}]'.format(entry.clidx)
 
-			if entry.name[0] == '\xe5': continue # deleted
-			if entry.name[0] in '\x2e': # dot-entries
-				entry.lfns, entry.name_long = list(), f2uni(entry.name)
-				assert not entry.name_long.strip(u'.'), repr(entry.name_long)
+			if entry.name[0] == 0xe5: continue # deleted
+			if entry.name[0] == 0x2e: # dot-entries
+				entry.lfns, entry.name_long = list(), entry.name.decode()
+				assert not entry.name_long.strip('. '), repr(entry.name_long)
 				yield DotEntry(entry, fs)
 				continue
-			assert entry.name[0] != '\0', repr(entry.name)
+			assert entry.name[0] != 0, repr(entry.name)
 
 			stream = entry.pop('_chain_stream') # if only to free the ref
 			log.debug('DirEnty[%s] at %s', entry.clidx, entry.slice_map_offset)
@@ -197,19 +176,19 @@ class File(object):
 				lfn_name = it.chain.from_iterable(
 					[lfn.name1, lfn.name2, lfn.name3]
 					for lfn in sorted(lfn_cache, key=op.attrgetter('seq_num')) )
-				entry.name_long = ''.join(lfn_name).decode('utf-16').split(u'\0')[0]
+				entry.name_long = b''.join(lfn_name).decode('utf-16').split('\0')[0]
 				lfn_cache, entry.lfns = list(), lfn_cache
-				csum, name = 0, iter(entry.name + '\0' * (len(entry.name) - 8) + entry.extension)
-				for n in xrange(11):
+				csum, name = 0, iter(entry.name + b'\0' * (len(entry.name) - 8) + entry.extension)
+				for n in range(11):
 					c = next(name)
-					csum = (((csum & 1) << 7) + (csum >> 1) + ord(c)) & 0xff
+					csum = (((csum & 1) << 7) + (csum >> 1) + c) & 0xff
 				assert csum == lfn_csum, [csum, lfn_csum]
 
 			else:
 				name = entry.name
-				if name[0] == '\x05': name = '\xe5' + name[1:] # 0x05 - Initial character is actually 0xE5
+				if name[0] == 0x05: name = b'\xe5' + name[1:] # 0x05 - Initial character is actually 0xE5
 				entry.lfns, entry.name_long = list(),\
-					u'{}.{}'.format(f2uni(name), f2uni(entry.extension))
+					'{}.{}'.format(name.decode(), entry.extension.decode())
 
 			is_dir = entry.attributes.subDirectory
 			log.debug('Parsing %s: %r (%s)', entry_id, entry.name_long, 'dir' if is_dir else 'file')
@@ -222,7 +201,7 @@ class File(object):
 		return self.fs.get_chain(self.firstCluster)
 
 	def get_slice_map(self):
-		return map(self.fs.get_slice, self.get_chain())
+		return list(map(self.fs.get_slice, self.get_chain()))
 
 	@property
 	def firstCluster(self):
@@ -232,12 +211,12 @@ class File(object):
 	def name(self): return self.name_tpl.format(self.de, self)
 	def __str__(self): return self.name
 
-	name_tpl = u'[{1.firstCluster}] {0.name_long}'
+	name_tpl = '[{1.firstCluster}] {0.name_long}'
 
 
 class DotEntry(File):
 
-	name_tpl = u'[ ] {0.name_long}'
+	name_tpl = '[ ] {0.name_long}'
 
 
 class Directory(File):
@@ -282,7 +261,7 @@ class Directory(File):
 	def __iter__(self):
 		return iter(self.children)
 
-	name_tpl = u'[{1.firstCluster}] {0.name_long}/'
+	name_tpl = '[{1.firstCluster}] {0.name_long}/'
 
 
 class FatFs(Directory):
@@ -311,7 +290,7 @@ class FatFs(Directory):
 	def get_chain(self, clidx):
 		res, clidx_start = [], clidx
 		while clidx < 0xffffff8: # last cluster is 0xffffff8-0xfffffff
-			assert isinstance(clidx, (int, long)), clidx
+			assert isinstance(clidx, int), clidx
 			assert 2 <= clidx <= 0xfffffef, 'Non-data cluster: {}'.format(hex(clidx))
 			res.append(clidx)
 			clidx = self.get_next_cluster(clidx)
@@ -364,7 +343,7 @@ class FatFs(Directory):
 				mem.seek(-1, os.SEEK_CUR)
 				pos = mem.tell()
 				obj = DirEntry.parse_stream(mem)
-				if obj.name[0] == '\0': break # sentinel entry
+				if obj.name[0] == 0: break # sentinel entry
 				obj.clidx, obj._chain_stream = clidx, mem
 				obj.slice_map, obj.slice_map_offset = slice_map, pos
 				yield obj
@@ -429,12 +408,12 @@ def main(args=None):
 		help='Shuffle entries in specified directory.'
 			' This reads all direntries there and writes them back in randomized order.'
 			' Intended for stupid devices (e.g. mp3 players) which rely on that.')
-	parser.add_argument('-g', '--group-dirs', default='first',
+	parser.add_argument('-g', '--group-dirs', default='first', metavar='type',
 		help='Group and sort directories at the beginning/end of the file entries.'
 			' Possible values: no, first, last. Only used with -s/--shuffle option.'
 			' Default: %(default)s')
 
-	parser.add_argument('-r', '--rename',
+	parser.add_argument('-r', '--rename', metavar='template',
 		help='Rename specified node (file/dir) according to the template.'
 			' Only changes utf-16 name in LFNs, as that is all modern OSes seem to care about.'
 			' Template is for python str.format. Example: {name}.bak')
@@ -465,12 +444,10 @@ def main(args=None):
 	logging.basicConfig(level=log)
 	log = logging.getLogger()
 
-	with open(opts.dev, 'r' if opts.list else 'r+') as src:
+	with open(opts.dev, 'rb' if opts.list else 'rb+') as src:
 		fs = path = FatFs(src)
 
-		for k in it.ifilter( None,
-				normpath(opts.path).lstrip(os.sep).split(os.sep) ):
-			path = path[k]
+		for k in filter(None, normpath(opts.path).lstrip(os.sep).split(os.sep)): path = path[k]
 
 		if opts.list:
 			for entry in path: print(entry)
@@ -480,15 +457,15 @@ def main(args=None):
 			def rename(path, tpl):
 				name = tpl.decode('utf-8').format(name=path.de.name_long)
 				log.debug('Renaming %s -> %r', path, name)
-				with BytesIO((name + u'\0').encode('utf-16')) as name_raw:
+				with BytesIO((name + '\0').encode('utf-16')) as name_raw:
 					name_raw.seek(0)
-					assert name_raw.read(2) == '\xff\xfe' # BOM
+					assert name_raw.read(2) == b'\xff\xfe' # BOM
 					for lfn in path.de.lfns:
 						for field in LFNEntry.subcons:
 							if field.name in ['name1', 'name2', 'name3']:
 								field_len = field.sizeof()
 								data = name_raw.read(field_len)
-								lfn[field.name] = data + '\xff' * (field_len - len(data))
+								lfn[field.name] = data + b'\xff' * (field_len - len(data))
 						fs.write_struct(LFNEntry, lfn, dry_run=opts.dry_run)
 			if not opts.rename_inside: rename(path, opts.rename)
 			else:
@@ -499,11 +476,11 @@ def main(args=None):
 			for struct, data in path.shuffled_structs(group_dirs=opts.group_dirs):
 				# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
 				try: struct.build_stream(data, mem)
-				except FieldError:
+				except StreamError:
 					log.error('Failed to serialize construct: %s', data)
 					raise
 			slice_map = path.get_slice_map()
-			len_structs, len_clusters = mem.tell(), sum(it.imap(op.itemgetter(1), slice_map))
+			len_structs, len_clusters = mem.tell(), sum(map(op.itemgetter(1), slice_map))
 			assert len_structs <= len_clusters, [len_structs, len_clusters]
 
 			# Actual write operation
@@ -517,7 +494,7 @@ def main(args=None):
 				if not opts.dry_run: src.write(chunk)
 				length -= len(chunk)
 				if length > 0:
-					chunk = '\0'*length
+					chunk = b'\0'*length
 					log.info('Padding remaining %sB with zeroes', len(chunk))
 					if not opts.dry_run: src.write(chunk)
 

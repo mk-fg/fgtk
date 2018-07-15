@@ -2125,15 +2125,16 @@ positions or current (`auto-rotated`_) wallpaper path.
 vfat_shuffler
 '''''''''''''
 
-Tool to shuffle entries inside a vfat (filesystem) directory (and do some other
-things) without actually mounting filesystem.
+Python3 script to shuffle LFN entries inside a vfat (filesystem) directory
+and do some other things without actually mounting filesystem.
 
-Some crappy cheap mp3 players don't have shuffle functionality and play files
-strictly in the same order as their dentries_ appear on the device blocks.
+Implemented to work around limitations of crappy cheap mp3 players that don't
+have shuffle (or any ordering) functionality and cycle tracks in the same order
+as their dentries_ appear on the filesystem.
 
-Easy way to "shuffle" stuff for them in quick-and-efficient manner is to swap
-dentries' places, which unfortunately requires re-implementing a bit of vfat
-driver code, which (fortunately) isn't that complex.
+Easy way to "shuffle" stuff for them in quick and efficient manner is to swap
+dentries' places, which (unfortunately) requires re-implementing a bit of vfat
+driver code, which (fortunately) isn't that complicated.
 
 Tool takes path to device and directory to operate on as arguments (see --help)
 and has -s/--shuffle (actual shuffle operation), -l/--list (simply list files,
@@ -2142,13 +2143,19 @@ check what thing will do without making any changes.
 
 One limitation is that it works *only* with FAT32 "vfat" fs type, which can be
 created with "mkfs.vfat" tool, *not* the types that "mkdosfs" tool creates,
-*not* FAT16 or whatever other variations are out there.
-Only reason is that I didn't bother to learn the differences between these, just
-checked and saw parser bug out on mkdosfs-created fs format.
+*not* FAT16, FAT12, exFAT or whatever other variations are out there - they're
+slightly different and I didn't need these.
 
-Might be useful baseline to hack some fat32-related tool, as it has everything
+Might be useful base to hack some fat32-related tool, as it has everything
 necessary for full r/w implementation - e.g. a tool to hardlink files on fat32,
 create infinite dir loops, undelete tool, etc.
+
+Due to bunch of heavy parsing done inside, can take a few seconds to process
+whole fs structure, and works ~5x faster with `pypy <http://pypy.org/>`_
+(e.g. 1.5s instead of 9s).
+
+Somewhat similar project (which I didn't find at the time of implementing this
+back in 2013) - `maxpat78/FATtools <https://github.com/maxpat78/FATtools/>`_.
 
 .. _dentries: https://en.wikipedia.org/wiki/File_Allocation_Table#Directory_entry
 
