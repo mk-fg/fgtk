@@ -216,7 +216,7 @@ class File(object):
 
 class DotEntry(File):
 
-	def __str__(self): return f'[   ] {self.de.name_long}'
+	def __str__(self): return f'[{" "*7}] {self.de.name_long}'
 	def __repr__(self): return f'<{self.__class__.__name__} [{self.de.name_long.strip()}]>'
 
 
@@ -226,8 +226,11 @@ class Directory(File):
 		super(Directory, self).__init__(de, fs)
 		self.children = list(self.parse_des(self.fs.get_des(self.firstCluster), fs))
 
-	def reordered_structs(self, sort_func, group_dirs=None, group_dirs_sort_func=None):
+	struct_tuple = collections.namedtuple('StructTuple', 'struct data')
+	def iter_struct_tuples( self,
+			sort_func=None, group_dirs=None, group_dirs_sort_func=None ):
 		assert group_dirs in [None, False, 'first', 'last'], group_dirs
+		if not sort_func: sort_func = lambda des: None
 		if not group_dirs_sort_func: group_dirs_sort_func = sort_func
 
 		parts = collections.namedtuple( 'Parts',
@@ -241,17 +244,17 @@ class Directory(File):
 			else: dst = parts.whatever
 			dst.append(obj)
 
-		for k, entries in parts._asdict().items():
+		for k, des in parts._asdict().items():
 			if k == 'dots': continue # dotentries
-			res = (sort_func if k == 'whatever' else group_dirs_sort_func)(entries)
+			res = (sort_func if k == 'whatever' else group_dirs_sort_func)(des)
 			if res is None: continue # assuming it's an in-place list sorter
-			entries[:] = res
+			des[:] = res
 
 		log.debug('Resulting directory order:')
 		for obj in it.chain(*parts):
 			log.debug('  %s', obj)
-			for lfn in obj.de.lfns: yield (LFNEntry, lfn)
-			yield (DirEntry, obj.de)
+			for lfn in obj.de.lfns: yield self.struct_tuple(LFNEntry, lfn)
+			yield self.struct_tuple(DirEntry, obj.de)
 
 	def __getitem__(self, name):
 		for obj in self.children:
@@ -261,7 +264,7 @@ class Directory(File):
 	def __iter__(self):
 		return iter(self.children)
 
-	def __str__(self): return f'[{self.firstCluster:3d}] {self.de.name_long}/'
+	def __str__(self): return f'[{self.firstCluster:7d}] {self.de.name_long}/'
 
 
 class FatFs(Directory):
@@ -280,7 +283,7 @@ class FatFs(Directory):
 	def get_next_cluster(self, clidx):
 		ress = set([fat[clidx] for fat in self.pdr.fats])
 		if len(ress) == 1: return ress.pop()
-		log.error('Inconsistencie between FATs: %s points to', clidx)
+		log.error('Inconsistency between FATs: %s points to', clidx)
 		for i, fat in enumerate(self.pdr.fats):
 			log.error('    %s according to fat #%s' , fat[clidx], i)
 		res = ress.pop()
@@ -465,11 +468,19 @@ def op_rename(path, tpl, dry_run=False):
 			fs.write_struct(LFNEntry, lfn, dry_run=dry_run)
 
 def op_reorder(path, src, dry_run=False, **reorder_kws):
-	path_structs = path.reordered_structs(**reorder_kws)
+	path_sts_orig = list(path.iter_struct_tuples())
+	path_sts_sorted = list(path.iter_struct_tuples(**reorder_kws))
+
+	path_sts_hashed = [
+		tuple(id(st.data) for st in sts)
+		for sts in [path_sts_orig, path_sts_sorted] ]
+	if path_sts_hashed[0] == path_sts_hashed[1]:
+		log.debug('Reorder for path was not needed, skipping: %r', path)
+		return
 
 	with BytesIO() as mem:
 		# Dump all path_structs to mem
-		for struct, data in path_structs:
+		for struct, data in path_sts_sorted:
 			# log.debug('Writing-out struct (%sB):\n%s', struct.sizeof(), data)
 			try: struct.build_stream(data, mem)
 			except StreamError:
