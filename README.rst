@@ -2142,6 +2142,8 @@ operation), ---o/order, --rename plus some other action-opts (all support
 -r/--recursive operation), and ``--debug --dry-run`` can be useful to check what
 script does without making any fs changes (opens device read-only).
 
+See -h/--help output for more info and usage examples.
+
 One limitation is that it only works with FAT32 "vfat" fs type, which can be
 created via "mkfs.vfat" tool, *not* the stuff that "mkdosfs" tool creates,
 *not* FAT16, FAT12, exFAT or whatever other variations are out there (they're

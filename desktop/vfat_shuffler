@@ -526,7 +526,23 @@ def main(args=None):
 		description=dedent('''
 			Raw FAT32 manipulation tool.
 			Simply lists files in specified directory by default.
-			Use options like -s/--shuffle and --rename to specify other actions.'''))
+			Use options like -s/--shuffle and --rename to specify other actions.'''),
+		epilog=dedent('''
+			Usage examples:
+
+				List files in order they are stored (with -r/--recursive to do it recursively):
+					% vfat_shuffler /dev/sdd1 /music/misc
+					% vfat_shuffler -lr /dev/sdd1 /music
+
+				Order stuff alphabetically, grouping dirs before files (default for -g/--group-dirs):
+					% vfat_shuffler -o /dev/sdd1 /music/misc
+					% vfat_shuffler -or /dev/sdd1 /
+					% vfat_shuffler -o --case-insensitive /mnt/player/music/misc
+					% vfat_shuffler -or --sudo --umount /mnt/player/music
+
+				Shuffle files (randomize order):
+					% vfat_shuffler -srx /mnt/player/music
+		'''))
 
 	group = parser.add_argument_group('Device and path')
 	group.add_argument('dev_or_vfs_path',
