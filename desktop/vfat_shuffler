@@ -579,6 +579,8 @@ def main(args=None):
 		help='''
 			Use sudo for mount/umount commands
 				when vfs path is specified instead of device+path.''')
+	group.add_argument('-u', '--umount', action='store_true',
+		help='When operating on a mounted path, do not remount it back.')
 
 	group = parser.add_argument_group('Debug/output options')
 	group.add_argument('-n', '--dry-run',
@@ -639,7 +641,7 @@ def main(args=None):
 					op_reorder(path, src, dry_run=opts.dry_run, **sort_opts)
 
 	finally:
-		if mp:
+		if mp and not opts.umount:
 			res = run_proc(['mount', mp], sudo=opts.sudo, out=...) # fstab check
 			if res.returncode: res = run_proc(['mount', dev, mp], sudo=opts.sudo, out=...)
 			if res.returncode: res.check_returncode()
