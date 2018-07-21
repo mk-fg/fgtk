@@ -593,7 +593,7 @@ def main(args=None):
 			' All "src" args must be paths.'
 			' Does not imply --remove-src (creates copies next to src files), unless specified.')
 	group.add_argument('-t', '--dst-dir', metavar='path',
-		help='Path to store resulting files in. Defaults to current one.'
+		help='Path to store resulting files in. Defaults to current one (unless --inplace).'
 			' With --inplace also specified, full dst realpath will be re-created under this dir.')
 	group.add_argument('-y', '--ytdl-opts',
 		action='append', metavar='opts',
