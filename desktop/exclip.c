@@ -349,9 +349,9 @@ void parse_opts( int argc, char *argv[],
 "Usage: %s [-h|--help] [-x|--verbatim] [-d|--slashes-to-dots]\n\n"
 "\"Copies\" (actually forks pids"
 	" to hold/own that stuff) primary X11 selection\n"
-" back to primary and clipboard, stripping start/end spaces\n"
-" and removing newlines"
-	" by default (unless -x/--verbatim is specified).\n\n"
+" back to primary and clipboard, stripping start/end spaces,\n"
+" removing newlines and replacing tabs with spaces by default\n"
+" (unless -x/--verbatim is specified).\n\n"
 "-d/--slashes-to-dots flag replaces all forward slashes [/] with dots [.],\n"
 " and can be used with or without -x/--verbatim to strip/keep other stuff.\n\n"
 			, argv[0] );
@@ -392,6 +392,7 @@ int main(int argc, char *argv[]) {
 
 	if (!opt_verbatim) {
 		str_rmchar(buff, &buff_len, '\n');
+		str_subchar(buff, buff_len, '\t', ' ');
 		str_strip(&buff, &buff_len); }
 	if (opt_slashes_to_dots) str_subchar(buff, buff_len, '/', '.');
 
