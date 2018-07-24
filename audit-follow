@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+
+import os, sys, subprocess, signal, json, re, binascii, time
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Follow and decode audit msgs from journalctl output.')
+	parser.add_argument('-a', '--all', action='store_true',
+		help='Do not strip prefixes and misc noise from audit msgs.')
+	parser.add_argument('-s', '--sep',
+		nargs='?', const='', metavar='char ["x" count]',
+		help='Separator char and optional'
+				' count of these to use between multi-line audit msgs.'
+			' Default: -s=-x80, empty or no arg can be used for empty line.')
+	parser.add_argument('-r', '--reltime', action='store_true',
+		help='Print relative monotonic timestamp before every line since app start.')
+	parser.add_argument('-d', '--difftime', action='store_true',
+		help='Print timestamp since last logged event on each line.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	sys.stdout = open(sys.stdout.fileno(), 'w', 1)
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	proc = subprocess.Popen(['journalctl', '-af', '-o', 'json'], stdout=subprocess.PIPE)
+
+	def decode_hex_sub(m):
+		k, v = m.group(0).split('=', 1)
+		try: v = binascii.a2b_hex(v)
+		except ValueError: pass
+		else:
+			try: v = repr(v.decode().replace('\0', ' '))
+			except UnicodeDecodeError: v = '[{}]'.format(repr(v).lstrip('b'))
+		return f'{k}={v}'
+
+	ts0 = None
+	if opts.reltime: ts0 = time.monotonic()
+	ts_prev = ts_diff = ts0 if opts.difftime else None
+
+	sep_c, sep = 80, '-' if opts.sep is None else opts.sep.strip()
+	if len(sep) > 1:
+		sep, sep_c = sep.split('x', 1)
+		sep, sep_c = sep.strip(), int(sep_c)
+	if sep: sep *= sep_c
+
+	audit_id_prev = None
+	for line in proc.stdout:
+		line = json.loads(line)
+		if not ( line['SYSLOG_FACILITY'] == '0'
+			and line['SYSLOG_IDENTIFIER'] == 'kernel'
+			and line['MESSAGE'].startswith('audit:') ): continue
+		line = re.sub( r'[\w\d]+=[A-F0-9]{8}[A-F0-9]+',
+			decode_hex_sub, line['MESSAGE'].strip() )
+
+		ts, audit_id = time.monotonic(), re.search(r'audit\([\d.]+:(\d+)\)', line)
+		if audit_id: audit_id = int(audit_id.group(1))
+		if sep and audit_id != audit_id_prev:
+			if audit_id_prev: print(sep)
+			audit_id_prev = audit_id
+			if ts_prev: ts_diff, ts_prev = ts - ts_prev, ts
+		if not opts.all:
+			line = re.sub(r'^audit: type=(\d+) audit\(.*\):\s+', '[\g<1>] ', line)
+		if ts0: line = '{:>8.2f} {}'.format(time.monotonic() - ts0, line)
+		if ts_prev: line = '{:>6.2f} {}'.format(ts_diff, line)
+
+		print(line)
+
+if __name__ == '__main__': sys.exit(main())

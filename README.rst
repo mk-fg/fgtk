@@ -127,6 +127,38 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
 .. _fatrace: https://launchpad.net/fatrace
 .. _fanotify: http://lwn.net/Articles/339253/
 
+audit-follow
+''''''''''''
+
+Trivial py3 script to decide audit messages from "journalctl -af" output,
+i.e. stuff like this::
+
+  Jul 24 17:14:01 malediction audit: PROCTITLE
+    proctitle=7368002D630067726570202D652044... (loooong hex-encoded string)
+
+Into this::
+
+  [1327] proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
+
+Filters for audit messages only, strips long audit-id/time prefixes,
+unless -a/--all specified, puts separators between multi-line audit reports,
+relative and/or differential timestamps (-r/--reltime and -d/--difftime opts).
+
+Audit subsystem can be very useful to understand which process modifies some
+path or what's the command-line of /bin/bash being occasionally run without need
+for strace or where it's inapplicable.
+
+Some useful auditctl incantations (cheatsheet)::
+
+  # auditctl -e 1
+  # auditctl -a exit,always -S execve -F path=/bin/bash
+  # auditctl -a exit,always -F auid=1001 -S openat -S openat
+  # auditctl -w /some/important/path/ -p rwxa
+  # auditctl -e 0
+  # auditctl -D
+
+auditd + ausearch can be used as an offline/advanced alternative to such script.
+
 clean-boot
 ''''''''''
 
