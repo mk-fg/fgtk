@@ -407,7 +407,7 @@ def run_proc(cmd, sudo=False, out=True, **kws):
 
 def op_resolve_mp(vfs_path):
 	import json, pathlib as pl
-	path = pl.Path(vfs_path)
+	path = pl.Path(vfs_path).resolve()
 	lsblk = json.loads(run_proc('lsblk --json --paths'.split()))
 	mp_list, lsblk = list(), collections.deque(lsblk['blockdevices'])
 	while lsblk:
@@ -633,6 +633,7 @@ def main(args=None):
 	try:
 		if not path:
 			dev, path, mount = op_resolve_mp(dev)
+			os.chdir('/') # umount might fail otherwise
 			run_proc(['umount', mount], sudo=opts.sudo)
 			mp = mount
 		elif not path.startswith(os.sep):
