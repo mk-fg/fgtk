@@ -132,7 +132,7 @@ def main_core(argv=None):
 		for path in [dir_chat, dir_priv]:
 			if not isdir(path): os.makedirs(path, 0755)
 
-		chats = set() # to detect duplicates with diff in cancer-chars
+		chats = set() # to detect duplicates with diff in stripped chars
 
 		for chan, files in sorted(chans.viewitems()):
 			priv = not any(it.imap(chan.startswith, chat_prefixes)) # private messages
@@ -142,7 +142,9 @@ def main_core(argv=None):
 			if not priv:
 				# "#" and "&" prefixes don't work well with shells, so strip these,
 				#  taking care that there are no duplicate names as a result
-				chan = chan.lstrip('#&')
+				if chan.startswith('#'): chan = chan[1:]
+				while chan.startswith('#'): chan = '_' + chan[1:]
+				if chan.startswith('&'): chan = '+' + chan[1:]
 				assert chan not in chats, chan
 				chats.add(chan)
 
