@@ -13,7 +13,7 @@ class SSHMuxConfig:
 		-oControlPath=none -oControlMaster=no
 		-oConnectTimeout=180 -oServerAliveInterval=6 -oServerAliveCountMax=10
 		-oBatchMode=yes -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0
-		-NnT'''.split()
+		-oExitOnForwardFailure=yes -NnT'''.split()
 
 
 class LogMessage(object):

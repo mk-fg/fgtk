@@ -66,26 +66,6 @@ pyacl
 Tool to restore POSIX ACLs on paths, broken by chmod or similar stuff without
 actually changing them.
 
-rsync-diff
-''''''''''
-
-Tool to sync paths, based on berkley db and rsync.
-
-Keeps b-tree of paths (files and dirs) and corresponding mtimes in berkdb,
-comparing state when ran and building a simple merge-filter for rsync (``+
-/path`` line for each changed file/dir, including their path components, ending
-with ``- *``). Then it runs a single rsync with this filter to efficiently sync
-the paths.
-
-Note that the only difference from "rsync -a src dst" here is that "dst" tree
-doesn't have to exist on fs, otherwise scanning "dst" should be pretty much the
-same (and probably more efficient, depending on fs implementation) b-tree
-traversal as with berkdb.
-
-Wrote it before realizing that it's quite pointless for my mirroring use-case -
-I do have full source and destination trees, so rsync can be used to compare (if
-diff file-list is needed) or sync them.
-
 fs
 ''
 
@@ -618,210 +598,6 @@ such tools on an isolated systems that don't run anything else crypto-related.
 
 Shouldn't compromise deterministic stuff though, e.g. dm-crypt operation (except
 new key generation in cryptsetup or such).
-
-
-
-dev
-~~~
-
-tabs_filter
-^^^^^^^^^^^
-
-My secret weapon in tabs-vs-spaces holywar.
-
-In my emacs, tab key always inserts "", marking spaces as a bug with
-develock-mode. This script transparently converts all indent-tabs into spaces
-and back, designed to be used from git content filters, and occasionally by
-hand.
-
-.git/config::
-
-  [filter "tabs"]
-    clean = tabs_filter clean %f
-    smudge = tabs_filter smudge %f
-
-.git/info/attributes or .gitattributes::
-
-  *.py filter=tabs
-  *.tac filter=tabs
-
-Not sure why people have such strong opinions on that trivial matter,
-but I find it easier never to mention that I use such script ;)
-
-golang_filter
-^^^^^^^^^^^^^
-
-Same idea as in "tabs_filter", but on a larger scale - basically does to Go_
-what coffee-script_ does to the syntax of javascript - drops all the unnecessary
-brace-cancer, with the ability to restore original perfectly ("diff -u reverse
-original" is checked upon transformation to make sure of that), as long as code
-intentation is correct.
-
-.. _Go: http://golang.org/
-.. _coffee-script: http://jashkenas.github.com/coffee-script/
-
-.git/config::
-
-  [filter "golang"]
-    clean = golang_filter git-clean %f
-    smudge = golang_filter git-smudge %f
-
-.git/info/attributes or .gitattributes::
-
-  *.go filter=golang
-
-Again, ideally no one should even notice that I actually don't have that crap in
-the editor, while repo and compiler will see the proper (bloated) code.
-
-distribute_regen
-^^^^^^^^^^^^^^^^
-
-Tool to auto-update python package metadata in setup.py and README files.
-
-Uses python ast module to parse setup.py to find "version" keyword there and
-update it (via simple regex replacement, not sure if ast can be converted back
-to code properly), based on date and current git revision number, producing
-something like "12.04.58" (year.month.revision-since-month-start).
-
-Also generates (and checks with docutils afterwards) README.txt (ReST) from
-README.md (Markdown) with pandoc, if both are present and there's no README or
-README.rst.
-
-Designed to be used from pre-commit hook, like ``ln -s /path/to/distribute_regen
-.git/hooks/pre-commit``, to update version number before every commit.
-
-darcs_bundle_to_diff
-^^^^^^^^^^^^^^^^^^^^
-
-Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
-hunks. Handles file creations and all sorts of updates, but probably not moves
-and removals, which were outside my use-case at the moment.
-
-Was written for just one occasion (re-working old bundles attached to tahoe-lafs
-tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
-out-of-date, but I imagine it shouldn't take much effort to make it work with
-any other bundles.
-
-git-nym
-^^^^^^^
-
-Script to read NYM env var and run git using that ssh id instead of whatever
-ssh-agent or e.g. ``~/.ssh/id_rsa`` provides.
-
-NYM var is checked for either full path to the key, basename in ``~/.ssh``, name
-like ``~/.ssh/id_{rsa,ecdsa,ed25519}__${NYM}`` or unique (i.e. two matches will
-cause error, not random pick) match for one of ``~/.ssh/id_*`` name part.
-
-Can be used as ``NYM=project-x git-nym clone git@dev.project-x:component-y`` to
-e.g.  clone the specified repo using ``~/.ssh/id_rsa__project-x`` key or as
-``NYM=project-x git nym clone ...``.
-
-Also to just test new keys with git, disregarding ssh-agent and lingering
-control sockets with NYM_CLEAN flag set.
-
-git-meld
-^^^^^^^^
-
-Git-command replacement for git-diff to run meld instead of regular
-(git-provided) textual diff, but aggregating all the files into one invocation.
-
-For instance, if diffs are in ``server.py`` and ``client.py`` files, running
-``git meld`` will run something like::
-
-  meld \
-    --diff /tmp/.git-meld/server.py.hash1 /tmp/.git-meld/server.py.hash2 \
-    --diff /tmp/.git-meld/client.py.hash1 /tmp/.git-meld/client.py.hash2
-
-Point is to have all these diffs in meld tabs (with one window per ``git meld``)
-instead of running separate meld window/tab on each pair of files as setting
-GIT_EXTERNAL_DIFF would do.
-
-Should be installed as ``git-meld`` somewhere in PATH *and* symlinked as
-``meld-git`` (git-meld runs ``GIT_EXTERNAL_DIFF=meld-git git diff "$@"``) to
-work.
-
-catn
-^^^^
-
-Similar to "cat" (specifically coreutils' ``cat -n file``), but shows specific
-line in a file with a few "context" lines around it::
-
-  % catn js/main.js 188
-     185:     projectionTween = function(projection0, projection1) {
-     186:       return function(d) {
-     187:         var project, projection, t;
-  >> 188:         project = function(λ, φ) {
-     189:           var p0, p1, _ref1;
-     190:           λ *= 180 / Math.PI;
-     191:           φ *= 180 / Math.PI;
-
-Above command is synonymous to ``catn js/main.js 188 3``, ``catn
-js/main.js:188`` and ``catn js/main.js:188:3``, where "3" means "3 lines of
-context" (can be omitted as 3 is the default value there).
-
-``catn -q ...`` outputs line + context verbatim, so it'd be more useful for
-piping to another file/command or terminal copy-paste.
-
-git_terminate
-^^^^^^^^^^^^^
-
-Script to permanently delete files/folders from repository and its history -
-including "dangling" objects where these might still exist.
-
-Should be used from repo root with a list of paths to delete, e.g.
-``git_terminate path1 path2``.
-
-WARNING: will do things like ``git reflog expire`` and ``git gc`` with agressive
-parameters on the whole repository, so any other possible history not stashed or
-linked to existing branches/remotes (e.g. stuff in ``git reflog``) will be
-purged.
-
-git_contains
-^^^^^^^^^^^^
-
-Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
-"SPECIFYING REVISIONS" in git-rev-parse(1)) object(s) exist (e.g.  merged) in a
-specified git repo/tree-ish.
-
-Essentially does ``git rev-list <tree-ish2> | grep $(git rev-parse
-<tree-ish1>)``.
-
-::
-
-  % git_contains -C /var/src/linux-git ee0073a1e7b0ec172
-  [exit status=0, hash was found]
-
-  % git_contains -C /var/src/linux-git ee0073a1e7b0ec172 HEAD notarealthing
-  Missing:
-    notarealthing
-  [status=2 right when rev-parse fails before even starting rev-list]
-
-  % git_contains -C /var/src/linux-git -H v3.5 --quiet ee0073a1e7b0ec172
-  [status=2, this commit is in HEAD, but not in v3.5 (tag), --quiet doesn't produce stdout]
-
-  % git_contains -C /var/src/linux-git --any ee0073a1e7b0ec172 notarealthing
-  [status=0, ee0073a1e7b0ec172 was found, and it's enough with --any]
-
-  % git_contains -C /var/src/linux-git --strict notarealthing
-  fatal: ambiguous argument 'notarealting': unknown revision or path not in the working tree.
-  Use '--' to separate paths from revisions, like this:
-  'git <command> [<revision>...] -- [<file>...]'
-  git rev-parse failed for tree-ish 'notarealting' (command: ['git', 'rev-parse', 'notarealting'])
-
-Lines in square brackets above are comments, not actual output.
-
-gtk-val-slider
-^^^^^^^^^^^^^^
-
-Renders gtk3 window with a slider widget and writes value (float or int) picked
-there either to stdout or to a specified file, with some rate-limiting delay.
-
-Useful to mock/control values on a dev machine.
-
-E.g. instead of hardware sensors (which might be hard to get/connect/use), just
-setup app to read value(s) that should be there from file(s), specify proper
-value range to the thing and play around with values all you want to see what
-happens.
 
 
 
@@ -1673,6 +1449,249 @@ adding paths/filesystems to these without clobbering ownership info there.
 Should be safe to use anywhere, as in most non-nspawn cases upper bits of
 uid/gid are always zero, hence any changes can be easily reverted by running
 this tool again with -c0.
+
+
+
+dev
+~~~
+
+Minor things I tend to use when writing code and stuff.
+
+tabs_filter
+^^^^^^^^^^^
+
+My secret weapon in tabs-vs-spaces holywar.
+
+In my emacs, tab key always inserts "", marking spaces as a bug with
+develock-mode. This script transparently converts all indent-tabs into spaces
+and back, designed to be used from git content filters, and occasionally by
+hand.
+
+.git/config::
+
+  [filter "tabs"]
+    clean = tabs_filter clean %f
+    smudge = tabs_filter smudge %f
+
+.git/info/attributes or .gitattributes::
+
+  *.py filter=tabs
+  *.tac filter=tabs
+
+Not sure why people have such strong opinions on that trivial matter,
+but I find it easier never to mention that I use such script ;)
+
+golang_filter
+^^^^^^^^^^^^^
+
+Same idea as in "tabs_filter", but on a larger scale - basically does to Go_
+what coffee-script_ does to the syntax of javascript - drops all the unnecessary
+brace-cancer, with the ability to restore original perfectly ("diff -u reverse
+original" is checked upon transformation to make sure of that), as long as code
+intentation is correct.
+
+.. _Go: http://golang.org/
+.. _coffee-script: http://jashkenas.github.com/coffee-script/
+
+.git/config::
+
+  [filter "golang"]
+    clean = golang_filter git-clean %f
+    smudge = golang_filter git-smudge %f
+
+.git/info/attributes or .gitattributes::
+
+  *.go filter=golang
+
+Again, ideally no one should even notice that I actually don't have that crap in
+the editor, while repo and compiler will see the proper (bloated) code.
+
+distribute_regen
+^^^^^^^^^^^^^^^^
+
+Tool to auto-update python package metadata in setup.py and README files.
+
+Uses python ast module to parse setup.py to find "version" keyword there and
+update it (via simple regex replacement, not sure if ast can be converted back
+to code properly), based on date and current git revision number, producing
+something like "12.04.58" (year.month.revision-since-month-start).
+
+Also generates (and checks with docutils afterwards) README.txt (ReST) from
+README.md (Markdown) with pandoc, if both are present and there's no README or
+README.rst.
+
+Designed to be used from pre-commit hook, like ``ln -s /path/to/distribute_regen
+.git/hooks/pre-commit``, to update version number before every commit.
+
+darcs_bundle_to_diff
+^^^^^^^^^^^^^^^^^^^^
+
+Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
+hunks. Handles file creations and all sorts of updates, but probably not moves
+and removals, which were outside my use-case at the moment.
+
+Was written for just one occasion (re-working old bundles attached to tahoe-lafs
+tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
+out-of-date, but I imagine it shouldn't take much effort to make it work with
+any other bundles.
+
+git-nym
+^^^^^^^
+
+Script to read NYM env var and run git using that ssh id instead of whatever
+ssh-agent or e.g. ``~/.ssh/id_rsa`` provides.
+
+NYM var is checked for either full path to the key, basename in ``~/.ssh``, name
+like ``~/.ssh/id_{rsa,ecdsa,ed25519}__${NYM}`` or unique (i.e. two matches will
+cause error, not random pick) match for one of ``~/.ssh/id_*`` name part.
+
+Can be used as ``NYM=project-x git-nym clone git@dev.project-x:component-y`` to
+e.g.  clone the specified repo using ``~/.ssh/id_rsa__project-x`` key or as
+``NYM=project-x git nym clone ...``.
+
+Also to just test new keys with git, disregarding ssh-agent and lingering
+control sockets with NYM_CLEAN flag set.
+
+git-meld
+^^^^^^^^
+
+Git-command replacement for git-diff to run meld instead of regular
+(git-provided) textual diff, but aggregating all the files into one invocation.
+
+For instance, if diffs are in ``server.py`` and ``client.py`` files, running
+``git meld`` will run something like::
+
+  meld \
+    --diff /tmp/.git-meld/server.py.hash1 /tmp/.git-meld/server.py.hash2 \
+    --diff /tmp/.git-meld/client.py.hash1 /tmp/.git-meld/client.py.hash2
+
+Point is to have all these diffs in meld tabs (with one window per ``git meld``)
+instead of running separate meld window/tab on each pair of files as setting
+GIT_EXTERNAL_DIFF would do.
+
+Should be installed as ``git-meld`` somewhere in PATH *and* symlinked as
+``meld-git`` (git-meld runs ``GIT_EXTERNAL_DIFF=meld-git git diff "$@"``) to
+work.
+
+catn
+^^^^
+
+Similar to "cat" (specifically coreutils' ``cat -n file``), but shows specific
+line in a file with a few "context" lines around it::
+
+  % catn js/main.js 188
+     185:     projectionTween = function(projection0, projection1) {
+     186:       return function(d) {
+     187:         var project, projection, t;
+  >> 188:         project = function(λ, φ) {
+     189:           var p0, p1, _ref1;
+     190:           λ *= 180 / Math.PI;
+     191:           φ *= 180 / Math.PI;
+
+Above command is synonymous to ``catn js/main.js 188 3``, ``catn
+js/main.js:188`` and ``catn js/main.js:188:3``, where "3" means "3 lines of
+context" (can be omitted as 3 is the default value there).
+
+``catn -q ...`` outputs line + context verbatim, so it'd be more useful for
+piping to another file/command or terminal copy-paste.
+
+git_terminate
+^^^^^^^^^^^^^
+
+Script to permanently delete files/folders from repository and its history -
+including "dangling" objects where these might still exist.
+
+Should be used from repo root with a list of paths to delete, e.g.
+``git_terminate path1 path2``.
+
+WARNING: will do things like ``git reflog expire`` and ``git gc`` with agressive
+parameters on the whole repository, so any other possible history not stashed or
+linked to existing branches/remotes (e.g. stuff in ``git reflog``) will be
+purged.
+
+git_contains
+^^^^^^^^^^^^
+
+Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
+"SPECIFYING REVISIONS" in git-rev-parse(1)) object(s) exist (e.g.  merged) in a
+specified git repo/tree-ish.
+
+Essentially does ``git rev-list <tree-ish2> | grep $(git rev-parse
+<tree-ish1>)``.
+
+::
+
+  % git_contains -C /var/src/linux-git ee0073a1e7b0ec172
+  [exit status=0, hash was found]
+
+  % git_contains -C /var/src/linux-git ee0073a1e7b0ec172 HEAD notarealthing
+  Missing:
+    notarealthing
+  [status=2 right when rev-parse fails before even starting rev-list]
+
+  % git_contains -C /var/src/linux-git -H v3.5 --quiet ee0073a1e7b0ec172
+  [status=2, this commit is in HEAD, but not in v3.5 (tag), --quiet doesn't produce stdout]
+
+  % git_contains -C /var/src/linux-git --any ee0073a1e7b0ec172 notarealthing
+  [status=0, ee0073a1e7b0ec172 was found, and it's enough with --any]
+
+  % git_contains -C /var/src/linux-git --strict notarealthing
+  fatal: ambiguous argument 'notarealting': unknown revision or path not in the working tree.
+  Use '--' to separate paths from revisions, like this:
+  'git <command> [<revision>...] -- [<file>...]'
+  git rev-parse failed for tree-ish 'notarealting' (command: ['git', 'rev-parse', 'notarealting'])
+
+Lines in square brackets above are comments, not actual output.
+
+gtk-val-slider
+^^^^^^^^^^^^^^
+
+Renders gtk3 window with a slider widget and writes value (float or int) picked
+there either to stdout or to a specified file, with some rate-limiting delay.
+
+Useful to mock/control values on a dev machine.
+
+E.g. instead of hardware sensors (which might be hard to get/connect/use), just
+setup app to read value(s) that should be there from file(s), specify proper
+value range to the thing and play around with values all you want to see what
+happens.
+
+
+
+backup
+~~~~~~
+
+Various dedicated backup tools and snippets.
+
+ssh-r-sync / ssh-r-sync-recv
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+"ssh -Rsync" - SSH shell-script and client to negotiate and run rsync pulls over
+ssh reverse tunnels ("ssh -R") without any extra client-side setup.
+
+I.e. ``ssh-r-sync user@backup-host somedir`` should ssh into user\@backup-host,
+with auto-selected reverse-tunnel (-R) spec depending on local machine name,
+pass backup parameters and run ``rsync --daemon`` locally, allowing remote
+backup-host to initiate a pull from this daemon over secure/authenticated
+ssh tunnel, picking appropriate destination path and most rsync parameters,
+rotating/removing stuff on the backup-fs as necessary.
+
+This is to avoid following problematic things:
+
+- Pushing stuff to backup-host, which can be exploited to delete stuff.
+- Using insecure network channels and/or rsync auth - ssh only.
+- Having any kind of insecure auth or port open on backup-host (e.g. rsyncd) - ssh only.
+- Requiring backed-up machine to be accessible on the net for backup-pulls - can
+  be behind any amount of NAT layers, and only needs a single ssh connection.
+- Specifying/handling backup parameters (beyond --filter lists), rotation and
+  cleanup on the backed-up machine - backup-host will handle all that in a
+  known-good and uniform manner.
+
+Idea is to for backup process to be as simple as ssh'ing into backup-host,
+although with path and filter specs telling it what to grab.
+
+| Only needs python3 + ssh + rsync on either side.
+| See ``ssh-r-sync-recv -h`` for sshd_config setup notes.
 
 
 
@@ -2632,6 +2651,26 @@ Mostly a reminder of how to use the thing and what one can do with it.
 There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
 
 .. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
+
+rsync-diff
+''''''''''
+
+Script to sync paths, based on berkley db and rsync.
+
+Keeps b-tree of paths (files and dirs) and corresponding mtimes in berkdb,
+comparing state when ran and building a simple merge-filter for rsync (``+
+/path`` line for each changed file/dir, including their path components, ending
+with ``- *``). Then it runs a single rsync with this filter to efficiently sync
+the paths.
+
+Note that the only difference from "rsync -a src dst" here is that "dst" tree
+doesn't have to exist on fs, otherwise scanning "dst" should be pretty much the
+same (and probably more efficient, depending on fs implementation) b-tree
+traversal as with berkdb.
+
+Wrote it before realizing that it's quite pointless for my mirroring use-case -
+do have full source and destination trees, so rsync can be used to compare
+(if diff file-list is needed) or sync them.
 
 pcap-process
 ^^^^^^^^^^^^

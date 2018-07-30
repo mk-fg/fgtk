@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, contextlib, subprocess, socket
+import hashlib, math, json, base64, signal, time
+
+
+p_fmt = lambda fmt,*a,**k: (
+	[fmt.format(*a,**k)] if isinstance(fmt, str)
+		and (a or k) else [[fmt, *a], k] )
+p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
+
+
+class SSHRsyncReceiverConfig:
+	# recv_port_* settings should be same on server/client
+	recv_port_range = 6000, 6999
+	recv_port_retries = 4
+	recv_port_hash_key = b'J\xbc\xed\xa3\xa5\x02E(\xde\xdc#h\xa4\xa5\xa4t'
+
+	hs_hello = b'ssh-r-sync o/ 1'
+	hs_timeout = 5.0
+	hs_key_size = 64
+
+class SSHRsyncError(Exception):
+	def __init__(self, *args):
+		super().__init__(str(p_fmt(*args)[0]))
+
+
+def hash_to_int(name, retry, n_max, **blake2_kws):
+	'Returns integer hash within n_max range from name/retry values.'
+	assert n_max > 0, n_max
+	n_bits = math.ceil(math.log(n_max + 1, 2))
+	n_bytes = math.ceil(n_bits / 8)
+	mac = retry.to_bytes(1, 'big') + name.encode()
+	for n in range(1000):
+		mac = hashlib.blake2b(mac, **blake2_kws).digest()
+		for o in range(0, 8//n_bytes):
+			n = int.from_bytes(mac[o*n_bytes:(o+1)*n_bytes], 'big')
+			if n_bits % 8: n >>= 8 - n_bits % 8
+			if n <= n_max: return n # (n % n_max) would add bias for small values
+	raise ValueError('Failed to get int within range after many hashes')
+
+b64_str = lambda v: base64.urlsafe_b64encode(v).decode()
+b64_bytes = lambda v: base64.urlsafe_b64decode(v.encode())
+
+@contextlib.contextmanager
+def err_timeout(timeout, err_t, *err_args):
+	def timeout_handler(sig, frm): raise err_t(*err_args)
+	handler_prev = signal.signal(signal.SIGALRM, timeout_handler)
+	delay, interval = signal.setitimer(signal.ITIMER_REAL, timeout)
+	assert not delay or interval
+	try: yield
+	finally:
+		signal.setitimer(signal.ITIMER_REAL, 0)
+		if handler_prev: signal.signal(signal.SIGALRM, handler_prev)
+
+
+def main(args=None):
+	conf = SSHRsyncReceiverConfig()
+
+	import argparse, textwrap
+
+	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join( indent + line
+				for line in text.replace('\t', '  ').splitlines(keepends=True) )
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).splitlines()
+
+	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
+		description=dedent('''
+			Receiver script for ssh sessions from ssh-r-sync.
+			Should be run after successful ssh auth to check reverse-tunnel setup,
+				perform any necessary maintenance on destination path and run rsync client.'''),
+		epilog=dedent('''
+			sshd_config snippet to set this script for backup-user command:
+
+				Match User backup
+					# GatewayPorts yes
+					PasswordAuthentication no
+					X11Forwarding no
+					AllowAgentForwarding no
+					PermitTTY no
+					PermitTunnel no
+					AllowStreamLocalForwarding no
+					AllowTcpForwarding remote
+					ForceCommand ~backup/ssh-r-sync-recv
+
+			Any cli opts of this script should be added to ForceCommand.
+			Authentication is done via usual lines in ~backup/.ssh/authorized_keys'''))
+	parser.add_argument('-r', '--rsync', metavar='path',
+		help='Path to custom rsync binary, e.g. one with all necessary posix caps enabled.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	ssh_recv = open(sys.stdin.fileno(), 'rb', 0)
+	ssh_send = open(sys.stdout.fileno(), 'wb', 0)
+	sys.stdin = sys.stdout = None
+
+	hs_timeout_ctx = ft.partial( err_timeout,
+		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
+
+	with hs_timeout_ctx(): ssh_send.write(conf.hs_hello + b'\n')
+	with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
+	if hello != conf.hs_hello:
+		raise SSHRsyncError( 'Hello-string mismatch:'
+			' local={!r} remote={!r}', conf.hs_hello, hello )
+
+	with hs_timeout_ctx(): info = ssh_recv.readline()
+	info = json.loads(info)
+	tun_ports = set(
+		(conf.recv_port_range[0] + hash_to_int( info['name'], attempt,
+			conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key ))
+		for attempt in range(conf.recv_port_retries+1) )
+	if info['port'] not in tun_ports:
+		raise SSHRsyncError( 'Tunnel-port mismatch:'
+			' remote={!r} local-set={!r}', info['port'], tun_ports )
+	info['key'] = b64_bytes(info['key'])
+
+	key_recv = hashlib.blake2b(info['key'], person=b'server', key=conf.hs_hello).digest()
+	key_push = hashlib.blake2b(info['key'], person=b'client', key=conf.hs_hello).digest()
+	assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
+
+	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
+		sock_conn.settimeout(conf.hs_timeout)
+		sock_conn.connect(('localhost', info['port']))
+		key = sock_conn.recv(conf.hs_key_size)
+		if len(key) != conf.hs_key_size or key != key_push:
+			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
+		sock_conn.send(key_recv)
+
+	print('done!', file=sys.stderr)
+
+if __name__ == '__main__': sys.exit(main())

@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, logging, contextlib, subprocess, socket, pwd
+import hashlib, math, json, base64, signal, time
+
+
+p_fmt = lambda fmt,*a,**k: (
+	[fmt.format(*a,**k)] if isinstance(fmt, str)
+		and (a or k) else [[fmt, *a], k] )
+p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+log = get_logger('main')
+
+
+class SSHRsyncConfig:
+	# recv_port_* settings should be same on server/client
+	recv_port_range = 6000, 6999
+	recv_port_retries = 4
+	recv_port_hash_key = b'J\xbc\xed\xa3\xa5\x02E(\xde\xdc#h\xa4\xa5\xa4t'
+
+	hs_hello = b'ssh-r-sync o/ 1'
+	hs_timeout = 5.0
+	hs_key_size = 64
+
+	ssh_opts = '''
+		-oControlPath=none -oControlMaster=no
+		-oConnectTimeout=180 -oServerAliveInterval=6 -oServerAliveCountMax=10
+		-oBatchMode=yes -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0
+		-oExitOnForwardFailure=yes -T'''.split()
+
+class SSHRsyncError(Exception):
+	def __init__(self, *args):
+		super().__init__(str(p_fmt(*args)[0]))
+
+
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
+b64_str = lambda v: base64.urlsafe_b64encode(v).decode()
+b64_bytes = lambda v: base64.urlsafe_b64decode(v.encode())
+
+def hash_to_int(name, retry, n_max, **blake2_kws):
+	'Returns integer hash within n_max range from name/retry values.'
+	assert n_max > 0, n_max
+	n_bits = math.ceil(math.log(n_max + 1, 2))
+	n_bytes = math.ceil(n_bits / 8)
+	mac = retry.to_bytes(1, 'big') + name.encode()
+	for n in range(1000):
+		mac = hashlib.blake2b(mac, **blake2_kws).digest()
+		for o in range(0, 8//n_bytes):
+			n = int.from_bytes(mac[o*n_bytes:(o+1)*n_bytes], 'big')
+			if n_bits % 8: n >>= 8 - n_bits % 8
+			if n <= n_max: return n # (n % n_max) would add bias for small values
+	raise ValueError('Failed to get int within range after many hashes')
+
+@contextlib.contextmanager
+def err_timeout(timeout, err_t, *err_args):
+	def timeout_handler(sig, frm): raise err_t(*err_args)
+	handler_prev = signal.signal(signal.SIGALRM, timeout_handler)
+	delay, interval = signal.setitimer(signal.ITIMER_REAL, timeout)
+	assert not delay or interval
+	try: yield
+	finally:
+		signal.setitimer(signal.ITIMER_REAL, 0)
+		if handler_prev: signal.signal(signal.SIGALRM, handler_prev)
+
+
+def main(args=None):
+	conf = SSHRsyncConfig()
+
+	import argparse, textwrap
+
+	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join( indent + line
+				for line in text.replace('\t', '  ').splitlines(keepends=True) )
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).splitlines()
+
+	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
+		usage='%(prog)s [options] [user@]host[:port]',
+		description=dedent('''
+			"ssh -R rsync" script to backup stuff via ssh/rsync.
+			It works by ssh'ing into remote backup server, requesting it to make a backup,
+				which then happens over same ssh connection, using reverse-tunnel opened there.
+			ssh console channel is used to send backup parameters.
+
+			This avoids following problematic things:
+			- Pushing stuff to remote, which can be exploited to delete things.
+			- Using insecure network channels and/or rsync auth - ssh only.
+			- Having any kind of insecure auth or port open on backup server - ssh only.
+			- Requiring backed-up machine to be accessible on the net for backup-pulls.
+
+			On the backup-server side, only one
+				locked-down single-command ssh account is necessary.
+
+			To get rsync with full fs access, use -r/--rsync option and binary with
+				cap_dac_read_search (read) / cap_dac_override (write) posix capabilities.
+			Idea is to for backup process to be as simple as ssh'ing into remote host.'''))
+
+	group = parser.add_argument_group('Basic required arguments')
+	group.add_argument('host', metavar='[user@]host[:port]',
+		help='''
+			Destination [user@]host[:port] spec for ssh command.
+			If "user" part is omitted, current local user name will be added.''')
+	group.add_argument('path', help='Local path to backup.')
+
+	group = parser.add_argument_group('Rsync/backup options')
+	group.add_argument('-r', '--rsync', metavar='path',
+		help='Path to custom rsync binary, e.g. one with all necessary posix caps enabled.')
+	group.add_argument('-n', '--name', metavar='name',
+		help='Local machine name, which is used for backup'
+			' cleanup and deduplication. Picked as uname.nodename, if not specified.')
+	group.add_argument('-f', '--filter-file', metavar='path',
+		help='Local file to send and use as a global rsync'
+			' include/exclude filter rules, to be passed as --filter="merge <file>".')
+	group.add_argument('-x', '--filter-dir-file', metavar='name',
+		help='Simplified form of -f/--filter-file,'
+				' passing --filter="dir-merge <name>" to remote rsync command.'
+			' Same as using one-liner --filter-file with that directive.')
+
+	group = parser.add_argument_group('SSH options')
+	group.add_argument('-p', '--port', metavar='port',
+		help='Alternative way to specify port, similar to ssh binary.')
+	group.add_argument('--no-ssh-opts', action='store_true',
+		help='''
+			Do not pass any advanced -o<stuff> ssh options which script does by default.
+			ssh will still read stuff from ~/.ssh/config, so any new ones can be specified there.
+			Default options are:\n{}'''.format('\n'.join(textwrap.wrap(
+				' '.join(conf.ssh_opts), width=90, initial_indent='\t'*4, subsequent_indent='\t'*4 ))))
+
+	group = parser.add_argument_group('Misc options')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+
+	user = pwd.getpwuid(os.getuid()).pw_name
+	user, host = str_part(opts.host, '<@', user)
+	host, port = str_part(host, ':>')
+	name = opts.name or os.uname().nodename
+
+	hs_timeout_ctx = ft.partial( err_timeout,
+		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
+
+	def ssh_proc_close(proc):
+		for n, func in enumerate([proc.stdin.close, proc.terminate, proc.kill], 1):
+			with contextlib.suppress(OSError): func()
+			with contextlib.suppress(subprocess.TimeoutExpired):
+				proc.wait(n)
+				break
+
+	sock = sock_conn = ssh = None
+	try:
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		sock.bind(('localhost', 0)) # to get os-picked open port to tunnel to
+		addr, rsync_port = sock.getsockname()
+		sock.listen(1)
+
+		for attempt in range(conf.recv_port_retries+1):
+			tun_port = conf.recv_port_range[0] + hash_to_int( name, attempt,
+				conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key )
+			ssh_opts = ['-R', f'{tun_port}:localhost:{rsync_port}']
+			if not opts.no_ssh_opts: ssh_opts.extend(conf.ssh_opts)
+			ssh_cmd = ['ssh', *ssh_opts, f'{user}@{host}']
+			ssh = subprocess.Popen(
+				ssh_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+				stderr=subprocess.DEVNULL if not opts.debug else sys.stderr )
+			ssh_recv = open(ssh.stdout.fileno(), 'rb', 0)
+			ssh_send = open(ssh.stdin.fileno(), 'wb', 0)
+			with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
+			if hello: break
+			log.debug( 'No "hello" from the other side,'
+				' assuming tunnel failure (attempt={})', attempt+1 )
+			time.sleep(1)
+			ssh_proc_close(ssh)
+			exit(1)
+		if hello != conf.hs_hello:
+			raise SSHRsyncError( 'Hello-string mismatch:'
+				' local={!r} remote={!r}', conf.hs_hello, hello )
+
+		key = os.urandom(conf.hs_key_size)
+		info = dict(name=name, port=tun_port, key=b64_str(key))
+		with hs_timeout_ctx():
+			ssh_send.write(conf.hs_hello + b'\n')
+			ssh_send.write(json.dumps(info).encode() + b'\n')
+
+		key_recv = hashlib.blake2b(key, person=b'server', key=conf.hs_hello).digest()
+		key_push = hashlib.blake2b(key, person=b'client', key=conf.hs_hello).digest()
+		assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
+
+		sock.settimeout(conf.hs_timeout)
+		sock_conn, sock_addr = sock.accept()
+		sock_conn.settimeout(conf.hs_timeout)
+		sock_conn.send(key_push)
+		key = sock_conn.recv(conf.hs_key_size)
+		if len(key) != conf.hs_key_size or key != key_recv:
+			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
+
+		sock_conn = sock_conn.close()
+		sock = sock.close()
+
+		print('done!', file=sys.stderr)
+
+	finally:
+		if ssh:
+			for n, func in enumerate([ssh.stdin.close, ssh.terminate, ssh.kill], 1):
+				with contextlib.suppress(OSError): func()
+				with contextlib.suppress(subprocess.TimeoutExpired):
+					ssh.wait(n)
+					break
+		if sock_conn: sock_conn.close()
+		if sock: sock.close()
+
+if __name__ == '__main__': sys.exit(main())
