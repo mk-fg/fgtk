@@ -3,6 +3,7 @@
 import itertools as it, operator as op, functools as ft
 import os, sys, contextlib, subprocess, socket
 import hashlib, math, json, base64, signal, time
+import tempfile, pathlib as pl
 
 
 p_fmt = lambda fmt,*a,**k: (
@@ -54,6 +55,19 @@ def err_timeout(timeout, err_t, *err_args):
 		signal.setitimer(signal.ITIMER_REAL, 0)
 		if handler_prev: signal.signal(signal.SIGALRM, handler_prev)
 
+def proc_close(proc, wait=1, wait_base=0.3):
+	if not proc or proc.poll() is not None: return
+	close_ops = [proc.terminate, proc.kill]
+	if proc.stdin: close_ops = [proc.stdin.close] + close_ops
+	if isinstance(wait, (int, float)) and wait > 0:
+		wait = list(n*wait for n, func in enumerate(close_ops, 1))
+	wait = dict(enumerate(wait or list()))
+	for n, func in enumerate(close_ops):
+		with contextlib.suppress(OSError): func()
+		with contextlib.suppress(subprocess.TimeoutExpired):
+			proc.wait(wait.get(n, wait_base))
+			break
+
 
 def main(args=None):
 	conf = SSHRsyncReceiverConfig()
@@ -90,12 +104,21 @@ def main(args=None):
 					PermitTunnel no
 					AllowStreamLocalForwarding no
 					AllowTcpForwarding remote
-					ForceCommand ~backup/ssh-r-sync-recv
+					ForceCommand ~/ssh-r-sync-recv -m -- /mnt/backups
 
 			Any cli opts of this script should be added to ForceCommand.
 			Authentication is done via usual lines in ~backup/.ssh/authorized_keys'''))
+	# XXX: allow to use as shell, with backup_dir set to home-dir
+	parser.add_argument('backup_dir', help='Destination backup directory path.')
 	parser.add_argument('-r', '--rsync', metavar='path',
 		help='Path to custom rsync binary, e.g. one with all necessary posix caps enabled.')
+	parser.add_argument('-m', '--manifest',
+		nargs='?', metavar='name', const='_manifest.txt',
+		help='Generate manifest file with specified name'
+				' (default: %(default)s) in the synced directories.'
+			' Created by single "find -printf ..." command with'
+				' custom format, including various file/path stats/attributes.')
+	# XXX: option for touching/removing backup-done file
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	ssh_recv = open(sys.stdin.fileno(), 'rb', 0)
@@ -122,18 +145,56 @@ def main(args=None):
 			' remote={!r} local-set={!r}', info['port'], tun_ports )
 	info['key'] = b64_bytes(info['key'])
 
+	# XXX: backup dir handling/rotation
+	bak_path = pl.Path(opts.backup_dir).resolve()
+
+	rsync_cmd = pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync'
+	rsync_user, rsync_key, rsync_mod, rsync_su =\
+		(info[f'rsync_{k}'] for k in 'user key mod su'.split())
+	rsync_port = info['port']
+	rsync_opts = [
+		*(['-HaAXS', '--super', '--numeric-ids'] if rsync_su else ['-rltHE']),
+		( '--skip-compress='
+			r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar'
+			r'/rpm/deb/iso'
+			r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ) ]
+	rsync_src = f'rsync://{rsync_user}@localhost:{rsync_port}/{rsync_mod}/.'
+	rsync_dst = str(bak_path / '.')
+
 	key_recv = hashlib.blake2b(info['key'], person=b'server', key=conf.hs_hello).digest()
 	key_push = hashlib.blake2b(info['key'], person=b'client', key=conf.hs_hello).digest()
 	assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
 
 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
 		sock_conn.settimeout(conf.hs_timeout)
-		sock_conn.connect(('localhost', info['port']))
+		sock_conn.connect(('localhost', rsync_port))
 		key = sock_conn.recv(conf.hs_key_size)
 		if len(key) != conf.hs_key_size or key != key_push:
 			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
 		sock_conn.send(key_recv)
 
-	print('done!', file=sys.stderr)
+	cmd = ssh_recv.readline().rstrip(b'\n')
+	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
+
+	rsync = subprocess.Popen(
+		[rsync_cmd] + rsync_opts + [rsync_src, rsync_dst],
+		env=dict(RSYNC_PASSWORD=rsync_key) ) # XXX: check popen kws
+	rsync_err = rsync.wait()
+	if rsync_err != 0:
+		raise SSHRsyncError('Rsync process exited with non-0 code: {}', rsync_err)
+
+	if opts.manifest:
+		with tempfile.NamedTemporaryFile(
+				dir=bak_path, prefix=opts.manifest + '.', delete=False ) as tmp:
+			try:
+				subprocess.run(
+					['find', '-printf', '%P :: %Y:%l :: %U:%G:%m :: %s :: %T@\n'],
+					stdout=tmp, cwd=rsync_dst, check=True)
+				os.rename(tmp.name, bak_path / opts.manifest)
+			finally:
+				with contextlib.suppress(OSError): os.unlink(tmp.name)
+
+	ssh_send.write(b'done\n')
+	ssh_send.close()
 
 if __name__ == '__main__': sys.exit(main())

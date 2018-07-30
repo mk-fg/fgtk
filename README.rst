@@ -1676,7 +1676,7 @@ backup-host to initiate a pull from this daemon over secure/authenticated
 ssh tunnel, picking appropriate destination path and most rsync parameters,
 rotating/removing stuff on the backup-fs as necessary.
 
-This is to avoid following problematic things:
+This is done to avoid following problematic things:
 
 - Pushing stuff to backup-host, which can be exploited to delete stuff.
 - Using insecure network channels and/or rsync auth - ssh only.
@@ -1686,9 +1686,17 @@ This is to avoid following problematic things:
 - Specifying/handling backup parameters (beyond --filter lists), rotation and
   cleanup on the backed-up machine - backup-host will handle all that in a
   known-good and uniform manner.
+- Running rsyncd or such with unrestricted fs access "for backups" - only
+  runs on localhost port with one-time auth during ssh connection lifetime,
+  restricted to specified read-only path, with local filter rules on top.
 
 Idea is to for backup process to be as simple as ssh'ing into backup-host,
-although with path and filter specs telling it what to grab.
+only specifying path and filter specs for what it should grab.
+
+rsync is supposed to start by some regular uid on either end, so if full fs
+access is needed, -r/--rsync option can be used to point to rsync binary that
+has cap_dac_read_search (read) / cap_dac_override (write) posix capabilities
+or whatever wrapper script doing similar thing.
 
 | Only needs python3 + ssh + rsync on either side.
 | See ``ssh-r-sync-recv -h`` for sshd_config setup notes.

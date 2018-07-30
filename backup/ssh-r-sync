@@ -3,11 +3,11 @@
 import itertools as it, operator as op, functools as ft
 import os, sys, logging, contextlib, subprocess, socket, pwd
 import hashlib, math, json, base64, signal, time
+import tempfile, pathlib as pl
 
 
 p_fmt = lambda fmt,*a,**k: (
-	[fmt.format(*a,**k)] if isinstance(fmt, str)
-		and (a or k) else [[fmt, *a], k] )
+	[fmt.format(*a,**k)] if isinstance(fmt, str) else [[fmt, *a], k] )
 p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -84,6 +84,30 @@ def err_timeout(timeout, err_t, *err_args):
 		signal.setitimer(signal.ITIMER_REAL, 0)
 		if handler_prev: signal.signal(signal.SIGALRM, handler_prev)
 
+def proc_close(proc, wait=1, wait_base=0.3):
+	if not proc or proc.poll() is not None: return
+	close_ops = [proc.terminate, proc.kill]
+	if proc.stdin: close_ops = [proc.stdin.close] + close_ops
+	if isinstance(wait, (int, float)) and wait > 0:
+		wait = list(n*wait for n, func in enumerate(close_ops, 1))
+	wait = dict(enumerate(wait or list()))
+	for n, func in enumerate(close_ops):
+		with contextlib.suppress(OSError): func()
+		with contextlib.suppress(subprocess.TimeoutExpired):
+			proc.wait(wait.get(n, wait_base))
+			break
+
+def temp_file(prefix, contents=None):
+	tmp = tempfile.NamedTemporaryFile('w', prefix=prefix)
+	try:
+		if contents:
+			tmp.write(contents)
+			tmp.flush()
+	except:
+		tmp.close()
+		raise
+	return tmp
+
 
 def main(args=None):
 	conf = SSHRsyncConfig()
@@ -133,16 +157,22 @@ def main(args=None):
 
 	group = parser.add_argument_group('Rsync/backup options')
 	group.add_argument('-r', '--rsync', metavar='path',
-		help='Path to custom rsync binary, e.g. one with all necessary posix caps enabled.')
+		help='''
+			Path to custom rsync binary, e.g. one with all necessary posix caps enabled.
+			If specified, elevated privileges for rsync are assumed, and parameters like -HaAX are used.
+			Passing -u/--rsync-user option allows to disable this
+				behavior and only copy stuff that regular users can access.''')
+	group.add_argument('-u', '--rsync-user', action='store_true',
+		help='Don not assume elevated privileges when -r/--rsync path is specified.')
 	group.add_argument('-n', '--name', metavar='name',
 		help='Local machine name, which is used for backup'
 			' cleanup and deduplication. Picked as uname.nodename, if not specified.')
 	group.add_argument('-f', '--filter-file', metavar='path',
-		help='Local file to send and use as a global rsync'
-			' include/exclude filter rules, to be passed as --filter="merge <file>".')
+		help='Local file to use as rsync daemon filter rules,'
+			' to be passed as "filter = merge <file>" in its config.')
 	group.add_argument('-x', '--filter-dir-file', metavar='name',
 		help='Simplified form of -f/--filter-file,'
-				' passing --filter="dir-merge <name>" to remote rsync command.'
+				' adding "dir-merge <name>" to rsync filter rule.'
 			' Same as using one-liner --filter-file with that directive.')
 
 	group = parser.add_argument_group('SSH options')
@@ -169,15 +199,31 @@ def main(args=None):
 	hs_timeout_ctx = ft.partial( err_timeout,
 		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
 
-	def ssh_proc_close(proc):
-		for n, func in enumerate([proc.stdin.close, proc.terminate, proc.kill], 1):
-			with contextlib.suppress(OSError): func()
-			with contextlib.suppress(subprocess.TimeoutExpired):
-				proc.wait(n)
-				break
-
 	sock = sock_conn = ssh = None
+	rsync_filter = rsync_conf = rsync_secrets = rsync_lock = rsync = None
 	try:
+
+		rsync_key = b64_str(os.urandom(6))
+		rsync_user = rsync_mod = 'sshrsync'
+		rsync_cmd = pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync'
+		rsync_su = bool(opts.rsync)
+		if opts.filter_file or opts.filter_dir_file:
+			rsync_filter = tempfile.NamedTemporaryFile('w', prefix='.ssh-r-sync.filter.')
+			if opts.filter_dir_file: rsync_filter.write(f'merge-dir {opts.filter_dir_file}\n')
+			if opts.filter_file: rsync_filter.write(pl.Path(opts.filter_file).read_text())
+			rsync_filter.flush()
+		rsync_secrets = temp_file('.ssh-r-sync.passwd.', f'{rsync_user}:{rsync_key}\n')
+		rsync_lock = temp_file('.ssh-r-sync.lock.')
+		rsync_conf = [
+			'hosts allow = localhost', 'read only = true', 'numeric ids = true',
+			'use chroot = no', 'max connections = 1', f'lock file = {rsync_lock.name}',
+			f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_user}' ]
+		if opts.debug: rsync_conf.append('log file = /dev/stderr')
+		path = pl.Path(opts.path).resolve()
+		rsync_conf.extend([f'[{rsync_mod}]', f' path = {path}'])
+		if rsync_filter: rsync_conf.append(f' filter = merge {rsync_filter.name}')
+		rsync_conf = temp_file('.ssh-r-sync.conf.', '\n'.join(rsync_conf + ['']))
+
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		sock.bind(('localhost', 0)) # to get os-picked open port to tunnel to
 		addr, rsync_port = sock.getsockname()
@@ -198,15 +244,16 @@ def main(args=None):
 			if hello: break
 			log.debug( 'No "hello" from the other side,'
 				' assuming tunnel failure (attempt={})', attempt+1 )
-			time.sleep(1)
-			ssh_proc_close(ssh)
-			exit(1)
+			proc_close(ssh)
+		else: raise SSHRsyncError('SSH connection failed')
 		if hello != conf.hs_hello:
 			raise SSHRsyncError( 'Hello-string mismatch:'
 				' local={!r} remote={!r}', conf.hs_hello, hello )
 
 		key = os.urandom(conf.hs_key_size)
-		info = dict(name=name, port=tun_port, key=b64_str(key))
+		info = dict(
+			name=name, port=tun_port, key=b64_str(key), rsync_su=rsync_su,
+			rsync_user=rsync_user, rsync_key=rsync_key, rsync_mod=rsync_mod )
 		with hs_timeout_ctx():
 			ssh_send.write(conf.hs_hello + b'\n')
 			ssh_send.write(json.dumps(info).encode() + b'\n')
@@ -226,15 +273,21 @@ def main(args=None):
 		sock_conn = sock_conn.close()
 		sock = sock.close()
 
-		print('done!', file=sys.stderr)
+		rsync = subprocess.Popen([
+			rsync_cmd, '--daemon', '--no-detach',
+			f'--port={rsync_port}', f'--config={rsync_conf.name}' ])
+		ssh_send.write(b'start\n')
+
+		ack = ssh_recv.readline().rstrip(b'\n')
+		if ack != b'done': raise SSHRsyncError('Invalid/missing backup completion ack: {!r}', ack)
 
 	finally:
-		if ssh:
-			for n, func in enumerate([ssh.stdin.close, ssh.terminate, ssh.kill], 1):
-				with contextlib.suppress(OSError): func()
-				with contextlib.suppress(subprocess.TimeoutExpired):
-					ssh.wait(n)
-					break
+		if rsync: proc_close(rsync)
+		if rsync_conf: rsync_conf.close()
+		if rsync_lock: rsync_conf.close()
+		if rsync_secrets: rsync_conf.close()
+		if rsync_filter: rsync_conf.close()
+		if ssh: proc_close(ssh)
 		if sock_conn: sock_conn.close()
 		if sock: sock.close()
 
