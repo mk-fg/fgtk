@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, logging, contextlib, subprocess, socket, pwd
+import os, sys, logging, contextlib, collections, subprocess, socket, pwd
 import hashlib, math, json, base64, signal, time
 import tempfile, pathlib as pl
 
@@ -109,6 +109,91 @@ def temp_file(prefix, contents=None):
 	return tmp
 
 
+SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
+RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su')
+
+def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
+	hs_timeout_ctx = ft.partial( err_timeout,
+		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
+
+	sock = ctx.enter_context(
+		socket.socket(socket.AF_INET, socket.SOCK_STREAM) )
+	sock.bind(('localhost', 0)) # to get os-picked open port to tunnel to
+	addr, rsync_port = sock.getsockname()
+	sock.listen(1)
+
+	for attempt in range(conf.recv_port_retries+1):
+		tun_port = conf.recv_port_range[0] + hash_to_int( name, attempt,
+			conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key )
+		ssh = subprocess.Popen(
+			[ 'ssh', *(conf.ssh_opts or list()),
+				'-R', f'{tun_port}:localhost:{rsync_port}', *([f'-p{port}'] if port else []), dst ],
+			stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr )
+		ssh_recv = open(ssh.stdout.fileno(), 'rb', 0)
+		ssh_send = open(ssh.stdin.fileno(), 'wb', 0)
+		with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
+		if hello:
+			ctx.callback(proc_close, ssh)
+			ssh = None
+			break
+		log.debug( 'No "hello" from the other side,'
+			' assuming tunnel failure (attempt={})', attempt+1 )
+	else: raise SSHRsyncError('SSH connection failed')
+	if hello != conf.hs_hello:
+		raise SSHRsyncError( 'Hello-string mismatch:'
+			' local={!r} remote={!r}', conf.hs_hello, hello )
+
+	key = os.urandom(conf.hs_key_size)
+	info = dict( name=name, port=tun_port,
+		key=b64_str(key), rsync=rsync_info._asdict() )
+
+	with hs_timeout_ctx():
+		ssh_send.write(conf.hs_hello + b'\n')
+		ssh_send.write(json.dumps(info).encode() + b'\n')
+
+	key_recv = hashlib.blake2b(key, person=b'server', key=conf.hs_hello).digest()
+	key_push = hashlib.blake2b(key, person=b'client', key=conf.hs_hello).digest()
+	assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
+
+	sock.settimeout(conf.hs_timeout)
+	sock_conn, sock_addr = sock.accept()
+	ctx.callback(sock_conn.close)
+	sock_conn.settimeout(conf.hs_timeout)
+	sock_conn.send(key_push)
+	key = sock_conn.recv(conf.hs_key_size)
+	if len(key) != conf.hs_key_size or key != key_recv:
+		raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
+
+	sock_conn.close()
+	sock.close()
+
+	return rsync_port, SSHPipe(ssh_send, ssh_recv)
+
+def create_rsync_conf( ctx, path, rsync_info,
+		filter_file=None, filter_dir_file=None, debug=False ):
+	if filter_file or filter_dir_file:
+		rsync_filter = ctx.enter_context(
+			tempfile.NamedTemporaryFile('w', prefix='.ssh-r-sync.filter.') )
+		if filter_dir_file: rsync_filter.write(f'merge-dir {filter_dir_file}\n')
+		if filter_file: rsync_filter.write(pl.Path(filter_file).read_text())
+		rsync_filter.flush()
+	else: rsync_filter = None
+	rsync_secrets = ctx.enter_context(
+		temp_file('.ssh-r-sync.passwd.', f'{rsync_info.user}:{rsync_info.key}\n') )
+	rsync_lock = ctx.enter_context(temp_file('.ssh-r-sync.lock.'))
+	rsync_conf = [
+		'hosts allow = localhost', 'read only = true', 'numeric ids = true',
+		'use chroot = no', 'max connections = 1', f'lock file = {rsync_lock.name}',
+		f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_info.user}' ]
+	if debug: rsync_conf.append('log file = /dev/stderr')
+	path = pl.Path(path).resolve()
+	rsync_conf.extend([f'[{rsync_info.mod}]', f' path = {path}'])
+	if rsync_filter: rsync_conf.append(f' filter = merge {rsync_filter.name}')
+	rsync_conf = ctx.enter_context(
+		temp_file('.ssh-r-sync.conf.', '\n'.join(rsync_conf + [''])) )
+	return rsync_conf.name
+
+
 def main(args=None):
 	conf = SSHRsyncConfig()
 
@@ -191,104 +276,21 @@ def main(args=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
-	user = pwd.getpwuid(os.getuid()).pw_name
-	user, host = str_part(opts.host, '<@', user)
-	host, port = str_part(host, ':>')
+	ssh_dst, ssh_port = str_part(opts.host, ':>')
 	name = opts.name or os.uname().nodename
+	if opts.no_ssh_opts: conf.ssh_opts.clear()
 
-	hs_timeout_ctx = ft.partial( err_timeout,
-		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
-
-	sock = sock_conn = ssh = None
-	rsync_filter = rsync_conf = rsync_secrets = rsync_lock = rsync = None
-	try:
-
-		rsync_key = b64_str(os.urandom(6))
-		rsync_user = rsync_mod = 'sshrsync'
-		rsync_cmd = pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync'
-		rsync_su = bool(opts.rsync)
-		if opts.filter_file or opts.filter_dir_file:
-			rsync_filter = tempfile.NamedTemporaryFile('w', prefix='.ssh-r-sync.filter.')
-			if opts.filter_dir_file: rsync_filter.write(f'merge-dir {opts.filter_dir_file}\n')
-			if opts.filter_file: rsync_filter.write(pl.Path(opts.filter_file).read_text())
-			rsync_filter.flush()
-		rsync_secrets = temp_file('.ssh-r-sync.passwd.', f'{rsync_user}:{rsync_key}\n')
-		rsync_lock = temp_file('.ssh-r-sync.lock.')
-		rsync_conf = [
-			'hosts allow = localhost', 'read only = true', 'numeric ids = true',
-			'use chroot = no', 'max connections = 1', f'lock file = {rsync_lock.name}',
-			f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_user}' ]
-		if opts.debug: rsync_conf.append('log file = /dev/stderr')
-		path = pl.Path(opts.path).resolve()
-		rsync_conf.extend([f'[{rsync_mod}]', f' path = {path}'])
-		if rsync_filter: rsync_conf.append(f' filter = merge {rsync_filter.name}')
-		rsync_conf = temp_file('.ssh-r-sync.conf.', '\n'.join(rsync_conf + ['']))
-
-		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		sock.bind(('localhost', 0)) # to get os-picked open port to tunnel to
-		addr, rsync_port = sock.getsockname()
-		sock.listen(1)
-
-		for attempt in range(conf.recv_port_retries+1):
-			tun_port = conf.recv_port_range[0] + hash_to_int( name, attempt,
-				conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key )
-			ssh_opts = ['-R', f'{tun_port}:localhost:{rsync_port}']
-			if not opts.no_ssh_opts: ssh_opts.extend(conf.ssh_opts)
-			ssh_cmd = ['ssh', *ssh_opts, f'{user}@{host}']
-			ssh = subprocess.Popen(
-				ssh_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-				stderr=subprocess.DEVNULL if not opts.debug else sys.stderr )
-			ssh_recv = open(ssh.stdout.fileno(), 'rb', 0)
-			ssh_send = open(ssh.stdin.fileno(), 'wb', 0)
-			with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
-			if hello: break
-			log.debug( 'No "hello" from the other side,'
-				' assuming tunnel failure (attempt={})', attempt+1 )
-			proc_close(ssh)
-		else: raise SSHRsyncError('SSH connection failed')
-		if hello != conf.hs_hello:
-			raise SSHRsyncError( 'Hello-string mismatch:'
-				' local={!r} remote={!r}', conf.hs_hello, hello )
-
-		key = os.urandom(conf.hs_key_size)
-		info = dict(
-			name=name, port=tun_port, key=b64_str(key), rsync_su=rsync_su,
-			rsync_user=rsync_user, rsync_key=rsync_key, rsync_mod=rsync_mod )
-		with hs_timeout_ctx():
-			ssh_send.write(conf.hs_hello + b'\n')
-			ssh_send.write(json.dumps(info).encode() + b'\n')
-
-		key_recv = hashlib.blake2b(key, person=b'server', key=conf.hs_hello).digest()
-		key_push = hashlib.blake2b(key, person=b'client', key=conf.hs_hello).digest()
-		assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
-
-		sock.settimeout(conf.hs_timeout)
-		sock_conn, sock_addr = sock.accept()
-		sock_conn.settimeout(conf.hs_timeout)
-		sock_conn.send(key_push)
-		key = sock_conn.recv(conf.hs_key_size)
-		if len(key) != conf.hs_key_size or key != key_recv:
-			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
-
-		sock_conn = sock_conn.close()
-		sock = sock.close()
-
+	with contextlib.ExitStack() as ctx:
+		rsync_info = RsyncInfo( key=b64_str(os.urandom(6)),
+			user='sshrsync', mod='sshrsync', su=opts.rsync and not opts.rsync_user )
+		rsync_conf_path = create_rsync_conf( ctx, opts.path, rsync_info,
+			filter_file=opts.filter_file, filter_dir_file=opts.filter_dir_file, debug=opts.debug )
+		rsync_port, ssh = create_ssh_tunnel(ctx, conf, ssh_dst, ssh_port, name, rsync_info)
 		rsync = subprocess.Popen([
-			rsync_cmd, '--daemon', '--no-detach',
-			f'--port={rsync_port}', f'--config={rsync_conf.name}' ])
-		ssh_send.write(b'start\n')
-
-		ack = ssh_recv.readline().rstrip(b'\n')
+			pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync',
+			'--daemon', '--no-detach', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
+		ssh.send.write(b'start\n')
+		ack = ssh.recv.readline().rstrip(b'\n')
 		if ack != b'done': raise SSHRsyncError('Invalid/missing backup completion ack: {!r}', ack)
-
-	finally:
-		if rsync: proc_close(rsync)
-		if rsync_conf: rsync_conf.close()
-		if rsync_lock: rsync_conf.close()
-		if rsync_secrets: rsync_conf.close()
-		if rsync_filter: rsync_conf.close()
-		if ssh: proc_close(ssh)
-		if sock_conn: sock_conn.close()
-		if sock: sock.close()
 
 if __name__ == '__main__': sys.exit(main())

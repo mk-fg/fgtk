@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, contextlib, subprocess, socket
+import os, sys, contextlib, collections, subprocess, socket
 import hashlib, math, json, base64, signal, time
 import tempfile, pathlib as pl
 
@@ -69,6 +69,46 @@ def proc_close(proc, wait=1, wait_base=0.3):
 			break
 
 
+SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
+RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su')
+
+def get_rsync_info(conf, ssh):
+	hs_timeout_ctx = ft.partial( err_timeout,
+		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
+
+	with hs_timeout_ctx(): ssh.send.write(conf.hs_hello + b'\n')
+	with hs_timeout_ctx(): hello = ssh.recv.readline().rstrip(b'\n')
+	if hello != conf.hs_hello:
+		raise SSHRsyncError( 'Hello-string mismatch:'
+			' local={!r} remote={!r}', conf.hs_hello, hello )
+
+	with hs_timeout_ctx(): info = ssh.recv.readline()
+	info = json.loads(info)
+	tun_ports = set(
+		(conf.recv_port_range[0] + hash_to_int( info['name'], attempt,
+			conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key ))
+		for attempt in range(conf.recv_port_retries+1) )
+	if info['port'] not in tun_ports:
+		raise SSHRsyncError( 'Tunnel-port mismatch:'
+			' remote={!r} local-set={!r}', info['port'], tun_ports )
+	rsync_port, rsync_info = info['port'], RsyncInfo(**info['rsync'])
+	key_base = b64_bytes(info['key'])
+
+	key_recv = hashlib.blake2b(key_base, person=b'server', key=conf.hs_hello).digest()
+	key_push = hashlib.blake2b(key_base, person=b'client', key=conf.hs_hello).digest()
+	assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
+
+	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
+		sock_conn.settimeout(conf.hs_timeout)
+		sock_conn.connect(('localhost', rsync_port))
+		key = sock_conn.recv(conf.hs_key_size)
+		if len(key) != conf.hs_key_size or key != key_push:
+			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
+		sock_conn.send(key_recv)
+
+	return rsync_port, rsync_info
+
+
 def main(args=None):
 	conf = SSHRsyncReceiverConfig()
 
@@ -121,67 +161,31 @@ def main(args=None):
 	# XXX: option for touching/removing backup-done file
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	ssh_recv = open(sys.stdin.fileno(), 'rb', 0)
-	ssh_send = open(sys.stdout.fileno(), 'wb', 0)
+	ssh = SSHPipe(
+		recv=open(sys.stdin.fileno(), 'rb', 0),
+		send=open(sys.stdout.fileno(), 'wb', 0) )
 	sys.stdin = sys.stdout = None
-
-	hs_timeout_ctx = ft.partial( err_timeout,
-		conf.hs_timeout, SSHRsyncError, 'Timeout waiting for receiver' )
-
-	with hs_timeout_ctx(): ssh_send.write(conf.hs_hello + b'\n')
-	with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
-	if hello != conf.hs_hello:
-		raise SSHRsyncError( 'Hello-string mismatch:'
-			' local={!r} remote={!r}', conf.hs_hello, hello )
-
-	with hs_timeout_ctx(): info = ssh_recv.readline()
-	info = json.loads(info)
-	tun_ports = set(
-		(conf.recv_port_range[0] + hash_to_int( info['name'], attempt,
-			conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key ))
-		for attempt in range(conf.recv_port_retries+1) )
-	if info['port'] not in tun_ports:
-		raise SSHRsyncError( 'Tunnel-port mismatch:'
-			' remote={!r} local-set={!r}', info['port'], tun_ports )
-	info['key'] = b64_bytes(info['key'])
 
 	# XXX: backup dir handling/rotation
 	bak_path = pl.Path(opts.backup_dir).resolve()
 
-	rsync_cmd = pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync'
-	rsync_user, rsync_key, rsync_mod, rsync_su =\
-		(info[f'rsync_{k}'] for k in 'user key mod su'.split())
-	rsync_port = info['port']
-	rsync_opts = [
-		*(['-HaAXS', '--super', '--numeric-ids'] if rsync_su else ['-rltHE']),
-		( '--skip-compress='
-			r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar'
-			r'/rpm/deb/iso'
-			r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ) ]
-	rsync_src = f'rsync://{rsync_user}@localhost:{rsync_port}/{rsync_mod}/.'
-	rsync_dst = str(bak_path / '.')
+	rsync_port, rsync_info = get_rsync_info(conf, ssh)
 
-	key_recv = hashlib.blake2b(info['key'], person=b'server', key=conf.hs_hello).digest()
-	key_push = hashlib.blake2b(info['key'], person=b'client', key=conf.hs_hello).digest()
-	assert len(key_recv) == len(key_push) == conf.hs_key_size, [len(key_recv), len(key_push)]
-
-	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
-		sock_conn.settimeout(conf.hs_timeout)
-		sock_conn.connect(('localhost', rsync_port))
-		key = sock_conn.recv(conf.hs_key_size)
-		if len(key) != conf.hs_key_size or key != key_push:
-			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
-		sock_conn.send(key_recv)
-
-	cmd = ssh_recv.readline().rstrip(b'\n')
+	cmd = ssh.recv.readline().rstrip(b'\n')
 	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
 
-	rsync = subprocess.Popen(
-		[rsync_cmd] + rsync_opts + [rsync_src, rsync_dst],
-		env=dict(RSYNC_PASSWORD=rsync_key) ) # XXX: check popen kws
-	rsync_err = rsync.wait()
-	if rsync_err != 0:
-		raise SSHRsyncError('Rsync process exited with non-0 code: {}', rsync_err)
+	rsync = subprocess.run(
+		[ pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync',
+			*(['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE']),
+			( '--skip-compress='
+				r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar'
+				r'/rpm/deb/iso'
+				r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ),
+			f'rsync://{rsync_info.user}@localhost:{rsync_port}/{rsync_info.mod}/.',
+			str(bak_path / '.') ],
+		env=dict(RSYNC_PASSWORD=rsync_info.key) ) # XXX: check popen kws
+	if rsync.returncode != 0:
+		raise SSHRsyncError('Rsync process exited with non-zero code: {}', rsync.returncode)
 
 	if opts.manifest:
 		with tempfile.NamedTemporaryFile(
@@ -189,12 +193,12 @@ def main(args=None):
 			try:
 				subprocess.run(
 					['find', '-printf', '%P :: %Y:%l :: %U:%G:%m :: %s :: %T@\n'],
-					stdout=tmp, cwd=rsync_dst, check=True)
+					stdout=tmp, cwd=bak_path, check=True)
 				os.rename(tmp.name, bak_path / opts.manifest)
 			finally:
 				with contextlib.suppress(OSError): os.unlink(tmp.name)
 
-	ssh_send.write(b'done\n')
-	ssh_send.close()
+	ssh.send.write(b'done\n')
+	ssh.send.close()
 
 if __name__ == '__main__': sys.exit(main())
