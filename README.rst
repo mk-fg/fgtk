@@ -1689,6 +1689,7 @@ This is done to avoid following problematic things:
 - Running rsyncd or such with unrestricted fs access "for backups" - only
   runs on localhost port with one-time auth during ssh connection lifetime,
   restricted to specified read-only path, with local filter rules on top.
+- Needing anything beyond basic ssh/rsync/python on either side.
 
 Idea is to for backup process to be as simple as ssh'ing into backup-host,
 only specifying path and filter specs for what it should grab.
@@ -1697,6 +1698,11 @@ rsync is supposed to start by some regular uid on either end, so if full fs
 access is needed, -r/--rsync option can be used to point to rsync binary that
 has cap_dac_read_search (read) / cap_dac_override (write) posix capabilities
 or whatever wrapper script doing similar thing.
+
+To use any special rsync options or pre/post-sync actions on the backup-host side
+(such as backup file manifest, backup rotation and free space management,
+rsync output/errors checking, etc), hook scripts can be used there,
+see ``ssh-r-sync-recv --hook-list`` for more info.
 
 | Only needs python3 + ssh + rsync on either side.
 | See ``ssh-r-sync-recv -h`` for sshd_config setup notes.

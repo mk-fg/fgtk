@@ -7,8 +7,7 @@ import tempfile, pathlib as pl
 
 
 p_fmt = lambda fmt,*a,**k: (
-	[fmt.format(*a,**k)] if isinstance(fmt, str)
-		and (a or k) else [[fmt, *a], k] )
+	[fmt.format(*a,**k)] if isinstance(fmt, str) else [[fmt, *a], k] )
 p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
 
 
@@ -69,6 +68,44 @@ def proc_close(proc, wait=1, wait_base=0.3):
 			break
 
 
+class BackupHooks(dict):
+	points = {
+		'script.start':
+			'Before starting handshake with authenticated remote.\n'
+			'args: backup root dir.',
+		'script.done':
+			'After successful backup and closing connection to remote.\n'
+			'args: backup root dir, backup dir, remote name.',
+		'script.handshake':
+			'After handshake with remote and before any backup actions.\n'
+			'args: backup root dir, backup dir, remote name.',
+		'rsync.pre':
+			'Right before backup-rsync is started, if it will be run.\n'
+			'args: backup root dir, backup dir, remote name, privileged sync (0 or 1).\n'
+			'stdout: any additional \\0-separated args to pass to rsync.\n'
+			'  These must be terminated by \\0, if passed,\n'
+			'    and can start with \\0 to avoid passing any default options.',
+		'rsync.done':
+			'Right after backup-rsync is finished, e.g. to check/process its output.\n'
+			'args: backup root dir, backup dir, remote name, rsync exit code.\n'
+			'stdin: interleaved stdout/stderr from rsync.\n'
+			'stdout: optional replacement for rsync return code to check, must be int if non-empty.',
+	}
+	__slots__ = 'timeout'.split()
+	def __init__(self, *args, **kws):
+		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
+		if self.timeout <= 0: self.timeout = None
+
+	def run(self, hook, *hook_args, **run_kws):
+		import subprocess
+		hook_script = self.get(hook)
+		if not hook_script: return
+		kws = dict(check=True, timeout=self.timeout)
+		kws.update(run_kws)
+		hook_args = list(map(str, hook_args))
+		return subprocess.run([hook_script] + hook_args, **kws)
+
+
 SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
 RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su')
 
@@ -91,7 +128,7 @@ def get_rsync_info(conf, ssh):
 	if info['port'] not in tun_ports:
 		raise SSHRsyncError( 'Tunnel-port mismatch:'
 			' remote={!r} local-set={!r}', info['port'], tun_ports )
-	rsync_port, rsync_info = info['port'], RsyncInfo(**info['rsync'])
+	name, rsync_port, rsync_info = info['name'], info['port'], RsyncInfo(**info['rsync'])
 	key_base = b64_bytes(info['key'])
 
 	key_recv = hashlib.blake2b(key_base, person=b'server', key=conf.hs_hello).digest()
@@ -106,10 +143,12 @@ def get_rsync_info(conf, ssh):
 			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
 		sock_conn.send(key_recv)
 
-	return rsync_port, rsync_info
+	return name, rsync_port, rsync_info
 
 
 def main(args=None):
+	if args is None: args = sys.argv[1:]
+	if args[0] == '-c' and len(args) == 2: args = args[1].split()[1:] # shell mode
 	conf = SSHRsyncReceiverConfig()
 
 	import argparse, textwrap
@@ -131,7 +170,8 @@ def main(args=None):
 		description=dedent('''
 			Receiver script for ssh sessions from ssh-r-sync.
 			Should be run after successful ssh auth to check reverse-tunnel setup,
-				perform any necessary maintenance on destination path and run rsync client.'''),
+				perform any necessary maintenance on destination path and run rsync client.
+			Can be used as ssh ForceCommand (with any options) and shell at the same time.'''),
 		epilog=dedent('''
 			sshd_config snippet to set this script for backup-user command:
 
@@ -146,59 +186,110 @@ def main(args=None):
 					AllowTcpForwarding remote
 					ForceCommand ~/ssh-r-sync-recv -m -- /mnt/backups
 
-			Any cli opts of this script should be added to ForceCommand.
+			Any cli opts of this script should be added to ForceCommand (string for shell).
+			To avoid running shell (i.e. "/bin/bash -c 'command args...'") entirely,
+				in addition to ForceCommand (where all options are specified),
+				set this script to be user's shell as well, though note that
+				it'll split ForceCommand by spaces and won't interpret any quoting there.
 			Authentication is done via usual lines in ~backup/.ssh/authorized_keys'''))
-	# XXX: allow to use as shell, with backup_dir set to home-dir
-	parser.add_argument('backup_dir', help='Destination backup directory path.')
+	parser.add_argument('backup_dir', nargs='?', help='Destination backup directory root path.')
 	parser.add_argument('-r', '--rsync', metavar='path',
 		help='Path to custom rsync binary, e.g. one with all necessary posix caps enabled.')
-	parser.add_argument('-m', '--manifest',
-		nargs='?', metavar='name', const='_manifest.txt',
-		help='Generate manifest file with specified name'
-				' (default: %(default)s) in the synced directories.'
-			' Created by single "find -printf ..." command with'
-				' custom format, including various file/path stats/attributes.')
-	# XXX: option for touching/removing backup-done file
-	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	group = parser.add_argument_group('Hook options')
+	group.add_argument('-x', '--hook', action='append', metavar='hook:path',
+		help='''
+			Hook-script to run at the specified point.
+			Specified path must be executable (chmod +x ...), will be run synchronously, and
+				must exit with 0 for tool to continue operation, and non-zero to abort immediately.
+			Hooks are run with same uid/gid and env as the main script, can use PATH-lookup.
+			See --hook-list output to get full list of
+				all supported hook-points and arguments passed to them.
+			Example spec: -x domain-auth.publish-challenge:/etc/nginx/sync-frontends.sh''')
+	group.add_argument('--hook-timeout', metavar='seconds', type=float, default=0,
+		help='Timeout for waiting for hook-script to finish running,'
+				' before aborting the operation (treated as hook error).'
+			' Zero or negative value will disable timeout. Default: no-limit')
+	group.add_argument('--hook-list', action='store_true',
+		help='Print the list of all supported hooks with descriptions/parameters and exit.')
+
+	opts = parser.parse_args(args)
+
+	bak_hooks = BackupHooks(opts.hook_timeout)
+	if opts.hook_list:
+		p('Available hook points:\n')
+		for hp, desc in bak_hooks.points.items():
+			p('  {}:', hp)
+			indent = ' '*4
+			desc = textwrap.fill(desc, width=100, initial_indent=indent, subsequent_indent=indent)\
+				if '\n' not in desc else ''.join(indent + line for line in desc.splitlines(keepends=True))
+			p(desc + '\n')
+		p('Hooks are run synchronously, waiting for subprocess to exit before continuing.')
+		p('All hooks must exit with status 0 to continue operation.')
+		p('Some hooks get passed arguments, as mentioned in hook descriptions.')
+		p('Setting --hook-timeout (defaults to no limit) can be used to abort when hook-scripts hang.')
+		return
+	for v in opts.hook or list():
+		if ':' not in v: parser.error('Invalid --hook spec (must be hook:path): {!r}'.format(v))
+		hp, path = v.split(':', 1)
+		if hp not in bak_hooks.points:
+			parser.error('Invaluid hook name: {!r} (see --hook-list)'.format(hp))
+		bak_hooks[hp] = path
+
+	if not opts.backup_dir: parser.error('backup_dir argument must be specified')
 
 	ssh = SSHPipe(
 		recv=open(sys.stdin.fileno(), 'rb', 0),
 		send=open(sys.stdout.fileno(), 'wb', 0) )
 	sys.stdin = sys.stdout = None
 
-	# XXX: backup dir handling/rotation
-	bak_path = pl.Path(opts.backup_dir).resolve()
+	bak_root = pl.Path(opts.backup_dir).resolve()
+	bak_hooks.run('script.start', bak_root)
 
-	rsync_port, rsync_info = get_rsync_info(conf, ssh)
+	bak_name, rsync_port, rsync_info = get_rsync_info(conf, ssh)
+	bak_path = bak_root / bak_name
+	bak_hooks.run('script.handshake', bak_root, bak_path, bak_name)
 
 	cmd = ssh.recv.readline().rstrip(b'\n')
 	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
 
+	rsync_opts = ( (['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE'])
+		+ [ '--skip-compress='
+			r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar/rpm/deb/iso'
+			r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ] )
+
+	hook = bak_hooks.run( 'rsync.pre',
+		bak_root, bak_path, bak_name, int(bool(rsync_info.su)) )
+	if hook and hook.stdout.strip():
+		if b'\0' not in hook.stdout:
+			raise SSHRsyncError( 'rsync.pre hook'
+				' produced non-\\0-terminated stdout: {!r}', hook.stdout )
+		hook = hook.stdout.decode().strip(' \n').split('\0')
+		if not hook[0]: rsync_opts[:] = hook[1:]
+		else: rsync_opts.extend(hook)
+
 	rsync = subprocess.run(
-		[ pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync',
-			*(['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE']),
-			( '--skip-compress='
-				r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar'
-				r'/rpm/deb/iso'
-				r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ),
+		[ pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync', *rsync_opts,
 			f'rsync://{rsync_info.user}@localhost:{rsync_port}/{rsync_info.mod}/.',
 			str(bak_path / '.') ],
-		env=dict(RSYNC_PASSWORD=rsync_info.key) ) # XXX: check popen kws
-	if rsync.returncode != 0:
-		raise SSHRsyncError('Rsync process exited with non-zero code: {}', rsync.returncode)
+		stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+		env=dict(RSYNC_PASSWORD=rsync_info.key) )
+	rsync_code, rsync_ouput = rsync.returncode, rsync.stdout
 
-	if opts.manifest:
-		with tempfile.NamedTemporaryFile(
-				dir=bak_path, prefix=opts.manifest + '.', delete=False ) as tmp:
-			try:
-				subprocess.run(
-					['find', '-printf', '%P :: %Y:%l :: %U:%G:%m :: %s :: %T@\n'],
-					stdout=tmp, cwd=bak_path, check=True)
-				os.rename(tmp.name, bak_path / opts.manifest)
-			finally:
-				with contextlib.suppress(OSError): os.unlink(tmp.name)
+	hook = bak_hooks.run( 'rsync.done',
+		bak_root, bak_path, bak_name, rsync_code, input=rsync_ouput )
+	if hook and hook.stdout.strip(): rsync_code = int(hook.stdout)
+
+	if rsync_code != 0:
+		msg = f'Rsync process exited with non-zero code: {rsync_code}'
+		if rsync_ouput.strip():
+			msg += '\nRsync process output:\n' + '\n'.join(
+				f'  {line}'.rstrip() for line in rsync_ouput.decode('utf-8', 'replace').split('\n') )
+		raise SSHRsyncError(msg)
 
 	ssh.send.write(b'done\n')
 	ssh.send.close()
+
+	bak_hooks.run('script.done', bak_root, bak_path, bak_name)
 
 if __name__ == '__main__': sys.exit(main())
