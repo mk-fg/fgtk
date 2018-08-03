@@ -148,6 +148,9 @@ def get_rsync_info(conf, ssh):
 
 def main(args=None):
 	if args is None: args = sys.argv[1:]
+	if not args: # very dangerous, as it'd allow rsync to arbitrary paths chosen by remote
+		print('ERROR: ssh-r-sync-recv shell setup without ForceCommand!', file=sys.stderr)
+		return 1
 	if args[0] == '-c' and len(args) == 2: args = args[1].split()[1:] # shell mode
 	conf = SSHRsyncReceiverConfig()
 
@@ -214,6 +217,13 @@ def main(args=None):
 		help='Print the list of all supported hooks with descriptions/parameters and exit.')
 
 	opts = parser.parse_args(args)
+
+	def print_error_msg_only(err_t, err, err_tb):
+		# sys.__excepthook__(err_t, err, err_tb)
+		print( f'ERROR: {err}'
+			if isinstance(err, SSHRsyncError)
+			else f'BUG: [{err_t.__name__}] {err}', file=sys.stderr )
+	sys.excepthook = print_error_msg_only
 
 	bak_hooks = BackupHooks(opts.hook_timeout)
 	if opts.hook_list:
