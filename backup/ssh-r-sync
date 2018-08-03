@@ -276,10 +276,9 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	def print_error_msg_only(err_t, err, err_tb):
-		# sys.__excepthook__(err_t, err, err_tb)
-		print( f'ERROR: {err}'
-			if isinstance(err, SSHRsyncError)
-			else f'BUG: [{err_t.__name__}] {err}', file=sys.stderr )
+		if isinstance(err, SSHRsyncError):
+			print(f'ERROR: {err}', file=sys.stderr)
+		else: sys.__excepthook__(err_t, err, err_tb)
 	sys.excepthook = print_error_msg_only
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)

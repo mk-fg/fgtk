@@ -74,7 +74,7 @@ class BackupHooks(dict):
 			'Before starting handshake with authenticated remote.\n'
 			'args: backup root dir.',
 		'script.done':
-			'After successful backup and closing connection to remote.\n'
+			'After successful backup, before closing connection to remote.\n'
 			'args: backup root dir, backup dir, remote name.',
 		'script.handshake':
 			'After handshake with remote and before any backup actions.\n'
@@ -219,10 +219,9 @@ def main(args=None):
 	opts = parser.parse_args(args)
 
 	def print_error_msg_only(err_t, err, err_tb):
-		# sys.__excepthook__(err_t, err, err_tb)
-		print( f'ERROR: {err}'
-			if isinstance(err, SSHRsyncError)
-			else f'BUG: [{err_t.__name__}] {err}', file=sys.stderr )
+		if isinstance(err, SSHRsyncError):
+			print(f'ERROR: {err}', file=sys.stderr)
+		else: sys.__excepthook__(err_t, err, err_tb)
 	sys.excepthook = print_error_msg_only
 
 	bak_hooks = BackupHooks(opts.hook_timeout)
@@ -289,8 +288,13 @@ def main(args=None):
 	rsync_code, rsync_ouput = rsync.returncode, rsync.stdout
 
 	hook = bak_hooks.run( 'rsync.done',
-		bak_root, bak_path, bak_name, rsync_code, input=rsync_ouput )
-	if hook and hook.stdout.strip(): rsync_code = int(hook.stdout)
+		bak_root, bak_path, bak_name, rsync_code,
+		input=rsync_ouput, stdout=subprocess.PIPE )
+	if hook and hook.stdout.strip():
+		try: rsync_code = int(hook.stdout.strip())
+		except ValueError:
+			raise SSHRsyncError( 'rsync.done hook stdout'
+				' cannot be parsed as integer: {!r}', hook.stdout ) from None
 
 	if rsync_code != 0:
 		msg = f'Rsync process exited with non-zero code: {rsync_code}'
