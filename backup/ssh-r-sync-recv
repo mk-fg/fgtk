@@ -184,7 +184,7 @@ def main(args=None):
 					PermitTunnel no
 					AllowStreamLocalForwarding no
 					AllowTcpForwarding remote
-					ForceCommand ~/ssh-r-sync-recv -m -- /mnt/backups
+					ForceCommand ~/ssh-r-sync-recv -- /mnt/backups
 
 			Any cli opts of this script should be added to ForceCommand (string for shell).
 			To avoid running shell (i.e. "/bin/bash -c 'command args...'") entirely,

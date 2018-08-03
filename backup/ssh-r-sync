@@ -183,7 +183,8 @@ def create_rsync_conf( ctx, path, rsync_info,
 	rsync_lock = ctx.enter_context(temp_file('.ssh-r-sync.lock.'))
 	rsync_conf = [
 		'hosts allow = localhost', 'read only = true', 'numeric ids = true',
-		'use chroot = no', 'max connections = 1', f'lock file = {rsync_lock.name}',
+		'use chroot = {}'.format('no' if not rsync_info.su else 'yes'),
+		'max connections = 1', f'lock file = {rsync_lock.name}',
 		f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_info.user}' ]
 	if debug: rsync_conf.append('log file = /dev/stderr')
 	path = pl.Path(path).resolve()
