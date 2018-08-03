@@ -1666,15 +1666,15 @@ Various dedicated backup tools and snippets.
 ssh-r-sync / ssh-r-sync-recv
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-"ssh -Rsync" - SSH shell-script and client to negotiate and run rsync pulls over
-ssh reverse tunnels ("ssh -R") without any extra client-side setup.
+"ssh -Rsync" - SSH shell and client to negotiate/run rsync pulls over ssh
+reverse tunnels ("ssh -R") without any extra client-side setup.
 
-I.e. ``ssh-r-sync user@backup-host somedir`` should ssh into user\@backup-host,
-with auto-selected reverse-tunnel (-R) spec depending on local machine name,
-pass backup parameters and run ``rsync --daemon`` locally, allowing remote
-backup-host to initiate a pull from this daemon over secure/authenticated
-ssh tunnel, picking appropriate destination path and most rsync parameters,
-rotating/removing stuff on the backup-fs as necessary.
+Just running ``ssh-r-sync user@backup-host somedir`` should ssh into
+user\@backup-host, with auto-selected reverse-tunnel (-R) spec depending on
+local machine name, pass backup parameters and run ``rsync --daemon`` locally,
+allowing remote backup-host to initiate a pull from this daemon over established
+secure/authenticated ssh tunnel, picking appropriate destination path and most
+rsync parameters, rotating/removing stuff on the backup-fs (via hooks) as necessary.
 
 This is done to avoid following problematic things:
 
@@ -1682,22 +1682,27 @@ This is done to avoid following problematic things:
 - Using insecure network channels and/or rsync auth - ssh only.
 - Having any kind of insecure auth or port open on backup-host (e.g. rsyncd) - ssh only.
 - Requiring backed-up machine to be accessible on the net for backup-pulls - can
-  be behind any amount of NAT layers, and only needs a single ssh connection.
+  be behind any amount of NAT layers, and only needs one outgoing ssh connection.
 - Specifying/handling backup parameters (beyond --filter lists), rotation and
   cleanup on the backed-up machine - backup-host will handle all that in a
   known-good and uniform manner.
 - Running rsyncd or such with unrestricted fs access "for backups" - only
-  runs on localhost port with one-time auth during ssh connection lifetime,
+  runs it on localhost port with one-time auth for ssh connection lifetime,
   restricted to specified read-only path, with local filter rules on top.
 - Needing anything beyond basic ssh/rsync/python on either side.
 
-Idea is to for backup process to be as simple as ssh'ing into backup-host,
+Idea is to have backup process be as simple as ssh'ing into backup-host,
 only specifying path and filter specs for what it should grab.
 
 rsync is supposed to start by some regular uid on either end, so if full fs
 access is needed, -r/--rsync option can be used to point to rsync binary that
 has cap_dac_read_search (read) / cap_dac_override (write) posix capabilities
-or whatever wrapper script doing similar thing.
+or whatever wrapper script doing similar thing, e.g.::
+
+  # cp /usr/bin/rsync ~backup/
+  # setcap cap_dac_override=ep ~backup/rsync
+
+...and add ``-r ~/rsync`` to ssh-r-sync-recv ForceCommand to use that binary.
 
 To use any special rsync options or pre/post-sync actions on the backup-host side
 (such as backup file manifest, backup rotation and free space management,

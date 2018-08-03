@@ -240,10 +240,11 @@ def main(args=None):
 		p('Setting --hook-timeout (defaults to no limit) can be used to abort when hook-scripts hang.')
 		return
 	for v in opts.hook or list():
-		if ':' not in v: parser.error('Invalid --hook spec (must be hook:path): {!r}'.format(v))
+		if ':' not in v: parser.error(f'Invalid --hook spec (must be hook:path): {v!r}')
 		hp, path = v.split(':', 1)
 		if hp not in bak_hooks.points:
-			parser.error('Invaluid hook name: {!r} (see --hook-list)'.format(hp))
+			parser.error(f'Invaluid hook name: {hp!r} (see --hook-list)')
+		if os.sep in path: path = str(pl.Path(path).expanduser().resolve())
 		bak_hooks[hp] = path
 
 	if not opts.backup_dir: parser.error('backup_dir argument must be specified')
@@ -278,8 +279,9 @@ def main(args=None):
 		if not hook[0]: rsync_opts[:] = hook[1:]
 		else: rsync_opts.extend(hook)
 
+	rsync = pl.Path(opts.rsync).expanduser().resolve() if opts.rsync else 'rsync'
 	rsync = subprocess.run(
-		[ pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync', *rsync_opts,
+		[ rsync, *rsync_opts,
 			f'rsync://{rsync_info.user}@localhost:{rsync_port}/{rsync_info.mod}/.',
 			str(bak_path / '.') ],
 		stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -298,9 +298,9 @@ def main(args=None):
 		rsync_conf_path = create_rsync_conf( ctx, opts.path, rsync_info,
 			filter_file=opts.filter_file, filter_dir_file=opts.filter_dir_file, debug=opts.debug )
 		rsync_port, ssh = create_ssh_tunnel(ctx, conf, ssh_dst, ssh_port, name, rsync_info)
-		rsync = subprocess.Popen([
-			pl.Path(opts.rsync).resolve() if opts.rsync else 'rsync',
-			'--daemon', '--no-detach', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
+		rsync = pl.Path(opts.rsync).expanduser().resolve() if opts.rsync else 'rsync'
+		rsync = subprocess.Popen([ rsync, '--daemon',
+			'--no-detach', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
 		ssh.send.write(b'start\n')
 		ack = ssh.recv.readline().rstrip(b'\n')
 		if ack != b'done': raise SSHRsyncError('Invalid/missing backup completion ack: {!r}', ack)
