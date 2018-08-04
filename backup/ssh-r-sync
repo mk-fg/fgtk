@@ -174,7 +174,7 @@ def create_rsync_conf( ctx, path, rsync_info,
 	if filter_file or filter_dir_file:
 		rsync_filter = ctx.enter_context(
 			tempfile.NamedTemporaryFile('w', prefix='.ssh-r-sync.filter.') )
-		if filter_dir_file: rsync_filter.write(f'merge-dir {filter_dir_file}\n')
+		if filter_dir_file: rsync_filter.write(f'dir-merge {filter_dir_file}\n')
 		if filter_file: rsync_filter.write(pl.Path(filter_file).read_text())
 		rsync_filter.flush()
 	else: rsync_filter = None
@@ -183,9 +183,10 @@ def create_rsync_conf( ctx, path, rsync_info,
 	rsync_lock = ctx.enter_context(temp_file('.ssh-r-sync.lock.'))
 	rsync_conf = [
 		'hosts allow = localhost', 'read only = true', 'numeric ids = true',
-		'use chroot = {}'.format('no' if not rsync_info.su else 'yes'),
 		'max connections = 1', f'lock file = {rsync_lock.name}',
 		f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_info.user}' ]
+	if rsync_info.su: rsync_conf.extend(['uid = root', 'gid = *'])
+	else: rsync_conf.append('use chroot = no')
 	if debug: rsync_conf.append('log file = /dev/stderr')
 	path = pl.Path(path).resolve()
 	rsync_conf.extend([f'[{rsync_info.mod}]', f' path = {path}'])
@@ -281,6 +282,9 @@ def main(args=None):
 		else: sys.__excepthook__(err_t, err, err_tb)
 	sys.excepthook = print_error_msg_only
 
+	for sig in 'int hup term'.upper().split():
+		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(1))
+
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
 	ssh_dst, ssh_port = str_part(opts.host, ':>')
@@ -292,8 +296,9 @@ def main(args=None):
 	if opts.no_ssh_opts: conf.ssh_opts.clear()
 
 	with contextlib.ExitStack() as ctx:
-		rsync_info = RsyncInfo( key=b64_str(os.urandom(6)),
-			user='sshrsync', mod='sshrsync', su=opts.rsync and not opts.rsync_user )
+		rsync_info = RsyncInfo(
+			key=b64_str(os.urandom(6)), user='sshrsync', mod='sshrsync',
+			su=(os.getuid() == 0 or opts.rsync) and not opts.rsync_user )
 		rsync_conf_path = create_rsync_conf( ctx, opts.path, rsync_info,
 			filter_file=opts.filter_file, filter_dir_file=opts.filter_dir_file, debug=opts.debug )
 		rsync_port, ssh = create_ssh_tunnel(ctx, conf, ssh_dst, ssh_port, name, rsync_info)

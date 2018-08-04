@@ -1700,7 +1700,7 @@ has cap_dac_read_search (read) / cap_dac_override (write) posix capabilities
 or whatever wrapper script doing similar thing, e.g.::
 
   # cp /usr/bin/rsync ~backup/
-  # setcap cap_dac_override=ep ~backup/rsync
+  # setcap cap_dac_override,cap_chown,cap_fowner=ep ~backup/rsync
 
 ...and add ``-r ~/rsync`` to ssh-r-sync-recv ForceCommand to use that binary.
 

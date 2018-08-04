@@ -224,6 +224,9 @@ def main(args=None):
 		else: sys.__excepthook__(err_t, err, err_tb)
 	sys.excepthook = print_error_msg_only
 
+	for sig in 'int hup term'.upper().split():
+		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(1))
+
 	bak_hooks = BackupHooks(opts.hook_timeout)
 	if opts.hook_list:
 		p('Available hook points:\n')
@@ -263,8 +266,9 @@ def main(args=None):
 	cmd = ssh.recv.readline().rstrip(b'\n')
 	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
 
-	rsync_opts = ( (['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE'])
-		+ [ '--skip-compress='
+	rsync_opts = (
+		(['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE'])
+		+ [ '--delete', '--delete-excluded', '--skip-compress='
 			r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar/rpm/deb/iso'
 			r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ] )
 
