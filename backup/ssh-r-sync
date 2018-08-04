@@ -309,6 +309,7 @@ def main(args=None):
 	name = opts.name or os.uname().nodename
 	if opts.no_ssh_opts: conf.ssh_opts.clear()
 
+	if opts.debug: p(f'----- sync name={name} dst={ssh_dst}:{ssh_port or 22}')
 	with contextlib.ExitStack() as ctx:
 		rsync_info = RsyncInfo(
 			key=b64_str(os.urandom(6)), user='sshrsync', mod='sshrsync',
