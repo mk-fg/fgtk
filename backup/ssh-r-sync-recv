@@ -216,6 +216,16 @@ def main(args=None):
 	group.add_argument('--hook-list', action='store_true',
 		help='Print the list of all supported hooks with descriptions/parameters and exit.')
 
+	group = parser.add_argument_group('Misc options')
+	group.add_argument('--nice', metavar='[prio:][io-class[.io-level]]',
+		help='''
+			Set "nice" and/or "ionice" (CFQ I/O) priorities, inherited by hooks and rsync.'
+			"nice" prio value, if specified, must be
+				in [-20;20] range, where lower = higher prio, and base=0.
+			"ionice" value should be in class[:level] format, where
+				"class" is one of [rt, be, idle] and "level" in 0-7 range (0=highest prio).
+			See setpriority(2) / ioprio_set(2) for more info.''')
+
 	opts = parser.parse_args(args)
 
 	def print_error_msg_only(err_t, err, err_tb):
@@ -226,6 +236,24 @@ def main(args=None):
 
 	for sig in 'int hup term'.upper().split():
 		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(1))
+
+	if opts.nice is not None:
+		import ctypes as ct
+		nice, ionice = (opts.nice + ':').split(':', 1)
+		if not ionice and not nice.isdigit(): nice, ionice = None, nice
+		if nice: os.setpriority(os.PRIO_PROCESS, os.getpid(), int(nice))
+		if ionice:
+			ionice = ionice.rstrip(':').split('.', 1)
+			if len(ionice) == 1: ionice.append(0)
+			ionice[0] = dict(rt=1, be=2, idle=3)[ionice[0].lower()]
+			if ionice[0] == 3: ionice[1] = 0
+			elif 0 <= ionice[1] <= 7: parser.error('--ionice prio level must be in 0-7 range')
+			ionice = (ionice[0] << 13) | ionice[1]
+			# grep ioprio_set /var/src/linux/arch/x86/entry/syscalls/syscall_64.tbl
+			err = ct.CDLL('libc.so.6', use_errno=True).syscall(251, 1, os.getpid(), ionice)
+			if err != 0:
+				err = ct.get_errno()
+				raise OSError(err, 'ionice_set failed - ' + os.strerror(err))
 
 	bak_hooks = BackupHooks(opts.hook_timeout)
 	if opts.hook_list:
