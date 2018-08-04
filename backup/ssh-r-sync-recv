@@ -13,12 +13,13 @@ p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
 
 class SSHRsyncReceiverConfig:
 	# recv_port_* settings should be same on server/client
-	recv_port_range = 6000, 6999
+	recv_port_bind = '127.0.0.1'
+	recv_port_range = 22000, 22999
 	recv_port_retries = 4
 	recv_port_hash_key = b'J\xbc\xed\xa3\xa5\x02E(\xde\xdc#h\xa4\xa5\xa4t'
 
 	hs_hello = b'ssh-r-sync o/ 1'
-	hs_timeout = 5.0
+	hs_timeout = 20
 	hs_key_size = 64
 
 class SSHRsyncError(Exception):
@@ -137,7 +138,7 @@ def get_rsync_info(conf, ssh):
 
 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
 		sock_conn.settimeout(conf.hs_timeout)
-		sock_conn.connect(('localhost', rsync_port))
+		sock_conn.connect((conf.recv_port_bind, rsync_port))
 		key = sock_conn.recv(conf.hs_key_size)
 		if len(key) != conf.hs_key_size or key != key_push:
 			raise SSHRsyncError('ssh/socket mismatch (len={}/{})', len(key), conf.hs_key_size)
@@ -313,9 +314,8 @@ def main(args=None):
 
 	rsync = pl.Path(opts.rsync).expanduser().resolve() if opts.rsync else 'rsync'
 	rsync = subprocess.run(
-		[ rsync, *rsync_opts,
-			f'rsync://{rsync_info.user}@localhost:{rsync_port}/{rsync_info.mod}/.',
-			str(bak_path / '.') ],
+		[ rsync, *rsync_opts, f'rsync://{rsync_info.user}@'
+			f'{conf.recv_port_bind}:{rsync_port}/{rsync_info.mod}/.', str(bak_path / '.') ],
 		stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
 		env=dict(RSYNC_PASSWORD=rsync_info.key) )
 	rsync_code, rsync_ouput = rsync.returncode, rsync.stdout

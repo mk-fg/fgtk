@@ -13,13 +13,17 @@ p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
 
 class SSHRsyncConfig:
 	# recv_port_* settings should be same on server/client
-	recv_port_range = 6000, 6999
+	recv_port_bind = '127.0.0.1'
+	recv_port_range = 22000, 22999
 	recv_port_retries = 4
 	recv_port_hash_key = b'J\xbc\xed\xa3\xa5\x02E(\xde\xdc#h\xa4\xa5\xa4t'
 
 	hs_hello = b'ssh-r-sync o/ 1'
-	hs_timeout = 5.0
+	hs_timeout = 20
 	hs_key_size = 64
+
+	rsync_bind = '127.0.0.1'
+	rsync_ready_wait = 10, 3.0 # attempts, timeout
 
 	ssh_opts = '''
 		-oControlPath=none -oControlMaster=no
@@ -90,6 +94,18 @@ def temp_file(prefix, contents=None):
 		raise
 	return tmp
 
+def retries_within_timeout( tries, timeout,
+		backoff_func=lambda e,n: ((e**n-1)/e), slack=1e-2 ):
+	if timeout == 0: return list() # single attempt, regardless of tries
+	a, b = 0, timeout
+	while True:
+		m = (a + b) / 2
+		delays = list(backoff_func(m, n) for n in range(tries))
+		error = sum(delays) - timeout
+		if abs(error) < slack: return delays
+		elif error > 0: b = m
+		else: a = m
+
 
 SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
 RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su opts')
@@ -100,7 +116,8 @@ def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 
 	sock = ctx.enter_context(
 		socket.socket(socket.AF_INET, socket.SOCK_STREAM) )
-	sock.bind(('localhost', 0)) # to get os-picked open port to tunnel to
+	sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	sock.bind((conf.rsync_bind, 0)) # to get os-picked open port to tunnel to
 	addr, rsync_port = sock.getsockname()
 	sock.listen(1)
 
@@ -109,7 +126,8 @@ def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 			conf.recv_port_range[1] - conf.recv_port_range[0], key=conf.recv_port_hash_key )
 		ssh = subprocess.Popen(
 			[ 'ssh', *(conf.ssh_opts or list()),
-				'-R', f'{tun_port}:localhost:{rsync_port}', *([f'-p{port}'] if port else []), dst ],
+				'-R', f'{conf.recv_port_bind}:{tun_port}:{conf.rsync_bind}:{rsync_port}',
+				*([f'-p{port}'] if port else []), dst ],
 			stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr )
 		ssh_recv = open(ssh.stdout.fileno(), 'rb', 0)
 		ssh_send = open(ssh.stdin.fileno(), 'wb', 0)
@@ -179,6 +197,21 @@ def create_rsync_conf( ctx, path, rsync_info,
 	rsync_conf = ctx.enter_context(
 		temp_file('.ssh-r-sync.conf.', '\n'.join(rsync_conf + [''])) )
 	return rsync_conf.name
+
+def wait_for_socket(addr, tries, timeout):
+	delay, wait_iter = None, iter(retries_within_timeout(tries, timeout))
+	while True:
+		try: delay = next(wait_iter)
+		except StopIteration: delay = None
+		ts = time.monotonic() + (delay or 0)
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock_conn:
+			sock_conn.settimeout(delay or 5e-2)
+			try: sock_conn.connect(addr)
+			except OSError as err: pass # refused, timeout, etc
+			else: break
+		if delay is None:
+			raise SSHRsyncError('Timeout waiting for socket: {!r}', addr)
+		time.sleep(max(0, ts - time.monotonic()))
 
 
 def main(args=None):
@@ -319,8 +352,9 @@ def main(args=None):
 			filter_file=opts.filter_file, filter_dir_file=opts.filter_dir_file, debug=opts.debug )
 		rsync_port, ssh = create_ssh_tunnel(ctx, conf, ssh_dst, ssh_port, name, rsync_info)
 		rsync = pl.Path(opts.rsync).expanduser().resolve() if opts.rsync else 'rsync'
-		rsync = subprocess.Popen([ rsync, '--daemon',
-			'--no-detach', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
+		rsync = subprocess.Popen([ rsync, '--daemon', '--no-detach',
+			f'--address={conf.rsync_bind}', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
+		wait_for_socket((conf.rsync_bind, rsync_port), *conf.rsync_ready_wait)
 		ssh.send.write(b'start\n')
 		ack = ssh.recv.readline().rstrip(b'\n')
 		if ack != b'done': raise SSHRsyncError('Invalid/missing backup completion ack: {!r}', ack)
