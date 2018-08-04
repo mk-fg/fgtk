@@ -107,7 +107,7 @@ class BackupHooks(dict):
 
 
 SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
-RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su')
+RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su opts')
 
 def get_rsync_info(conf, ssh):
 	hs_timeout_ctx = ft.partial( err_timeout,
@@ -266,11 +266,12 @@ def main(args=None):
 	cmd = ssh.recv.readline().rstrip(b'\n')
 	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
 
-	rsync_opts = (
-		(['-HaAXS', '--super', '--numeric-ids'] if rsync_info.su else ['-rltHE'])
-		+ [ '--delete', '--delete-excluded', '--skip-compress='
-			r'gz/bz2/t\[gb\]z/tbz2/xz/lzma/7z/zip/rar/rpm/deb/iso'
-			r'/jpg/gif/png/mov/avi/og\[gv\]/mkv/webm/mp\[34g\]/flv/flac/ape/pdf/djvu' ] )
+	rsync_opts = [ '--delete', '--delete-excluded']
+	if rsync_info.opts.get('one_file_system'): rsync_opts.append('-x')
+	if rsync_info.su: rsync_opts.extend(['-HaAXS', '--super', '--numeric-ids'])
+	else:
+		rsync_opts.append('-rltHE')
+		if rsync_info.opts.get('fake_super'): rsync_opts.append('--fake-super')
 
 	hook = bak_hooks.run( 'rsync.pre',
 		bak_root, bak_path, bak_name, int(bool(rsync_info.su)) )

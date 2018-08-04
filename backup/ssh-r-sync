@@ -110,7 +110,7 @@ def temp_file(prefix, contents=None):
 
 
 SSHPipe = collections.namedtuple('SSHPipe', 'send recv')
-RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su')
+RsyncInfo = collections.namedtuple('RsyncInfo', 'user key mod su opts')
 
 def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 	hs_timeout_ctx = ft.partial( err_timeout,
@@ -171,6 +171,7 @@ def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 
 def create_rsync_conf( ctx, path, rsync_info,
 		filter_file=None, filter_dir_file=None, debug=False ):
+	path = pl.Path(path).resolve()
 	if filter_file or filter_dir_file:
 		rsync_filter = ctx.enter_context(
 			tempfile.NamedTemporaryFile('w', prefix='.ssh-r-sync.filter.') )
@@ -181,14 +182,18 @@ def create_rsync_conf( ctx, path, rsync_info,
 	rsync_secrets = ctx.enter_context(
 		temp_file('.ssh-r-sync.passwd.', f'{rsync_info.user}:{rsync_info.key}\n') )
 	rsync_lock = ctx.enter_context(temp_file('.ssh-r-sync.lock.'))
+	skip_compress_line = (
+		r'gz/bz2/t[gb]z/tbz2/xz/lzma/7z/zip/rar/rpm/deb/iso'
+		r'/jpg/gif/png/mov/avi/og[gv]/mkv/webm/mp[34g]/flv/flac/ape/pdf/djvu' )
+	skip_compress_line = ' '.join(f'*.{ext}' for ext in skip_compress_line.split('/'))
 	rsync_conf = [
 		'hosts allow = localhost', 'read only = true', 'numeric ids = true',
 		'max connections = 1', f'lock file = {rsync_lock.name}',
+		'timeout = 600', f'dont compress = {skip_compress_line}',
 		f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_info.user}' ]
 	if rsync_info.su: rsync_conf.extend(['uid = root', 'gid = *'])
 	else: rsync_conf.append('use chroot = no')
 	if debug: rsync_conf.append('log file = /dev/stderr')
-	path = pl.Path(path).resolve()
 	rsync_conf.extend([f'[{rsync_info.mod}]', f' path = {path}'])
 	if rsync_filter: rsync_conf.append(f' filter = merge {rsync_filter.name}')
 	rsync_conf = ctx.enter_context(
@@ -257,10 +262,14 @@ def main(args=None):
 	group.add_argument('-f', '--filter-file', metavar='path',
 		help='Local file to use as rsync daemon filter rules,'
 			' to be passed as "filter = merge <file>" in its config.')
-	group.add_argument('-x', '--filter-dir-file', metavar='name',
+	group.add_argument('-d', '--filter-dir-file', metavar='name',
 		help='Simplified form of -f/--filter-file,'
 				' adding "dir-merge <name>" to rsync filter rule.'
 			' Same as using one-liner --filter-file with that directive.')
+	group.add_argument('-x', '--one-file-system', action='store_true',
+		help='Instruct receiver rsync-pull to use -x/--one-file-system option.')
+	group.add_argument('-X', '--fake-super', action='store_true',
+		help='Instruct receiver rsync-pull to use --fake-super option.')
 
 	group = parser.add_argument_group('SSH options')
 	group.add_argument('-p', '--port', metavar='port',
@@ -273,7 +282,7 @@ def main(args=None):
 				' '.join(conf.ssh_opts), width=90, initial_indent='\t'*4, subsequent_indent='\t'*4 ))))
 
 	group = parser.add_argument_group('Misc options')
-	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	def print_error_msg_only(err_t, err, err_tb):
@@ -298,7 +307,8 @@ def main(args=None):
 	with contextlib.ExitStack() as ctx:
 		rsync_info = RsyncInfo(
 			key=b64_str(os.urandom(6)), user='sshrsync', mod='sshrsync',
-			su=(os.getuid() == 0 or opts.rsync) and not opts.rsync_user )
+			su=(os.getuid() == 0 or opts.rsync) and not opts.rsync_user,
+			opts=dict(one_file_system=opts.one_file_system, fake_super=opts.fake_super) )
 		rsync_conf_path = create_rsync_conf( ctx, opts.path, rsync_info,
 			filter_file=opts.filter_file, filter_dir_file=opts.filter_dir_file, debug=opts.debug )
 		rsync_port, ssh = create_ssh_tunnel(ctx, conf, ssh_dst, ssh_port, name, rsync_info)
