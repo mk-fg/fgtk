@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, logging, contextlib, collections, subprocess, socket, pwd
+import os, sys, contextlib, collections, subprocess, socket, pwd
 import hashlib, math, json, base64, signal, time
 import tempfile, pathlib as pl
 
@@ -9,24 +9,6 @@ import tempfile, pathlib as pl
 p_fmt = lambda fmt,*a,**k: (
 	[fmt.format(*a,**k)] if isinstance(fmt, str) else [[fmt, *a], k] )
 p = lambda fmt,*a,**k: print(*p_fmt(fmt,*a,**k), file=sys.stderr, flush=True)
-
-err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
-
-class LogMessage:
-	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
-	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
-
-class LogStyleAdapter(logging.LoggerAdapter):
-	def __init__(self, logger, extra=None):
-		super(LogStyleAdapter, self).__init__(logger, extra or {})
-	def log(self, level, msg, *args, **kws):
-		if not self.isEnabledFor(level): return
-		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
-		msg, kws = self.process(msg, kws)
-		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
-
-get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
-log = get_logger('main')
 
 
 class SSHRsyncConfig:
@@ -136,8 +118,6 @@ def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 			ctx.callback(proc_close, ssh)
 			ssh = None
 			break
-		log.debug( 'No "hello" from the other side,'
-			' assuming tunnel failure (attempt={})', attempt+1 )
 	else: raise SSHRsyncError('SSH connection failed')
 	if hello != conf.hs_hello:
 		raise SSHRsyncError( 'Hello-string mismatch:'
@@ -293,8 +273,6 @@ def main(args=None):
 
 	for sig in 'int hup term'.upper().split():
 		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(1))
-
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
 	ssh_dst, ssh_port = str_part(opts.host, ':>')
 	if opts.port:
