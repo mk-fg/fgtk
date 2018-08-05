@@ -209,7 +209,7 @@ def main(args=None):
 			Hooks are run with same uid/gid and env as the main script, can use PATH-lookup.
 			See --hook-list output to get full list of
 				all supported hook-points and arguments passed to them.
-			Example spec: -x domain-auth.publish-challenge:/etc/nginx/sync-frontends.sh''')
+			Example spec: -x rsync.pre:~/hook.pre-sync.sh''')
 	group.add_argument('--hook-timeout', metavar='seconds', type=float, default=0,
 		help='Timeout for waiting for hook-script to finish running,'
 				' before aborting the operation (treated as hook error).'
@@ -218,7 +218,7 @@ def main(args=None):
 		help='Print the list of all supported hooks with descriptions/parameters and exit.')
 
 	group = parser.add_argument_group('Misc options')
-	group.add_argument('--nice', metavar='[prio:][io-class[.io-level]]',
+	group.add_argument('--nice', metavar='(prio:)(io-class(.io-level))',
 		help='''
 			Set "nice" and/or "ionice" (CFQ I/O) priorities, inherited by hooks and rsync.'
 			"nice" prio value, if specified, must be
