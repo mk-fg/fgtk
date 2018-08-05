@@ -231,10 +231,11 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, loop, src_list,
-			start=None, length=None, chunks=None, inplace=False, remove_src=False,
+			start=None, length=None, chunks=None,
+			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
-		self.start, self.length, self.chunks = start, length, chunks
+		self.start, self.length, self.chunks, self.probe = start, length, chunks, probe
 		self.inplace, self.remove_src = inplace, remove_src
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
@@ -333,6 +334,9 @@ class AudioConv:
 					conv = self.conv_ytdl(src, self.ytdl_opts)
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
+				elif self.probe:
+					print(f'{src.label} [{src.codec}] :: {naturaltime_diff(src.duration)}')
+					conv = None
 				elif self.chunks and not isinstance(src, AudioConvChunk):
 					if not src.duration:
 						raise AudioConvError( 'Cannot split src'
@@ -371,10 +375,11 @@ class AudioConv:
 						dst.parent.mkdir(parents=True, exist_ok=True)
 					conv = self.conv_src(src, dst, start, length)
 
-				log.debug('Scheduling new conv-job for src: {}', src)
-				conv = self.loop.create_task(conv)
-				conv.src, conv.task_id = src, id(conv)
-				self.conv_jobs[conv.task_id] = conv
+				if conv:
+					log.debug('Scheduling new conv-job for src: {}', src)
+					conv = self.loop.create_task(conv)
+					conv.src, conv.task_id = src, id(conv)
+					self.conv_jobs[conv.task_id] = conv
 			if not self.conv_jobs: break
 
 			done, pending = await asyncio.wait(
@@ -388,8 +393,9 @@ class AudioConv:
 				if dst_sub: src_stack.append(dst_path)
 				else: self.src_done.setdefault(res.src, set()).add(Path(dst_path))
 
-		assert len(self.src_done) == len(self.src_list)
-		assert all((self.src_done[p.src] == p.chunks) for p in self.chunk_dirs)
+		if not self.probe:
+			assert len(self.src_done) == len(self.src_list)
+			assert all((self.src_done[p.src] == p.chunks) for p in self.chunk_dirs)
 
 		if self.remove_src:
 			for src, dst_set in self.src_done.items():
@@ -452,7 +458,7 @@ class AudioConv:
 	async def conv_probe(self, src, start=None, length=None):
 		src_name, src_cleanup = src.name, isinstance(src, AudioConvSubResult)
 		async with FFProc( self.loop, src_name,
-				[ 'ffprobe', '-v', 'error', '-show_entries',
+				[ 'ffprobe', '-v', 'fatal', '-show_entries',
 					'stream=codec_type,codec_name,duration:format=duration',
 					'-print_format', 'json', str(src) ],
 				stdout=subprocess.PIPE ) as proc:
@@ -629,6 +635,8 @@ def main(args=None):
 			' Length argument is optional and defaults to 15:00 (15 min).')
 
 	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-p', '--probe', action='store_true',
+		help='Only probe and print length for each file, without converting anything.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -682,7 +690,7 @@ def main(args=None):
 		success = loop.run_until_complete(
 			AudioConv.run_async(
 				loop, src_list, start=start, length=length, chunks=chunks,
-				inplace=opts.inplace, remove_src=opts.remove_src,
+				probe=opts.probe, inplace=opts.inplace, remove_src=opts.remove_src,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts, ytdl_opts=ytdl_opts ) )
 
 	return int(not success)
