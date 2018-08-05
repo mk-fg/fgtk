@@ -303,7 +303,8 @@ def main(args=None):
 		if rsync_info.opts.get('fake_super'): rsync_opts.append('--fake-super')
 
 	hook = bak_hooks.run( 'rsync.pre',
-		bak_root, bak_path, bak_name, int(bool(rsync_info.su)) )
+		bak_root, bak_path, bak_name,
+		int(bool(rsync_info.su)), stdout=subprocess.PIPE )
 	if hook and hook.stdout.strip():
 		if b'\0' not in hook.stdout:
 			raise SSHRsyncError( 'rsync.pre hook'

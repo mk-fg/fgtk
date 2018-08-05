@@ -1702,7 +1702,8 @@ or whatever wrapper script doing similar thing, e.g.::
   # cp /usr/bin/rsync ~backup/
   # setcap cap_dac_override,cap_chown,cap_fowner=ep ~backup/rsync
 
-...and add ``-r ~/rsync`` to ssh-r-sync-recv ForceCommand to use that binary.
+| ...and add ``-r ~/rsync`` to ssh-r-sync-recv ForceCommand to use that binary.
+Note: rsync with full rw fs access is usually same as "NOPASSWD: ALL" sudo.
 
 To use any special rsync options or pre/post-sync actions on the backup-host side
 (such as backup file manifest, backup rotation and free space management,
