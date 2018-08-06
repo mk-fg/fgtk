@@ -30,10 +30,10 @@ def main(args=None):
 	parser.add_argument('-c', '--keep-configs', action='store_true',
 		help='Keep config-* files, removing only vmlinuz-* and System.map-*.')
 
-	parser.add_argument('-r', '--force-remove-count',
-		type=int, metavar='count',
+	parser.add_argument('-r', '--force-remove-count', metavar='count',
 		help='Number of least relevant versions to explicitly remove.'
-			' --keep-min overrides this option.')
+			' Regardless of this option, --keep-min count is preserved.'
+			' "inf" value can be used to remove all but --keep-min count.')
 
 	parser.add_argument('-n', '--dry-run',
 		action='store_true', help='Do not actually remove anything.')
@@ -119,6 +119,10 @@ def main(args=None):
 		df = os.statvfs('.')
 		return (df.f_bavail * df.f_bsize / float(df.f_blocks * df.f_bsize)) * 100
 	rm_count = opts.force_remove_count
+	if rm_count == 'inf': rm_count = 2**64
+	else:
+		try: rm_count = int(rm_count)
+		except ValueError: parser.error('Invalid integer value: {}'.format(rm_count))
 
 	rmq_set = set() # check to make sure these don't get repeated anywhere
 	if rmq_kept:
