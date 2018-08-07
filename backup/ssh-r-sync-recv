@@ -243,9 +243,9 @@ def main(args=None):
 		if not ionice and not nice.isdigit(): nice, ionice = None, nice
 		if nice: os.setpriority(os.PRIO_PROCESS, os.getpid(), int(nice))
 		if ionice:
-			# grep ioprio_set /var/src/linux/arch/x86/entry/syscalls/syscall_64.tbl
+			# grep -r ioprio_set /usr/share/gdb/syscalls/
 			syscall_id = os.uname().machine
-			try: syscall_id = dict(x86_64=251)[syscall_id]
+			try: syscall_id = dict(x86_64=251, armv7l=314, aarch64=30)[syscall_id]
 			except KeyError: parser.error(f'--nice ionice is not supported on arch: {syscall_id}')
 			ionice = ionice.rstrip(':').split('.', 1)
 			if len(ionice) == 1: ionice.append(0)
