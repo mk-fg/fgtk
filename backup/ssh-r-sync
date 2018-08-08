@@ -357,6 +357,7 @@ def main(args=None):
 		rsync = pl.Path(opts.rsync).expanduser().resolve() if opts.rsync else 'rsync'
 		rsync = subprocess.Popen([ rsync, '--daemon', '--no-detach',
 			f'--address={conf.rsync_bind}', f'--port={rsync_port}', f'--config={rsync_conf_path}' ])
+		ctx.callback(proc_close, rsync)
 		wait_for_socket((conf.rsync_bind, rsync_port), *conf.rsync_ready_wait)
 		ssh.send.write(b'start\n')
 		ack = ssh.recv.readline().rstrip(b'\n')
