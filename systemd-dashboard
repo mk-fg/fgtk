@@ -5,7 +5,7 @@ import itertools as it, operator as op, functools as ft
 import os, sys, re
 
 
-def systemd_state_dump():
+def systemd_state_dump(machines=False):
 	'Fetch systemd state dump via libsystemd sd-bus API.'
 	import os, ctypes as ct
 
@@ -21,6 +21,7 @@ def systemd_state_dump():
 		if sig: func.argtypes = sig
 		res = func(*args)
 		if check and res < 0: raise OSError(-res, os.strerror(-res))
+		return res
 
 	bus = ct.POINTER(sd_bus)()
 	run( 'sd_bus_open_system', ct.byref(bus),
@@ -28,33 +29,77 @@ def systemd_state_dump():
 
 	error = sd_bus_error()
 	reply = ct.POINTER(sd_bus_msg)()
-	run( 'sd_bus_call_method',
-		bus,
-		b'org.freedesktop.systemd1',
-		b'/org/freedesktop/systemd1',
-		b'org.freedesktop.systemd1.Manager',
-		b'Dump',
-		ct.byref(error),
-		ct.byref(reply),
-		b'',
-		sig=[
-			ct.POINTER(sd_bus),
-			ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
-			ct.POINTER(sd_bus_error),
-			ct.POINTER(ct.POINTER(sd_bus_msg)),
-			ct.c_char_p ] )
 
-	dump = ct.c_char_p()
-	run( 'sd_bus_message_read', reply, b's', ct.byref(dump),
-		sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_char_p)] )
+	machine_names = list()
+	if machines:
+		run( 'sd_bus_call_method',
+			bus,
+			b'org.freedesktop.machine1',
+			b'/org/freedesktop/machine1',
+			b'org.freedesktop.machine1.Manager',
+			b'ListMachines',
+			ct.byref(error),
+			ct.byref(reply),
+			b'',
+			sig=[
+				ct.POINTER(sd_bus),
+				ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+				ct.POINTER(sd_bus_error),
+				ct.POINTER(ct.POINTER(sd_bus_msg)),
+				ct.c_char_p ] )
+		machine_info = list(ct.c_char_p() for n in range(4))
+		machine_info_refs = list(map(ct.byref, machine_info))
+		run( 'sd_bus_message_enter_container',
+			reply, b'a', b'(ssso)',
+			sig=[ct.POINTER(sd_bus_msg), ct.c_char, ct.c_char_p] )
+		while True:
+			n = run( 'sd_bus_message_read',
+				reply, b'(ssso)', *machine_info_refs,
+				sig=[ ct.POINTER(sd_bus_msg), ct.c_char_p,
+					ct.POINTER(ct.c_char_p), ct.POINTER(ct.c_char_p),
+					ct.POINTER(ct.c_char_p), ct.POINTER(ct.c_char_p) ] )
+			if not n: break
+			name, cls, unit, path = list(v.value.decode() for v in machine_info)
+			machine_names.append(name)
 
-	dump = dump.value.decode()
+	def get_state_dump():
+		run( 'sd_bus_call_method',
+			bus,
+			b'org.freedesktop.systemd1',
+			b'/org/freedesktop/systemd1',
+			b'org.freedesktop.systemd1.Manager',
+			b'Dump',
+			ct.byref(error),
+			ct.byref(reply),
+			b'',
+			sig=[
+				ct.POINTER(sd_bus),
+				ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+				ct.POINTER(sd_bus_error),
+				ct.POINTER(ct.POINTER(sd_bus_msg)),
+				ct.c_char_p ] )
+		dump = ct.c_char_p()
+		run( 'sd_bus_message_read', reply, b's', ct.byref(dump),
+			sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_char_p)] )
+		return dump.value.decode()
 
-	run('sd_bus_flush', bus, check=False)
-	run('sd_bus_close', bus, check=False)
-	run('sd_bus_unref', bus, check=False)
+	def bus_close():
+		run('sd_bus_flush', bus, check=False)
+		run('sd_bus_close', bus, check=False)
+		run('sd_bus_unref', bus, check=False)
 
-	return dump
+	state = dict(_host=get_state_dump())
+	bus_close()
+
+	for name in machine_names:
+		if name.startswith('.'): continue
+		run( 'sd_bus_open_system_machine',
+			ct.byref(bus), name.encode(),
+			sig=[ct.POINTER(ct.POINTER(sd_bus)), ct.c_char_p] )
+		state[name] = get_state_dump()
+		bus_close()
+
+	return state
 
 
 class SDProps(dict):
@@ -88,14 +133,25 @@ class SDProps(dict):
 		return v_list[0]
 
 
-def systemd_state_dump_parse(dump_str=None):
-	if dump_str is None: dump_str = systemd_state_dump()
+def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/'):
+	state = dict()
+	for name, state_str in state_map_str.items():
+		machine_state = ssd_parse_machine(state_str)
+		prefix = prefix_fmt.format(name=name)
+		for unit, props in machine_state.items():
+			unit_key = prefix + unit
+			assert unit_key not in state, [name, unit, unit_path]
+			state[unit_key] = props
+	return state
 
-	state_lines = iter(dump_str.splitlines())
+def ssd_parse_machine(state_str):
+	state_lines = iter(state_str.splitlines())
 	state_lines = it.dropwhile(lambda line: line.startswith('Timestamp '), state_lines)
 
 	state, props, prop_sub = dict(), None, None
 	for line in state_lines:
+		line = re.sub(r'^Limit\tNOFILE', '\tLimitNOFILE', line) # bug in systemd-239
+
 		if prop_sub is not None:
 			k, indent, v = prop_sub
 			m = re.search(r'^{}\s+(.*)(?::\s*|=)(.*)$'.format(re.escape(indent)), line)
@@ -142,9 +198,15 @@ def main(argv=None):
 			' Use "systemd-analyze dump" to get raw state dump.')
 	parser.add_argument('-u', '--unit', metavar='name',
 		help='Pretty-print state for specified unit name and exit.')
+	parser.add_argument('-m', '--machines', action='store_true',
+		help='Query and print units in each registered'
+				' machine running on this host, prefixed by "{name}/".'
+			' Connecting to system bus of these requires root uid.')
 	opts = parser.parse_args()
 
-	state = systemd_state_dump_parse()
+	state_map_str = systemd_state_dump(machines=opts.machines)
+	state = systemd_state_dump_parse(
+		state_map_str, prefix_fmt='{name}/' if opts.machines else '' )
 
 	if opts.unit:
 		unit = state.get(opts.unit)

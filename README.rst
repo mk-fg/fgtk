@@ -614,6 +614,9 @@ and e.g. any deviations there detected/reported (simple diff can do it).
 Gets unit info by parsing Dump() snapshot fetched via sd-bus API of libsystemd
 (using ctypes to wrap it), which is same as e.g. "systemd-analyze dump" gets.
 
+Has -m/--machines option to query state from all registered machines as well,
+which requires root (for sd_bus_open_system_machine) due to current systemd limitations.
+
 See `Dashboard-for-... blog post`_ for extended rationale,
 though it's probably obsolete otherwise since this thing was rewritten.
 
