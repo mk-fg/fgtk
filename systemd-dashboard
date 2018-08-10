@@ -16,11 +16,11 @@ def systemd_state_dump():
 
 	lib = ct.CDLL('libsystemd.so')
 
-	def run(call, *args, sig=None):
+	def run(call, *args, sig=None, check=True):
 		func = getattr(lib, call)
 		if sig: func.argtypes = sig
 		res = func(*args)
-		if res < 0: raise OSError(-res, os.strerror(-err))
+		if check and res < 0: raise OSError(-res, os.strerror(-res))
 
 	bus = ct.POINTER(sd_bus)()
 	run( 'sd_bus_open_system', ct.byref(bus),
@@ -50,9 +50,9 @@ def systemd_state_dump():
 
 	dump = dump.value.decode()
 
-	run('sd_bus_flush', bus)
-	run('sd_bus_close', bus)
-	run('sd_bus_unref', bus)
+	run('sd_bus_flush', bus, check=False)
+	run('sd_bus_close', bus, check=False)
+	run('sd_bus_unref', bus, check=False)
 
 	return dump
 
@@ -98,7 +98,7 @@ def systemd_state_dump_parse(dump_str=None):
 	for line in state_lines:
 		if prop_sub is not None:
 			k, indent, v = prop_sub
-			m = re.search(r'^{}\s+(.*)(?:: |=)(.*)$'.format(re.escape(indent)), line)
+			m = re.search(r'^{}\s+(.*)(?::\s*|=)(.*)$'.format(re.escape(indent)), line)
 			if m:
 				sk, sv = m.groups()
 				assert sk not in prop_sub, [prop_sub, sk]
@@ -109,18 +109,19 @@ def systemd_state_dump_parse(dump_str=None):
 				prop_sub = None
 
 		if props is not None:
-			m = re.search(r'^\s+(.*?)(?:: |=)(.*)$', line)
-			if m:
-				k, v = m.groups()
-				props.setdefault(k, list()).append(v)
-				continue
 			m = re.search(r'^(\s+)-> (Exec\w+):$', line)
 			if m:
 				prop_sub = m.group(2), m.group(1), dict()
 				continue
+			m = re.search(r'^\s+(.*?)(?::\s*|=)(.*)$', line)
+			if m:
+				k, v = m.groups()
+				props.setdefault(k, list()).append(v)
+				continue
 			if prop_sub:
 				prop_sub, (k, indent, v) = None, prop_sub
 				props.setdefault(k, list()).append(v)
+			assert unit not in state, unit
 			state[unit], props = SDProps(props), None
 
 		if props is None:
