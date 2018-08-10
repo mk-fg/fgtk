@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-import os, sys, re
+import os, sys, re, errno
 
 
 def systemd_state_dump(machines=False):
@@ -93,9 +93,13 @@ def systemd_state_dump(machines=False):
 
 	for name in machine_names:
 		if name.startswith('.'): continue
-		run( 'sd_bus_open_system_machine',
-			ct.byref(bus), name.encode(),
-			sig=[ct.POINTER(ct.POINTER(sd_bus)), ct.c_char_p] )
+		try:
+			run( 'sd_bus_open_system_machine',
+				ct.byref(bus), name.encode(),
+				sig=[ct.POINTER(ct.POINTER(sd_bus)), ct.c_char_p] )
+		except OSError as err:
+			if err.errno == errno.ENOENT: continue # old machine without such link
+			raise OSError(err.errno, f'machine={name} :: {str(err)}') from None
 		state[name] = get_state_dump()
 		bus_close()
 
