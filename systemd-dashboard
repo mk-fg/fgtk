@@ -133,10 +133,10 @@ class SDProps(dict):
 		return v_list[0]
 
 
-def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/'):
+def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/', **parse_kws):
 	state = dict()
 	for name, state_str in state_map_str.items():
-		machine_state = ssd_parse_machine(state_str)
+		machine_state = ssd_parse_machine(state_str, **parse_kws)
 		prefix = prefix_fmt.format(name=name)
 		for unit, props in machine_state.items():
 			unit_key = prefix + unit
@@ -144,9 +144,11 @@ def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/'):
 			state[unit_key] = props
 	return state
 
-def ssd_parse_machine(state_str):
+def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	state_lines = iter(state_str.splitlines())
 	state_lines = it.dropwhile(lambda line: line.startswith('Timestamp '), state_lines)
+	if not filter_prop: filter_prop = lambda k: True
+	if not filter_unit: filter_unit = lambda u: True
 
 	state, props, prop_sub = dict(), None, None
 	for line in state_lines:
@@ -154,11 +156,13 @@ def ssd_parse_machine(state_str):
 
 		if prop_sub is not None:
 			k, indent, v = prop_sub
-			m = re.search(r'^{}\s+(.*)(?::\s*|=)(.*)$'.format(re.escape(indent)), line)
+			m = (
+				re.search(r'^{}\s+(.*)(?::\s*|=)(.*)$'.format(re.escape(indent)), line)
+				if filter_prop(k) else None )
 			if m:
 				sk, sv = m.groups()
 				assert sk not in prop_sub, [prop_sub, sk]
-				v[sk] = sv
+				if filter_prop(sk): v[sk] = sv
 				continue
 			else:
 				props.setdefault(k, list()).append(v)
@@ -172,13 +176,14 @@ def ssd_parse_machine(state_str):
 			m = re.search(r'^\s+(.*?)(?::\s*|=)(.*)$', line)
 			if m:
 				k, v = m.groups()
-				props.setdefault(k, list()).append(v)
+				if filter_prop(k): props.setdefault(k, list()).append(v)
 				continue
 			if prop_sub:
 				prop_sub, (k, indent, v) = None, prop_sub
-				props.setdefault(k, list()).append(v)
+				if filter_prop(k): props.setdefault(k, list()).append(v)
 			assert unit not in state, unit
-			state[unit], props = SDProps(props), None
+			if filter_unit(unit): state[unit] = SDProps(props)
+			props = None
 
 		if props is None:
 			m = re.search(r'^-> Unit (.*):$', line)
@@ -204,9 +209,19 @@ def main(argv=None):
 			' Connecting to system bus of these requires root uid.')
 	opts = parser.parse_args()
 
+	if not opts.unit:
+		# These are purely for performance optimization purposes.
+		# On hosts with containers, dumps can get pretty large and slow to parse.
+		filter_prop_keys = { 'Type', 'Source Path',
+			'Transient', 'Unit Load State', 'Unit Active State' }
+		filters = dict(
+			filter_prop=lambda k,_set=filter_prop_keys: k in _set,
+			filter_unit=lambda u: not re.search(r'\.(device|slice|scope)$', u) )
+	else: filters = dict()
+
 	state_map_str = systemd_state_dump(machines=opts.machines)
 	state = systemd_state_dump_parse(
-		state_map_str, prefix_fmt='{name}/' if opts.machines else '' )
+		state_map_str, prefix_fmt='{name}/' if opts.machines else '', **filters )
 
 	if opts.unit:
 		unit = state.get(opts.unit)
