@@ -234,7 +234,7 @@ def main(argv=None):
 	for unit, s in sorted(state.items()):
 		if re.search(r'\.(device|slice|scope)$', unit): continue
 
-		# Skip any clear auto-started units
+		# Skip any known auto-started/stopped and transient units
 		# Does not skip: Unit=X from timers/sockets
 		if unit.endswith('.mount') and f'{unit[:-6]}.automount' in state: continue
 		if unit.endswith('.service') and (
@@ -242,6 +242,7 @@ def main(argv=None):
 		if s.type_N == 'dbus': continue
 		if s.source_path_N == '/proc/self/mountinfo': continue
 		if s.transient_N == 'yes': continue
+		if re.search(r'(/|^)user@\S+\.service$', unit): continue
 
 		if ( s.unit_load_state not in ['error', 'not-found']
 			and s.unit_active_state == 'active' ): print(unit)
