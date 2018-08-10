@@ -2,81 +2,170 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-import os, sys, subprocess, unicodedata
+import os, sys, re
 
-import dbus
+
+def systemd_state_dump():
+	'Fetch systemd state dump via libsystemd sd-bus API.'
+	import os, ctypes as ct
+
+	class sd_bus(ct.Structure): pass
+	class sd_bus_error(ct.Structure):
+		_fields_ = [('name', ct.c_char_p), ('message', ct.c_char_p), ('need_free', ct.c_int)]
+	class sd_bus_msg(ct.Structure): pass
+
+	lib = ct.CDLL('libsystemd.so')
+
+	def run(call, *args, sig=None):
+		func = getattr(lib, call)
+		if sig: func.argtypes = sig
+		res = func(*args)
+		if res < 0: raise OSError(-res, os.strerror(-err))
+
+	bus = ct.POINTER(sd_bus)()
+	run( 'sd_bus_open_system', ct.byref(bus),
+		sig=[ct.POINTER(ct.POINTER(sd_bus))] )
+
+	error = sd_bus_error()
+	reply = ct.POINTER(sd_bus_msg)()
+	run( 'sd_bus_call_method',
+		bus,
+		b'org.freedesktop.systemd1',
+		b'/org/freedesktop/systemd1',
+		b'org.freedesktop.systemd1.Manager',
+		b'Dump',
+		ct.byref(error),
+		ct.byref(reply),
+		b'',
+		sig=[
+			ct.POINTER(sd_bus),
+			ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+			ct.POINTER(sd_bus_error),
+			ct.POINTER(ct.POINTER(sd_bus_msg)),
+			ct.c_char_p ] )
+
+	dump = ct.c_char_p()
+	run( 'sd_bus_message_read', reply, b's', ct.byref(dump),
+		sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_char_p)] )
+
+	dump = dump.value.decode()
+
+	run('sd_bus_flush', bus)
+	run('sd_bus_close', bus)
+	run('sd_bus_unref', bus)
+
+	return dump
+
+
+class SDProps(dict):
+
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.fix_camelcase()
+
+	def fix_camelcase(self):
+		for k in list(self.keys()):
+			k_new = k
+			if ' ' in k: k_new = k_new.replace(' ', '_')
+			elif not (k.islower() or k.isupper()):
+				k_new = re.sub( r'([A-Z]{2,})([A-Z][a-z])',
+					lambda m: ('_'+m.group(1)+'_'+m.group(2)).lower(), k_new )
+				k_new = re.sub(r'[A-Z]+', lambda m: '_'+m.group(0).lower(), k_new)
+			k_new = re.sub(r'_+', '_', k_new.replace('/', '_').strip('_').lower())
+			if k_new == k: continue
+			assert k_new not in self, [k_new, self.get(k_new)]
+			self[k_new] = self.pop(k)
+		for k, v in list(self.items()):
+			if len(v) == 1 and isinstance(v[0], dict):
+				SDProps.fix_camelcase(v[0])
+
+	def __getattr__(self, k):
+		if k.endswith('_N'):
+			k = k[:-2]
+			if k not in self: return
+		v_list = self[k]
+		assert len(v_list) == 1, v_list
+		return v_list[0]
+
+
+def systemd_state_dump_parse(dump_str=None):
+	if dump_str is None: dump_str = systemd_state_dump()
+
+	state_lines = iter(dump_str.splitlines())
+	state_lines = it.dropwhile(lambda line: line.startswith('Timestamp '), state_lines)
+
+	state, props, prop_sub = dict(), None, None
+	for line in state_lines:
+		if prop_sub is not None:
+			k, indent, v = prop_sub
+			m = re.search(r'^{}\s+(.*)(?:: |=)(.*)$'.format(re.escape(indent)), line)
+			if m:
+				sk, sv = m.groups()
+				assert sk not in prop_sub, [prop_sub, sk]
+				v[sk] = sv
+				continue
+			else:
+				props.setdefault(k, list()).append(v)
+				prop_sub = None
+
+		if props is not None:
+			m = re.search(r'^\s+(.*?)(?:: |=)(.*)$', line)
+			if m:
+				k, v = m.groups()
+				props.setdefault(k, list()).append(v)
+				continue
+			m = re.search(r'^(\s+)-> (Exec\w+):$', line)
+			if m:
+				prop_sub = m.group(2), m.group(1), dict()
+				continue
+			if prop_sub:
+				prop_sub, (k, indent, v) = None, prop_sub
+				props.setdefault(k, list()).append(v)
+			state[unit], props = SDProps(props), None
+
+		if props is None:
+			m = re.search(r'^-> Unit (.*):$', line)
+			if not m: raise ValueError(repr(line))
+			unit, props = m.group(1), dict()
+			unit = re.sub( br'\\x([\da-f]{2})',
+				lambda m: chr(int(m.group(1), 16)).encode(),
+				unit.encode() ).decode()
+
+	return state
 
 
 def main(argv=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Tool to compare the set of enabled'
-			' systemd services against currently running ones.\n'
-		'If started without parameters, it\'ll just show all the enabled services'
-			' that should be running (Type != oneshot) yet for some reason they aren\'t.')
-	parser.add_argument('-s', '--status', action='store_true',
-		help='Show status report on found services.')
-	parser.add_argument('-n', '--not-enabled', action='store_true',
-		help='Show list of services that are running but are not enabled directly.')
-	parser.add_argument('-x', '--systemd-internals', action='store_true',
-		help='Dont exclude systemd internal services from the output.')
-	optz = parser.parse_args()
+		description='systemd state tracking tool.'
+			' Use "systemd-analyze dump" to get raw state dump.')
+	parser.add_argument('-u', '--unit', metavar='name',
+		help='Pretty-print state for specified unit name and exit.')
+	opts = parser.parse_args()
 
-	bus = dbus.SystemBus()
-	systemd = dbus.Interface(
-		bus.get_object('org.freedesktop.systemd1', '/org/freedesktop/systemd1'),
-		'org.freedesktop.systemd1.Manager' )
-	subproc_env = dict(LANG='C', LC_ALL='C')
+	state = systemd_state_dump_parse()
 
-	if optz.not_enabled:
-		not_enabled = set( unit[0] for unit in systemd.ListUnits()
-			if unit[0].endswith('.service') and unit[3] == 'active' and not unit[0].startswith('user@') )
+	if opts.unit:
+		unit = state.get(opts.unit)
+		if not unit: unit = state.get(opts.unit + '.service')
+		if not unit: parser.error(f'Unit {opts.unit!r} not found in systemd state dump')
+		import pprint
+		pprint.pprint(unit)
+		return
 
-	def show_status(unit_name):
-		if not optz.systemd_internals and unit_name.startswith('systemd-'): return
-		if not optz.status: print(unit_name)
-		else:
-			print()
-			subprocess.run(['systemctl', 'status', unicode(unit_name)], env=subproc_env)
+	for unit, s in sorted(state.items()):
+		if re.search(r'\.(device|slice|scope)$', unit): continue
 
-	proc = subprocess.run( ['systemctl', '--full', 'list-dependencies'],
-		env=subproc_env, stdout=subprocess.PIPE, check=True, timeout=10.0 )
+		# Skip any clear auto-started units
+		# Does not skip: Unit=X from timers/sockets
+		if unit.endswith('.mount') and f'{unit[:-6]}.automount' in state: continue
+		if unit.endswith('.service') and (
+			f'{unit[:-8]}.timer' in state or f'{unit[:-8]}.socket' in state ): continue
+		if s.type_N == 'dbus': continue
+		if s.source_path_N == '/proc/self/mountinfo': continue
+		if s.transient_N == 'yes': continue
 
-	for line in proc.stdout.decode().splitlines():
-		for i,c in enumerate(line):
-			if unicodedata.category(c) not in ['Zs', 'So'] and c not in '*|-` ': break
-		else: continue
-		unit_name = line[i:]
-
-		# Not really interested in anything else
-		if not unit_name.endswith('.service'): continue
-
-		if optz.not_enabled:
-			not_enabled.discard(unit_name)
-			continue
-
-		try:
-			unit = dbus.Interface(
-				bus.get_object('org.freedesktop.systemd1', systemd.GetUnit(unit_name)),
-				'org.freedesktop.DBus.Properties' )
-		except dbus.exceptions.DBusException as err:
-			if err.get_dbus_name() != 'org.freedesktop.systemd1.NoSuchUnit': raise
-			continue
-		if unit.Get('org.freedesktop.systemd1.Service', 'Type') == 'oneshot': continue
-		state = dict(
-			( k.lower(),
-				unit.Get('org.freedesktop.systemd1.Unit', '{}State'.format(k)) )
-			for k in ['Load', 'Active', 'Sub'] )
-		if state['load'] not in ['error', 'not-found'] and state['active'] != 'active':
-			show_status(unit_name)
-
-	if optz.not_enabled:
-		for unit_name in not_enabled:
-			unit = dbus.Interface(
-				bus.get_object('org.freedesktop.systemd1', systemd.GetUnit(unit_name)),
-				'org.freedesktop.DBus.Properties' )
-			if unit.Get('org.freedesktop.systemd1.Service', 'Type') == 'oneshot': continue
-			show_status(unit_name)
-
+		if ( s.unit_load_state not in ['error', 'not-found']
+			and s.unit_active_state == 'active' ): print(unit)
 
 if __name__ == '__main__': sys.exit(main())

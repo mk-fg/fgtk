@@ -607,31 +607,15 @@ Misc
 systemd-dashboard
 ^^^^^^^^^^^^^^^^^
 
-There's a `Dashboard-for-... blog post`_ with more details.
+Python3 script to list all currently active and non-transient systemd units,
+so that these can be tracked as a "system state",
+and e.g. any deviations there detected/reported (simple diff can do it).
 
-::
+Gets unit info by parsing Dump() snapshot fetched via sd-bus API of libsystemd
+(using ctypes to wrap it), which is same as e.g. "systemd-analyze dump" gets.
 
-  root@damnation:~# systemd-dashboard -h
-  usage: systemd-dashboard [-h] [-s] [-u] [-n] [-x]
-
-  Tool to compare the set of enabled systemd services against currently running
-  ones. If started without parameters, it'll just show all the enabled services
-  that should be running (Type != oneshot) yet for some reason they aren't.
-
-  optional arguments:
-    -h, --help            show this help message and exit
-    -s, --status          Show status report on found services.
-    -u, --unknown         Show enabled but unknown (not loaded) services.
-    -n, --not-enabled     Show list of services that are running but are not
-                          enabled directly.
-    -x, --systemd-internals
-                          Dont exclude systemd internal services from the
-                          output.
-
-  root@damnation:~# systemd-dashboard
-  smartd.service
-  systemd-readahead-replay.service
-  apache.service
+See `Dashboard-for-... blog post`_ for extended rationale,
+though it's probably obsolete otherwise since this thing was rewritten.
 
 .. _Dashboard-for-... blog post: http://blog.fraggod.net/2011/2/Dashboard-for-enabled-services-in-systemd
 
@@ -640,8 +624,8 @@ at
 
 Replacement for standard unix'ish "atd" daemon in the form of a bash script.
 
-It just forks out and waits for however long it needs before executing the given
-command. Unlike with atd, such tasks won't survive reboot, obviously.
+| It just forks out and waits for however long it needs before executing the given command.
+| Unlike atd proper, such tasks won't survive reboot, obviously.
 
 ::
 
