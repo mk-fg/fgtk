@@ -246,7 +246,7 @@ def main(argv=None):
 		if s.type_N == 'dbus': continue
 		if s.source_path_N == '/proc/self/mountinfo': continue
 		if s.transient_N == 'yes': continue
-		if re.search(r'(/|^)user@\S+\.service$', unit): continue
+		if re.search(r'(/|^)user(-runtime-dir)?@\d+\.service$', unit): continue
 
 		if ( s.unit_load_state not in ['error', 'not-found']
 			and s.unit_active_state == 'active' ): print(unit)
