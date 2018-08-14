@@ -154,8 +154,8 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	if not filter_prop: filter_prop = lambda k: True
 	if not filter_unit: filter_unit = lambda u: True
 
-	state, props, prop_sub = dict(), None, None
-	for line in state_lines:
+	state, unit, props, prop_sub = dict(), None, None, None
+	for line in it.chain(state_lines, ['-> Unit END:']):
 		line = re.sub(r'^Limit\tNOFILE', '\tLimitNOFILE', line) # bug in systemd-239
 
 		if prop_sub is not None:
