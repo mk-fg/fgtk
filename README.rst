@@ -110,7 +110,7 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
 audit-follow
 ''''''''''''
 
-Trivial py3 script to decide audit messages from "journalctl -af" output,
+Trivial py3 script to decode audit messages from "journalctl -af" output,
 i.e. stuff like this::
 
   Jul 24 17:14:01 malediction audit: PROCTITLE

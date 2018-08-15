@@ -169,13 +169,17 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 				if filter_prop(sk): v[sk] = sv
 				continue
 			else:
-				props.setdefault(k, list()).append(v)
+				if k: props.setdefault(k, list()).append(v)
 				prop_sub = None
 
 		if props is not None:
 			m = re.search(r'^(\s+)-> (Exec\w+):$', line)
 			if m:
 				prop_sub = m.group(2), m.group(1), dict()
+				continue
+			m = re.search(r'^(\s+)-> Job (\d+):$', line)
+			if m:
+				prop_sub = None, m.group(1), dict() # discarded later
 				continue
 			m = re.search(r'^\s+(.*?)(?::\s*|=)(.*)$', line)
 			if m:
@@ -185,9 +189,14 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 			if prop_sub:
 				prop_sub, (k, indent, v) = None, prop_sub
 				if filter_prop(k): props.setdefault(k, list()).append(v)
-			assert unit not in state, unit
-			if filter_unit(unit): state[unit] = SDProps(props)
+			if unit:
+				assert unit not in state, unit
+				if filter_unit(unit): state[unit] = SDProps(props)
 			props = None
+
+		if props is None:
+			m = re.search(r'^-> Job (\d+):$', line)
+			if m: unit, props = None, dict() # discarded later
 
 		if props is None:
 			m = re.search(r'^-> Unit (.*):$', line)
