@@ -915,15 +915,22 @@ def detect_rpi():
 	if not hasattr(detect_rpi, 'cache'):
 		import re
 		with open('/proc/cpuinfo', 'r') as src: cpuinfo = src.read()
-		m = re.search(r'^Hardware\s+:\s+(\w+)$', cpuinfo, re.MULTILINE | re.I)
-		hw = m and m.group(1)
-		detect_rpi.cache = dict(BCM2708='rpi', BCM2709='rpi2').get(hw) or hw
+		m = re.search(r'^Revision\s*:\s*([\da-f]{4})$', cpuinfo, re.MULTILINE | re.I)
+		if not m: raise OSError(cpuinfo)
+		# https://elinux.org/RPi_HardwareHistory
+		rev, rev_int = m.group(1).lower(), int(m.group(1), 16)
+		if rev_int <= 0x15 or rev in '900021 900032'.split(): hw = 'rpi1'
+		elif rev in 'a01040 a01041 a21041 a22042'.split(): hw = 'rpi2'
+		elif rev in '900092 900093 920093 9000c1'.split(): hw = 'rpi0'
+		elif rev in 'a02082 a020a0 a22082 a32082 a020d3'.split(): hw = 'rpi3'
+		else: raise OSError(rev, cpuinfo)
+		detect_rpi.cache = hw
 	return detect_rpi.cache
 
 def rpi_set_internal_resistor_state(bcm_gpio_n, state, platform=False):
 	'Resistor state can be "up", "down" or "off".'
 	state_val = dict(off=0, down=1, up=2)[state]
-	addr_bcm_peri_base = dict(rpi=0x20000000, rpi2=0x3f000000)
+	addr_bcm_peri_base = dict(rpi1=0x20000000, rpi2=0x3f000000)
 	if not platform: platform = detect_rpi()
 	if not platform or platform not in addr_bcm_peri_base:
 		raise InvalidPlatform( 'Internal pull-up control for anything'
