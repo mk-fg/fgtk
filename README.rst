@@ -1437,6 +1437,15 @@ Should be safe to use anywhere, as in most non-nspawn cases upper bits of
 uid/gid are always zero, hence any changes can be easily reverted by running
 this tool again with -c0.
 
+primes
+^^^^^^
+
+Python3 script to print prime numbers in specified range.
+
+For small ranges only, as it does brute-force [2, sqrt(n)] division checks,
+and intended to generate primes for non-overlapping "tick % n" workload spacing,
+not any kind of crypto operations.
+
 
 
 dev
