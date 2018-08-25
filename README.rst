@@ -2876,6 +2876,30 @@ restart or disrupt them in any way, but found that this approach was too tedious
 in my specific case due to how stuff is stored there, so didn't bother with
 process_vm_writev part.
 
+gpm-track
+^^^^^^^^^
+
+Py3 script to capture and print mouse events from GPM_ (as in libgpm) in
+specified tty.
+
+Main event receiver is gpm-track.c (build with ``gcc -O2 gpm-track.c -o
+gpm-track -lgpm -lrt``) proxy-binary though, which writes latest mouse position
+to mmap'ed shared memory file (under /dev/shm) and sends SIGRT* signals to main
+process on mouse clicks.
+
+Python wrapper runs that binary and reads position at its own pace,
+reacting to clicks immediately via signals.
+
+Such separation can be useful to have python only receive click events while C
+binary tracks position and draws cursor itself in whatever fashion (e.g. on a
+top-level layer via RPi's OpenVG API), without needing to do all that separate
+low-latency work in python.
+
+Note that GPM tracks x/y in row/column format, not pixels, which isn't very
+useful for GUIs, alas.
+
+.. _GPM: https://github.com/telmich/gpm
+
 
 License (WTFPL)
 ---------------
