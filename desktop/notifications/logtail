@@ -75,7 +75,7 @@ def notify(title, body, critical=False, timeout=None, icon=None, fork=False):
 
 def notify_logtail_cb(path=None, line='', skipped=None, **notify_kws):
 	if skipped:
-		notify('logtail', 'Rate-limiting discarded {} events'.format(skipped), **notify_kws)
+		notify('logtail', 'Rate-limiting discarded {} event(s)'.format(skipped), **notify_kws)
 	if path:
 		# Try to strip iso8601 timestamp, use simplier format
 		# For things like "2016-06-28T20:53:03.550642+05:00 user.notice proc[5973]: stuff"
