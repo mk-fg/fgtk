@@ -142,10 +142,10 @@ class BlindsWindow(Gtk.ApplicationWindow):
 		if ev_done:
 			if ev_done in self.ev_discard: return
 			self.ev_discard.add(ev_done)
-		s, sg = w.get_screen(), adict(x=0, y=0, w=0, h=0)
+		dsp, sg = w.get_screen().get_display(), adict(x=0, y=0, w=0, h=0)
 		geom = dict(S=sg)
-		for n in range(s.get_n_monitors()):
-			rct = s.get_monitor_geometry(n)
+		for n in range(dsp.get_n_monitors()):
+			rct = dsp.get_monitor(n).get_geometry()
 			mg = geom[f'M{n+1}'] = adict(x=rct.x, y=rct.y, w=rct.width, h=rct.height)
 			sg.w, sg.h = max(sg.w, mg.x + mg.w), max(sg.h, mg.y + mg.h)
 		ww = wh = None
