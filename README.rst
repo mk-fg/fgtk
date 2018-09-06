@@ -132,7 +132,7 @@ Some useful auditctl incantations (cheatsheet)::
 
   # auditctl -e 1
   # auditctl -a exit,always -S execve -F path=/bin/bash
-  # auditctl -a exit,always -F auid=1001 -S openat -S openat
+  # auditctl -a exit,always -F auid=1001 -S open -S openat
   # auditctl -w /some/important/path/ -p rwxa
   # auditctl -e 0
   # auditctl -D
