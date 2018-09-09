@@ -9,7 +9,14 @@ import os, sys, re
 
 Group = namedtuple('group', 'name type key contents')
 Value = namedtuple('value', 'name type contents')
-sort_func = lambda elm: (elm.__class__.__name__, elm)
+
+def get_element_name(elm, deep=True):
+	if isinstance(elm, Value) and elm.name == '"name"': return elm.contents
+	elif deep:
+		for sub in elm.contents:
+			name = get_element_name(sub, deep=False)
+			if name: return name
+sort_func = lambda elm: (elm.__class__.__name__, get_element_name(elm), elm)
 
 
 
@@ -124,9 +131,14 @@ def dump(elm, indent=0):
 	return bol + ' '*indent*4 + ' '.join(node) + eol + '\n'
 
 def dump_config(path, name=False):
+	if name is True: path_home = os.path.expanduser('~/')
 	try:
 		if name:
-			if name is True: name = 'file: {}'.format(os.path.basename(path))
+			if name is True:
+				name = path
+				if name.startswith(path_home):
+					name = '~/' + name[len(path_home):]
+				name = 'file: {}'.format(name)
 			data = '----- {}\n'.format(name)
 		else: data = ''
 		src = Popen(['eet', '-d', path, 'config'], stdout=PIPE)
