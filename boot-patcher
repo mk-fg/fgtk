@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import tempfile, warnings, shutil, zipfile, subprocess
+import os, sys, re, logging, pathlib, time, collections, contextlib
+
+
+### Example systemd unit file:
+#
+# [Unit]
+# DefaultDependencies=no
+# After=local-fs.target
+# Before=sysinit.target
+# ConditionPathExists=!/boot/_updates/_disable
+#
+# [Service]
+# Type=oneshot
+# RemainAfterExit=yes
+# ExecStart=/usr/local/bin/boot-patcher --debug /boot/_updates
+#
+# [Install]
+# WantedBy=sysinit.target
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def addHandler(self, handler, propagate=False):
+		self.logger.propagate = propagate
+		return self.logger.addHandler(handler)
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+
+class LogPrefixAdapter(LogStyleAdapter):
+	def __init__(self, logger, prefix=None, prefix_raw=False, extra=None):
+		if isinstance(logger, str): logger = get_logger(logger)
+		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
+		super(LogPrefixAdapter, self).__init__(logger, extra or {})
+		if not prefix: prefix = get_uid()
+		if not prefix_raw: prefix = '[{}] '.format(prefix)
+		self.prefix = prefix
+	def process(self, msg, kws):
+		super(LogPrefixAdapter, self).process(msg, kws)
+		return ('{}{}'.format(self.prefix, msg), kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+def install_update(
+		update, log, p_install,
+		dir_update, dir_update_state, dir_state,
+		p_update_reboot, p_update_reapply ):
+	if not p_install.exists():
+		log.error('Missing update-install script, skipping update')
+		return
+
+	p_install_src = p_install.read_bytes()
+	if not any(map(p_install_src.startswith, [b'\x7fELF', b'#!'])):
+		log.debug('Auto-adding #!/bin/bash to update-install script')
+		p_install.write_bytes(b'#!/bin/bash\n' + p_install_src)
+	p_install.chmod(0o755)
+
+	env = dict(
+		BP_UPDATE_ID=update,
+		BP_UPDATE_DIR=str(dir_update),
+		BP_UPDATE_STATE=str(dir_update_state),
+		BP_UPDATE_STATE_ROOT=str(dir_state),
+		BP_UPDATE_REBOOT=str(p_update_reboot),
+		BP_UPDATE_REAPPLY=str(p_update_reapply) )
+	log.debug('Running update-install script...')
+	res = subprocess.run([p_install], env=env)
+	log.debug('Update-install script finished (exit-code={})', res.returncode)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Patcher script to apply update-bundles on boot.')
+
+	group = parser.add_argument_group('Paths')
+	group.add_argument('update_dir', nargs='?',
+		help='Directory to pickup/apply .update files from.')
+	group.add_argument('--dir-tmp',
+		metavar='dir', default='/tmp/boot-patcher',
+		help='Temp-dir to unpack update bundles to. Default: %(default)s')
+	group.add_argument('--dir-state',
+		metavar='dir', default='/var/lib/boot-patcher',
+		help='Persistent dir that is used to'
+			' track applied updates and store rollback data. Default: %(default)s')
+	group.add_argument('--file-touch-done', metavar='path',
+		help='File to create after all updates are applied.'
+			' Not checked in the script, but can be checked in e.g. systemd unit.')
+
+	group = parser.add_argument_group('Misc/debug')
+	group.add_argument('--reboot-delay', type=float, metavar='seconds',
+		help='Insert delay before reboot if update requires it.'
+			' Can be used to e.g. read debug stuff that has been displayed on the monitor.')
+	group.add_argument('--print-systemd-unit', action='store_true',
+		help='Print example systemd unit file to stdout and exit.')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.print_systemd_unit:
+		with open(__file__) as src:
+			echo = False
+			for line in iter(src.readline, ''):
+				if echo: print(re.sub(r'^#+\s*', '', line.strip()))
+				if re.search('^### Example systemd unit file:', line):
+					echo = True
+					continue
+				elif echo and not line.strip(): return
+	if not opts.update_dir: parser.error('update_dir argument is required')
+
+	log_fmt = ( '%(levelname)s :: %(message)s' if os.getppid() == 1
+		else '%(asctime)s :: %(name)s %(levelname)s :: %(message)s' )
+	logging.basicConfig( datefmt='%Y-%m-%d %H:%M:%S',
+		format=log_fmt, level=logging.DEBUG if opts.debug else logging.WARNING )
+	log = get_logger('main')
+
+	dir_src, dir_tmp, dir_state = map(
+		pathlib.Path, [opts.update_dir, opts.dir_tmp, opts.dir_state] )
+	p_file_touch_done = opts.file_touch_done
+	if p_file_touch_done: p_file_touch_done = pathlib.Path(p_file_touch_done)
+
+	for p_dir in dir_src, dir_tmp, dir_state:
+		p_dir.mkdir(parents=True, exist_ok=True)
+
+	stats = collections.Counter()
+	log.debug('Using update-dir: {}', dir_src)
+
+	for p in sorted(dir_src.iterdir(), key=op.attrgetter('name')):
+		update = p.name
+		if update.startswith('_') or not update.endswith('.update'): continue
+		update = update[:-7]
+		log.debug('Processing update: {}', update)
+		log_update = LogPrefixAdapter(log, update)
+		stats['total'] += 1
+
+		with tempfile.TemporaryDirectory(dir=dir_tmp, prefix=f'{update}.') as dir_update:
+			dir_update = pathlib.Path(dir_update)
+			p_install = dir_update / '_install'
+			dir_update_state = dir_state / update
+			p_update_done = dir_state / f'{update}.done'
+			p_update_reboot = dir_tmp / '_reboot'
+			p_update_reapply = dir_update / '_reapply'
+
+			if p_update_done.exists():
+				log_update.debug('Update already marked as installed, skipping')
+				continue
+			with contextlib.suppress(OSError): p_update_reapply.unlink()
+
+			dir_update_state.mkdir(exist_ok=True)
+
+			update_zip = zipfile.is_zipfile(p)
+			log_update.debug('Detected type: {}', 'zip' if update_zip else 'bash')
+			if update_zip:
+				with zipfile.ZipFile(p) as src: src.extractall(dir_update)
+			else: shutil.copy(p, p_install)
+
+			log_update.debug('installing...')
+			install_update(
+				update, log_update, p_install,
+				dir_update, dir_update_state, dir_state,
+				p_update_reboot, p_update_reapply )
+			stats['install'] += 1
+			log_update.debug('Finished')
+
+			if p_update_reapply.exists():
+				log_update.debug('Reapply-flag detected, not marking as done')
+			else: p_update_done.touch()
+
+			with contextlib.suppress(OSError): dir_update_state.rmdir()
+			os.sync()
+
+			if p_update_reboot.exists():
+				log.debug( 'Reboot-flag detected,'
+					' initiating reboot (delay: {:.1f})', opts.reboot_delay or 0 )
+				if opts.reboot_delay: time.sleep(opts.reboot_delay)
+				with contextlib.suppress(OSError): p_update_reboot.unlink()
+				os.execvp('systemctl', ['systemctl', 'reboot'])
+
+	if p_file_touch_done:
+		try: p_file_touch_done.touch()
+		except OSError as err:
+			log.error('Failed to access --file-touch-done path [{}]: {}', p_file_touch_done, err)
+
+	log.debug('Finished (updates-total={}, install={})', stats['total'], stats['install'])
+
+if __name__ == '__main__': sys.exit(main())

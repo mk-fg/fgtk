@@ -1446,6 +1446,104 @@ For small ranges only, as it does brute-force [2, sqrt(n)] division checks,
 and intended to generate primes for non-overlapping "tick % n" workload spacing,
 not any kind of crypto operations.
 
+boot-patcher
+^^^^^^^^^^^^
+
+Py3 script to run on early boot, checking specific directory for update-files
+and unpack/run these, recording names to skip applied ones on subsequent boots.
+
+Idea for it is to be very simple, straightforward, single-file drop-in script to
+put on distributed .img files to avoid re-making these on every one-liner change,
+sending tiny .update files instead.
+
+Update-file format:
+
+- Either zip or bash script with .update suffix.
+- Script/zip detected by python's zipfile.is_zipfile() (zip file magic).
+- If zip, should contain "_install" (update-install) script inside.
+- Update-install script shebang is optional, defaults to "#!/bin/bash".
+
+Update-install script env:
+
+- BP_UPDATE_ID: name of the update (without .update suffix, e.g. "001.test").
+
+- BP_UPDATE_DIR: unpacked update zip dir in tmpfs.
+
+  Will only have "_install" file in it for standalone scripts (non-zip).
+
+- BP_UPDATE_STATE: /var/lib/boot-patcher/<update-id>
+
+  Persistent dir created for this update, can be used to backup various
+  updated/removed files, just in case.
+
+  If left empty, removed after update-install script is done.
+
+- BP_UPDATE_STATE_ROOT: /var/lib/boot-patcher
+
+- BP_UPDATE_REBOOT: reboot-after flag-file (on tmpfs) to touch.
+
+  | If reboot is required after this update, create (touch) file at that path.
+  | Reboot will be done immediately after this particular update, not after all of them.
+
+- BP_UPDATE_REAPPLY: flag-file (on tmpfs) to re-run this update on next boot.
+
+  Can be used to retry failed updates by e.g. creating it at the start of the
+  script and removing on success.
+
+Example update-file contents:
+
+- 2017-10-27.001.install-stuff.zip.update
+
+  ``_install``::
+
+    cd "$BP_UPDATE_DIR"
+    exec pacman --noconfirm -U *.pkg.tar.xz
+
+  ``*.pkg.tar.xz`` - any packages to install, zipped alongside that ^^^
+
+- 2017-10-28.001.disable-console-logging.update (single update-install file)::
+
+    patch -l /boot/boot.ini <<'EOF'
+    --- /boot/boot.ini      2017-10-28 04:11:38.000000000 +0000
+    +++ /boot/boot.ini.old  2017-10-28 04:11:15.836588509 +0000
+    @@ -6,7 +6,7 @@
+     hdmitx edid
+
+     setenv condev "console=ttyAML0,115200n8 console=tty0"
+    -setenv bootargs "root=/dev/mmcblk1p2 ... video=HDMI-A-1:1920x1080@60e"
+    +setenv bootargs "root=/dev/mmcblk1p2 ... video=HDMI-A-1:1920x1080@60e loglevel=2"
+
+     setenv loadaddr "0x1080000"
+     setenv dtb_loadaddr "0x1000000"
+    EOF
+    touch "$BP_UPDATE_REBOOT"
+
+- 2017-10-28.002.apply-patches-from-git.zip.update
+
+  ``_install``::
+
+    set -e -o pipefail
+    cd /srv/app
+    for p in "$BP_UPDATE_DIR"/*.patch ; do patch -p1 -i "$p"; done
+
+  ``*.patch`` - patches for "app" from the repo, made by e.g. ``git format-patch -3``.
+
+Misc notes:
+
+- Update-install exit code is not checked.
+
+- After update-install is finished, and if BP_UPDATE_REAPPLY was not created,
+  "<update-id>.done" file is created in BP_UPDATE_STATE_ROOT and update is
+  skipped on all subsequent runs.
+
+- Update ordering is simple alphasort, dependenciess can be checked by update
+  scripts via .done files (also mentioned in prev item).
+
+- No auth (e.g. signature checks) for update-files, so be sure to send these
+  over secure channels.
+
+- Run as ``boot-patcher --print-systemd-unit`` for the only bit of setup it needs.
+
 
 
 dev
