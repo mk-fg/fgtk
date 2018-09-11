@@ -22,6 +22,5 @@ def main(args=None):
 		else:
 			print(n)
 			if one: break
-	else: return
 
 if __name__ == '__main__': sys.exit(main())
