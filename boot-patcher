@@ -36,7 +36,7 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		if not self.isEnabledFor(level): return
 		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
 		msg, kws = self.process(msg, kws)
-		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
 
 class LogPrefixAdapter(LogStyleAdapter):
 	def __init__(self, logger, prefix=None, prefix_raw=False, extra=None):

@@ -1504,14 +1504,14 @@ Example update-file contents:
 - 2017-10-28.001.disable-console-logging.update (single update-install file)::
 
     patch -l /boot/boot.ini <<'EOF'
-    --- /boot/boot.ini      2017-10-28 04:11:38.000000000 +0000
-    +++ /boot/boot.ini.old  2017-10-28 04:11:15.836588509 +0000
+    --- /boot/boot.ini.old  2017-10-28 04:11:15.836588509 +0000
+    +++ /boot/boot.ini      2017-10-28 04:11:38.000000000 +0000
     @@ -6,7 +6,7 @@
      hdmitx edid
 
      setenv condev "console=ttyAML0,115200n8 console=tty0"
     -setenv bootargs "root=/dev/mmcblk1p2 ... video=HDMI-A-1:1920x1080@60e"
-    +setenv bootargs "root=/dev/mmcblk1p2 ... video=HDMI-A-1:1920x1080@60e loglevel=2"
+    +setenv bootargs "root=/dev/mmcblk1p2 ... video=HDMI-A-1:1920x1080@60e loglevel=1"
 
      setenv loadaddr "0x1080000"
      setenv dtb_loadaddr "0x1000000"
