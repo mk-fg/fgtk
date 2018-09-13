@@ -2767,7 +2767,7 @@ There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
 .. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
 
 rsync-diff
-''''''''''
+^^^^^^^^^^
 
 Script to sync paths, based on berkley db and rsync.
 
