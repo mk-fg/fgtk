@@ -131,7 +131,7 @@ class SDProps(dict):
 	def __getattr__(self, k):
 		if k.endswith('_N'):
 			k = k[:-2]
-			if k not in self: return
+			if k not in self: return ''
 		v_list = self[k]
 		assert len(v_list) == 1, v_list
 		return v_list[0]
@@ -256,6 +256,8 @@ def main(argv=None):
 		if s.source_path_N == '/proc/self/mountinfo': continue
 		if s.transient_N == 'yes': continue
 		if re.search(r'(/|^)user(-runtime-dir)?@\d+\.service$', unit): continue
+		if ( re.search(r'(/|^)[^/@]+@[^/]+\.service$', unit)
+			and s.triggered_by_N.endswith('.socket') ): continue
 
 		if ( s.unit_load_state not in ['error', 'not-found']
 			and s.unit_active_state == 'active' ): print(unit)
