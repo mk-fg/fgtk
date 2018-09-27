@@ -220,7 +220,7 @@ def main(argv=None):
 		help='Query and print units in each registered'
 				' machine running on this host, prefixed by "{name}/".'
 			' Connecting to system bus of these requires root uid.')
-	opts = parser.parse_args()
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if not opts.unit:
 		# These are purely for performance optimization purposes.
