@@ -964,19 +964,20 @@ opts for more info.
 mikrotik-backup
 ^^^^^^^^^^^^^^^
 
-Script to ssh into `mikrotik router <http://mikrotik.com>`__ with specified
-("--auth-file" option) user/password and get the backup, optionally compressing
-it.
+Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
+DSA-only firmware via specified ("--auth-file" option) user/password and get the
+backup, optionally compressing it.
 
-Can determine address of the router on its own (using "ip route get").
+| Can determine address of the router on its own (using "ip route get").
+| Can be used more generally to get/store output of any command(s) to the router.
+| Python script, uses "twisted.conch" for ssh.
+|
 
-Can be used more generally to get/store output of any command(s) to the router.
+Should not be used with modern firmware, where using e.g. ``ssh admin@router
+/export`` with RSA keys works perfectly well.
 
-RouterOS allows using DSA (old, disabled on any modern sshds) keys, which should
-be used if accessible at the standard places (e.g.  "~/.ssh/id_dsa"). That might
-be preferrable to using password auth.
-
-Python script, uses "twisted.conch" for ssh.
+"backup/ssh-dump" script from this repo can be used to pass all necessary
+non-interactive mode options and compress/rotate resulting file with these.
 
 kernel-patch
 ^^^^^^^^^^^^
@@ -1807,6 +1808,17 @@ see ``ssh-r-sync-recv --hook-list`` for more info.
 | Only needs python3 + ssh + rsync on either side.
 | See ``ssh-r-sync-recv -h`` for sshd_config setup notes.
 
+ssh-dump
+^^^^^^^^
+
+Bash wrapper around ssh to run it in non-interactive command mode, storing
+output to specified path with date-suffix and optional compression/rotation.
+
+Implements very basic operation of grabbing either some command output or file
+contents from remote host for backup purposes.
+
+Passes bunch of common options to use ssh batch mode, disable non-key auth and
+enable keepalive in case of long-running remote commands.
 
 
 desktop

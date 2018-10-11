@@ -1,0 +1,62 @@
+#!/bin/bash
+
+set -e -o pipefail
+export LC_ALL=C
+
+ssh_cmd=( /export )
+suff_fmt='%Y-%m-%d_%H%M%S'
+n=9
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin [-x] [-n N] [-s suffix-fmt] dst-file user@host [command...]"
+	echo >&2
+	echo >&2 "Run command on a remote host non-interactively, dumping output to dst-file."
+	echo >&2
+	echo >&2 "dst-file is rotated (N copies preserved) and can have compression-type suffix."
+	echo >&2 "E.g. using backup.gz will use gzip to compress it, same with xz and lz4."
+	echo >&2 "Rotated files will have date/time suffix, use -n 0 to disable rotation entirely."
+	echo >&2
+	echo >&2 "Default command (if not specified): ${ssh_cmd[@]}"
+	echo >&2 "Default rotation count (N, 0 - disable): $n"
+	echo >&2 "Default date/time suffix format (used for alphanumeric sort): $suff_fmt_default"
+	exit ${1:-0}
+}
+
+while getopts ":hn:s:x" opt
+do case "$opt" in
+	h) usage 0 ;;
+	n) [[ $OPTARG =~ ^[0-9]+$ ]] && n=$OPTARG \
+		|| { echo >&2 -e "ERROR: Invalid -n value: $OPTARG\n"; usage 1; } ;;
+	s) suff_fmt=$OPTARG ;;
+	x) set -x ;;
+	*) { echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; usage 1; } ;;
+esac; done
+shift $((OPTIND-1))
+
+[[ $# -ge 2 ]] || usage 1
+file=$1 host=$2
+shift; shift
+[[ $# -le 0 ]] || ssh_cmd=$@
+
+declare -A compress_opts=( [gz]=gzip [xz]=xz [lz4]=lz4 )
+compress=${compress_opts[${file##*.}]}
+[[ -n "$compress" ]] && cmd_pipe="| $compress" || cmd_pipe=''
+
+ssh_opts=(
+	-nT -oControlPath=none -oControlMaster=no
+	-oConnectTimeout=180 -oServerAliveInterval=6 -oServerAliveCountMax=10
+	-oBatchMode=yes -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 )
+
+file_dst="$file.$(date +"$suff_fmt")"
+eval "ssh ${ssh_opts[@]} $host -- ${ssh_cmd[@]} $cmd_pipe >$file_dst"
+
+[[ $n -le 0 ]] || {
+	readarray -t files < <(ls -1 "$file".* | sort)
+	n_files=${#files[@]}
+	for p in "${files[@]}"; do
+		[[ $n_files -gt $n ]] || break
+		rm -f "$p"
+		(( n_files -= 1 ))
+	done
+}
