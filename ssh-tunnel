@@ -30,14 +30,15 @@ exec 3>"$pid_file"
 ( flock -n 3 || exit 0
 	trap "rm -f '$pid_file'" EXIT
 	while :; do
-		ssh\
-			-oControlPath=none\
-			-oControlMaster=no\
-			-oServerAliveInterval=3\
-			-oServerAliveCountMax=5\
-			-oConnectTimeout=5\
-			-oPasswordAuthentication=no\
-			-oNumberOfPasswordPrompts=0\
+		ssh \
+			-oControlPath=none \
+			-oControlMaster=no \
+			-oServerAliveInterval=3 \
+			-oServerAliveCountMax=5 \
+			-oConnectTimeout=5 \
+			-oBatchMode=yes \
+			-oPasswordAuthentication=no \
+			-oNumberOfPasswordPrompts=0 \
 			-qyTnN $3 -L "$1" "$2"
 		sleep 5
 	done ) &
