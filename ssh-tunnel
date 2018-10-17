@@ -15,6 +15,7 @@ usage() {
 	echo >&2 "    Can be useful when setting up tunnel for the first time."
 	echo >&2 " -t - tping - use 'tping' tool before running ssh, to avoid restarting"
 	echo >&2 "    ssh every 5s when remote host is more likely to be down than otherwise."
+	echo >&2 " -r - reverse-ssh - run reverse ssh tunnel (using -R option instead of -L)."
 	echo >&2 " -i <interval> - interval between connection attempts"
 	echo >&2 "    in seconds (default=5), applied to both ssh/tping."
 	echo >&2 " -x - debug - Use 'set -x' at the start of the script."
@@ -23,15 +24,16 @@ usage() {
 [[ "$#" -ge 2 ]] || usage 1
 [[ "$1" = -h || "$1" = --help ]] && usage
 
-oneshot= tping= interval=5
+oneshot= tping= interval=5 tun=-L
 
-while getopts ":h1txi:" opt
+while getopts ":h1txi:r" opt
 do case "$opt" in
 	h) usage 0 ;;
 	i) [[ $OPTARG =~ ^[0-9]+$ ]] && interval=$OPTARG \
 		|| { echo >&2 -e "ERROR: Invalid -i interval value: $OPTARG\n"; usage 1; } ;;
 	1) oneshot=t ;;
 	t) tping=t ;;
+	r) tun=-R ;;
 	x) set -x ;;
 	*) { echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; usage 1; } ;;
 esac; done
@@ -76,7 +78,7 @@ tping_opts=( -p"${ssh_port:-22}" -r"$interval" --conn-timeout="$tping_ct" )
 
 [[ -z "$oneshot" ]] || {
 	[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
-	exec ssh "${ssh_opts[@]}" -L "$fwd" "$dst"
+	exec ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
 }
 
 touch "$pid_file"
@@ -86,7 +88,7 @@ exec 3>"$pid_file"
 	trap "rm -f '$pid_file'" EXIT
 	while :; do
 		[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
-		ssh "${ssh_opts[@]}" -L "$fwd" "$dst"
+		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
 		[[ -n "$tping" ]] || sleep "$interval"
 	done ) &
 

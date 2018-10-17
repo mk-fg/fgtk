@@ -652,8 +652,24 @@ be weak if bruteforce attack picks words instead of individual lettters.
 ssh-tunnel
 ^^^^^^^^^^
 
-Script to keep persistent, unique and reasonably responsive ssh tunnel.  Mostly
-just a wrapper with collection of options for such use-case.
+| Script to keep persistent, unique and reasonably responsive ssh tunnels.
+| Mostly just a bash wrapper with collection of options for such use-case.
+|
+
+I.e. to run ``ssh-tunnel -ti 60 2223:nexthop:22 user@host -p2222`` instead of
+some manual loop (re-)connecting every 60s in the background using something like::
+
+  ssh \
+    -oControlPath=none -oControlMaster=no \
+    -oConnectTimeout=5 -oServerAliveInterval=3 -oServerAliveCountMax=5 \
+    -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 \
+    -oBatchMode=yes -oExitOnForwardFailure=yes -TnNqy \
+    -p2222 -L 2223:nexthop:22 user@host
+
+Which are all pretty much required for proper background tunnel operation.
+
+| Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.
+| Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
 
 ssh-reverse-mux-\*
 ^^^^^^^^^^^^^^^^^^
