@@ -3,35 +3,57 @@
 usage() {
 	bin=$(basename $0)
 	echo >&2 "Usage:"
-	echo >&2 "  $bin [-1] <ssh -L forwarding spec> <ssh destination spec> [<ssh opts>]"
+	echo >&2 "  $bin [opts] <ssh -L forwarding spec> <ssh destination spec> [<ssh opts>]"
 	echo >&2 "  $bin <ssh -L forwarding spec> <ssh destination spec> { kill | -k }"
-	echo >&2
-	echo >&2 "Example:"
-	echo >&2 "  $bin 8080:127.0.0.1:80 root@my.example.host"
 	echo >&2
 	echo >&2 "Starts non-interactive ssh -L tunnel through specified destination host,"
 	echo >&2 " saving pid file in /tmp, which can be used to stop tunnel via kill/-k option."
-	echo >&2 "When setting up tunnel for the first time,"
-	echo >&2 " -1 (oneshot) option can be used to test it in the foreground."
+	echo >&2 "Example: $bin 8080:127.0.0.1:80 root@my.example.host"
+	echo >&2
+	echo >&2 "Options:"
+	echo >&2 " -1 - oneshot - start tunnel in the foreground."
+	echo >&2 "    Can be useful when setting up tunnel for the first time."
+	echo >&2 " -t - tping - use 'tping' tool before running ssh, to avoid restarting"
+	echo >&2 "    ssh every 5s when remote host is more likely to be down than otherwise."
+	echo >&2 " -i <interval> - interval between connection attempts"
+	echo >&2 "    in seconds (default=5), applied to both ssh/tping."
+	echo >&2 " -x - debug - Use 'set -x' at the start of the script."
 	exit ${1:-0}
 }
-[[ "$#" -lt 2 || "$1" = -h || "$1" = --help ]] && usage
+[[ "$#" -ge 2 ]] || usage 1
+[[ "$1" = -h || "$1" = --help ]] && usage
 
-oneshot= ssh_opts_ext= fwd= dst=
-pid_file="/tmp/.$(basename $0).$(echo "$1.$2" | md5sum | cut -b-5)"
+oneshot= tping= interval=5
 
-[[ "$1" != -1 ]] || { oneshot=t; shift; }
+while getopts ":h1txi:" opt
+do case "$opt" in
+	h) usage 0 ;;
+	i) [[ $OPTARG =~ ^[0-9]+$ ]] && interval=$OPTARG \
+		|| { echo >&2 -e "ERROR: Invalid -i interval value: $OPTARG\n"; usage 1; } ;;
+	1) oneshot=t ;;
+	t) tping=t ;;
+	x) set -x ;;
+	*) { echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; usage 1; } ;;
+esac; done
+shift $((OPTIND-1))
+
 fwd=$1 dst=$2
 shift; shift
 
-if [[ "$1" = kill || "$1" = -k ]]; then
+pid_file="/tmp/.$(basename $0).$(echo "$fwd.$dst" | md5sum | cut -b-5)"
+
+[[ "$1" = kill || "$1" = -k ]] && {
 	pid=$(cat "$pid_file" 2>/dev/null)
 	[[ -n "$pid" ]] || exit 1
 	flock -n 3 3<"$pid_file" && exit 1
 	pgrp=$(ps -o pgrp= "$pid" | tr -d '\040\011\012\015')
 	[[ -n "$pgrp" && "$pgrp" -gt 1 ]] || exit 1
 	exec kill -- -"$pgrp"
-else ssh_opts_ext=( $@ ); fi
+}
+
+OPTIND=0 ssh_port= ssh_opts_ext=( "$@" )
+while getopts ":p:" opt
+	do case "$opt" in p) ssh_port=$OPTARG;; esac; done
 
 ssh_opts=(
 	-oControlPath=none
@@ -48,8 +70,14 @@ ssh_opts=(
 [[ -n "$oneshot" ]] || ssh_opts+=( -qy )
 ssh_opts+=( "${ssh_opts_ext[@]}" )
 
-[[ -z "$oneshot" ]] \
-	|| exec ssh "${ssh_opts[@]}" -L "$fwd" "$dst"
+tping_ct=$(( $interval * 2 ))
+tping_ct=$(( $tping_ct > 5 ? $tping_ct : 5 ))
+tping_opts=( -p"${ssh_port:-22}" -r"$interval" --conn-timeout="$tping_ct" )
+
+[[ -z "$oneshot" ]] || {
+	[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
+	exec ssh "${ssh_opts[@]}" -L "$fwd" "$dst"
+}
 
 touch "$pid_file"
 flock -n 3 3<"$pid_file" || exit 0
@@ -57,8 +85,9 @@ exec 3>"$pid_file"
 ( flock -n 3 || exit 0
 	trap "rm -f '$pid_file'" EXIT
 	while :; do
+		[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
 		ssh "${ssh_opts[@]}" -L "$fwd" "$dst"
-		sleep 5
+		[[ -n "$tping" ]] || sleep "$interval"
 	done ) &
 
 echo $! >&3
