@@ -635,6 +635,9 @@ def main(args=None):
 			' Length argument is optional and defaults to 15:00 (15 min).')
 
 	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-j', '--max-parallel', type=int,
+		help='Max number of processing jobs to run in parallel.'
+			' Default or 0 will be set to number of available cpu threads.')
 	group.add_argument('-p', '--probe', action='store_true',
 		help='Only probe and print length for each file, without converting anything.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
@@ -690,8 +693,9 @@ def main(args=None):
 		success = loop.run_until_complete(
 			AudioConv.run_async(
 				loop, src_list, start=start, length=length, chunks=chunks,
-				probe=opts.probe, inplace=opts.inplace, remove_src=opts.remove_src,
-				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts, ytdl_opts=ytdl_opts ) )
+				max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
+				remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
+				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
 
 	return int(not success)
 
