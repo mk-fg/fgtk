@@ -13,8 +13,8 @@ usage() {
 	echo >&2 "Options:"
 	echo >&2 " -1 - oneshot - start tunnel in the foreground."
 	echo >&2 "    Can be useful when setting up tunnel for the first time."
-	echo >&2 " -t - tping - use 'tping' tool before running ssh, to avoid restarting"
-	echo >&2 "    ssh every 5s when remote host is more likely to be down than otherwise."
+	echo >&2 " -t - tping - use 'tping' tool before running ssh, to avoid restarting ssh"
+	echo >&2 "    every interval when remote host is more likely to be down than otherwise."
 	echo >&2 " -r - reverse-ssh - run reverse ssh tunnel (using -R option instead of -L)."
 	echo >&2 " -i <interval> - interval between connection attempts"
 	echo >&2 "    in seconds (default=5), applied to both ssh/tping."
@@ -87,9 +87,12 @@ exec 3>"$pid_file"
 ( flock -n 3 || exit 0
 	trap "rm -f '$pid_file'" EXIT
 	while :; do
-		[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
+		[[ -z "$tping" ]] || {
+			ts0=$(printf '%(%s)T' -1)
+			tping "${tping_opts[@]}" "$dst" || exit; }
 		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
-		[[ -n "$tping" ]] || sleep "$interval"
+		[[ -z "$tping" ]] || interval=$(( $(printf '%(%s)T' -1) - $ts0 ))
+		[[ "$interval" -le 0 ]] || sleep "$interval"
 	done ) &
 
 echo $! >&3
