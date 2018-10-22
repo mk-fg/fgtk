@@ -86,12 +86,13 @@ flock -n 3 3<"$pid_file" || exit 0
 exec 3>"$pid_file"
 ( flock -n 3 || exit 0
 	trap "rm -f '$pid_file'" EXIT
+	interval_base=$interval
 	while :; do
 		[[ -z "$tping" ]] || {
 			ts0=$(printf '%(%s)T' -1)
 			tping "${tping_opts[@]}" "$dst" || exit; }
 		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
-		[[ -z "$tping" ]] || interval=$(( $(printf '%(%s)T' -1) - $ts0 ))
+		[[ -z "$tping" ]] || interval=$(( $interval_base - $(printf '%(%s)T' -1) - $ts0 ))
 		[[ "$interval" -le 0 ]] || sleep "$interval"
 	done ) &
 
