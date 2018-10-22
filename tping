@@ -173,8 +173,9 @@ def main(args=None):
 			host, str(port), type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
 		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
 	except (socket.gaierror, socket.error) as err:
-		parser.error( 'Failed to resolve socket parameters (address, family)'
-			' via getaddrinfo: {!r} - [{}] {}'.format((host, port), err.__class__.__name__, err) )
+		print( 'ERROR: getaddrinfo failure for {!r} - [{}] {}'\
+			.format((host, port), err.__class__.__name__, err), file=sys.stderr )
+		return 1
 	sock_af, sock_t, _, _, sock_addr = addrinfo[0]
 	log.debug( 'Resolved host:port {!r}:{!r} to endpoint: {} (family: {}, type: {})',
 		host, port, sock_addr, sockopt_resolve('af_', sock_af), sockopt_resolve('sock_', sock_t) )

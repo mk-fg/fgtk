@@ -77,7 +77,7 @@ tping_ct=$(( $tping_ct > 5 ? $tping_ct : 5 ))
 tping_opts=( -p"${ssh_port:-22}" -r"$interval" --conn-timeout="$tping_ct" )
 
 [[ -z "$oneshot" ]] || {
-	[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst" || exit
+	[[ -z "$tping" ]] || tping "${tping_opts[@]}" "$dst"
 	exec ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
 }
 
@@ -90,7 +90,7 @@ exec 3>"$pid_file"
 	while :; do
 		[[ -z "$tping" ]] || {
 			ts0=$(printf '%(%s)T' -1)
-			tping "${tping_opts[@]}" "$dst" || exit; }
+			tping "${tping_opts[@]}" "$dst"; }
 		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
 		[[ -z "$tping" ]] || interval=$(( $interval_base - $(printf '%(%s)T' -1) - $ts0 ))
 		[[ "$interval" -le 0 ]] || sleep "$interval"
