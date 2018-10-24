@@ -1,64 +1,209 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-# Example udev rule:
-#  SUBSYSTEM=="power_supply", RUN+="/usr/local/bin/notify.power $env{POWER_SUPPLY_PRESENT}"
+import itertools as it, operator as op, functools as ft
+import os, sys, select, time, signal, subprocess as sp
 
-state=/tmp/.de.note.power.state
-state_now=$1
-
-debounce=2
-battery=/sys/class/power_supply/BAT0
-lock=/tmp/.de.note.power
-lock_timeout=30
-notify='notify-net -d 0.0.0.0:8158 -u critical -t0 -i nwn -n power'
-test=
+import pyudev
 
 
-# Mutex
-exec 4>>"$lock"
-flock -n 4 || {
-	# Check if lock holder pid got stuck somehow
-	ts=$(printf '%(%s)T' -1)
-	ts_lock=$(stat --format=%Y "$lock" 2>/dev/null || echo 0)
-	[[ $(( $ts - $ts_lock )) -lt "$lock_timeout" ]] && exit || {
-		rm "$lock"
-		logger "BUG: removing stale but still open lock for power notifications: $lock"
-	}
-}
-echo "$$" >"$lock"
+### Example systemd unit file:
+#
+# ### NOTE: only suitable as a systemd --user unit!
+#
+# [Service]
+# ExecStart=/usr/local/bin/notify-power
+#
+# [Install]
+# WantedBy=default.target
+#
+# ### Optional udev start rule:
+# # SUBSYSTEM=="power_supply", TAG+="systemd", \
+# #  ENV{SYSTEMD_USER_WANTS}="notify-power.service"
 
 
-# Change tracking
-[[ -n "$test" || "$debounce" -eq 0 ]] || {
-	sleep "$debounce"
-	grep -qF -e Charging -e Full "$battery"/status \
-		&& state_now=1 || state_now=0
-}
-check=x$(cat "$state" 2>/dev/null)
-[[ "$check" = x"$state_now" ]] && exit
-echo "$state_now" >$state
+def get_dbus_notify_func(**defaults):
+	import ctypes as ct
+
+	class sd_bus(ct.Structure): pass
+	class sd_bus_error(ct.Structure):
+		_fields_ = [('name', ct.c_char_p), ('message', ct.c_char_p), ('need_free', ct.c_int)]
+	class sd_bus_msg(ct.Structure): pass
+
+	lib = ct.CDLL('libsystemd.so')
+
+	def run(call, *args, sig=None, check=True):
+		func = getattr(lib, call)
+		if sig: func.argtypes = sig
+		res = func(*args)
+		if check and res < 0: raise OSError(-res, os.strerror(-res))
+		return res
+
+	bus, error, reply = (
+		ct.POINTER(sd_bus)(), sd_bus_error(), ct.POINTER(sd_bus_msg)() )
+	run( 'sd_bus_open_user', ct.byref(bus),
+		sig=[ct.POINTER(ct.POINTER(sd_bus))] )
+
+	def bus_close():
+		run('sd_bus_flush', bus, check=False)
+		run('sd_bus_close', bus, check=False)
+		run('sd_bus_unref', bus, check=False)
+
+	kws, defaults = defaults, dict(
+		summary='', body='', app='', icon='', replaces_id=0, timeout=-1 )
+	defaults.update(kws)
+
+	def notify_func( summary=None, body=None,
+			app=None, icon=None, replaces_id=None, timeout=None ):
+		args = [app, replaces_id, icon, summary, body, None, None, timeout]
+		for n, k in enumerate([ 'app', 'replaces_id',
+				'icon', 'summary', 'body', None, None, 'timeout' ]):
+			if not k: continue
+			if args[n] is None: args[n] = defaults[k]
+			if isinstance(args[n], str): args[n] = args[n].encode()
+		run( 'sd_bus_call_method',
+			bus,
+			b'org.freedesktop.Notifications', # dst
+			b'/org/freedesktop/Notifications', # path
+			b'org.freedesktop.Notifications', # iface
+			b'Notify', # method
+			ct.byref(error),
+			ct.byref(reply),
+			b'susssasa{sv}i',
+			*args,
+			sig=[
+				ct.POINTER(sd_bus),
+				ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+				ct.POINTER(sd_bus_error),
+				ct.POINTER(ct.POINTER(sd_bus_msg)),
+				ct.c_char_p,
+				ct.c_char_p, ct.c_uint32,
+				ct.c_char_p, ct.c_char_p, ct.c_char_p,
+				ct.c_void_p, ct.c_void_p, ct.c_int32 ] )
+		note_id = ct.c_uint32()
+		n = run( 'sd_bus_message_read', reply, b'u', ct.byref(note_id),
+			sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_uint32)] )
+		assert n > 0, n
+		return note_id.value
+	notify_func.close = bus_close
+
+	return notify_func
 
 
-# Notification
-power_div() {
-	pw=$(bc <<< "scale=2; $1 / $2")
-	pw=${pw#*.} pw=${pw#0}
-	[[ $pw -ne 0 ]] || pw=100
-	echo $pw
-}
+class PowerMonitor:
 
-pw_full=$(< "$battery"/charge_full)
-pw_left=$(cat "$battery"/charge_now)
-pw_new=$(cat "$battery"/charge_full_design)
+	notify_opts = dict(icon='nwn', timeout=0, app='power')
+	notify_cmd = None
+	# notify_cmd = ( 'notify-net -d 0.0.0.0:8158'
+	# 	' -u critical -t0 -i nwn -n power -s' ).split()
+	udev = udev_mon = poller = notify_func = None
 
-export LC_ALL=en_US.UTF8 # for printf digit groups
-pw=$(power_div $pw_left $pw_full)
-pw_cap=$(power_div $pw_full $pw_new)
-pw_full=$(printf "%'d" $pw_full) pw_new=$(printf "%'d" $pw_new)
-pw_cap_linux=$(< "$battery"/capacity) pw_cap_level=$(< "$battery"/capacity_level)
+	def __init__(self, debounce_delay=1.0):
+		self.debounce_delay = debounce_delay
 
-alarm=$(< "$battery"/alarm) status=$(< "$battery"/status)
-$notify -s "Charger state: $status" <<EOF
-Battery state: <b>${pw}%</b> (cap=$pw_cap_linux, level=$pw_cap_level, alarm=$alarm)
-Battery max charge state: ${pw_cap}% ($pw_full / $pw_new)
-EOF
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+	def open(self):
+		self.udev = pyudev.Context()
+		self.udev_mon = pyudev.Monitor.from_netlink(self.udev)
+		self.udev_mon.filter_by(subsystem='power_supply')
+		self.poller, self.poller_hooks = select.epoll(), dict()
+		for pipe, hook in [(self.udev_mon, self.udev_event)]:
+			fd = pipe.fileno()
+			self.poller.register(fd, select.EPOLLIN)
+			self.poller_hooks[fd] = hook
+		self.udev_mon.start()
+		if self.notify_opts:
+			self.notify_func = get_dbus_notify_func(**self.notify_opts)
+		self.plugged_init = self.plugged = self.ts_notify = None
+		self.power_percent = None
+
+	def close(self):
+		if self.notify_func: self.notify_func = self.notify_func.close()
+		if self.poller: self.poller = self.poller.close()
+		if self.udev_mon: self.udev_mon = None
+		if self.udev: self.udev = None
+
+	def run(self):
+		err_mask = select.EPOLLHUP | select.EPOLLERR
+		while True:
+			ts = time.monotonic()
+			if self.ts_notify:
+				poll_time = max(0, self.ts_notify - ts)
+				if poll_time <= 0: self.notify()
+			else: poll_time = -1
+			for fd, ev in self.poller.poll(poll_time):
+				if ev & err_mask != 0: return
+				self.poller_hooks[fd]()
+
+	def udev_event(self):
+		ev, dev = self.udev_mon.receive_device()
+
+		# dev_info = dict( (k, getattr(dev, k)) for k in
+		# 	'sys_name device_path driver device_type device_node'.split() )
+		# print(f'--- dev [{dev.action}]: {dev_info}')
+		# for k, v in dev.items(): print(f'  {k} {v!r}')
+
+		if dev.sys_name.startswith('ADP'):
+			status = dev.get('POWER_SUPPLY_ONLINE')
+			if not status: return
+			plugged = bool(int(status))
+		if dev.sys_name.startswith('BAT'):
+			pw = dev.get('POWER_SUPPLY_CAPACITY')
+			if pw: self.power_percent = float(pw)
+			status = dev.get('POWER_SUPPLY_STATUS')
+			if not status: return
+			plugged = status.lower() in ['charging', 'full']
+		if plugged == self.plugged: return
+
+		if not self.ts_notify: self.plugged_init = self.plugged
+		self.ts_notify = time.monotonic() + self.debounce_delay
+		self.plugged = plugged
+
+	def notify(self):
+		if self.plugged_init != self.plugged:
+			state_head = ( 'online' if self.plugged else
+				'<span color="red">UNPLUGGED</span>' )
+			state_head = f'Charger state: {state_head}'
+			state_body = f'Battery state: <b>{self.power_percent:.0f}%</b>'
+			if self.notify_cmd:
+				cmd = self.notify_cmd.copy()
+				cmd.append(state_head)
+				cmd = sp.run(cmd, input=state_body)
+				if cmd.returnstatus:
+					print( f'ERROR: notification cmd exited'
+						f' with code {cmd.returnstatus}', file=sys.stderr )
+			if self.notify_func: self.notify_func(state_head, state_body)
+		self.ts_notify = None
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Notification script for power supply events.')
+	parser.add_argument('-t', '--debounce-delay',
+		type=float, metavar='seconds', default=2.0,
+		help='Time to wait for any follow-up changes before issuing notification.')
+	parser.add_argument('--print-systemd-unit', action='store_true',
+		help='Print example systemd unit file to stdout and exit.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.print_systemd_unit:
+		import re
+		with open(__file__) as src:
+			echo = False
+			for line in iter(src.readline, ''):
+				if echo: print(re.sub(r'^#+\s*', '', line.strip()))
+				if re.search('^### Example systemd unit file:', line):
+					echo = True
+					continue
+				elif echo and not line.strip(): return
+
+	with PowerMonitor(opts.debounce_delay) as app: app.run()
+
+if __name__ == '__main__':
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())

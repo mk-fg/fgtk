@@ -2152,15 +2152,8 @@ Useful to save a few battery/power cycles due to random electrical contact loss
 in charger or just plain negligence, if nothing else in DE has good indication
 for that already.
 
-Example udev rule (in e.g. ``/etc/udev/rules.d/70-power-supply.rules``)::
-
-  SUBSYSTEM=="power_supply", RUN+="/usr/local/bin/notify.power $env{POWER_SUPPLY_PRESENT}"
-
-Uses "notify-net" script from `notification-thing`_ daemon to avoid dbus session
-bus auth and socket location mess, and some other configuration (paths,
-debouncing, locks, etc) via vars at the top.
-
-.. _notification-thing: https://github.com/mk-fg/notification-thing
+| Uses python3/pyudev and systemd dbus lib via ctypes for notifications.
+| Run with --print-systemd-unit to get systemd/udev templates.
 
 logtail
 '''''''
