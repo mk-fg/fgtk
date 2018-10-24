@@ -84,9 +84,7 @@ def systemd_state_dump(machines=False):
 		return dump.value.decode()
 
 	def bus_close():
-		run('sd_bus_flush', bus, check=False)
-		run('sd_bus_close', bus, check=False)
-		run('sd_bus_unref', bus, check=False)
+		run('sd_bus_flush_close_unref', bus, check=False)
 
 	state = dict(_host=get_state_dump())
 	bus_close()
