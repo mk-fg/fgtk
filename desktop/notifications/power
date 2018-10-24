@@ -36,17 +36,43 @@ def get_dbus_notify_func(**defaults):
 		ct.POINTER(sd_bus)(), sd_bus_error(), ct.POINTER(sd_bus_msg)() )
 
 	kws, defaults = defaults, dict(
-		summary='', body='', app='', icon='', replaces_id=0, timeout=-1 )
-	defaults.update(kws)
+		app='', replaces_id=0, icon='',
+		summary='', body='', actions=None, hints=None, timeout=-1 )
+	for k in defaults:
+		if k in kws: defaults[k] = kws.pop(k)
+	assert not kws, kws
+	bb = lambda v: v.encode() if isinstance(v, str) else v
 
-	def notify_func( summary=None, body=None,
-			app=None, icon=None, replaces_id=None, timeout=None ):
-		args = [app, replaces_id, icon, summary, body, None, None, timeout]
-		for n, k in enumerate([ 'app', 'replaces_id',
-				'icon', 'summary', 'body', None, None, 'timeout' ]):
-			if not k: continue
-			if args[n] is None: args[n] = defaults[k]
-			if isinstance(args[n], str): args[n] = args[n].encode()
+	def encode_array(k, v):
+		if not v: sig, args = [ct.c_void_p], [None]
+		elif k == 'actions':
+			sig, args = [ct.c_int, [ct.c_char_p] * len(v)], [len(v), *map(bb, v)]
+		elif k == 'hints':
+			sig, args = [ct.c_int], [len(v)]
+			for ak, av in v.items():
+				sig.extend([ct.c_char_p, ct.c_char_p]) # key, type
+				args.append(bb(ak))
+				if isinstance(av, (str, bytes)):
+					av_sig, av_args = [ct.c_char_p], [b's', bb(av)]
+				elif isinstance(av, int): av_sig, av_args = [ct.c_int32], [b'i', av]
+				else: av_sig, av_args = av
+				args.extend(av_args)
+				sig.extend(av_sig)
+		else: raise ValueError(k)
+		return sig, args
+
+	def notify_func(
+			summary=None, body=None, app=None, icon=None,
+			replaces_id=None, actions=None, hints=None, timeout=None ):
+		args, kws, sig_arrays = list(), locals(), list()
+		for k, default in defaults.items():
+			v = kws.get(k)
+			if v is None: v = default
+			if k in ['actions', 'hints']:
+				arr_sig, arr_args = encode_array(k, v)
+				sig_arrays.extend(arr_sig)
+				args.extend(arr_args)
+			else: args.append(bb(v))
 		run( 'sd_bus_open_user', ct.byref(bus),
 			sig=[ct.POINTER(ct.POINTER(sd_bus))] )
 		try:
@@ -67,19 +93,20 @@ def get_dbus_notify_func(**defaults):
 					ct.c_char_p,
 					ct.c_char_p, ct.c_uint32,
 					ct.c_char_p, ct.c_char_p, ct.c_char_p,
-					ct.c_void_p, ct.c_void_p, ct.c_int32 ] )
+					*sig_arrays, ct.c_int32 ] )
 			note_id = ct.c_uint32()
 			n = run( 'sd_bus_message_read', reply, b'u', ct.byref(note_id),
 				sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_uint32)] )
 			assert n > 0, n
 		finally: run('sd_bus_flush_close_unref', bus, check=False)
 		return note_id.value
+
 	return notify_func
 
 
 class PowerMonitor:
 
-	notify_opts = dict(icon='nwn', timeout=0, app='power')
+	notify_opts = dict(icon='nwn', timeout=0, app='power', hints=dict(urgency=2))
 	notify_cmd = None
 	# notify_cmd = ( 'notify-net -d 0.0.0.0:8158'
 	# 	' -u critical -t0 -i nwn -n power -s' ).split()
@@ -104,8 +131,8 @@ class PowerMonitor:
 			self.poller.register(fd, select.EPOLLIN)
 			self.poller_hooks[fd] = hook
 		self.udev_mon.start()
-		if self.notify_opts:
-			self.notify_func = get_dbus_notify_func(**self.notify_opts)
+		if self.notify_opts or not self.notify_cmd:
+			self.notify_func = get_dbus_notify_func(**(self.notify_opts or dict()))
 		self.plugged_init = self.plugged = self.ts_notify = None
 		self.power_percent = None
 
