@@ -351,7 +351,9 @@ def main(args=None):
 
 	group = parser.add_argument_group('Encoding options')
 	group.add_argument('-b', '--base64', action='store_true',
-		help='Encode result using urlsafe base64 encoding. This is the default.')
+		help='Encode result using *urlsafe* base64 encoding. This is the default.')
+	group.add_argument('--base64-alt', action='store_true',
+		help='Encode result with non-anything-safe common base64 with + and / in it.')
 	group.add_argument('-x', '--hex', action='store_true',
 		help='Encode result using "hex" encoding (0-9 + a-f).')
 	group.add_argument('-c', '--base32', action='store_true',
@@ -402,6 +404,7 @@ def main(args=None):
 		[opts.base64, opts.hex, opts.base32, opts.base32_nodashes, opts.raw] ))
 	if enc_sum > 1: parser.error('At most one encoding option can be used at the same time.')
 	if not enc_sum or opts.base64: res = b64encode(res, urlsafe=True)
+	elif opts.base64_alt: res = b64encode(res, urlsafe=False)
 	elif opts.hex: res = res.encode('hex')
 	elif opts.base32: res = b32encode(res)
 	elif opts.base32_nodashes: res = b32encode(res).replace('-', '')
