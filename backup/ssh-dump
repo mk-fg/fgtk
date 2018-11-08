@@ -19,7 +19,7 @@ usage() {
 	echo >&2
 	echo >&2 "Default command (if not specified): ${ssh_cmd[@]}"
 	echo >&2 "Default rotation count (N, 0 - disable): $n"
-	echo >&2 "Default date/time suffix format (used for alphanumeric sort): $suff_fmt_default"
+	echo >&2 "Default date/time suffix format (used for alphanumeric sort): $suff_fmt"
 	exit ${1:-0}
 }
 
