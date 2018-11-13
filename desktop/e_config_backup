@@ -189,11 +189,11 @@ def main(argv=None):
 
 			for line in it.imap(op.methodcaller('strip'), diff_data.splitlines()):
 				# 'value "prop.pos_h" int: 291;' <-- numbers often change
-				if not re.search( r'^value\s+"prop\.((pos|res)_)?'
-					'[whxy]|startup_id"\s+int:\s+\d+\s*;$', line ): break
+				if not re.search(
+					r'^value\s+"(geom|prop)\.((pos|res|size)_)?'
+					r'[whxy]|startup_id"\s+int:\s+\d+\s*;$', line ): break
 			else: src_data = None
 
 		if src_data: open(optz.backup, 'w').write(src_data)
-
 
 if __name__ == '__main__': main()
