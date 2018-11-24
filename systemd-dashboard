@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it, operator as op, functools as ft
-import os, sys, re, errno
+import os, sys, re, errno, collections as cs, pathlib as pl
 
 
 def systemd_state_dump(machines=False):
@@ -104,7 +104,7 @@ def systemd_state_dump(machines=False):
 	return state
 
 
-class SDProps(dict):
+class SDProps(cs.UserDict):
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -207,7 +207,7 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	return state
 
 
-def main(argv=None):
+def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='systemd state tracking tool.'
@@ -218,19 +218,23 @@ def main(argv=None):
 		help='Query and print units in each registered'
 				' machine running on this host, prefixed by "{name}/".'
 			' Connecting to system bus of these requires root uid.')
+	parser.add_argument('-f', '--file', metavar='file',
+		help='Process specified "systemd-analyze dump" file instead of getting it via dbus.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if not opts.unit:
 		# These are purely for performance optimization purposes.
 		# On hosts with containers, dumps can get pretty large and slow to parse.
 		filter_prop_keys = { 'Type', 'Source Path',
-			'Transient', 'Unit Load State', 'Unit Active State' }
+			'Transient', 'Unit Load State', 'Unit Active State', 'TriggeredBy' }
 		filters = dict(
 			filter_prop=lambda k,_set=filter_prop_keys: k in _set,
 			filter_unit=lambda u: not re.search(r'\.(device|slice|scope)$', u) )
 	else: filters = dict()
 
-	state_map_str = systemd_state_dump(machines=opts.machines)
+	if not opts.file:
+		state_map_str = systemd_state_dump(machines=opts.machines)
+	else: state_map_str = dict(_host=pl.Path(opts.file).read_text())
 	state = systemd_state_dump_parse(
 		state_map_str, prefix_fmt='{name}/' if opts.machines else '', **filters )
 
@@ -247,6 +251,7 @@ def main(argv=None):
 
 		# Skip any known auto-started/stopped and transient units
 		# Does not skip: Unit=X from timers/sockets
+		# WARNING: be sure to add all props used there to filter_prop_keys above!
 		if unit.endswith('.mount') and f'{unit[:-6]}.automount' in state: continue
 		if unit.endswith('.service') and (
 			f'{unit[:-8]}.timer' in state or f'{unit[:-8]}.socket' in state ): continue
