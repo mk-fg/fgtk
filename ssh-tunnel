@@ -92,7 +92,7 @@ exec 3>"$pid_file"
 			ts0=$(printf '%(%s)T' -1)
 			tping "${tping_opts[@]}" "$dst"; }
 		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
-		[[ -z "$tping" ]] || interval=$(( $interval_base - $(printf '%(%s)T' -1) - $ts0 ))
+		[[ -z "$tping" ]] || interval=$(( $ts0 + $interval_base - $(printf '%(%s)T' -1) ))
 		[[ "$interval" -le 0 ]] || sleep "$interval"
 	done ) &
 
