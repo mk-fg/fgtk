@@ -2055,7 +2055,7 @@ General usage examples (wrapped)::
     &>sc2_blizzcon_finals.log &
   % mpv sc2_blizzcon_finals.mp4   # starts playback before download ends
 
-| Needs Python-3.6+, youtube-dl_, `aiohttp <https://aiohttp.readthedocs.io/>`_ and aria2_.
+| Needs Python-3.7+, youtube-dl_, `aiohttp <https://aiohttp.readthedocs.io/>`_ and aria2_.
 | A bit more info (on its previous py2 version) can be found in `this twitchtv-vods-... blog post`_.
 
 .. _Choonster's fork of this repo: https://github.com/Choonster/fgtk#twitch-vod-fetch
