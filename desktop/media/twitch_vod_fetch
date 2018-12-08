@@ -672,6 +672,7 @@ class TVF:
 		file_dst_mark.close()
 
 		if file_dst_done != file_dst_path:
+			file_dst_done.parent.mkdir(parents=True, exist_ok=True)
 			shutil.move(file_dst_path, file_dst_done, copy_function=shutil.copy)
 			file_dst_path = file_dst_done
 
