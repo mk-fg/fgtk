@@ -32,12 +32,12 @@ class TVFConfig:
 	aria2_conf_func = lambda self, opts: '\n'.join( [
 			'summary-interval=0',
 			f'console-log-level={opts.log_level}',
-
+			'',
 			'enable-rpc=true',
 			f'rpc-listen-port={opts.port}',
 			f'rpc-secret={opts.key}',
 			f'stop-with-process={os.getpid()}',
-
+			'',
 			'no-netrc',
 			'allow-overwrite=true', # always-resume=true can force-reuse these
 			'max-concurrent-downloads=5',
@@ -47,8 +47,8 @@ class TVFConfig:
 			'timeout=15',
 			'connect-timeout=10',
 			'lowest-speed-limit=100K',
-			f'user-agent={opts.ua}' ]
-		+ (self.aria2c_opts or list()) + [''] )
+			f'user-agent={opts.ua}', '' ]
+		+ ([*self.aria2c_opts, ''] if self.aria2c_opts else []) )
 
 	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
 	aria2_startup_checks = 8, 10.0
@@ -693,7 +693,7 @@ def main(args=None, conf=None):
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [options] { url-1 [url-2 ...] | url file_prefix [url-2 file_prefix-2 ...] }',
 		description='Download VoD (or a specified slice of it) from twitch.tv.')
-	parser.add_argument('url',
+	parser.add_argument('url', nargs='?',
 		help='URL for a VoD to fetch.'
 			' Can be either followed by file_prefix argument'
 				' (and any number of such url/prefix pairs after that),'
@@ -743,6 +743,9 @@ def main(args=None, conf=None):
 			' These are same as long-form command-line options, but without double-dash prefix.'
 			' Will be split on spaces, unless option is used multiple times.'
 			' Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"')
+	group.add_argument('--aria2c-opts-print', action='store_true',
+		help='Print template for aria2c configuration file'
+			' that will be used, with all options there. Short form: -ap')
 
 	group = parser.add_argument_group('Misc/debug options')
 	group.add_argument('-p', '--use-part-suffix',
@@ -778,6 +781,14 @@ def main(args=None, conf=None):
 	if len(conf.ytdl_opts) == 1: conf.ytdl_opts = conf.ytdl_opts[0].strip().split()
 	conf.aria2c_opts = opts.aria2c_opts or list()
 	if len(conf.aria2c_opts) == 1: conf.aria2c_opts = conf.aria2c_opts[0].strip().split()
+
+	if conf.aria2c_opts == ['p']: opts.aria2c_opts_print, conf.aria2c_opts = True, list()
+	if opts.aria2c_opts_print:
+		print(conf.aria2_conf_func(adict(
+			key='<key>', port='<port>', ua='<ytdl-user-agent>',
+			log_level='notice' if conf.verbose else 'warn' )).strip())
+		return
+	if not opts.url: parser.error('At least one video URL must be specified.')
 
 	conf.verbose = opts.debug
 	conf.keep_tempfiles = opts.keep_tempfiles
