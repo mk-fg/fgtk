@@ -230,6 +230,7 @@ def main(args=None, conf=None):
 		host, port_mux, sock_addr,
 		*(sockopt_resolve(pre, n) for pre, n in [
 			('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p) ]) )
+	host, port_mux = sock_addr[:2]
 
 	try:
 		tun_port_a, tun_port_b = map(int, opts.tunnel_port_range.split(':', 1))

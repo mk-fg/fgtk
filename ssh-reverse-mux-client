@@ -245,6 +245,7 @@ def main(args=None, conf=None):
 		host, port_mux, sock_addr,
 		*(sockopt_resolve(pre, n) for pre, n in [
 			('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p) ]) )
+	host, port_mux = sock_addr[:2]
 
 	ssh_login = f'{user}@{host}' if user else host
 	retry_delays = retries_within_timeout(opts.attempts+1, opts.timeout)[:-1]
