@@ -230,11 +230,12 @@ class AudioConv:
 	async def run_async(cls, *args, **kws):
 		async with cls(*args, **kws) as self: return await self.run()
 
-	def __init__(self, loop, src_list,
+	def __init__(self, loop, src_list, dst_name_tpl=None,
 			start=None, length=None, chunks=None,
 			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
-		self.loop, self.src_list, self.max_parallel = loop, src_list, max_parallel or os.cpu_count()
+		self.loop, self.src_list, self.dst_name_tpl = loop, src_list, dst_name_tpl
+		self.max_parallel = max_parallel or os.cpu_count()
 		self.start, self.length, self.chunks, self.probe = start, length, chunks, probe
 		self.inplace, self.remove_src = inplace, remove_src
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
@@ -317,6 +318,11 @@ class AudioConv:
 
 	async def conv_list(self):
 		src_stack = list(reversed(self.src_list))
+		def dst_name_format(name):
+			dst_name = self.dst_name_tpl
+			if dst_name: dst_name = dst_name.format(name=name.rsplit('.', 1)[0])
+			return (dst_name or name).rsplit('.', 1)[0]
+
 		while True:
 			# Processing sequence:
 			#  str or Path
@@ -341,7 +347,8 @@ class AudioConv:
 					if not src.duration:
 						raise AudioConvError( 'Cannot split src'
 							f' into chunks due to unknown duration: {src}' )
-					src_chunks, chunk_len, dst_name = list(), self.chunks, src.name.rsplit('.', 1)[0]
+					src_chunks, chunk_len = list(), self.chunks
+					dst_name = dst_name_format(src.name)
 					start, length = start or 0, src.duration
 					length_total = length - start
 					dst_dir = ( dst_name if not self.inplace
@@ -364,7 +371,7 @@ class AudioConv:
 					if isinstance(src, AudioConvChunk):
 						dst, start, length = src.dst, src.start, src.duration
 					else:
-						dst_base = src.name.rsplit('.', 1)[0]
+						dst_base = dst_name_format(src.name)
 						if self.inplace: dst_base = str(src.parent.resolve()).strip(os.sep) + f'/{dst_base}'
 						dst = Path(dst_base + '.ogg')
 						if dst.resolve() == src.resolve():
@@ -608,9 +615,12 @@ def main(args=None):
 			' Default is to override -f option for suitable audio formats,'
 				' but leave -o unspecified (i.e. use default or config file).'
 			' Will be split on spaces, unless option is used multiple times.')
+	group.add_argument('-n', '--name', metavar='tpl',
+		help='Template to rename resulting file(s), instead of default "{name}.ogg".'
+			' Substituted keys: "name" - source filename without extension.')
 
 	group = parser.add_argument_group('Volume normalization')
-	group.add_argument('-n', '--loudnorm', action='store_true',
+	group.add_argument('--loudnorm', action='store_true',
 		help='Use ffmpeg "loudnorm" filter to have sane volume level.'
 			' It takes quite a while to process longer files with it.'
 			' Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.'
@@ -635,7 +645,7 @@ def main(args=None):
 			' Length argument is optional and defaults to 15:00 (15 min).')
 
 	group = parser.add_argument_group('Debug/misc')
-	group.add_argument('-j', '--max-parallel', type=int,
+	group.add_argument('-j', '--max-parallel', type=int, metavar='n',
 		help='Max number of processing jobs to run in parallel.'
 			' Default or 0 will be set to number of available cpu threads.')
 	group.add_argument('-p', '--probe', action='store_true',
@@ -692,7 +702,8 @@ def main(args=None):
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		success = loop.run_until_complete(
 			AudioConv.run_async(
-				loop, src_list, start=start, length=length, chunks=chunks,
+				loop, src_list, dst_name_tpl=opts.name,
+				start=start, length=length, chunks=chunks,
 				max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
 				remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
