@@ -13,8 +13,10 @@ usage() {
 [[ "$#" -gt 1 || "$1" = -h || "$1" = --help ]] && usage
 v1=$1
 
+[[ -r /usr/src/distfiles ]] || { echo >&2 "ERROR: no access to $dir_distfiles"; exit 1; }
+
 cd "$dir_linux" && [[ -e Makefile ]]\
-	|| { echo >&2 "ERROR: Failed to find Makefile in /usr/src/linux"; exit 1; }
+	|| { echo >&2 "ERROR: Failed to find Makefile in $dir_linux"; exit 1; }
 
 v0=$( awk '$1=="VERSION" {v1=$3}
 	$1=="PATCHLEVEL" {v2=$3}
