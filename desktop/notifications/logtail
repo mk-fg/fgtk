@@ -207,7 +207,7 @@ class INotify:
 			try:
 				evs.append(self.INotifyEv(
 					*self.wd_paths[wd], wd, self.flags.unpack(mask), cookie, name ))
-			except KeyError: pass # can happen right after rm_watch
+			except KeyError: pass # after rm_watch or IN_Q_OVERFLOW (wd=-1)
 		return evs
 
 	def __iter__(self):
