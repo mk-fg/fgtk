@@ -204,8 +204,10 @@ class INotify:
 			n += self._INotifyEv_struct_len
 			name = ctypes.c_buffer(buff[n:n + name_len], name_len).value.decode()
 			n += name_len
-			evs.append(self.INotifyEv(
-				*self.wd_paths[wd], wd, self.flags.unpack(mask), cookie, name ))
+			try:
+				evs.append(self.INotifyEv(
+					*self.wd_paths[wd], wd, self.flags.unpack(mask), cookie, name ))
+			except KeyError: pass # can happen right after rm_watch
 		return evs
 
 	def __iter__(self):
