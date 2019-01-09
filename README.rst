@@ -1583,6 +1583,19 @@ Some useful auditctl incantations (cheatsheet)::
 
 auditd + ausearch can be used as an offline/advanced alternative to such script.
 
+tui-binary-conv
+'''''''''''''''
+
+Simple ncurses-based interactive (TUI) decimal/hex/binary
+py3 converter script for the terminal.
+
+Main purpose it to easily experiment with flipping bits and digits in values,
+seeing nicely aligned/formatted/highlighted immediate changes in other outputs
+and an easy converter tool as well.
+
+Controls are: cursor keys, home/end, backspace, insert (insert/replace mode),
+0/1 + digits + a-f.
+
 
 
 [dev] Dev tools

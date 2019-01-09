@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, string, math
+
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+
+class adict(dict):
+	_make = None
+	def __init__(self, *args, **kws):
+		if self._make: kws, args = dict(), [self._make(*args, **kws)]
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+class Pos(adict):
+	def _make(self, x, y, w=None, h=None, **kws):
+		res = dict(x=x, y=y, **kws)
+		if not (w is None and h is None): res.update(w=w, h=h)
+		return res
+	def __getattr__(self, k):
+		if k in 'wh' and not k in self: k = dict(w='x', h='y')[k]
+		return self.__getattribute__(
+			dict(x1='x', y1='y', x2='w', y2='h').get(k, k) )
+	def __getitem__(self, k):
+		return ( super().__getitem__(k)
+			if not isinstance(k, slice) else list(self)[k] )
+	def __iter__(self):
+		yield from (self[k] for k in 'xy')
+		if self.get('w') is not None and self.get('h') is not None:
+			yield from (getattr(self, k) for k in 'wh')
+	def _translate(self, x, y): return Pos(self.x + (x or 0), self.y + (y or 0))
+
+
+class TUIBinConv:
+
+	c = None
+
+	def __enter__(self):
+		self.st = st = adict(
+			wh=None, ww=None, margin=Pos(1, 1),
+			pos=0, focus=0, mode='ins', mark=adict(ins='>> ', rep='|| '),
+			fields=adict(
+				dec=Pos( 0, 0, 30, k='dec', v='', p_line=None,
+					chars=string.digits, conv=10, repr='{:d}' ),
+				hex=Pos( 0, 2, 30, k='hex', v='', p_line=None,
+					chars=string.hexdigits, conv=16, repr='{:x}' ),
+				bin=Pos( 0, 4, 30, k='bin', v='', p_line=None, chars='01', conv=2,
+					repr=lambda v: '{{:0{}b}}'.format(4*math.ceil(math.log2(v)/4)).format(v) ) ) )
+		self.st.focus_map = adict(
+			it.chain.from_iterable([(k,n), (n,k)] for n,k in enumerate(st.fields.keys())) )
+		return self
+
+	def __exit__(self, *err): pass
+
+	def update_values(self, v=None, focus=None):
+		st, focus_restore = self.st, None
+		if focus is not None:
+			if isinstance(focus, str): focus = st.focus_map[focus]
+			st.focus = focus
+		field = st.fields[st.focus_map[st.focus]]
+		if v is not None:
+			focus_k, focus_restore, st.focus = None, st.focus, st.focus_map.dec
+		else: focus_k, v = field.k, int(field.v, field.conv) if field.v else None
+		for ff in st.fields.values():
+			if ff.k == focus_k: continue
+			if v is None: ff.v = ''
+			elif v == 0: ff.v = '0'
+			elif isinstance(ff.repr, str): ff.v = ff.repr.format(v)
+			else: ff.v = ff.repr(v)
+		if focus_restore is not None: st.focus = focus_restore
+		return field
+
+	def run(self):
+		import locale, curses
+		locale.setlocale(locale.LC_ALL, '')
+		self.c = curses
+		self.c.wrapper(self._run)
+
+	def _run(self, stdscr):
+		c, self.c_stdscr = self.c, stdscr
+		c.curs_set(0)
+		c.use_default_colors()
+		win, st = self.c_win_init(), self.st
+		key_match = ( lambda *choices:
+			key_name.lower() in choices or key in map(self.c_key, choices) )
+
+		def clamp_pos(): st.pos = max(0, min(len(field.v), st.pos))
+		def clamp_focus(): st.focus = max(0, min(len(st.fields)-1, st.focus))
+
+		while True:
+			field = self.update_values()
+			try: self.draw(win, field)
+			except Exception as err:
+				if print(f'Draw error: {err_fmt(err)}'): raise
+
+			key = None
+			try:
+				while True:
+					try: key = win.getch()
+					except c.error: break
+					try: key_name = c.keyname(key).decode()
+					except ValueError: key_name = 'unknown' # e.g. "-1"
+					break
+			except KeyboardInterrupt: break
+			if key is None: continue
+			print(f'Keypress event: {key} ({key_name})')
+
+			if key_match('resize'): pass
+			elif key_match('^['): break
+
+			elif key_match('left', 'right', 'home', 'end'):
+				clamp_pos()
+				if key_match('left'): st.pos -= 1
+				elif key_match('right'): st.pos += 1
+				elif key_match('home'): st.pos = 0
+				elif key_match('end'): st.pos = 999
+				clamp_pos()
+
+			elif key_match('up', 'down', 'tab'):
+				if key_match('up'): st.focus -= 1
+				elif key_match('down', 'tab'): st.focus += 1
+				clamp_focus()
+
+			elif len(key_name) == 1 and key_name in field.chars:
+				clamp_pos()
+				if st.mode == 'ins':
+					field.v, st.pos = field.v[:st.pos] + key_name.lower() + field.v[st.pos:], st.pos + 1
+				elif st.mode == 'rep':
+					field.v = field.v[:st.pos] + key_name.lower() + field.v[st.pos+1:]
+
+			elif key_match('backspace', '^?'):
+				field.v, st.pos = field.v[:st.pos-1] + field.v[st.pos:], st.pos-1
+
+			elif key_match('ic'):
+				st.mode = 'rep' if st.mode == 'ins' else 'ins'
+
+
+	def c_win_init(self):
+		win = self.c_stdscr
+		win.keypad(True)
+		win.bkgdset(' ')
+		return win
+
+	def c_win_add(self, w, *args, hl=False):
+		if hl in [None, True, False]: hl = [self.c.A_NORMAL, self.c.A_REVERSE][bool(hl)]
+		try: w.addstr(*args, hl)
+		except self.c.error as err: pass
+
+	def c_key(self, k):
+		if len(k) == 1: return ord(k)
+		return getattr(self.c, 'key_{}'.format(k).upper(), object())
+
+	def draw(self, w, focus):
+		# w.erase()
+		st, p = self.st, None
+		st.wh, st.ww = w.getmaxyx()
+
+		def out(line, x=None, y=None, pos=None, **kws):
+			nonlocal p
+			if x is None and y is None: x = p
+			if isinstance(x, Pos):
+				x = x._translate(0, y)
+				x, y = x.x, x.y
+			if pos:
+				pos = pos._translate(x, y)
+				x, y = pos.x, pos.y
+			p = Pos(x, y)
+			x, y = st.margin._translate(x, y)
+			line_len = st.ww - x - st.margin.x
+			if line_len <= 0: return
+			line = str(line)[:line_len]
+			self.c_win_add(w, y, x, line, **kws)
+			p = p._translate(len(line), 0)
+			return p
+
+		if focus.k == 'dec': hl_a = hl_b = None
+		else:
+			print([focus.v])
+			hl_a = min(st.pos, len(focus.v))
+			if focus.k == 'hex': hl_a, hl_b = hl_a*4, hl_a*4 + 4
+			elif focus.k == 'bin': hl_b = hl_a + 1
+
+		for k, pos in st.fields.items():
+			mark = st.mark[st.mode]
+			mark = mark if k == focus.k else ' '*len(mark)
+			p_line = pos.p_line = out(mark, pos)
+			line = pos.v + '_'*(pos.w - len(pos.v))
+			out(line)
+			if k == focus.k:
+				hl_pos = max(0, min(len(pos.v), st.pos))
+				out(line[hl_pos], pos=p_line, x=hl_pos, hl=True)
+			elif hl_a is not None:
+				if k == 'hex':
+					a, b = hl_a//4, math.ceil(hl_b/4)
+					out(line[a:b], pos=p_line, x=a, hl=True)
+				elif k == 'bin': out(line[hl_a:hl_b], pos=p_line, x=hl_a, hl=True)
+			if k == 'bin':
+				for n in range(pos.w // 4 + 1):
+					out(n//2 if n%2==0 else '|', n * 4, 1, pos=p_line)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='ncurses-based binary/dec/hex converter tui.')
+	parser.add_argument('value', nargs='?',
+		help='Initial value. Should be prefixed by 0x for hex, 0b for binary. Default: empty.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global print
+	if opts.debug: print = lambda *a,_p=print: _p(*a, file=sys.stderr, flush=True) or True
+	else: print = lambda *a: None
+
+	with TUIBinConv() as app:
+		if opts.value:
+			for focus, base in ('bin', 2), ('dec', 10), ('hex', 16):
+				try: v = int(opts.value, base)
+				except ValueError: pass
+				else: break
+			app.update_values(v, focus)
+		print('Entering curses ui loop...')
+		app.run()
+		print('Finished')
+
+if __name__ == '__main__': sys.exit(main())
