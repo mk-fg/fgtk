@@ -184,7 +184,7 @@ class TUIBinConv:
 			mark = st.mark[st.mode]
 			mark = mark if k == focus.k else ' '*len(mark)
 			p_line = pos.p_line = out(mark, pos)
-			line = pos.v + '_'*(pos.w - len(pos.v))
+			line = pos.v + ' ' + '_'*max(0, pos.w - len(pos.v) - 1)
 			out(line)
 			if k == focus.k:
 				hl_pos = max(0, min(len(pos.v), st.pos))
@@ -199,10 +199,20 @@ class TUIBinConv:
 					out(n//2 if n%2==0 else '|', n * 4, 1, pos=p_line)
 
 		if focus.k != 'dec':
-			n = min(st.pos, len(focus.v))
-			if focus.k == 'hex': nb, nn, nbit = n // 2, n, n * 4
-			elif focus.k == 'bin': nb, nn, nbit = n // 8, n // 4, n
-			out(f'offsets: byte {nb}, nibble {nn}, bit {nbit}' + ' '*6, st.status)
+			ll = len(focus.v)
+			n = min(st.pos, ll)
+			if focus.k == 'hex':
+				lb, ln, lbit = math.ceil(ll / 2), ll, ll * 4
+				nb, nn, nbit = n // 2, n, n * 4
+			elif focus.k == 'bin':
+				lb, ln, lbit = math.ceil(ll / 8), math.ceil(ll / 4), ll
+				nb, nn, nbit = n // 8, n // 4, n
+			for n, line in enumerate([
+					f'offset-left:  byte {nb:2d}, nibble {nn:2d}, bit {nbit:2d}',
+					f'offset-right: byte {max(0, lb-nb-1):2d}, nibble '
+						f'{max(0, ln-nn-1):2d}, bit {max(0, lbit-nbit-1):2d}',
+					f'length:       byte {lb:2d}, nibble {ln:2d}, bit {lbit:2d}' ]):
+				out(line + ' '*6, st.status, n)
 
 
 def main(args=None):
@@ -220,10 +230,10 @@ def main(args=None):
 
 	with TUIBinConv() as app:
 		if opts.value:
-			for focus, base in ('bin', 2), ('dec', 10), ('hex', 16):
-				try: v = int(opts.value, base)
-				except ValueError: pass
-				else: break
+			for pre, focus, base in ('0b', 'bin', 2), ('0x', 'hex', 16), ('', 'dec', 10):
+				if pre and not opts.value.startswith(pre): continue
+				v = int(opts.value, base)
+				break
 			app.update_values(v, focus)
 		print('Entering curses ui loop...')
 		app.run()
