@@ -41,11 +41,11 @@ class TUIBinConv:
 			wh=None, ww=None, margin=Pos(1, 1),
 			pos=0, focus=0, mode='ins', mark=adict(ins='>> ', rep='|| '),
 			fields=adict(
-				dec=Pos( 0, 0, 30, k='dec', v='', p_line=None,
+				dec=Pos( 0, 0, 78, k='dec', v='', p_line=None,
 					chars=string.digits, conv=10, repr='{:d}' ),
-				hex=Pos( 0, 2, 30, k='hex', v='', p_line=None,
+				hex=Pos( 0, 2, 78, k='hex', v='', p_line=None,
 					chars=string.hexdigits, conv=16, repr='{:x}' ),
-				bin=Pos( 0, 4, 30, k='bin', v='', p_line=None, chars='01', conv=2,
+				bin=Pos( 0, 4, 78, k='bin', v='', p_line=None, chars='01', conv=2,
 					repr=lambda v: '{{:0{}b}}'.format(4*math.ceil(math.log2(v)/4)).format(v) ) ),
 			status=Pos(0, 7) )
 		self.st.focus_map = adict(
