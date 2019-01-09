@@ -46,7 +46,8 @@ class TUIBinConv:
 				hex=Pos( 0, 2, 30, k='hex', v='', p_line=None,
 					chars=string.hexdigits, conv=16, repr='{:x}' ),
 				bin=Pos( 0, 4, 30, k='bin', v='', p_line=None, chars='01', conv=2,
-					repr=lambda v: '{{:0{}b}}'.format(4*math.ceil(math.log2(v)/4)).format(v) ) ) )
+					repr=lambda v: '{{:0{}b}}'.format(4*math.ceil(math.log2(v)/4)).format(v) ) ),
+			status=Pos(0, 7) )
 		self.st.focus_map = adict(
 			it.chain.from_iterable([(k,n), (n,k)] for n,k in enumerate(st.fields.keys())) )
 		return self
@@ -107,7 +108,7 @@ class TUIBinConv:
 			print(f'Keypress event: {key} ({key_name})')
 
 			if key_match('resize'): pass
-			elif key_match('^['): break
+			elif key_match('q'): break
 
 			elif key_match('left', 'right', 'home', 'end'):
 				clamp_pos()
@@ -134,7 +135,6 @@ class TUIBinConv:
 
 			elif key_match('ic'):
 				st.mode = 'rep' if st.mode == 'ins' else 'ins'
-
 
 	def c_win_init(self):
 		win = self.c_stdscr
@@ -176,7 +176,6 @@ class TUIBinConv:
 
 		if focus.k == 'dec': hl_a = hl_b = None
 		else:
-			print([focus.v])
 			hl_a = min(st.pos, len(focus.v))
 			if focus.k == 'hex': hl_a, hl_b = hl_a*4, hl_a*4 + 4
 			elif focus.k == 'bin': hl_b = hl_a + 1
@@ -198,6 +197,12 @@ class TUIBinConv:
 			if k == 'bin':
 				for n in range(pos.w // 4 + 1):
 					out(n//2 if n%2==0 else '|', n * 4, 1, pos=p_line)
+
+		if focus.k != 'dec':
+			n = min(st.pos, len(focus.v))
+			if focus.k == 'hex': nb, nn, nbit = n // 2, n, n * 4
+			elif focus.k == 'bin': nb, nn, nbit = n // 8, n // 4, n
+			out(f'offsets: byte {nb}, nibble {nn}, bit {nbit}' + ' '*6, st.status)
 
 
 def main(args=None):

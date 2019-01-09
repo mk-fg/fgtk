@@ -1594,7 +1594,7 @@ seeing nicely aligned/formatted/highlighted immediate changes in other outputs
 and an easy converter tool as well.
 
 Controls are: cursor keys, home/end, backspace, insert (insert/replace mode),
-0/1 + digits + a-f.
+0/1 + digits + a-f, q to quit.
 
 
 
