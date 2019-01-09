@@ -3,7 +3,7 @@ fgtk
 
 A set of a misc tools to work with files and processes.
 
-Various oldish helper binaries I wrote to help myself with day-to-day tasks.
+Various oldish helper scripts/binaries I wrote to help myself with day-to-day tasks.
 
 License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`__
 (public domain-ish), feel free to just copy and use these in whatever way you like.
@@ -18,14 +18,16 @@ Scripts
 -------
 
 
-Files
-~~~~~
+[-root-] Various console/system things
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Mostly file/link/dir-entry manipulation tools.
+File/dir/fs management
+^^^^^^^^^^^^^^^^^^^^^^
 
+File/link/dir and filesystem manipulation tools.
 
 scim set
-^^^^^^^^
+''''''''
 
 A set of tools to bind a bunch of scattered files to a single path, with
 completely unrelated internal path structure. Intended usage is to link
@@ -37,13 +39,13 @@ more generic, not necessarily vcs-related, solution.
 .. _cfgit project: http://fraggod.net/code/git/configit/
 
 scim-ln
-'''''''
+```````
 
 Adds a new link (symlink or catref) to a manifest (links-list), also moving file
 to scim-tree (repository) on fs-level.
 
 scim
-''''
+````
 
 Main tool to check binding and metadata of files under scim-tree. Basic
 operation boils down to two (optional) steps:
@@ -56,9 +58,6 @@ operation boils down to two (optional) steps:
   paths in the same root, which aren't on the list, yet not in exclusion
   patterns (``.scim_links_exclude``).
 
-
-others
-^^^^^^
 
 pyacl
 '''''
@@ -107,89 +106,6 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
 .. _fatrace: https://launchpad.net/fatrace
 .. _fanotify: http://lwn.net/Articles/339253/
 
-audit-follow
-''''''''''''
-
-Trivial py3 script to decode audit messages from "journalctl -af" output,
-i.e. stuff like this::
-
-  Jul 24 17:14:01 malediction audit: PROCTITLE
-    proctitle=7368002D630067726570202D652044... (loooong hex-encoded string)
-
-Into this::
-
-  [1327] proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
-
-Filters for audit messages only, strips long audit-id/time prefixes,
-unless -a/--all specified, puts separators between multi-line audit reports,
-relative and/or differential timestamps (-r/--reltime and -d/--difftime opts).
-
-Audit subsystem can be very useful to understand which process modifies some
-path or what's the command-line of /bin/bash being occasionally run without need
-for strace or where it's inapplicable.
-
-Some useful auditctl incantations (cheatsheet)::
-
-  # auditctl -e 1
-  # auditctl -a exit,always -S execve -F path=/bin/bash
-  # auditctl -a exit,always -F auid=1001 -S open -S openat
-  # auditctl -w /some/important/path/ -p rwxa
-  # auditctl -e 0
-  # auditctl -D
-
-auditd + ausearch can be used as an offline/advanced alternative to such script.
-
-clean-boot
-''''''''''
-
-Script to remove older kernel versions (as installed by ``/sbin/installkernel``)
-from ``/boot`` or similar dir.
-
-Always keeps version linked as "vmlinuz", and prioritizes removal of older
-patchset versions from each major one, and only then latest per-major patchset,
-until free space goal (specified percentage, 20% by default) is met.
-
-Also keeps specified number of last-to-remove versions, can prioritize cleanup
-of ".old" verssion variants, keep ``config-*`` files... and other stuff (see
---help).
-
-Example::
-
-  # clean-boot --debug --dry-run -f 100
-  DEBUG:root:Preserved versions (linked version, its ".old" variant, --keep-min): 4
-  DEBUG:root: - 3.9.9.1 - System.map-3.9.9-fg.mf_master
-  DEBUG:root: - 3.9.9.1 - config-3.9.9-fg.mf_master
-  DEBUG:root: - 3.9.9.1 - vmlinuz-3.9.9-fg.mf_master
-  DEBUG:root: - 3.10.27.1 - vmlinuz-3.10.27-fg.mf_master
-  ...
-  DEBUG:root: - 3.12.19.1 - System.map-3.12.19-fg.mf_master
-  DEBUG:root: - 3.12.20.1 - config-3.12.20-fg.mf_master
-  DEBUG:root: - 3.12.20.1 - System.map-3.12.20-fg.mf_master
-  DEBUG:root: - 3.12.20.1 - vmlinuz-3.12.20-fg.mf_master
-  DEBUG:root:Removing files for version (df: 58.9%): 3.2.0.1
-  DEBUG:root: - System.map-3.2.0-fg.mf_master
-  DEBUG:root: - config-3.2.0-fg.mf_master
-  DEBUG:root: - vmlinuz-3.2.0-fg.mf_master
-  DEBUG:root:Removing files for version (df: 58.9%): 3.2.1.0
-  ... (removal of older patchsets for each major version, 3.2 - 3.12)
-  DEBUG:root:Removing files for version (df: 58.9%): 3.12.18.1
-  ... (this was the last non-latest patchset-per-major)
-  DEBUG:root:Removing files for version (df: 58.9%): 3.2.16.1
-  ... (removing latest patchset for each major version, starting from oldest - 3.2 here)
-  DEBUG:root:Removing files for version (df: 58.9%): 3.7.9.1
-  ...
-  DEBUG:root:Removing files for version (df: 58.9%): 3.8.11.1
-  ...
-  DEBUG:root:Finished (df: 58.9%, versions left: 4, versions removed: 66).
-
-("df" doesn't rise here because of --dry-run, ``-f 100`` = "remove all
-non-preserved" - as df can't really get to 100%)
-
-Note how 3.2.0.1 (non-.old 3.2.0) gets removed first, then 3.2.1, 3.2.2, and so
-on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
-"latest patchset for major" versions, except those that are preserved
-unconditionally (listed at the top).
-
 findx
 '''''
 
@@ -204,97 +120,48 @@ No matter how many years I'm using that tool, still can't get used to typing
 paths before query there, so decided to patch around that frustrating issue one
 day.
 
-wgets
-'''''
+patch-nspawn-ids
+''''''''''''''''
 
-Simple script to grab a file using wget and then validate checksum of the
-result, e.g.:
+Python3 script to "shift" or "patch" uid/gid values with new container-id
+according to systemd-nspawn schema, i.e. set upper 16-bit to specified
+container-id value and keep lower 16 bits to uid/gid inside the container.
 
-.. code:: console
+Similar operation to what systemd-nspawn's --private-users-chown option does
+(described in nspawn-patch-uid.c), but standalone, doesn't bother with ACLs or
+checks on filesystem boundaries.
 
-  $ wgets -c http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz cea5d785df19151806aa5ac3a917e41c
-  Using hash: md5
-  Using output filename: ArchLinuxARM-sun4i-latest.tar.gz
-  --2014-09-27 00:04:45--  http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz
-  Resolving os.archlinuxarm.org (os.archlinuxarm.org)... 142.4.223.96, 67.23.118.182, 54.203.244.41, ...
-  Connecting to os.archlinuxarm.org (os.archlinuxarm.org)|142.4.223.96|:80... connected.
-  HTTP request sent, awaiting response... 416 Requested Range Not Satisfiable
+Main purpose is to update uids when migrating systemd-nspawn containers or
+adding paths/filesystems to these without clobbering ownership info there.
 
-      The file is already fully retrieved; nothing to do.
+Should be safe to use anywhere, as in most non-nspawn cases upper bits of
+uid/gid are always zero, hence any changes can be easily reverted by running
+this tool again with -c0.
 
-  Checksum matched
+bindfs-idmap
+''''''''''''
 
-Basic invocation syntax is ``wgets [ wget_opts ] url checksum``, checksum is
-hex-decoded and hash func is auto-detected from its length (md5, sha-1, all
-sha-2's are supported).
+`bindfs <http://bindfs.org/>`_ wrapper script to setup id-mapping from uid of
+the mountpoint to uid/gid of the source directory.
 
-Idea is that - upon encountering an http link with either checksum on the page
-or in the file nearby - you can easily run the thing providing both link and
-checksum to fetch the file.
+I.e. after ``bindfs-idmap /var/lib/machines/home/src-user ~dst-user/tmp``,
+``~dst-user/tmp`` will be accessible to dst-user as if they were src-user, with
+all operations proxied to src-user's dir.
 
-If checksum is available in e.g. \*.sha1 file alongside the original one, it
-might be a good idea to fetch that checksum from any remote host (e.g. via
-"curl" from any open ssh session), making spoofing of both checksum and the
-original file a bit harder.
+Anything created under ``~dst-user/tmp`` will have uid/gid of the src dir.
 
+Useful to allow temporary access to some uid's files in a local container to
+user acc in a main namespace.
 
-
-Content
-~~~~~~~
-
-Things that manipulate whatever file contents.
+For long-term access (e.g. for some daemon), there probably are better options
+than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
 
 
-znc log helpers
-^^^^^^^^^^^^^^^
 
-znc-log-aggregator
-''''''''''''''''''
+Generic file contents manglers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Tool to process znc chat logs, produced by "log" module (global, per-user or
-per-network - looks everywhere) and store them using following schema::
-
-  <net>/chat/<channel>__<yy>-<mm>.log.xz
-  <net>/priv/<nick>__<yy>-<mm>.log.xz
-
-Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
-Values there are parsed according to any one of these (whichever matches
-first):
-
-* ``users/<net>/moddata/log/<chan>_<date>.log``
-
-* ``moddata/log/<net>_default_<chan>_<date>.log`` (no "_" in ``<net>`` allowed)
-
-* ``moddata/log/<user>_<net>_<chan>_<date>.log`` (no "_" in ``<user>`` or
-  ``<net>`` allowed)
-
-Each line gets processed by regexp to do ``[HH:MM:SS] <nick> some msg`` ->
-``[yy-mm-dd HH:MM:SS] <nick> some msg``.
-
-Latest (current day) logs are skipped. New logs for each run are concatenated to
-the monthly .xz file.
-
-Should be safe to stop at any time without any data loss - all the resulting
-.xz's get written to temporary files and renamed at the very end (followed only
-by unlinking of the source files).
-
-All temp files are produced in the destination dir and should be cleaned-up on
-any abort/exit/finish.
-
-Idea is to have more convenient hierarchy and less files for easier shell
-navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
-usage in the long run.
-
-znc-log-reader
-''''''''''''''
-
-Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
-or time range (with additional filtering by channel/nick and network) from all
-the current and aggregated logs.
-
-
-others
-^^^^^^
+Things that manipulate arbitrary file contents.
 
 pysed
 '''''
@@ -601,402 +468,11 @@ new key generation in cryptsetup or such).
 
 
 
-Misc
-~~~~
-
-systemd-dashboard
-^^^^^^^^^^^^^^^^^
-
-Python3 script to list all currently active and non-transient systemd units,
-so that these can be tracked as a "system state",
-and e.g. any deviations there detected/reported (simple diff can do it).
-
-Gets unit info by parsing Dump() snapshot fetched via sd-bus API of libsystemd
-(using ctypes to wrap it), which is same as e.g. "systemd-analyze dump" gets.
-
-Has -m/--machines option to query state from all registered machines as well,
-which requires root (for sd_bus_open_system_machine) due to current systemd limitations.
-
-See `Dashboard-for-... blog post`_ for extended rationale,
-though it's probably obsolete otherwise since this thing was rewritten.
-
-.. _Dashboard-for-... blog post: http://blog.fraggod.net/2011/2/Dashboard-for-enabled-services-in-systemd
-
-at
-^^
-
-Replacement for standard unix'ish "atd" daemon in the form of a bash script.
-
-| It just forks out and waits for however long it needs before executing the given command.
-| Unlike atd proper, such tasks won't survive reboot, obviously.
-
-::
-
-  Usage: ./at [ -h | -v ] when < sh_script
-  With -v flag ./at mails script output if it's not empty even if exit code is zero.
-
-mail
-^^^^
-
-Simple bash wrapper for sendmail command, generating From/Date headers and
-stuff, just like mailx would do, but also allowing to pass custom headers
-(useful for filtering error reports by-source), which some implementations of
-"mail" fail to do.
-
-passgen
-^^^^^^^
-
-Uses adict english dictionaly to generate easy-to-remember passphrase.  Should
-be weak if bruteforce attack picks words instead of individual lettters.
-
-ssh-tunnel
-^^^^^^^^^^
-
-| Script to keep persistent, unique and reasonably responsive ssh tunnels.
-| Mostly just a bash wrapper with collection of options for such use-case.
-|
-
-I.e. to run ``ssh-tunnel -ti 60 2223:nexthop:22 user@host -p2222`` instead of
-some manual loop (re-)connecting every 60s in the background using something like::
-
-  ssh \
-    -oControlPath=none -oControlMaster=no \
-    -oConnectTimeout=5 -oServerAliveInterval=3 -oServerAliveCountMax=5 \
-    -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 \
-    -oBatchMode=yes -oExitOnForwardFailure=yes -TnNqy \
-    -p2222 -L 2223:nexthop:22 user@host
-
-Which are all pretty much required for proper background tunnel operation.
-
-| Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.
-| Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
-
-ssh-reverse-mux-\*
-^^^^^^^^^^^^^^^^^^
-
-Python 3.6+ (asyncio) scripts to establish multiple ssh reverse-port-forwarding
-("ssh -R") connections to the same tunnel-server from mutliple hosts using same
-exact configuration on each.
-
-Normally, first client host will bind the "ssh -R" listening port and all others
-will fail, but these two scripts negotiate unique port within specified range to
-each host, so there are no clashes and all tunnels work fine.
-
-Tunnel server also stores allocated ports in a db file, so that each client gets
-more-or-less persistent listening port.
-
-Each client negotiates port before exec'ing "ssh -R" command, identifying itself
-via --ident-* string (derived from /etc/machine-id by default), and both
-client/server need to use same -s/--auth-secret to create/validate MACs in each
-packet.
-
-mosh-nat / mosh-nat-bind.c
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Python (3.6+) wrapper for mosh-server binary to do UDP hole punching through
-local NAT setup before starting it.
-
-Comes with mosh-nat-bind.c source for LD_PRELOAD=./mnb.so lib to force
-mosh-client on the other side to use specific local port that was used in
-"mosh-nat".
-
-Example usage (server at 84.217.173.225, client at 74.59.38.152)::
-
-  server% ./mosh-nat 74.59.38.152
-  mosh-client command:
-    MNB_PORT=34730 LD_PRELOAD=./mnb.so
-      MOSH_KEY=rYt2QFJapgKN5GUqKJH2NQ mosh-client <server-addr> 34730
-
-  client% MNB_PORT=34730 LD_PRELOAD=./mnb.so \
-    MOSH_KEY=rYt2QFJapgKN5GUqKJH2NQ mosh-client 84.217.173.225 34730
-
-Notes:
-
-- mnb.so is mosh-nat-bind.c lib. Check its header for command to build it.
-- Both mnb.so and mosh-nat only work with IPv4, IPv6 shouldn't use NAT anyway.
-- Should only work like that when NAT on either side doesn't rewrite src ports.
-- 34730 is default for -c/--client-port and -s/--server-port opts.
-- Started mosh-server waits for 60s (default) for mosh-client to connect.
-- Continous operation relies on mosh keepalive packets without interruption.
-- No roaming of any kind is possible here.
-- New MOSH_KEY is generated by mosh-server on every run.
-
-Useful for direct and fast connection when there's some other means of access
-available already, e.g. ssh through some slow/indirect tunnel or port forwarding
-setup.
-
-| For more hands-off hole-punching, similar approach to what
-  `pwnat <https://samy.pl/pwnat/>`_ does can be used.
-| See `mobile-shell/mosh#623 <https://github.com/mobile-shell/mosh/issues/623>`_
-  for more info and links on such feature implemented in mosh directly.
-| Source for LD_PRELOAD lib is based on https://github.com/yongboy/bindp/
-
-urlparse
-^^^^^^^^
-
-Simple script to parse long URL with lots of parameters, decode and print it out
-in an easily readable ordered YAML format or diff (that is, just using "diff"
-command on two outputs) with another URL.
-
-No more squinting at some huge incomprehensible ecommerce URLs before scraping
-the hell out of them!
-
-openssl-fingerprint
-^^^^^^^^^^^^^^^^^^^
-
-Do ``openssl s_client -connect somesite </dev/null | openssl
-x509 -fingerprint -noout -sha1`` in a nicer way - openssl cli tool doesn't seem
-to have that.
-
-Also can be passed socks proxy IP:PORT to use socat and pipe openssl connection
-through it - for example, to get fingerprint over Tor (with ``SocksAddress
-localhost:1080``) link::
-
-  % openssl-fingerprint google.com localhost:1080
-  SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
-
-graphite-scratchpad
-^^^^^^^^^^^^^^^^^^^
-
-Tool to load/dump stored graphite_ graphs through formats easily editable by
-hand.
-
-For example, creating even one dashboard there is a lot of clicky-clicks, and 10
-slightly different dashboards is mission impossible, but do
-``graphite-scratchpad dash:top`` (loaded straight from graphite db) and you
-get::
-
-  name: top
-
-  defaultGraphParams:
-    from: -24hours
-    height: 250
-    until: -20minutes
-    width: 400
-
-  ...
-
-  graphs:
-    - target:
-        - *.memory.allocation.reclaimable
-    - target:
-        - *.disk.load.sdb.utilization
-        - *.disk.load.sda.utilization
-      yMax: 100
-      yMin: 0
-    - target:
-        - *.cpu.all.idle
-      yMax: 100
-      yMin: 0
-  ...
-
-That's all graph-building data in an easily readable, editable and parseable
-format (yaml, nicely-spaced with pyaml_ module).
-
-Edit that and do ``graphite-scratchpad yaml dash:top < dash.yaml`` to replace
-the thing in graphite db with an updated thing. Much easier than doing anything
-with GUI.
-
-.. _graphite: http://graphite.readthedocs.org/
-.. _pyaml: https://github.com/mk-fg/pretty-yaml
-
-ip-ext
-^^^^^^
-
-Some minor tools for network configuration from console/scripts, which iproute2
-seem to be lacking, in a py3 script.
-
-For instance, if network interface on a remote machine was (mis-)configured in
-initramfs or wherever to not have link-local IPv6 address, there seem to be no
-tool to restore it without whole "ip link down && ip link up" dance, which can
-be a bad idea.
-
-``ipv6-lladdr`` subcommand handles that particular case, generating ipv6-lladdr
-from mac, as per RFC 4291 (as implemented in "netaddr" module) and can assign
-resulting address to the interface, if missing:
-
-.. code:: console
-
-  # ip-ext --debug ipv6-lladdr -i enp0s9 -x
-  DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
-  DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
-
-``ipv6-dns`` tool generates \*.ip.arpa and djbdns records for specified IPv6.
-
-``ip-check`` subcommand allows to check if address (ipv4/ipv6) is assigned to
-any of the interfaces and/or run "ip add" (with specified parameters) to assign
-it, if not.
-
-``iptables-flush`` removes all iptables/ip6tables rules from all tables,
-including any custom chains, using iptables-save/restore command-line tools, and
-sets policy for default chains to ACCEPT.
-
-hype
-^^^^
-
-Tools to work with cjdns_ and Hyperboria_ stuff.
-
-Has lots of subcommands for cjdns admin interface interaction, various related
-data processing, manipulation (ipv6, public key, switchLabel, config file, etc)
-and obfuscation. Full list with descriptions and all possible options is
-in --help output.
-
-Some of the functionality bits are described below.
-
-decode-path
-'''''''''''
-
-Decode cjdns "Path" to a sequence of integer "peer indexes", one for each hop.
-
-Relies on encoding schema described in NumberCompress.h of cjdns. Nodes are not
-required to use it in theory, and there are other encoding schemas implemented
-which should break this tool's operation, but in practice no one bothers to
-change that default.
-
-Examples:
-
-* ``hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30``
-* ``hype decode-path -x 0ff9.e22d.6cb5.19e3 -> 03 1e 03 6a 32 0b 16 62 03 0f 0f``
-
-conf-paste
-''''''''''
-
-Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
-deterministic way.
-
-Should be useful to pastebin your config file without revealing most sensitive
-data (passwords and keys) in it. Might still reveal some peer info like IP
-endpoints, contacts, comments, general list of nodes you're peered with. Use
-with caution.
-
-Sensitive bits are regexp-matched (by their key) and then value is processed
-through pbkdf2-sha256 and output is truncated to appear less massive. pbkdf2
-parameters are configurable (see --help output), and at least --pbkdf2-salt
-should be passed for output to be deterministic, otherwise random salt value
-will be used.
-
-peers
-'''''
-
-Shows peer stats, with some extra info, like ipv6'es derived from keys (--raw to
-disable all that).
-
-peers-remote
-''''''''''''
-
-Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
-specified by its ipv6, path, pubkey or addr, resolving these via
-SearchRunner_search as necessary.
-
-ipv6-to-record, key-to-ipv6
-'''''''''''''''''''''''''''
-
-Misc pubkey/ipv6 representation/conversion helpers.
-
-.. _cjdns: https://github.com/cjdelisle/cjdns/
-.. _Hyperboria: http://hyperboria.net/
-
-adhocapd
-^^^^^^^^
-
-Picks first wireless dev from ``iw dev`` and runs hostapd_ + udhcpd (from
-busybox) on it.
-
-Use-case is plugging wifi usb dongle and creating temporary AP on it - kinda
-like "tethering" functionality in Android and such.
-
-Configuration for both is generated using reasonable defaults - distinctive
-(picked from ``ssid_list`` at the top of the script) AP name and random password
-(using ``passgen`` from this repo or falling back to ``tr -cd '[:alnum:]'
-</dev/urandom | head -c10``).
-
-Dev, ssid, password, ip range and such can also be specified on the command line
-(see --help).
-
-If inet access thru local machine is needed, don't forget to also do something
-like this (with default ip range of 10.67.35.0/24 and "wlp0s18f2u2" interface
-name)::
-
-  # sysctl -w net.ipv4.conf.all.forwarding=1
-  # iptables -t nat -A POSTROUTING -s 10.67.35.0/24 -j MASQUERADE
-  # iptables -A FORWARD -s 10.67.35.0/24 -i wlp0s18f2u2 -j ACCEPT
-  # iptables -A FORWARD -d 10.67.35.0/24 -o wlp0s18f2u2 -j ACCEPT
-
-These rules are also echoed in the script, with IP and interface name that was
-used.
-
-For consistent naming of network interfaces from usb devices (to e.g.  have
-constant set of firewall rules for these), following udev rule can be used (all
-usb-wlan interfaces will be named according to NAME there)::
-
-  SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
-    DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
-
-wpa-systemd-wrapper
-^^^^^^^^^^^^^^^^^^^
-
-Systemd wrapper for `wpa_supplicant`_ or hostapd_, enabling either to work with
-Type=notify, support WatchdogSec=, different exit codes and all that goodness.
-
-Starts the daemon as a subprocess, connecting to its management interface and
-watching state/wpa_state changes, only indicating "started" state for systemd
-when daemon actually starts scanning/connecting (for wpa_supplicant) or sets
-state=enabled for hostapd.
-
-WatchdogSec= issues PING commands to underlying daemon, proxying responses back,
-as long as daemon state is somehting valid, and not INTERFACE-DISABLED,
-locally-generated disconnect or such, usually indicating hw failure, kernel
-module issue or whatever else.
-
-Such thing is needed to have systemd unit state follow AP/STA state, failing
-when e.g. wifi dongle gets pulled out from USB port, as that doesn't actually
-cause these things to fail/exit otherwise, which might be desirable if that wifi
-link is critical to other services or as a reboot-workaround for driver bugs.
-
-Example systemd unit (AP mode)::
-
-  [Service]
-  ExecStart=/usr/local/bin/wpa-systemd-wrapper \
-    --exit-check '/run/wpa.wlan0.first-run:config' \
-    --ap-mode wlan0 /etc/hostapd.wlan0.conf
-
-  Type=notify
-  WatchdogSec=90
-  Restart=on-failure
-  RestartPreventExitStatus=78
-  RestartSec=3
-  # StartLimitInterval=8min
-  # StartLimitBurst=10
-  # StartLimitAction=reboot
-
-This will run hostapd (due to -a/--ap-mode), and exit with special 78/CONFIG
-code if "first-run" file exists and hostapd never gets into ENABLED state on the
-first attempt - i.e. something likely wrong with the config and there's no point
-restarting it ad nauseum.
-
-Python3/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
-opts for more info.
-
-mikrotik-backup
-^^^^^^^^^^^^^^^
-
-Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
-DSA-only firmware via specified ("--auth-file" option) user/password and get the
-backup, optionally compressing it.
-
-| Can determine address of the router on its own (using "ip route get").
-| Can be used more generally to get/store output of any command(s) to the router.
-| Python script, uses "twisted.conch" for ssh.
-|
-
-Should not be used with modern firmware, where using e.g. ``ssh admin@router
-/export`` with RSA keys works perfectly well.
-
-"backup/ssh-dump" script from this repo can be used to pass all necessary
-non-interactive mode options and compress/rotate resulting file with these.
+Kernel sources/build/version management
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 kernel-patch
-^^^^^^^^^^^^
+''''''''''''
 
 Simple stateless script to update sources in /usr/src/linux to some (specified)
 stable version.
@@ -1017,7 +493,7 @@ In short, allows to run e.g. ``kernel-patch 3.14.22`` to get 3.14.22 in
 ``kernel-patch`` to have the latest 3.14 patchset.
 
 kernel-conf-check
-^^^^^^^^^^^^^^^^^
+'''''''''''''''''
 
 Ad-hoc python3 script to check any random snippet with linux kernel
 ``CONFIG_...`` values (e.g. "this is stuff you want to set" block on some wiki)
@@ -1025,19 +501,133 @@ against kernel config file, current config in /proc/config.gz or such.
 
 Reports what matches and what doesn't to stdout, trivial regexp matching.
 
-blinky
-^^^^^^
+clean-boot
+''''''''''
 
-Script to blink gpio-connected leds via ``/sys/class/gpio`` interface.
+Script to remove older kernel versions (as installed by ``/sbin/installkernel``)
+from ``/boot`` or similar dir.
 
-Includes oneshot mode, countdown mode (with some interval scaling option),
-direct on-off phase delay control (see --pre, --post and --interval\* options),
-cooperation between several instances using same gpio pin, "until" timestamp
-spec, and generally everything I can think of being useful (mostly for use from
-other scripts though).
+Always keeps version linked as "vmlinuz", and prioritizes removal of older
+patchset versions from each major one, and only then latest per-major patchset,
+until free space goal (specified percentage, 20% by default) is met.
+
+Also keeps specified number of last-to-remove versions, can prioritize cleanup
+of ".old" verssion variants, keep ``config-*`` files... and other stuff (see
+--help).
+
+Example::
+
+  # clean-boot --debug --dry-run -f 100
+  DEBUG:root:Preserved versions (linked version, its ".old" variant, --keep-min): 4
+  DEBUG:root: - 3.9.9.1 - System.map-3.9.9-fg.mf_master
+  DEBUG:root: - 3.9.9.1 - config-3.9.9-fg.mf_master
+  DEBUG:root: - 3.9.9.1 - vmlinuz-3.9.9-fg.mf_master
+  DEBUG:root: - 3.10.27.1 - vmlinuz-3.10.27-fg.mf_master
+  ...
+  DEBUG:root: - 3.12.19.1 - System.map-3.12.19-fg.mf_master
+  DEBUG:root: - 3.12.20.1 - config-3.12.20-fg.mf_master
+  DEBUG:root: - 3.12.20.1 - System.map-3.12.20-fg.mf_master
+  DEBUG:root: - 3.12.20.1 - vmlinuz-3.12.20-fg.mf_master
+  DEBUG:root:Removing files for version (df: 58.9%): 3.2.0.1
+  DEBUG:root: - System.map-3.2.0-fg.mf_master
+  DEBUG:root: - config-3.2.0-fg.mf_master
+  DEBUG:root: - vmlinuz-3.2.0-fg.mf_master
+  DEBUG:root:Removing files for version (df: 58.9%): 3.2.1.0
+  ... (removal of older patchsets for each major version, 3.2 - 3.12)
+  DEBUG:root:Removing files for version (df: 58.9%): 3.12.18.1
+  ... (this was the last non-latest patchset-per-major)
+  DEBUG:root:Removing files for version (df: 58.9%): 3.2.16.1
+  ... (removing latest patchset for each major version, starting from oldest - 3.2 here)
+  DEBUG:root:Removing files for version (df: 58.9%): 3.7.9.1
+  ...
+  DEBUG:root:Removing files for version (df: 58.9%): 3.8.11.1
+  ...
+  DEBUG:root:Finished (df: 58.9%, versions left: 4, versions removed: 66).
+
+("df" doesn't rise here because of --dry-run, ``-f 100`` = "remove all
+non-preserved" - as df can't really get to 100%)
+
+Note how 3.2.0.1 (non-.old 3.2.0) gets removed first, then 3.2.1, 3.2.2, and so
+on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
+"latest patchset for major" versions, except those that are preserved
+unconditionally (listed at the top).
+
+
+
+ZNC log helpers
+^^^^^^^^^^^^^^^
+
+Tools to manage `ZNC IRC bouncer <http://znc.in/>`_ logs - archive, view, search, etc.
+
+znc-log-aggregator
+''''''''''''''''''
+
+Tool to process znc chat logs, produced by "log" module (global, per-user or
+per-network - looks everywhere) and store them using following schema::
+
+  <net>/chat/<channel>__<yy>-<mm>.log.xz
+  <net>/priv/<nick>__<yy>-<mm>.log.xz
+
+Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
+Values there are parsed according to any one of these (whichever matches
+first):
+
+* ``users/<net>/moddata/log/<chan>_<date>.log``
+
+* ``moddata/log/<net>_default_<chan>_<date>.log`` (no "_" in ``<net>`` allowed)
+
+* ``moddata/log/<user>_<net>_<chan>_<date>.log`` (no "_" in ``<user>`` or
+  ``<net>`` allowed)
+
+Each line gets processed by regexp to do ``[HH:MM:SS] <nick> some msg`` ->
+``[yy-mm-dd HH:MM:SS] <nick> some msg``.
+
+Latest (current day) logs are skipped. New logs for each run are concatenated to
+the monthly .xz file.
+
+Should be safe to stop at any time without any data loss - all the resulting
+.xz's get written to temporary files and renamed at the very end (followed only
+by unlinking of the source files).
+
+All temp files are produced in the destination dir and should be cleaned-up on
+any abort/exit/finish.
+
+Idea is to have more convenient hierarchy and less files for easier shell
+navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
+usage in the long run.
+
+znc-log-reader
+''''''''''''''
+
+Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
+or time range (with additional filtering by channel/nick and network) from all
+the current and aggregated logs.
+
+
+
+systemd
+^^^^^^^
+
+systemd-dashboard
+'''''''''''''''''
+
+Python3 script to list all currently active and non-transient systemd units,
+so that these can be tracked as a "system state",
+and e.g. any deviations there detected/reported (simple diff can do it).
+
+Gets unit info by parsing Dump() snapshot fetched via sd-bus API of libsystemd
+(using ctypes to wrap it), which is same as e.g. "systemd-analyze dump" gets.
+
+Has -m/--machines option to query state from all registered machines as well,
+which requires root (for sd_bus_open_system_machine) due to current systemd limitations.
+
+See `Dashboard-for-... blog post`_ for extended rationale,
+though it's probably obsolete otherwise since this thing was rewritten.
+
+.. _Dashboard-for-... blog post: http://blog.fraggod.net/2011/2/Dashboard-for-enabled-services-in-systemd
 
 systemd-watchdog
-^^^^^^^^^^^^^^^^
+''''''''''''''''
 
 Trivial script to ping systemd watchdog and do some trivial actions in-between
 to make sure os still works.
@@ -1093,45 +683,15 @@ e.g. to dump network configuration info as in example above.
 Useless without systemd and requires systemd python3 module, plus fping tool if
 -n/--check-net-gw option is used.
 
-bt-pan
-^^^^^^
 
-Note: you might want to look at "bneptest" tool that comes with bluez - might be
-a good replacement for this script, which I haven't seen at the moment of its
-writing (maybe wasn't there, maybe just missed it).
 
-Bluetooth Personal Area Network (PAN) client/server setup script.
+ssh-related
+^^^^^^^^^^^
 
-BlueZ does all the work here, script just sends it commands to enable/register
-appropriate services.
-
-Can probably be done with one of the shipped tools, but I haven't found it, and
-there's just too many of them to remember anyway.
-
-::
-
-  machine-1 # ./bt-pan --debug server bnep
-  machine-2 # ./bt-pan --debug client <machine-1-bdaddr>
-
-First line above will probably complain that "bnep" bridge is missing and list
-commands to bring it up (brctl, ip).
-
-Default mode for both "server" and "client" is NAP (AP mode, like with WiFi).
-
-Both commands make bluetoothd (that should be running) create "bnepX" network
-interfaces, connected to server/clients, and "server" also automatically (as
-clients are connecting) adds these to specified bridge.
-
-Not sure how PANU and GN "ad-hoc" modes are supposed to work - both BlueZ
-"NetworkServer" and "Network" (client) interfaces support these, so I suppose
-one might need to run both or either of server/client commands (with e.g. "-u
-panu" option).
-
-Couldn't get either one of ad-hoc modes to work myself, but didn't try
-particulary hard, and it might be hardware issue as well, I guess.
+See also "backup" subsection.
 
 ssh-fingerprint
-^^^^^^^^^^^^^^^
+'''''''''''''''
 
 ssh-keyscan, but outputting each key in every possible format.
 
@@ -1161,7 +721,7 @@ location, or even localhost - should give (hopefully) any possible gibberish
 permutation that openssh (or something else) may decide to throw at you.
 
 ssh-keyparse
-^^^^^^^^^^^^
+''''''''''''
 
 Tool to extract raw private key string from ed25519 ssh keys.
 
@@ -1228,7 +788,7 @@ voice-comm link, if necessary.
 .. _Douglas Crockford's human-oriented Base32: http://www.crockford.com/wrmg/base32.html
 
 ssh-key-init
-^^^^^^^^^^^^
+''''''''''''
 
 Bash script to generate (init) ssh key (via ssh-keygen) without asking about
 various legacy and uninteresting options and safe against replacing existing
@@ -1244,8 +804,537 @@ Has -m option to init key for an nspawn container under ``/var/lib/machines``
 (e.g. ``ssh-key-init -m mymachine``) and -r option to replace any existing keys.
 Sets uid/gid of the parent path for all new ones and -m700.
 
+ssh-tunnel
+''''''''''
+
+| Script to keep persistent, unique and reasonably responsive ssh tunnels.
+| Mostly just a bash wrapper with collection of options for such use-case.
+|
+
+I.e. to run ``ssh-tunnel -ti 60 2223:nexthop:22 user@host -p2222`` instead of
+some manual loop (re-)connecting every 60s in the background using something like::
+
+  ssh \
+    -oControlPath=none -oControlMaster=no \
+    -oConnectTimeout=5 -oServerAliveInterval=3 -oServerAliveCountMax=5 \
+    -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 \
+    -oBatchMode=yes -oExitOnForwardFailure=yes -TnNqy \
+    -p2222 -L 2223:nexthop:22 user@host
+
+Which are all pretty much required for proper background tunnel operation.
+
+| Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.
+| Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
+
+ssh-reverse-mux-\*
+''''''''''''''''''
+
+Python 3.6+ (asyncio) scripts to establish multiple ssh reverse-port-forwarding
+("ssh -R") connections to the same tunnel-server from mutliple hosts using same
+exact configuration on each.
+
+Normally, first client host will bind the "ssh -R" listening port and all others
+will fail, but these two scripts negotiate unique port within specified range to
+each host, so there are no clashes and all tunnels work fine.
+
+Tunnel server also stores allocated ports in a db file, so that each client gets
+more-or-less persistent listening port.
+
+Each client negotiates port before exec'ing "ssh -R" command, identifying itself
+via --ident-* string (derived from /etc/machine-id by default), and both
+client/server need to use same -s/--auth-secret to create/validate MACs in each
+packet.
+
+ssh-tunnels-cleanup
+'''''''''''''''''''
+
+Bash script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
+don't have a listening socket associated with them or don't show ssh protocol
+greeting (e.g. "SSH-2.0-OpenSSH_7.4") there.
+
+These seem to occur when ssh client suddenly dies and reconnects to create new
+tunnel - old pid can still hog listening socket (even though there's nothing on
+the other end), but new pid won't exit and hang around uselessly.
+
+Solution is to a) check for sshd pids that don't have listenings socket, and
+b) connect to sshd pids' sockets and see if anything responds there, killing
+both non-listening and unresponsive pids.
+
+Only picks sshd pids for users with specific prefix, e.g. "tun-" by default, to
+be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
+
+Uses ps, ss, gawk and ncat (comes with nmap), only prints pids by default
+(without -k/--kill option).
+
+Also has -s/--cleanup-sessions option to remove all "abandoned" login sessions
+(think loginctl) for user with specified prefix, i.e. any leftover stuff after
+killing those useless ssh pids.
+
+See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
+
+mosh-nat / mosh-nat-bind.c
+''''''''''''''''''''''''''
+
+Python (3.6+) wrapper for mosh-server binary to do UDP hole punching through
+local NAT setup before starting it.
+
+Comes with mosh-nat-bind.c source for LD_PRELOAD=./mnb.so lib to force
+mosh-client on the other side to use specific local port that was used in
+"mosh-nat".
+
+Example usage (server at 84.217.173.225, client at 74.59.38.152)::
+
+  server% ./mosh-nat 74.59.38.152
+  mosh-client command:
+    MNB_PORT=34730 LD_PRELOAD=./mnb.so
+      MOSH_KEY=rYt2QFJapgKN5GUqKJH2NQ mosh-client <server-addr> 34730
+
+  client% MNB_PORT=34730 LD_PRELOAD=./mnb.so \
+    MOSH_KEY=rYt2QFJapgKN5GUqKJH2NQ mosh-client 84.217.173.225 34730
+
+Notes:
+
+- mnb.so is mosh-nat-bind.c lib. Check its header for command to build it.
+- Both mnb.so and mosh-nat only work with IPv4, IPv6 shouldn't use NAT anyway.
+- Should only work like that when NAT on either side doesn't rewrite src ports.
+- 34730 is default for -c/--client-port and -s/--server-port opts.
+- Started mosh-server waits for 60s (default) for mosh-client to connect.
+- Continous operation relies on mosh keepalive packets without interruption.
+- No roaming of any kind is possible here.
+- New MOSH_KEY is generated by mosh-server on every run.
+
+Useful for direct and fast connection when there's some other means of access
+available already, e.g. ssh through some slow/indirect tunnel or port forwarding
+setup.
+
+| For more hands-off hole-punching, similar approach to what
+  `pwnat <https://samy.pl/pwnat/>`_ does can be used.
+| See `mobile-shell/mosh#623 <https://github.com/mobile-shell/mosh/issues/623>`_
+  for more info and links on such feature implemented in mosh directly.
+| Source for LD_PRELOAD lib is based on https://github.com/yongboy/bindp/
+
+tping
+'''''
+
+Python-3 (asyncio) tool to try connecting to specified TCP port until connection
+can be established, then just exit, i.e. to wait until some remote port is accessible.
+
+Can be used to wait for host to reboot before trying to ssh into it, e.g.::
+
+  % tping myhost && ssh root@myhost
+
+(default -p/--port is 22 - ssh, see also -s/--ssh option)
+
+Tries establishing new connection (forcing new SYN, IPv4/IPv6 should both work)
+every -r/--retry-delay seconds (default: 1), only discarding (closing) "in
+progress" connections after -t/--timeout seconds (default: 3), essentially
+keeping rotating pool of establishing connections until one of them succeeds.
+
+This means that with e.g. ``-r1 -t5`` there will be 5 establishing connections
+(to account for slow-to-respond remote hosts) rotating every second, so ratio of
+these delays shouldn't be too high to avoid spawning too many connections.
+
+Host/port names specified on the command line are resolved synchronously on
+script startup (same as with e.g. "ping" tool), so it can't be used to wait
+until hostname resolves, only for connection itself.
+
+Above example can also be shortened via -s/--ssh option, e.g.::
+
+  % tping -s myhost 1234
+  % tping -s root@myhost:1234 # same thing as above
+  % tping -s -p1234 myhost # same thing as above
+
+Will exec ``ssh -p1234 root@myhost`` immediately after successful tcp connection.
+
+Uses python3 stdlib stuff, namely asyncio, to juggle multiple connections in an
+efficient manner.
+
+
+
+WiFi / Bluetooth helpers
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+adhocapd
+''''''''
+
+Picks first wireless dev from ``iw dev`` and runs hostapd_ + udhcpd (from
+busybox) on it.
+
+Use-case is plugging wifi usb dongle and creating temporary AP on it - kinda
+like "tethering" functionality in Android and such.
+
+Configuration for both is generated using reasonable defaults - distinctive
+(picked from ``ssid_list`` at the top of the script) AP name and random password
+(using ``passgen`` from this repo or falling back to ``tr -cd '[:alnum:]'
+</dev/urandom | head -c10``).
+
+Dev, ssid, password, ip range and such can also be specified on the command line
+(see --help).
+
+If inet access thru local machine is needed, don't forget to also do something
+like this (with default ip range of 10.67.35.0/24 and "wlp0s18f2u2" interface
+name)::
+
+  # sysctl -w net.ipv4.conf.all.forwarding=1
+  # iptables -t nat -A POSTROUTING -s 10.67.35.0/24 -j MASQUERADE
+  # iptables -A FORWARD -s 10.67.35.0/24 -i wlp0s18f2u2 -j ACCEPT
+  # iptables -A FORWARD -d 10.67.35.0/24 -o wlp0s18f2u2 -j ACCEPT
+
+These rules are also echoed in the script, with IP and interface name that was
+used.
+
+For consistent naming of network interfaces from usb devices (to e.g.  have
+constant set of firewall rules for these), following udev rule can be used (all
+usb-wlan interfaces will be named according to NAME there)::
+
+  SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
+    DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
+
+wpa-systemd-wrapper
+'''''''''''''''''''
+
+Systemd wrapper for `wpa_supplicant`_ or hostapd_, enabling either to work with
+Type=notify, support WatchdogSec=, different exit codes and all that goodness.
+
+Starts the daemon as a subprocess, connecting to its management interface and
+watching state/wpa_state changes, only indicating "started" state for systemd
+when daemon actually starts scanning/connecting (for wpa_supplicant) or sets
+state=enabled for hostapd.
+
+WatchdogSec= issues PING commands to underlying daemon, proxying responses back,
+as long as daemon state is somehting valid, and not INTERFACE-DISABLED,
+locally-generated disconnect or such, usually indicating hw failure, kernel
+module issue or whatever else.
+
+Such thing is needed to have systemd unit state follow AP/STA state, failing
+when e.g. wifi dongle gets pulled out from USB port, as that doesn't actually
+cause these things to fail/exit otherwise, which might be desirable if that wifi
+link is critical to other services or as a reboot-workaround for driver bugs.
+
+Example systemd unit (AP mode)::
+
+  [Service]
+  ExecStart=/usr/local/bin/wpa-systemd-wrapper \
+    --exit-check '/run/wpa.wlan0.first-run:config' \
+    --ap-mode wlan0 /etc/hostapd.wlan0.conf
+
+  Type=notify
+  WatchdogSec=90
+  Restart=on-failure
+  RestartPreventExitStatus=78
+  RestartSec=3
+  # StartLimitInterval=8min
+  # StartLimitBurst=10
+  # StartLimitAction=reboot
+
+This will run hostapd (due to -a/--ap-mode), and exit with special 78/CONFIG
+code if "first-run" file exists and hostapd never gets into ENABLED state on the
+first attempt - i.e. something likely wrong with the config and there's no point
+restarting it ad nauseum.
+
+Python3/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
+opts for more info.
+
+bt-pan
+''''''
+
+Note: you might want to look at "bneptest" tool that comes with bluez - might be
+a good replacement for this script, which I haven't seen at the moment of its
+writing (maybe wasn't there, maybe just missed it).
+
+Bluetooth Personal Area Network (PAN) client/server setup script.
+
+BlueZ does all the work here, script just sends it commands to enable/register
+appropriate services.
+
+Can probably be done with one of the shipped tools, but I haven't found it, and
+there's just too many of them to remember anyway.
+
+::
+
+  machine-1 # ./bt-pan --debug server bnep
+  machine-2 # ./bt-pan --debug client <machine-1-bdaddr>
+
+First line above will probably complain that "bnep" bridge is missing and list
+commands to bring it up (brctl, ip).
+
+Default mode for both "server" and "client" is NAP (AP mode, like with WiFi).
+
+Both commands make bluetoothd (that should be running) create "bnepX" network
+interfaces, connected to server/clients, and "server" also automatically (as
+clients are connecting) adds these to specified bridge.
+
+Not sure how PANU and GN "ad-hoc" modes are supposed to work - both BlueZ
+"NetworkServer" and "Network" (client) interfaces support these, so I suppose
+one might need to run both or either of server/client commands (with e.g. "-u
+panu" option).
+
+Couldn't get either one of ad-hoc modes to work myself, but didn't try
+particulary hard, and it might be hardware issue as well, I guess.
+
+
+
+Misc
+^^^^
+
+Misc one-off scripts that don't group well with anythin else.
+
+at
+''
+
+Replacement for standard unix'ish "atd" daemon in the form of a bash script.
+
+| It just forks out and waits for however long it needs before executing the given command.
+| Unlike atd proper, such tasks won't survive reboot, obviously.
+
+::
+
+  Usage: ./at [ -h | -v ] when < sh_script
+  With -v flag ./at mails script output if it's not empty even if exit code is zero.
+
+wgets
+'''''
+
+Simple script to grab a file using wget and then validate checksum of the
+result, e.g.:
+
+.. code:: console
+
+  $ wgets -c http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz cea5d785df19151806aa5ac3a917e41c
+  Using hash: md5
+  Using output filename: ArchLinuxARM-sun4i-latest.tar.gz
+  --2014-09-27 00:04:45--  http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz
+  Resolving os.archlinuxarm.org (os.archlinuxarm.org)... 142.4.223.96, 67.23.118.182, 54.203.244.41, ...
+  Connecting to os.archlinuxarm.org (os.archlinuxarm.org)|142.4.223.96|:80... connected.
+  HTTP request sent, awaiting response... 416 Requested Range Not Satisfiable
+
+      The file is already fully retrieved; nothing to do.
+
+  Checksum matched
+
+Basic invocation syntax is ``wgets [ wget_opts ] url checksum``, checksum is
+hex-decoded and hash func is auto-detected from its length (md5, sha-1, all
+sha-2's are supported).
+
+Idea is that - upon encountering an http link with either checksum on the page
+or in the file nearby - you can easily run the thing providing both link and
+checksum to fetch the file.
+
+If checksum is available in e.g. \*.sha1 file alongside the original one, it
+might be a good idea to fetch that checksum from any remote host (e.g. via
+"curl" from any open ssh session), making spoofing of both checksum and the
+original file a bit harder.
+
+mail
+''''
+
+Simple bash wrapper for sendmail command, generating From/Date headers and
+stuff, just like mailx would do, but also allowing to pass custom headers
+(useful for filtering error reports by-source), which some implementations of
+"mail" fail to do.
+
+passgen
+'''''''
+
+Uses adict english dictionaly to generate easy-to-remember passphrase.  Should
+be weak if bruteforce attack picks words instead of individual lettters.
+
+urlparse
+''''''''
+
+Simple script to parse long URL with lots of parameters, decode and print it out
+in an easily readable ordered YAML format or diff (that is, just using "diff"
+command on two outputs) with another URL.
+
+No more squinting at some huge incomprehensible ecommerce URLs before scraping
+the hell out of them!
+
+graphite-scratchpad
+'''''''''''''''''''
+
+Tool to load/dump stored graphite_ graphs through formats easily editable by
+hand.
+
+For example, creating even one dashboard there is a lot of clicky-clicks, and 10
+slightly different dashboards is mission impossible, but do
+``graphite-scratchpad dash:top`` (loaded straight from graphite db) and you
+get::
+
+  name: top
+
+  defaultGraphParams:
+    from: -24hours
+    height: 250
+    until: -20minutes
+    width: 400
+
+  ...
+
+  graphs:
+    - target:
+        - *.memory.allocation.reclaimable
+    - target:
+        - *.disk.load.sdb.utilization
+        - *.disk.load.sda.utilization
+      yMax: 100
+      yMin: 0
+    - target:
+        - *.cpu.all.idle
+      yMax: 100
+      yMin: 0
+  ...
+
+That's all graph-building data in an easily readable, editable and parseable
+format (yaml, nicely-spaced with pyaml_ module).
+
+Edit that and do ``graphite-scratchpad yaml dash:top < dash.yaml`` to replace
+the thing in graphite db with an updated thing. Much easier than doing anything
+with GUI.
+
+.. _graphite: http://graphite.readthedocs.org/
+.. _pyaml: https://github.com/mk-fg/pretty-yaml
+
+ip-ext
+''''''
+
+Some minor tools for network configuration from console/scripts, which iproute2
+seem to be lacking, in a py3 script.
+
+For instance, if network interface on a remote machine was (mis-)configured in
+initramfs or wherever to not have link-local IPv6 address, there seem to be no
+tool to restore it without whole "ip link down && ip link up" dance, which can
+be a bad idea.
+
+``ipv6-lladdr`` subcommand handles that particular case, generating ipv6-lladdr
+from mac, as per RFC 4291 (as implemented in "netaddr" module) and can assign
+resulting address to the interface, if missing:
+
+.. code:: console
+
+  # ip-ext --debug ipv6-lladdr -i enp0s9 -x
+  DEBUG:root:Got lladdr from interface (enp0s9): 00:e0:4c:c2:78:86
+  DEBUG:root:Assigned ipv6_lladdr (fe80::2e0:4cff:fec2:7886) to interface: enp0s9
+
+``ipv6-dns`` tool generates \*.ip.arpa and djbdns records for specified IPv6.
+
+``ip-check`` subcommand allows to check if address (ipv4/ipv6) is assigned to
+any of the interfaces and/or run "ip add" (with specified parameters) to assign
+it, if not.
+
+``iptables-flush`` removes all iptables/ip6tables rules from all tables,
+including any custom chains, using iptables-save/restore command-line tools, and
+sets policy for default chains to ACCEPT.
+
+hype
+''''
+
+Tools to work with cjdns_ and Hyperboria_ stuff.
+
+Has lots of subcommands for cjdns admin interface interaction, various related
+data processing, manipulation (ipv6, public key, switchLabel, config file, etc)
+and obfuscation. Full list with descriptions and all possible options is
+in --help output.
+
+Some of the functionality bits are described below.
+
+decode-path
+```````````
+
+Decode cjdns "Path" to a sequence of integer "peer indexes", one for each hop.
+
+Relies on encoding schema described in NumberCompress.h of cjdns. Nodes are not
+required to use it in theory, and there are other encoding schemas implemented
+which should break this tool's operation, but in practice no one bothers to
+change that default.
+
+Examples:
+
+* ``hype decode-path 0000.013c.bed9.5363 -> 3 54 42 54 15 5 30``
+* ``hype decode-path -x 0ff9.e22d.6cb5.19e3 -> 03 1e 03 6a 32 0b 16 62 03 0f 0f``
+
+conf-paste
+``````````
+
+Obfuscates cjdns config file (cjdroute.conf) in a secure and (optionally)
+deterministic way.
+
+Should be useful to pastebin your config file without revealing most sensitive
+data (passwords and keys) in it. Might still reveal some peer info like IP
+endpoints, contacts, comments, general list of nodes you're peered with. Use
+with caution.
+
+Sensitive bits are regexp-matched (by their key) and then value is processed
+through pbkdf2-sha256 and output is truncated to appear less massive. pbkdf2
+parameters are configurable (see --help output), and at least --pbkdf2-salt
+should be passed for output to be deterministic, otherwise random salt value
+will be used.
+
+peers
+`````
+
+Shows peer stats, with some extra info, like ipv6'es derived from keys (--raw to
+disable all that).
+
+peers-remote
+````````````
+
+Shows a list of peers (with pubkeys, ipv6'es, paths, etc) for any remote node,
+specified by its ipv6, path, pubkey or addr, resolving these via
+SearchRunner_search as necessary.
+
+ipv6-to-record, key-to-ipv6
+```````````````````````````
+
+Misc pubkey/ipv6 representation/conversion helpers.
+
+.. _cjdns: https://github.com/cjdelisle/cjdns/
+.. _Hyperboria: http://hyperboria.net/
+
+mikrotik-backup
+'''''''''''''''
+
+Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
+DSA-only firmware via specified ("--auth-file" option) user/password and get the
+backup, optionally compressing it.
+
+| Can determine address of the router on its own (using "ip route get").
+| Can be used more generally to get/store output of any command(s) to the router.
+| Python script, uses "twisted.conch" for ssh.
+|
+
+Should not be used with modern firmware, where using e.g. ``ssh admin@router
+/export`` with RSA keys works perfectly well.
+
+"backup/ssh-dump" script from this repo can be used to pass all necessary
+non-interactive mode options and compress/rotate resulting file with these.
+
+blinky
+''''''
+
+Script to blink gpio-connected leds via ``/sys/class/gpio`` interface.
+
+Includes oneshot mode, countdown mode (with some interval scaling option),
+direct on-off phase delay control (see --pre, --post and --interval\* options),
+cooperation between several instances using same gpio pin, "until" timestamp
+spec, and generally everything I can think of being useful (mostly for use from
+other scripts though).
+
+openssl-fingerprint
+'''''''''''''''''''
+
+Do ``openssl s_client -connect somesite </dev/null | openssl
+x509 -fingerprint -noout -sha1`` in a nicer way - openssl cli tool doesn't seem
+to have that.
+
+Also can be passed socks proxy IP:PORT to use socat and pipe openssl connection
+through it - for example, to get fingerprint over Tor (with ``SocksAddress
+localhost:1080``) link::
+
+  % openssl-fingerprint google.com localhost:1080
+  SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
+
 rrd-sensors-logger
-^^^^^^^^^^^^^^^^^^
+''''''''''''''''''
 
 Daemon script to grab data from whatever sensors and log it all via rrdtool.
 
@@ -1294,7 +1383,7 @@ and systemd unit file example ("print-systemd-unit" command).
 Uses: layered-yaml-attrdict-config (lya), rrdtool.
 
 nsh
-^^^
+'''
 
 Bash script to "nsenter" into specified machine's (as can be seen in ``ps -eo
 machine`` or ``nsh`` when run without args) container namespaces and run login
@@ -1319,35 +1408,8 @@ If run without argument or with -l/--list option, will list running machines.
 
 See also: lsns(1), nsenter(1), unshare(1)
 
-ssh-tunnels-cleanup
-^^^^^^^^^^^^^^^^^^^
-
-Bash script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
-don't have a listening socket associated with them or don't show ssh protocol
-greeting (e.g. "SSH-2.0-OpenSSH_7.4") there.
-
-These seem to occur when ssh client suddenly dies and reconnects to create new
-tunnel - old pid can still hog listening socket (even though there's nothing on
-the other end), but new pid won't exit and hang around uselessly.
-
-Solution is to a) check for sshd pids that don't have listenings socket, and
-b) connect to sshd pids' sockets and see if anything responds there, killing
-both non-listening and unresponsive pids.
-
-Only picks sshd pids for users with specific prefix, e.g. "tun-" by default, to
-be sure not to kill anything useful (i.e. anything that's not for "ssh -R").
-
-Uses ps, ss, gawk and ncat (comes with nmap), only prints pids by default
-(without -k/--kill option).
-
-Also has -s/--cleanup-sessions option to remove all "abandoned" login sessions
-(think loginctl) for user with specified prefix, i.e. any leftover stuff after
-killing those useless ssh pids.
-
-See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
-
 pam-run
-^^^^^^^
+'''''''
 
 Wrapper that opens specified PAM session (as per one of the configs in
 ``/etc/pam.d``, e.g. "system-login"), switches to specified uid/gid and runs
@@ -1382,80 +1444,8 @@ doesn't implement all the checks and sanitization these tools do, so only
 intended to be run from static, clean or trusted environment (e.g. started by
 systemd or manually).
 
-tping
-^^^^^
-
-Python-3 (asyncio) tool to try connecting to specified TCP port until connection
-can be established, then just exit, i.e. to wait until some remote port is accessible.
-
-Can be used to wait for host to reboot before trying to ssh into it, e.g.::
-
-  % tping myhost && ssh root@myhost
-
-(default -p/--port is 22 - ssh)
-
-Tries establishing new connection (forcing new SYN, IPv4/IPv6 should both work)
-every -r/--retry-delay seconds (default: 1), only discarding (closing) "in
-progress" connections after -t/--timeout seconds (default: 3), essentially
-keeping rotating pool of establishing connections until one of them succeeds.
-
-This means that with e.g. ``-r1 -t5`` there will be 5 establishing connections
-(to account for slow-to-respond remote hosts) rotating every second, so ratio of
-these delays shouldn't be too high to avoid spawning too many connections.
-
-Host/port names specified on the command line are resolved synchronously on
-script startup (same as with e.g. "ping" tool), so it can't be used to wait
-until hostname resolves, only for connection itself.
-
-Above example can also be shortened via -s/--ssh option, e.g.::
-
-  % tping -s myhost 1234
-  % tping -s root@myhost:1234 # same thing as above
-  % tping -s -p1234 myhost # same thing as above
-
-Will exec ``ssh -p1234 root@myhost`` immediately after successful tcp connection.
-
-Uses python3 stdlib stuff, namely asyncio, to juggle multiple connections in an
-efficient manner.
-
-bindfs-idmap
-^^^^^^^^^^^^
-
-`bindfs <http://bindfs.org/>`_ wrapper script to setup id-mapping from uid of
-the mountpoint to uid/gid of the source directory.
-
-I.e. after ``bindfs-idmap /var/lib/machines/home/src-user ~dst-user/tmp``,
-``~dst-user/tmp`` will be accessible to dst-user as if they were src-user, with
-all operations proxied to src-user's dir.
-
-Anything created under ``~dst-user/tmp`` will have uid/gid of the src dir.
-
-Useful to allow temporary access to some uid's files in a local container to
-user acc in a main namespace.
-
-For long-term access (e.g. for some daemon), there probably are better options
-than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
-
-patch-nspawn-ids
-^^^^^^^^^^^^^^^^
-
-Python3 script to "shift" or "patch" uid/gid values with new container-id
-according to systemd-nspawn schema, i.e. set upper 16-bit to specified
-container-id value and keep lower 16 bits to uid/gid inside the container.
-
-Similar operation to what systemd-nspawn's --private-users-chown option does
-(described in nspawn-patch-uid.c), but standalone, doesn't bother with ACLs or
-checks on filesystem boundaries.
-
-Main purpose is to update uids when migrating systemd-nspawn containers or
-adding paths/filesystems to these without clobbering ownership info there.
-
-Should be safe to use anywhere, as in most non-nspawn cases upper bits of
-uid/gid are always zero, hence any changes can be easily reverted by running
-this tool again with -c0.
-
 primes
-^^^^^^
+''''''
 
 Python3 script to print prime numbers in specified range.
 
@@ -1464,7 +1454,7 @@ and intended to generate primes for non-overlapping "tick % n" workload spacing,
 not any kind of crypto operations.
 
 boot-patcher
-^^^^^^^^^^^^
+''''''''''''
 
 Py3 script to run on early boot, checking specific directory for update-files
 and unpack/run these, recording names to skip applied ones on subsequent boots.
@@ -1561,10 +1551,42 @@ Misc notes:
 
 - Run as ``boot-patcher --print-systemd-unit`` for the only bit of setup it needs.
 
+audit-follow
+''''''''''''
+
+Trivial py3 script to decode audit messages from "journalctl -af" output,
+i.e. stuff like this::
+
+  Jul 24 17:14:01 malediction audit: PROCTITLE
+    proctitle=7368002D630067726570202D652044... (loooong hex-encoded string)
+
+Into this::
+
+  [1327] proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
+
+Filters for audit messages only, strips long audit-id/time prefixes,
+unless -a/--all specified, puts separators between multi-line audit reports,
+relative and/or differential timestamps (-r/--reltime and -d/--difftime opts).
+
+Audit subsystem can be very useful to understand which process modifies some
+path or what's the command-line of /bin/bash being occasionally run without need
+for strace or where it's inapplicable.
+
+Some useful auditctl incantations (cheatsheet)::
+
+  # auditctl -e 1
+  # auditctl -a exit,always -S execve -F path=/bin/bash
+  # auditctl -a exit,always -F auid=1001 -S open -S openat
+  # auditctl -w /some/important/path/ -p rwxa
+  # auditctl -e 0
+  # auditctl -D
+
+auditd + ausearch can be used as an offline/advanced alternative to such script.
 
 
-dev
-~~~
+
+[dev] Dev tools
+~~~~~~~~~~~~~~~
 
 Minor things I tend to use when writing code and stuff.
 
@@ -1769,8 +1791,8 @@ happens.
 
 
 
-backup
-~~~~~~
+[backup] Backup helpers
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Various dedicated backup tools and snippets.
 
@@ -1814,7 +1836,8 @@ or whatever wrapper script doing similar thing, e.g.::
   # setcap cap_dac_override,cap_chown,cap_fowner=ep ~backup/rsync
 
 | ...and add ``-r ~/rsync`` to ssh-r-sync-recv ForceCommand to use that binary.
-Note: rsync with full rw fs access is usually same as "NOPASSWD: ALL" sudo.
+| Note: rsync with full rw fs access is usually same as "NOPASSWD: ALL" sudo.
+|
 
 To use any special rsync options or pre/post-sync actions on the backup-host side
 (such as backup file manifest, backup rotation and free space management,
@@ -1837,14 +1860,14 @@ Passes bunch of common options to use ssh batch mode, disable non-key auth and
 enable keepalive in case of long-running remote commands.
 
 
-desktop
-~~~~~~~
+[desktop] Linux desktop stuff
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Helpers for more interactive (client) machine, DE and apps there.
 
 
-uri_handlers
-^^^^^^^^^^^^
+[desktop/uri_handlers]
+^^^^^^^^^^^^^^^^^^^^^^
 
 Scripts to delegate downloads from firefox to a more sensible download managers.
 
@@ -1854,8 +1877,8 @@ long-dead trackers from there and flatten tracker tiers, for reasons I blogged
 about in some distant past).
 
 
-media
-^^^^^
+[desktop/media]
+^^^^^^^^^^^^^^^
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
 process) various media files and streams.
@@ -2109,8 +2132,8 @@ minute or few, or working around streamlink quirks and fatal errors.
 .. _streamlink: https://github.com/streamlink/streamlink
 
 
-notifications
-^^^^^^^^^^^^^
+[desktop/notifications]
+^^^^^^^^^^^^^^^^^^^^^^^
 
 A bunch of tools to issue various desktop notifications.
 
@@ -2182,8 +2205,8 @@ Somewhat advanced usage example::
 Python-3, needs python-gobject ("gi" module, for notifications), uses inotify
 via ctypes.
 
-mail
-''''
+dovecot-mail
+''''''''''''
 
 Daemon script to monitor dovecot delivery logs (either generic ones, or produced
 via "mail_log" plugin), efficiently find delivered messages by their message-id
@@ -2561,8 +2584,8 @@ caveats as above.
 
 
 
-VM
-~~
+[vm] VM scripts
+~~~~~~~~~~~~~~~
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
 
@@ -2582,8 +2605,8 @@ Cheatsheet for qemu-img commands::
 
 
 
-sysdig
-~~~~~~
+[sysdig]
+~~~~~~~~
 
 Lua `"chisels"`_ for `sysdig tool`_.
 
@@ -2595,8 +2618,8 @@ in real-time for various common tasks.
 
 
 
-aufs
-~~~~
+[aufs]
+~~~~~~
 
 A few tools to work with a layered aufs filesystem on arm boards.
 
@@ -2622,8 +2645,8 @@ Can also just list what's there to be synced with "check" command.
 
 
 
-arch
-~~~~
+[arch] ArchLinux(+ARM)
+~~~~~~~~~~~~~~~~~~~~~~
 
 Tools for automating various Arch Linux tasks.
 
@@ -2722,7 +2745,6 @@ Bash script, requires git and perl (as "git-add--interactive" is a perl script).
 Shorter and simplier than most scripts for same purpose, as git does most of the
 work in this case, less wheels re-invented, less interfaces to learn/remember.
 
-
 tar-strap
 ^^^^^^^^^
 
@@ -2771,10 +2793,12 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 .. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
 
 
-scraps
-~~~~~~
 
-Misc prefabs and *really* ad-hoc scripts.
+[scraps]
+~~~~~~~~
+
+Misc prefabs and *really* ad-hoc scripts,
+mostly stored here as templates to make something out of later.
 
 gnuplot-free
 ^^^^^^^^^^^^
@@ -2889,7 +2913,7 @@ blog post.
 d3-du-disk-space-usage-layout
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-`D3`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
+`d3.js`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
 display directory hierarchy as d3 "partition" layout, with node size
 proportional to directory size from du output.
 
