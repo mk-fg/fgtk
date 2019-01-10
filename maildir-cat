@@ -6,13 +6,17 @@ import os, sys, re, pathlib as pl, collections as cs
 
 
 def _mail_header_decode_part(line):
-	# Doesn't pick up some badly-concatenated stuff
 	header = ''
 	for part, enc in email.header.decode_header(line):
 		if enc:
 			try: part = part.decode(enc, 'replace')
-			except LookupError: part = part.decode('utf-8', 'replace')
-		header += f' {part}'
+			except LookupError: pass
+		if isinstance(part, bytes): part = part.decode('utf-8', 'replace')
+		# RFC2822#2.2.3 whitespace folding auto-adds spaces.
+		# But extra space can also be encoded in base64 or such,
+		#  so this does not preserve exact number of encoded spaces.
+		if not header.endswith(' '): header += ' '
+		header += part.lstrip()
 	return header.strip()
 
 def mail_header_decode(val):
