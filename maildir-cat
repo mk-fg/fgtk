@@ -41,7 +41,7 @@ def _mail_parse(msg):
 	return MailMsg(headers, payload)
 
 def mail_parse(msg):
-	if isinstance(msg, str): msg = email.message_from_string(msg)
+	if isinstance(msg, (bytes, str)): msg = email.message_from_bytes(msg)
 	return _mail_parse(msg)
 
 
@@ -109,7 +109,7 @@ def main(args=None):
 		p_root = p_root_base.expanduser().resolve()
 
 		if p_root.is_file():
-			try: msg = dump_msg(f'{p}: ', p_root.read_text())
+			try: msg = dump_msg(f'{p}: ', p_root.read_bytes())
 			except email.errors.MessageParseError: log_err('Malformed msg file: {p}')
 			continue
 
