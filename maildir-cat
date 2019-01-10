@@ -5,12 +5,21 @@ import mailbox, email, email.header, email.charset, email.errors
 import os, sys, re, pathlib as pl, collections as cs
 
 
+def bytes_decode(b, enc, errors='strict'):
+	try: return b.decode(enc, errors)
+	except LookupError as err:
+		# Try to handle cp-850, unknown-8bit and such
+		if enc == 'unknown-8bit': enc_sub = 'utf-8'
+		else: enc_sub = enc.replace('-', '')
+		if enc_sub == enc: raise
+		try: return b.decode(enc_sub, errors)
+		except LookupError:
+			raise LookupError(enc, enc_sub) from None
+
 def _mail_header_decode_part(line):
 	header = ''
 	for part, enc in email.header.decode_header(line):
-		if enc:
-			try: part = part.decode(enc, 'replace')
-			except LookupError: pass
+		if enc: part = bytes_decode(part, enc, 'replace')
 		if isinstance(part, bytes): part = part.decode('utf-8', 'replace')
 		# RFC2822#2.2.3 whitespace folding auto-adds spaces.
 		# But extra space can also be encoded in base64 or such,
@@ -41,7 +50,7 @@ def _mail_parse(msg):
 	if not headers.get('content-type'): headers['content-type'] = [msg.get_content_type()]
 	if headers.get_core('content-disposition') == 'attachment': payload = '<attachment scrubbed>'
 	elif isinstance(payload, bytes):
-		payload = payload.decode(msg.get_content_charset() or 'utf-8', 'replace')
+		payload = bytes_decode(payload, msg.get_content_charset() or 'utf-8', 'replace')
 	return MailMsg(headers, payload)
 
 def mail_parse(msg):
