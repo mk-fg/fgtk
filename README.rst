@@ -1596,6 +1596,23 @@ and an easy converter tool as well.
 Controls are: cursor keys, home/end, backspace, insert (insert/replace mode),
 0/1 + digits + a-f, q to quit.
 
+maildir-cat
+'''''''''''
+
+Python3 script to iterate over all messages in all folders of a maildir and
+print (decoded) headers and plain + html body of each (decoded) message, with
+every line prefixed by its filename.
+
+Intended use is to produce a text dump of a maildir for searching or processing
+it via any simple tools like grep or awk.
+
+So using e.g. ``maildir-cat | grep 'important-word'`` will produce same output
+as ``grep -r 'important-word' email-texts/`` would if emails+headers were dumped
+as simple text files there.
+
+| Can also be pointed to maildir subdirs (same thing) or individual files.
+| Uses python stdlib email.* modules for all processing.
+
 
 
 [dev] Dev tools
