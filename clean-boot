@@ -30,7 +30,7 @@ def main(args=None):
 	parser.add_argument('-c', '--keep-configs', action='store_true',
 		help='Keep config-* files, removing only vmlinuz-* and System.map-*.')
 
-	parser.add_argument('-r', '--force-remove-count', metavar='count',
+	parser.add_argument('-r', '--force-remove-count', metavar='count', default=0,
 		help='Number of least relevant versions to explicitly remove.'
 			' Regardless of this option, --keep-min count is preserved.'
 			' "inf" value can be used to remove all but --keep-min count.')
@@ -122,7 +122,7 @@ def main(args=None):
 	if rm_count == 'inf': rm_count = 2**64
 	else:
 		try: rm_count = int(rm_count)
-		except ValueError: parser.error('Invalid integer value: {}'.format(rm_count))
+		except: parser.error('Invalid integer value: {}'.format(rm_count))
 
 	rmq_set = set() # check to make sure these don't get repeated anywhere
 	if rmq_kept:
@@ -136,7 +136,7 @@ def main(args=None):
 	df, rmq_len_start = free(), len(rmq)
 	for v, files in rmq.items():
 		df = free()
-		if rm_count is not None and rm_count > 0: rm_count -= 1
+		if rm_count > 0: rm_count -= 1 # avoids df check
 		elif df >= opts.free_space_min: break
 		log.debug('Removing files for version (df: %.1f%%): %s', df, format_v(v))
 		for p in files:
