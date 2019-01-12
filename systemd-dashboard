@@ -249,6 +249,9 @@ def main(args=None):
 	for unit, s in sorted(state.items()):
 		if re.search(r'\.(device|slice|scope)$', unit): continue
 
+		# Raw dm-* numbers change, so no point tracking these
+		if re.search(r'(/|^)dev-dm-\d+\.swap$', unit): continue
+
 		# Skip any known auto-started/stopped and transient units
 		# Does not skip: Unit=X from timers/sockets
 		# WARNING: be sure to add all props used there to filter_prop_keys above!
