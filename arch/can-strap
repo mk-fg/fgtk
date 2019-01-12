@@ -40,15 +40,16 @@ cd /var/lib/machines
 mkdir -p "$can"
 pacstrap "$@" -c -C "$pacman_conf" -d "$can" "${can_sets[@]}"
 
-cp -a /etc/localtime "$can"/etc/
-
-for conf in /etc/{profile,locale.gen,locale.conf,screenrc,nanorc,gitconfig,pacman.d/mirrorlist}
+for conf in \
+	/etc/{localtime,profile,locale.gen,locale.conf} \
+	/etc/{screenrc,nanorc,gitconfig,pacman.d/mirrorlist}
 do [[ ! -e "$conf" ]] || rsync -aL "$conf" "$can$conf"
 done
 
 chsh_cmd=true
 [[ "${SHELL##*/}" != zsh || ! -e "$can"/etc/zsh/ ]] || {
 	cp /etc/zsh/* "$can"/etc/zsh/
+	[[ ! -e /root/.zshrc ]] || cp /root/.zshrc "$can"/root/
 	chsh_cmd="chsh -s $SHELL"
 }
 
