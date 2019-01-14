@@ -1596,6 +1596,10 @@ and an easy converter tool as well.
 Controls are: cursor keys, home/end, backspace, insert (insert/replace mode),
 0/1 + digits + a-f, q to quit.
 
+There's a picture of it `on the blog page here`_.
+
+.. _on the blog page here: http://blog.fraggod.net/2019/01/10/tui-console-dechexbinary-converter-tool.html
+
 maildir-cat
 '''''''''''
 
@@ -2287,8 +2291,8 @@ will be displayed in a semi-transparent box instead.
 Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 
 
-others
-^^^^^^
+[desktop] others
+^^^^^^^^^^^^^^^^
 
 pick_tracks
 '''''''''''
