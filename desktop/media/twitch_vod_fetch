@@ -647,7 +647,7 @@ class TVF:
 						sc = heapq.heappop(seq_heap)
 						seq_chunks.append(sc.path)
 						file_dst_seq = sc.seq
-					if len(seq_chunks) >= self.conf.file_append_batch:
+					if chunks.finished or len(seq_chunks) >= self.conf.file_append_batch:
 						for p in seq_chunks:
 							with p.open('rb') as chunk: shutil.copyfileobj(chunk, file_dst)
 							file_dst_pos = file_dst.tell()
