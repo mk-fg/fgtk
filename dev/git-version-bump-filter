@@ -1,4 +1,11 @@
 #!/bin/bash
 set -e -o pipefail
+
+[[ -n "$1" ]] || {
+	files=( $(awk '$2=="filter=version-bump" {sub(/^\//,"",$1); print $1}' .gitattributes) )
+	[[ "${#files[@]}" -eq 0 ]] || touch "${files[@]}" && git checkout "${files[@]}"
+	exit 0
+}
+
 v=$(git log --pretty=format:x -- "$1" | wc -l)
 exec sed '/# git-version: py-tuple-2$/s/\(.* *= *[0-9]\+, *\)[0-9]\+/\1'"$v"'/'

@@ -1852,6 +1852,10 @@ Beauty of this approach is that local file(s) remain unchanged unless checked
 back out from the repo, not triggering any kind of concurrent modification
 alerts from editors, and doesn't make commit process any more complicated either.
 
+And if version bump in the working copy is needed, git-version-bump-filter can
+be run there without any arguments to run "touch && git checkout" on all files
+tagged with filter=version-bump (careful - will discard any new changes in these).
+
 Runs a single git-log and sed command under the hood, nothing fancy.
 
 
