@@ -1,0 +1,4 @@
+#!/bin/bash
+set -e -o pipefail
+v=$(git log --pretty=format:x -- "$1" | wc -l)
+exec sed '/# git-version: py-tuple-2$/s/\(.* *= *[0-9]\+, *\)[0-9]\+/\1'"$v"'/'
