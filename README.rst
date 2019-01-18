@@ -1840,13 +1840,21 @@ And then applied to specific files via repo .gitattributes like this::
 
 (can be safely applied to files without versions in them as well)
 
-Currently simply bumps last number in lines that contain
-``# git-version: py-tuple-2``, e.g.::
+It bumps last number in lines that contain comment-tags
+that look like ``# git-version: py-tuple``::
 
-  version = 1, 0 # git-version: py-tuple-2
+  version = 1, 0 # git-version: py-tuple
 
-Will be replaced by something like "1, 23" in the repo, with last number being
-number counting changes to that specific file.
+Version before which will be auto-replaced by something like "1, 23" in the
+repo, with last number being number counting changes to that specific file.
+
+Can run "git diff" right after adding that comment to see how line will look in
+the repo after content filtering was applied, i.e. whether/how it works.
+
+Available replacement types, with examples where 0 will be auto-replaced:
+
+- ``some_version = 2, 3, 0 # git-version: py-tuple``
+- ``self.server_ver = '5.6.0' # git-version: py-str``
 
 Beauty of this approach is that local file(s) remain unchanged unless checked
 back out from the repo, not triggering any kind of concurrent modification
