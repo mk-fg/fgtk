@@ -1827,14 +1827,14 @@ git-version-bump-filter
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 Very simple script to bump version numbers for file(s) in a git repo before
-commit, implemented as a git content filter and gitattributes.
+commit, implemented via git content filters and gitattributes(5).
 
 Should be defined in .git/config of the repo::
 
   [filter "version-bump"]
     clean = git-version-bump-filter %f
 
-And then applied to specific files like this::
+And then applied to specific files via repo .gitattributes like this::
 
   /app.py filter=version-bump
 
@@ -1846,15 +1846,15 @@ Currently simply bumps last number in lines that contain
   version = 1, 0 # git-version: py-tuple-2
 
 Will be replaced by something like "1, 23" in the repo, with last number being
-number counting number of changes to that specific file.
+number counting changes to that specific file.
 
 Beauty of this approach is that local file(s) remain unchanged unless checked
 back out from the repo, not triggering any kind of concurrent modification
 alerts from editors, and doesn't make commit process any more complicated either.
 
-And if version bump in the working copy is needed, git-version-bump-filter can
-be run there without any arguments to run "touch && git checkout" on all files
-tagged with filter=version-bump (careful - will discard any new changes in these).
+Can be run without arguments in a git repo to checkout all content-filtered
+files back out, making sure that they have no uncommitted changes first (to
+avoid loosing these).
 
 Runs a single git-log and sed command under the hood, nothing fancy.
 

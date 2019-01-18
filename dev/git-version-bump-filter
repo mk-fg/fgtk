@@ -3,7 +3,13 @@ set -e -o pipefail
 
 [[ -n "$1" ]] || {
 	files=( $(awk '$2=="filter=version-bump" {sub(/^\//,"",$1); print $1}' .gitattributes) )
-	[[ "${#files[@]}" -eq 0 ]] || touch "${files[@]}" && git checkout "${files[@]}"
+	[[ "${#files[@]}" -eq 0 ]] || {
+		git diff -U0 HEAD -- "${files[@]}" |
+				awk '/^@@/ {p=1; next} p&&/^[-+]/ {print; next} p {p=0}' |
+				grep -vq -e '# git-version: [^ ]\+' \
+			&& { echo "ERROR: uncomitted changes detected, aborting revert/bump"; exit 1; } ||:
+		touch "${files[@]}" && git checkout "${files[@]}"
+	}
 	exit 0
 }
 
