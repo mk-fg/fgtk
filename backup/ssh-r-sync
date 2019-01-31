@@ -283,6 +283,9 @@ def main(args=None):
 		help='Instruct receiver rsync-pull to use -x/--one-file-system option.')
 	group.add_argument('-X', '--fake-super', action='store_true',
 		help='Instruct receiver rsync-pull to use --fake-super option.')
+	group.add_argument('-t', '--handshake-timeout',
+		type=float, metavar='seconds', default=conf.hs_timeout,
+		help='Timeout waiting for handshake responses from remote side (default: %(default)ss).')
 
 	group = parser.add_argument_group('SSH options')
 	group.add_argument('-p', '--port', metavar='port',
@@ -312,6 +315,8 @@ def main(args=None):
 			print(f'ERROR: {err}', file=sys.stderr)
 		else: sys.__excepthook__(err_t, err, err_tb)
 	sys.excepthook = print_error_msg_only
+
+	if opts.handshake_timeout: conf.hs_timeout = opts.handshake_timeout
 
 	for sig in 'int hup term'.upper().split():
 		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(1))
