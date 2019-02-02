@@ -18,7 +18,8 @@ class TVFConfig:
 	aria2c_opts = None # overrides opts in aria2_conf_func
 	ytdl_opts = None
 	ytdl_output_format = None
-	aiohttp_opts = dict(read_timeout=30, conn_timeout=60)
+	aiohttp_opts = dict(
+		timeout=aiohttp.ClientTimeout(connect=60, sock_read=30) )
 
 	verbose = False
 	use_temp_dirs = True
