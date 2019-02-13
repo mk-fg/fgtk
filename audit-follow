@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import os, sys, subprocess, signal, json, re, time
-import binascii, struct, socket
+import binascii, struct, socket, atexit
 
 
 def print_audit_props(m):
@@ -39,8 +39,15 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Follow and decode audit msgs from journalctl output.')
+	parser.add_argument('-o', '--journalctl-opts',
+		action='append', metavar='opts',
+		help='Additional options/arguments to pass to journalctl.'
+			' Will be split on spaces, unless option is used multiple times.'
+			' Example: -o="--since=-1h SYSLOG_IDENTIFIER=audit"')
 	parser.add_argument('-a', '--all', action='store_true',
 		help='Do not strip prefixes and misc noise from audit msgs.')
+	parser.add_argument('-F', '--grep-str', metavar='string',
+		help='Print only events that contain exact substring that is provided.')
 	parser.add_argument('-s', '--sep', metavar='char ["x" count]',
 		help='Separator char and optional'
 				' count of these to use between multi-line audit msgs.'
@@ -57,10 +64,16 @@ def main(args=None):
 			' Longer ones will be split. Default: %(default)s')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+	journalctl_opts = opts.journalctl_opts or list()
+	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
+
 	sys.stdout = open(sys.stdout.fileno(), 'w', 1)
 	signal.signal(signal.SIGINT, signal.SIG_DFL)
 	if not opts.stdin:
-		proc = subprocess.Popen(['journalctl', '-af', '-o', 'json'], stdout=subprocess.PIPE)
+		proc = subprocess.Popen(
+			['journalctl', '-af', '-o', 'json'] + journalctl_opts,
+			stdout=subprocess.PIPE )
+		atexit.register(proc.terminate)
 		stream = proc.stdout
 	else: stream = sys.stdin
 
@@ -71,13 +84,17 @@ def main(args=None):
 	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
 
+	msg_buff_use = False
+	if opts.grep_str: msg_buff_use = True
+
 	line_proc = op.itemgetter(
 		'__MONOTONIC_TIMESTAMP',
 		'SYSLOG_FACILITY', 'SYSLOG_IDENTIFIER', 'MESSAGE' )
-
+	msg_buff = list()
 	ts0 = ts_prev = audit_id_prev = None
+
 	for line in stream:
-		if isinstance(line, bytes): line = line.decode()
+		if isinstance(line, bytes): line = line.decode(errors='replace')
 		line = json.loads(line)
 		ts, log_fac, log_id, msg = line_proc(line)
 		ts = int(ts) / 1000
@@ -104,7 +121,13 @@ def main(args=None):
 		if msg: msg_list.extend(msg.split())
 
 		if sep and audit_id != audit_id_prev:
-			if audit_id_prev: print(sep)
+			if msg_buff:
+				msg_buff_str = '\n'.join(msg_buff)
+				if opts.grep_str:
+					if opts.grep_str not in msg_buff_str: msg_buff_str = ''
+				if msg_buff_str: print(msg_buff_str)
+				msg_buff.clear()
+			if audit_id_prev and (not msg_buff_use or msg_buff_str): print(sep)
 			audit_id_prev = audit_id
 
 		prefix = ''
@@ -112,7 +135,7 @@ def main(args=None):
 		if opts.difftime: prefix = '[{:>9.3f}] '.format(ts - ts0)
 
 		if len(msg_list) <= 2:
-			print(prefix + ' '.join(msg_list))
+			msg_buff.append(prefix + ' '.join(msg_list))
 			continue
 		while msg_list:
 			msg = msg_list[0]
@@ -120,9 +143,13 @@ def main(args=None):
 				if len(msg) + len(part) < opts.line_len:
 					msg += ' ' + part
 				else:
-					print(prefix + msg)
+					msg_buff.append(prefix + msg)
 					prefix, msg_list = ' '*4, msg_list[n:]
 					break
 			else: break
+
+		if not msg_buff_use:
+			for line in msg_buff: print(line)
+			msg_buff.clear()
 
 if __name__ == '__main__': sys.exit(main())

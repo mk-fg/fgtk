@@ -1554,34 +1554,44 @@ Misc notes:
 audit-follow
 ''''''''''''
 
-Trivial py3 script to decode audit messages from "journalctl -af" output,
+Simple py3 script to decode audit messages from "journalctl -af -o json" output,
 i.e. stuff like this::
 
   Jul 24 17:14:01 malediction audit: PROCTITLE
     proctitle=7368002D630067726570202D652044... (loooong hex-encoded string)
+  Jul 24 17:14:01 malediction audit: SOCKADDR saddr=020000517F0000010000000000000000
 
 Into this::
 
-  [1327] proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
+  PROCTITLE proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
+  SOCKADDR saddr=127.0.0.1:81
 
 Filters for audit messages only, strips long audit-id/time prefixes,
 unless -a/--all specified, puts separators between multi-line audit reports,
 relative and/or differential timestamps (-r/--reltime and -d/--difftime opts).
 
 Audit subsystem can be very useful to understand which process modifies some
-path or what's the command-line of /bin/bash being occasionally run without need
-for strace or where it's inapplicable.
+path, what's the command-line of some /bin/bash being run from somewhere
+occasionally, or what process/command-line connects to some specific IP and what
+scripts it opens beforehand - all without need for gdb/strace, or where they're
+inapplicable.
 
-Some useful auditctl incantations (cheatsheet)::
+Some useful incantations (cheatsheet)::
 
   # auditctl -e 1
   # auditctl -a exit,always -S execve -F path=/bin/bash
   # auditctl -a exit,always -F auid=1001 -S open -S openat
   # auditctl -w /some/important/path/ -p rwxa
+  # auditctl -a exit,always -F arch=b64 -S connect
+
+  # audit-follow -ro='--since=-30min SYSLOG_IDENTIFIER=audit' |
+    grep --line-buffered -B1000 -F some-interesting-stuff | tee -a audit.log
+
   # auditctl -e 0
   # auditctl -D
 
-auditd + ausearch can be used as an offline/advanced alternative to such script.
+| auditd + ausearch can be used as an offline/advanced alternative to such script.
+| More powerful options for such task on linux can be sysdig and various BPF tools.
 
 tui-binary-conv
 '''''''''''''''
