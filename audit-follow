@@ -1,6 +1,39 @@
 #!/usr/bin/env python3
 
-import os, sys, subprocess, signal, json, re, binascii, time
+import itertools as it, operator as op, functools as ft
+import os, sys, subprocess, signal, json, re, time
+import binascii, struct, socket
+
+
+def print_audit_props(m):
+	aid = m.get('_AUDIT_ID')
+	if not aid:
+		print(
+			'No audit props for msg (mono-ts:',
+			m['__MONOTONIC_TIMESTAMP'], ')' )
+		return
+	print('Audit props for', aid)
+	for k, v in m.items():
+		k = k.lower()
+		if not k.startswith('_audit_'): continue
+		k = k[7:]
+		print(' ', k, v)
+
+def decode_hex_kv(kv):
+	k, v = kv.split('=', 1)
+	if k == 'saddr':
+		if len(v) >= 16 and v.startswith('0200'):
+			port, ipaddr = struct.unpack('>HL', binascii.a2b_hex(v[4:16]))
+			ip_addr = socket.inet_ntoa(struct.pack('>L', ipaddr))
+			v = '{}:{}'.format(ip_addr, str(port))
+	else:
+		try: v = binascii.a2b_hex(v)
+		except ValueError: pass
+		else:
+			try: v = repr(v.decode().replace('\0', ' '))
+			except UnicodeDecodeError: v = '[{}]'.format(repr(v).lstrip('b'))
+	return k, v
+
 
 def main(args=None):
 	import argparse
@@ -8,60 +41,88 @@ def main(args=None):
 		description='Follow and decode audit msgs from journalctl output.')
 	parser.add_argument('-a', '--all', action='store_true',
 		help='Do not strip prefixes and misc noise from audit msgs.')
-	parser.add_argument('-s', '--sep',
-		nargs='?', const='', metavar='char ["x" count]',
+	parser.add_argument('-s', '--sep', metavar='char ["x" count]',
 		help='Separator char and optional'
 				' count of these to use between multi-line audit msgs.'
 			' Default: -s=-x80, empty or no arg can be used for empty line.')
 	parser.add_argument('-r', '--reltime', action='store_true',
-		help='Print relative monotonic timestamp before every line since app start.')
+		help='Print relative monotonic timestamp before every line.')
 	parser.add_argument('-d', '--difftime', action='store_true',
 		help='Print timestamp since last logged event on each line.')
+	parser.add_argument('-i', '--stdin', action='store_true',
+		help='Read JSON lines from stdin instead of running "journalctl -af -o json".')
+	parser.add_argument('-l', '--line-len',
+		type=int, metavar='n', default=95,
+		help='Max length of individual lines in the output.'
+			' Longer ones will be split. Default: %(default)s')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	sys.stdout = open(sys.stdout.fileno(), 'w', 1)
 	signal.signal(signal.SIGINT, signal.SIG_DFL)
-	proc = subprocess.Popen(['journalctl', '-af', '-o', 'json'], stdout=subprocess.PIPE)
+	if not opts.stdin:
+		proc = subprocess.Popen(['journalctl', '-af', '-o', 'json'], stdout=subprocess.PIPE)
+		stream = proc.stdout
+	else: stream = sys.stdin
 
-	def decode_hex_sub(m):
-		k, v = m.group(0).split('=', 1)
-		try: v = binascii.a2b_hex(v)
-		except ValueError: pass
-		else:
-			try: v = repr(v.decode().replace('\0', ' '))
-			except UnicodeDecodeError: v = '[{}]'.format(repr(v).lstrip('b'))
-		return f'{k}={v}'
-
-	ts0 = None
-	if opts.reltime: ts0 = time.monotonic()
-	ts_prev = ts_diff = ts0 if opts.difftime else None
-
-	sep_c, sep = 80, '-' if opts.sep is None else opts.sep.strip()
+	sep = '-' if opts.sep is None else opts.sep.strip()
 	if len(sep) > 1:
 		sep, sep_c = sep.split('x', 1)
 		sep, sep_c = sep.strip(), int(sep_c)
+	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
 
-	audit_id_prev = None
-	for line in proc.stdout:
-		line = json.loads(line)
-		if not ( line['SYSLOG_FACILITY'] == '0'
-			and line['SYSLOG_IDENTIFIER'] == 'kernel'
-			and line['MESSAGE'].startswith('audit:') ): continue
-		line = re.sub( r'[\w\d]+=[A-F0-9]{8}[A-F0-9]+',
-			decode_hex_sub, line['MESSAGE'].strip() )
+	line_proc = op.itemgetter(
+		'__MONOTONIC_TIMESTAMP',
+		'SYSLOG_FACILITY', 'SYSLOG_IDENTIFIER', 'MESSAGE' )
 
-		ts, audit_id = time.monotonic(), re.search(r'audit\([\d.]+:(\d+)\)', line)
-		if audit_id: audit_id = int(audit_id.group(1))
+	ts0 = ts_prev = audit_id_prev = None
+	for line in stream:
+		if isinstance(line, bytes): line = line.decode()
+		line = json.loads(line)
+		ts, log_fac, log_id, msg = line_proc(line)
+		ts = int(ts) / 1000
+		if ts0 is None: ts0 = ts_prev = ts
+
+		if log_fac=='0' and log_id=='kernel' and msg.startswith('audit:'):
+			audit_id = re.search(r'audit\([\d.]+:(\d+)\)', msg)
+			if audit_id: audit_id = int(audit_id.group(1))
+		elif log_fac=='4' and log_id=='audit' and '_AUDIT_ID' in line:
+			audit_id = line['_AUDIT_ID']
+		else: continue
+
+		if not opts.all:
+			msg = re.sub(r'^(?:audit: )?type=(\d+) audit\(.*\):\s+', '[\g<1>] ', msg)
+
+		msg_list = list()
+		for m in re.finditer(
+				r'[\w\d]+=[A-F0-9]{8}[A-F0-9]+', msg.strip() ):
+			a, b = m.span()
+			k, v = decode_hex_kv(m.group())
+			msg_list.extend(msg[:a].split())
+			msg_list.append('{}={}'.format(k, v))
+			msg = msg[b:]
+		if msg: msg_list.extend(msg.split())
+
 		if sep and audit_id != audit_id_prev:
 			if audit_id_prev: print(sep)
 			audit_id_prev = audit_id
-			if ts_prev: ts_diff, ts_prev = ts - ts_prev, ts
-		if not opts.all:
-			line = re.sub(r'^audit: type=(\d+) audit\(.*\):\s+', '[\g<1>] ', line)
-		if ts0: line = '{:>8.2f} {}'.format(time.monotonic() - ts0, line)
-		if ts_prev: line = '{:>6.2f} {}'.format(ts_diff, line)
 
-		print(line)
+		prefix = ''
+		if opts.reltime: ts_prev, prefix = ts, '[{:>7.3f}] '.format(ts - ts_prev)
+		if opts.difftime: prefix = '[{:>9.3f}] '.format(ts - ts0)
+
+		if len(msg_list) <= 2:
+			print(prefix + ' '.join(msg_list))
+			continue
+		while msg_list:
+			msg = msg_list[0]
+			for n, part in enumerate(msg_list[1:], 1):
+				if len(msg) + len(part) < opts.line_len:
+					msg += ' ' + part
+				else:
+					print(prefix + msg)
+					prefix, msg_list = ' '*4, msg_list[n:]
+					break
+			else: break
 
 if __name__ == '__main__': sys.exit(main())
