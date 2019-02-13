@@ -5,19 +5,23 @@ import os, sys, subprocess, signal, json, re, time
 import binascii, struct, socket, atexit
 
 
+def print_sig(*args, **kws):
+	try: print(*args, **kws)
+	except OSError: os.kill(os.getpid(), signal.SIGINT)
+
 def print_audit_props(m):
 	aid = m.get('_AUDIT_ID')
 	if not aid:
-		print(
+		print_sig(
 			'No audit props for msg (mono-ts:',
 			m['__MONOTONIC_TIMESTAMP'], ')' )
 		return
-	print('Audit props for', aid)
+	print_sig('Audit props for', aid)
 	for k, v in m.items():
 		k = k.lower()
 		if not k.startswith('_audit_'): continue
 		k = k[7:]
-		print(' ', k, v)
+		print_sig(' ', k, v)
 
 def decode_hex_kv(kv):
 	k, v = kv.split('=', 1)
@@ -125,9 +129,9 @@ def main(args=None):
 				msg_buff_str = '\n'.join(msg_buff)
 				if opts.grep_str:
 					if opts.grep_str not in msg_buff_str: msg_buff_str = ''
-				if msg_buff_str: print(msg_buff_str)
+				if msg_buff_str: print_sig(msg_buff_str)
 				msg_buff.clear()
-			if audit_id_prev and (not msg_buff_use or msg_buff_str): print(sep)
+			if audit_id_prev and (not msg_buff_use or msg_buff_str): print_sig(sep)
 			audit_id_prev = audit_id
 
 		prefix = ''
@@ -149,7 +153,7 @@ def main(args=None):
 			else: break
 
 		if not msg_buff_use:
-			for line in msg_buff: print(line)
+			for line in msg_buff: print_sig(line)
 			msg_buff.clear()
 
 if __name__ == '__main__': sys.exit(main())
