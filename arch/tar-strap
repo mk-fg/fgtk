@@ -17,35 +17,33 @@ export LC_ALL=C
 
 url=$1 p=${2:-arch-root}
 
-[[ -e "$p" ]] || {
-	[[ -f "$url" ]] && url=$(readlink -f "$url")
+[[ -f "$url" ]] && url=$(readlink -f "$url")
 
-	mkdir -m0700 "$p"
-	pushd "$p" >/dev/null
+[[ -e "$p" ]] || mkdir -m0700 "$p"
+pushd "$p" >/dev/null
 
-	if [[ -f "$url" ]]
-	then
-		ln -s "$url".sig src.tar.xx.sig
-		ln -s "$url" src.tar.xx
-	else
-		echo $url
-		curl "$url".sig >src.tar.xx.sig
-		curl "$url" >src.tar.xx
-	fi
+if [[ -f "$url" ]]
+then
+	ln -s "$url".sig src.tar.xx.sig
+	ln -s "$url" src.tar.xx
+else
+	echo $url
+	curl "$url".sig >src.tar.xx.sig
+	curl "$url" >src.tar.xx
+fi
 
-	pacman-key -v src.tar.xx.sig
+pacman-key -v src.tar.xx.sig
 
-	rm -f src.tar.xx.sig
-	bsdtar -xf src.tar.xx
-	rm -f src.tar.xx
+rm -f src.tar.xx.sig
+bsdtar -xf src.tar.xx
+rm -f src.tar.xx
 
-	mv root.*/* .
-	rmdir root.*
+mv root.*/* .
+rmdir root.*
 
-	cp -aL /etc/{locale.gen,localtime,hostname,resolv.conf} etc/
-	cp -aL /etc/pacman.d/{mirrorlist,gnupg} etc/pacman.d/
+cp -aL /etc/{locale.gen,localtime,hostname,resolv.conf} etc/
+cp -aL /etc/pacman.d/{mirrorlist,gnupg} etc/pacman.d/
 
-	popd >/dev/null
-}
+popd >/dev/null
 
 exec arch-chroot "$p" /bin/bash
