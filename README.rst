@@ -723,7 +723,7 @@ permutation that openssh (or something else) may decide to throw at you.
 ssh-keyparse
 ''''''''''''
 
-Tool to extract raw private key string from ed25519 ssh keys.
+Python3 script to extract raw private key string from ed25519 ssh keys.
 
 Main purpose is easy backup of ssh private keys and derivation of new secrets
 from these for other purposes.
@@ -781,9 +781,9 @@ There's also an option (--pbkdf2) to run the thing through PBKDF2 (tunable via
 
   % ssh-keyparse test-key --raw >test-key.bin
 
-With encoding like --base32 (`Douglas Crockford's human-oriented Base32`_, last
-lowercase letter there is a checksum), it's easy to even read the thing over
-voice-comm link, if necessary.
+With encoding like --base32 (`Douglas Crockford's human-oriented Base32`_,
+last digit/lowercase-letter there is a checksum), it's easy to even read the
+thing over some voice channel, if necessary.
 
 .. _Douglas Crockford's human-oriented Base32: http://www.crockford.com/wrmg/base32.html
 
