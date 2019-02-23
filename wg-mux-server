@@ -6,7 +6,6 @@ import inspect, pathlib as pl, subprocess as sp
 
 
 class WGMuxConfig:
-	auth_secret = 'set this via cli option!'
 	mux_attempts = 4
 	mux_port = 8739
 	mux_timeout = 5.0
@@ -197,11 +196,11 @@ def main(args=None, conf=None):
 			' Can also be specified in the "bind" argument, which overrides this option.')
 
 	group = parser.add_argument_group('Auth/ident options')
-	group.add_argument('-s', '--auth-secret',
-		default=conf.auth_secret, metavar='string',
+	group.add_argument('-s', '--auth-secret', metavar='string',
 		help='Any string to use as symmetric secret'
 				' to authenticate both sides on --mux-port (default: %(default)s).'
-			' Must be same for both mux-client and server scripts talking to each other.')
+			' Must be same for both mux-client and server scripts talking to each other.'
+			' Will be read from stdin, if not specified.')
 	group.add_argument('-i', '--ident-db',
 		default=conf.ident_db_path, metavar='path',
 		help='Path to db to store all the seen clients to, for persistent port allocation.'
@@ -244,6 +243,11 @@ def main(args=None, conf=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+
+	if not opts.auth_secret:
+		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
+		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
+		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
 
 	wg_cmd = opts.wg_cmd.split()
 	wg_net = ipaddress.ip_network(opts.wg_net)

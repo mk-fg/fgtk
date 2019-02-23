@@ -860,7 +860,7 @@ Client identity, wg port, public key and tunnel IPs are sent in the clear with
 relatively weak authentication (hmac of -s/--auth-secret string), but wg server
 is also authenticated by pre-shared public key (and --wg-psk, if specified).
 
-Such setup is roughly equivalent to a weak-password-protected public network.
+Such setup is roughly equivalent to a password-protected public network.
 
 Runs "wg set" commands to update configuration, which need privileges, but can
 be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root in the rest of
