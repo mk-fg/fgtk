@@ -685,8 +685,8 @@ Useless without systemd and requires systemd python3 module, plus fping tool if
 
 
 
-ssh-related
-^^^^^^^^^^^
+SSH and WireGuard related
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 See also "backup" subsection.
 
@@ -841,9 +841,23 @@ Tunnel server also stores allocated ports in a db file, so that each client gets
 more-or-less persistent listening port.
 
 Each client negotiates port before exec'ing "ssh -R" command, identifying itself
-via --ident-* string (derived from /etc/machine-id by default), and both
+via --ident-\* string (derived from /etc/machine-id by default), and both
 client/server need to use same -s/--auth-secret to create/validate MACs in each
 packet.
+
+wg-mux-\*
+'''''''''
+
+Same thing as ssh-reverse-mux-\* scripts above, but for negotiating WireGuard
+tunnels, with persistent host tunnel IPs tracked via --ident-\* strings with
+simple auth via MACs on UDP packets derived from symmetric -s/--auth-secret.
+
+Host identity, wg port, public keys and tunnel IPs are authenticated,
+but are sent in the clear otherwise.
+
+Runs "wg set" commands to update configuration, which need privileges, but can
+be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root in the rest of
+the script.
 
 ssh-tunnels-cleanup
 '''''''''''''''''''

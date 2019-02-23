@@ -134,7 +134,7 @@ def main(args=None):
 	group.add_argument('-s', '--ssh', action='store_true',
 		help='Exec "ssh -p<port> <user@host>" after successful tcp connection instead of exit.'
 			' Default user is "root", if not specified in the "host" argument.')
-	group.add_argument('-o', '--ssh-opts', action='append',
+	group.add_argument('-o', '--ssh-opts', action='append', metavar='opts',
 		help='Extra options for ssh command, if -s/--ssh flag is used.'
 			' Will be split on spaces, unless option is used multiple times.'
 			' If has no spaces and does not start with a dash, single dash is prepended,'
