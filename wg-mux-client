@@ -6,6 +6,7 @@ import pathlib as pl, subprocess as sp
 
 
 class WGMuxConfig:
+	auth_salt = b'wg-mux-1'
 	mux_attempts = 6
 	mux_port = 8739
 	mux_timeout = 10.0
@@ -86,11 +87,10 @@ def retries_within_timeout( tries, timeout,
 		else: a = m
 
 
-def derive_wg_key(path, ident, ident_auth, rounds):
+def derive_wg_key(path, ident, auth_secret, person, rounds):
 	ident_key = hashlib.blake2b(
-		to_bytes(ident), key=to_bytes(ident_auth) ).digest()
+		to_bytes(ident), key=auth_secret, person=person ).digest()
 	if not path.exists():
-		raise ValueError
 		sp.run(
 			['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', f'wg-mux.{ident}', '-f', str(path)],
 			check=True, stdin=sp.DEVNULL )
@@ -200,20 +200,20 @@ class MuxClientProtocol:
 
 class AuthError(Exception): pass
 
-def build_req(secret, ident, wg_key_pk):
+def build_req(auth_secret, ident, wg_key_pk):
 	ident_buff, pk_buff = to_bytes(ident), b64_decode(wg_key_pk)
 	salt, payload = os.urandom(16), bin_pack('>Bzz', len(ident_buff), ident_buff, pk_buff)
-	mac = hashlib.blake2b(payload, key=to_bytes(secret), salt=salt).digest()
+	mac = hashlib.blake2b(payload, key=auth_secret, salt=salt).digest()
 	return payload + salt + mac
 
-def parse_res(secret, ident, res):
+def parse_res(auth_secret, ident, res):
 	if not res: return
 	try:
-		fmt = 'BBHB{}s{}s'.format(res[0], {4: 4, 6: 16}[res[1]])
+		fmt = '>BBHB{}s{}s'.format(res[0], {4: 4, 6: 16}[res[1]])
 		( ident_len, ip_len, wg_port, wg_mask, ident_buff,
 			wg_addr, salt, mac ) = struct.unpack(fmt + '16s64s', res)
 		mac_chk = hashlib.blake2b(
-			res[:struct.calcsize(fmt)], key=to_bytes(secret), salt=salt ).digest()
+			res[:struct.calcsize(fmt)], key=auth_secret, salt=salt ).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except (KeyError, struct.error, AuthError) as err:
 		log.debug('Failed to parse/auth response value: {}', err)
@@ -224,9 +224,9 @@ def parse_res(secret, ident, res):
 
 
 async def mux_negotiate(
-		loop, secret, ident, wg_key_pk,
+		loop, auth_secret, ident, wg_key_pk,
 		sock_af, sock_p, host, port, delays ):
-	req = build_req(secret, ident, wg_key_pk)
+	req = build_req(auth_secret, ident, wg_key_pk)
 	transport = proto = None
 	try:
 		for delay in delays + [2**30]:
@@ -244,7 +244,7 @@ async def mux_negotiate(
 					if response is None:
 						transport = proto = None
 						break
-					response = parse_res(secret, ident, response)
+					response = parse_res(auth_secret, ident, response)
 					if response: return response
 				if transport: transport.sendto(req)
 				await asyncio.sleep(max(0, deadline - loop.time()), loop=loop)
@@ -332,6 +332,7 @@ def main(args=None, conf=None):
 		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
 		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
 		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
+	auth_secret = hashlib.blake2s(to_bytes(opts.auth_secret), person=conf.auth_salt).digest()
 
 	ident = opts.ident_string
 	if not ident:
@@ -342,13 +343,13 @@ def main(args=None, conf=None):
 					m = re.search(r'^\s*Serial\s*:\s*(\S+)\s*$', line)
 					if m: break
 				else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
-				ident = hashlib.blake2s(m.group(1).encode(), key=to_bytes(opts.auth_secret)).digest()
+				ident = hashlib.blake2s(m.group(1).encode(), key=auth_secret).digest()
 		elif opts.ident_cmd:
 			res = subprocess.run(opts.ident_cmd, shell=True, check=True, stdout=subprocess.PIPE)
 			ident = res.stdout.decode().strip()
 		else:
 			with open('/etc/machine-id', 'rb') as src:
-				ident = hashlib.blake2s(src.read(), key=to_bytes(opts.auth_secret)).digest()
+				ident = hashlib.blake2s(src.read(), key=auth_secret).digest()
 
 	host, port_mux, family = opts.host, opts.mux_port, 0
 	if host.count(':') > 1: host, port_mux = str_part(host, ']:>', port_mux)
@@ -376,14 +377,14 @@ def main(args=None, conf=None):
 
 	wg_key = derive_wg_key(
 		pl.Path(conf.key_source_ssh).expanduser(),
-		ident, opts.auth_secret, conf.key_pbkdf2_rounds )
+		ident, auth_secret, conf.auth_salt, conf.key_pbkdf2_rounds )
 	wg_key_pk = sp.run( wg_cmd + ['pubkey'], check=True,
 		input=wg_key.encode(), stdout=sp.PIPE ).stdout.decode().strip()
 
 	retry_delays = retries_within_timeout(opts.attempts+1, opts.timeout)[:-1]
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		muxer = loop.create_task(mux_negotiate(
-			loop, opts.auth_secret, ident, wg_key_pk,
+			loop, auth_secret, ident, wg_key_pk,
 			sock_af, sock_p, host, port_mux, retry_delays ))
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
@@ -406,7 +407,7 @@ def main(args=None, conf=None):
 				f' outside of specified --wg-net: {wg_addr}', file=sys.stderr )
 			return 1
 		wg_net = wg_addr_net
-	wg_psk = '' if not opts.wg_psk else f'PresharedKey = {wg_psk}\n'
+	wg_psk = '' if not opts.wg_psk else f'PresharedKey = {opts.wg_psk}\n'
 	wg_ep = f'{host}:{wg_port}'
 
 	log.debug( 'Negotiated wg params:'

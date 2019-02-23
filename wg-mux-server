@@ -6,6 +6,7 @@ import inspect, pathlib as pl, subprocess as sp
 
 
 class WGMuxConfig:
+	auth_salt = b'wg-mux-1'
 	mux_attempts = 4
 	mux_port = 8739
 	mux_timeout = 5.0
@@ -33,7 +34,7 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log = get_logger('mux-server.main')
 
 
-b64_encode = lambda s: base64.urlsafe_b64encode(s).decode()
+b64_encode = lambda s: base64.standard_b64encode(s).decode()
 b64_decode = lambda s: ( base64.urlsafe_b64decode
 	if '-' in s or '_' in s else base64.standard_b64decode )(s)
 to_bytes = lambda s: s if isinstance(s, bytes) else str(s).encode()
@@ -119,7 +120,7 @@ class MuxServerProtocol:
 
 class AuthError(Exception): pass
 
-def parse_req(secret, req):
+def parse_req(auth_secret, req):
 	if not req: return
 	try:
 		fmt = f'B{req[0]}s32s'
@@ -127,19 +128,19 @@ def parse_req(secret, req):
 		if ( len(ident) != ident_len or not
 			(wg_pk_peer and salt and mac) ): raise AuthError('Invalid structure')
 		mac_chk = hashlib.blake2b(
-			req[:struct.calcsize(fmt)], key=to_bytes(secret), salt=salt ).digest()
+			req[:struct.calcsize(fmt)], key=auth_secret, salt=salt ).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except (struct.error, AuthError) as err:
 		log.debug('Failed to parse/auth request value: {}', err)
 		return
 	return b64_encode(ident), b64_encode(wg_pk_peer)
 
-def build_res(secret, ident, wg_addr, wg_net, wg_port):
+def build_res(auth_secret, ident, wg_addr, wg_net, wg_port):
 	ident_buff = to_bytes(ident)
 	salt, payload = os.urandom(16), bin_pack(
 		'>BBHBzz', len(ident_buff), wg_addr.version,
 		wg_port, wg_net.prefixlen, ident_buff, wg_addr.packed )
-	mac = hashlib.blake2b(payload, key=to_bytes(secret), salt=salt).digest()
+	mac = hashlib.blake2b(payload, key=auth_secret, salt=salt).digest()
 	return payload + salt + mac
 
 def ident_repr(ident):
@@ -153,7 +154,7 @@ async def mux_send(loop, transport, response, addr, delays):
 		transport.sendto(response, addr)
 		await asyncio.sleep(delay, loop=loop)
 
-async def mux_listen( loop, secret, ident_db,
+async def mux_listen( loop, auth_secret, ident_db,
 		sock_af, sock_p, host, port, init_peer, delays ):
 	responses = dict()
 	transport, proto = await loop.create_datagram_endpoint(
@@ -161,7 +162,7 @@ async def mux_listen( loop, secret, ident_db,
 	try:
 		while True:
 			req, req_addr = await proto.requests.get()
-			ident, wg_pk_peer = parse_req(secret, req)
+			ident, wg_pk_peer = parse_req(auth_secret, req)
 			if not ident: continue
 			if ident in responses:
 				if not responses[ident].done(): continue
@@ -169,7 +170,7 @@ async def mux_listen( loop, secret, ident_db,
 			peer_info = init_peer(ident, wg_pk_peer, req_addr)
 			if not peer_info: continue
 			wg_addr, wg_net, wg_port = peer_info
-			response = build_res(secret, ident, wg_addr, wg_net, wg_port)
+			response = build_res(auth_secret, ident, wg_addr, wg_net, wg_port)
 			responses[ident] = loop.create_task(
 				mux_send(loop, transport, response, req_addr, delays) )
 	finally:
@@ -263,6 +264,7 @@ def main(args=None, conf=None):
 		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
 		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
 		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
+	auth_secret = hashlib.blake2s(to_bytes(opts.auth_secret), person=conf.auth_salt).digest()
 
 	host, port_mux, family = opts.bind, opts.mux_port, 0
 	if host.count(':') > 1: host, port_mux = str_part(host, ']:>', port_mux)
@@ -307,7 +309,7 @@ def main(args=None, conf=None):
 		log.debug(
 			'Allocated [n={}, addr={}] for ident: {} (addr={})',
 			n, wg_addr, ident_repr(ident), req_addr )
-		cmd = wg_cmd + ['set', opts.wg_iface, 'peer', wg_pk_peer, 'allowed-ips', str(wg_net)]
+		cmd = wg_cmd + ['set', opts.wg_iface, 'peer', wg_pk_peer, 'allowed-ips', str(wg_addr)]
 		if opts.wg_psk: cmd.extend(['preshared-key', opts.wg_psk])
 		if not opts.dry_run:
 			sp.run(wg_cmd + [ 'set', opts.wg_iface,
@@ -318,9 +320,8 @@ def main(args=None, conf=None):
 
 	retry_delays = retries_within_timeout(opts.attempts, opts.timeout)
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		muxer = loop.create_task(mux_listen(
-			loop, opts.auth_secret, ident_db,
-			sock_af, sock_p, host, port_mux, init_peer, retry_delays ))
+		muxer = loop.create_task(mux_listen( loop, auth_secret,
+			ident_db, sock_af, sock_p, host, port_mux, init_peer, retry_delays ))
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
 		try: return loop.run_until_complete(muxer)
