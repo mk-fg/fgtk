@@ -87,7 +87,7 @@ def retries_within_timeout( tries, timeout,
 
 
 def derive_wg_key(path, ident, ident_auth, rounds):
-	ident_key = hashlib.blake2s(
+	ident_key = hashlib.blake2b(
 		to_bytes(ident), key=to_bytes(ident_auth) ).digest()
 	if not path.exists():
 		raise ValueError
@@ -202,8 +202,8 @@ class AuthError(Exception): pass
 
 def build_req(secret, ident, wg_key_pk):
 	ident_buff, pk_buff = to_bytes(ident), b64_decode(wg_key_pk)
-	salt, payload = os.urandom(8), bin_pack('>Bzz', len(ident_buff), ident_buff, pk_buff)
-	mac = hashlib.blake2s(payload, key=to_bytes(secret), salt=salt).digest()
+	salt, payload = os.urandom(16), bin_pack('>Bzz', len(ident_buff), ident_buff, pk_buff)
+	mac = hashlib.blake2b(payload, key=to_bytes(secret), salt=salt).digest()
 	return payload + salt + mac
 
 def parse_res(secret, ident, res):
@@ -211,8 +211,8 @@ def parse_res(secret, ident, res):
 	try:
 		fmt = 'BBHB{}s{}s'.format(res[0], {4: 4, 6: 16}[res[1]])
 		( ident_len, ip_len, wg_port, wg_mask, ident_buff,
-			wg_addr, salt, mac ) = struct.unpack(fmt + '8s32s', res)
-		mac_chk = hashlib.blake2s(
+			wg_addr, salt, mac ) = struct.unpack(fmt + '16s64s', res)
+		mac_chk = hashlib.blake2b(
 			res[:struct.calcsize(fmt)], key=to_bytes(secret), salt=salt ).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except (KeyError, struct.error, AuthError) as err:

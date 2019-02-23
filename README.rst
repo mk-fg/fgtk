@@ -845,9 +845,9 @@ via --ident-\* string (derived from /etc/machine-id by default), and both
 client/server need to use same -s/--auth-secret to create/validate MACs in each
 packet.
 
-Note that all that --auth-secret is used for is literally handing-out sequential
-numbers, and isn't expected to be strong protection against anything, unlike ssh
-auth that should come after that.
+Note that all --auth-secret is used for is literally handing-out sequential
+numbers, and isn't expected to be strong protection against anything,
+unlike ssh auth that should come after that.
 
 wg-mux-\*
 '''''''''
@@ -862,9 +862,9 @@ is also authenticated by pre-shared public key (and --wg-psk, if specified).
 
 Such setup is roughly equivalent to a password-protected public network.
 
-Runs "wg set" commands to update configuration, which need privileges, but can
-be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root in the rest of
-the script.
+Runs "wg set" commands to update configuration, which need privileges,
+but can be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root
+in the rest of the script.
 
 ssh-tunnels-cleanup
 '''''''''''''''''''

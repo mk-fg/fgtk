@@ -123,10 +123,10 @@ def parse_req(secret, req):
 	if not req: return
 	try:
 		fmt = f'B{req[0]}s32s'
-		ident_len, ident, wg_pk_peer, salt, mac = struct.unpack(fmt + '8s32s', req)
+		ident_len, ident, wg_pk_peer, salt, mac = struct.unpack(fmt + '16s64s', req)
 		if ( len(ident) != ident_len or not
 			(wg_pk_peer and salt and mac) ): raise AuthError('Invalid structure')
-		mac_chk = hashlib.blake2s(
+		mac_chk = hashlib.blake2b(
 			req[:struct.calcsize(fmt)], key=to_bytes(secret), salt=salt ).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except (struct.error, AuthError) as err:
@@ -136,10 +136,10 @@ def parse_req(secret, req):
 
 def build_res(secret, ident, wg_addr, wg_net, wg_port):
 	ident_buff = to_bytes(ident)
-	salt, payload = os.urandom(8), bin_pack(
+	salt, payload = os.urandom(16), bin_pack(
 		'>BBHBzz', len(ident_buff), wg_addr.version,
 		wg_port, wg_net.prefixlen, ident_buff, wg_addr.packed )
-	mac = hashlib.blake2s(payload, key=to_bytes(secret), salt=salt).digest()
+	mac = hashlib.blake2b(payload, key=to_bytes(secret), salt=salt).digest()
 	return payload + salt + mac
 
 def ident_repr(ident):
@@ -244,11 +244,6 @@ def main(args=None, conf=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
-	if not opts.auth_secret:
-		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
-		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
-		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
-
 	wg_cmd = opts.wg_cmd.split()
 	wg_net = ipaddress.ip_network(opts.wg_net)
 	tun_a, tun_b = 0, wg_net.num_addresses - 1
@@ -263,6 +258,11 @@ def main(args=None, conf=None):
 			print('n={} addr={} :: {}'.format(
 				n, wg_net[n + tun_offset], ident_repr(ident) ))
 		return
+
+	if not opts.auth_secret:
+		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
+		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
+		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
 
 	host, port_mux, family = opts.bind, opts.mux_port, 0
 	if host.count(':') > 1: host, port_mux = str_part(host, ']:>', port_mux)
