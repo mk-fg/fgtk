@@ -11,7 +11,6 @@ class WGMuxConfig:
 	mux_port = 8739
 	mux_timeout = 5.0
 	wg_iface = 'wg'
-	wg_pk = bytes(32)
 	wg_port = 2200
 	wg_net = '10.215.72.0/24'
 	n_skip = 1 # to reserve e.g. 10.215.72.1/24 for server
@@ -136,11 +135,11 @@ def parse_req(secret, req):
 		return
 	return b64_encode(ident), b64_encode(wg_pk_peer)
 
-def build_res(secret, ident, wg_addr, wg_net, wg_pk, wg_port):
+def build_res(secret, ident, wg_addr, wg_net, wg_port):
 	ident_buff = to_bytes(ident)
 	salt, payload = os.urandom(8), bin_pack(
-		'>BBHBzzz', len(ident_buff), wg_addr.version,
-		wg_port, wg_net.prefixlen, ident_buff, wg_addr.packed, wg_pk )
+		'>BBHBzz', len(ident_buff), wg_addr.version,
+		wg_port, wg_net.prefixlen, ident_buff, wg_addr.packed )
 	mac = hashlib.blake2s(payload, key=to_bytes(secret), salt=salt).digest()
 	return payload + salt + mac
 
@@ -170,8 +169,8 @@ async def mux_listen( loop, secret, ident_db,
 				await responses[ident]
 			peer_info = init_peer(ident, wg_pk_peer, req_addr)
 			if not peer_info: continue
-			wg_addr, wg_net, wg_pk, wg_port = peer_info
-			response = build_res(secret, ident, wg_addr, wg_net, wg_pk, wg_port)
+			wg_addr, wg_net, wg_port = peer_info
+			response = build_res(secret, ident, wg_addr, wg_net, wg_port)
 			responses[ident] = loop.create_task(
 				mux_send(loop, transport, response, req_addr, delays) )
 	finally:
@@ -213,8 +212,6 @@ def main(args=None, conf=None):
 	group = parser.add_argument_group('WireGuard options')
 	group.add_argument('--wg-iface', metavar='iface', default=conf.wg_iface,
 		help='WireGuard interface name to configure. Default: %(default)s')
-	group.add_argument('--wg-pk', metavar='base64-pubkey', default=b64_encode(conf.wg_pk),
-		help='WireGuard server public key. Empty one will be sent, if not specified.')
 	group.add_argument('--wg-port', type=int, metavar='port', default=conf.wg_port,
 		help='WireGuard endpoint port to send to mux-clients. Default: %(default)s')
 	group.add_argument('--wg-psk', metavar='file',
@@ -313,7 +310,7 @@ def main(args=None, conf=None):
 				'peer', wg_pk_peer, 'remove' ], stderr=sp.DEVNULL)
 			sp.run(cmd, check=True)
 		else: log.debug('Config for peer: {}', ' '.join(cmd))
-		return wg_addr, wg_net, b64_decode(opts.wg_pk), opts.wg_port
+		return wg_addr, wg_net, opts.wg_port
 
 	retry_delays = retries_within_timeout(opts.attempts, opts.timeout)
 	with contextlib.closing(asyncio.get_event_loop()) as loop:

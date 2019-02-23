@@ -845,6 +845,10 @@ via --ident-\* string (derived from /etc/machine-id by default), and both
 client/server need to use same -s/--auth-secret to create/validate MACs in each
 packet.
 
+Note that all that --auth-secret is used for is literally handing-out sequential
+numbers, and isn't expected to be strong protection against anything, unlike ssh
+auth that should come after that.
+
 wg-mux-\*
 '''''''''
 
@@ -852,8 +856,11 @@ Same thing as ssh-reverse-mux-\* scripts above, but for negotiating WireGuard
 tunnels, with persistent host tunnel IPs tracked via --ident-\* strings with
 simple auth via MACs on UDP packets derived from symmetric -s/--auth-secret.
 
-Host identity, wg port, public keys and tunnel IPs are authenticated,
-but are sent in the clear otherwise.
+Client identity, wg port, public key and tunnel IPs are sent in the clear with
+relatively weak authentication (hmac of -s/--auth-secret string), but wg server
+is also authenticated by pre-shared public key (and --wg-psk, if specified).
+
+Such setup is roughly equivalent to a weak-password-protected public network.
 
 Runs "wg set" commands to update configuration, which need privileges, but can
 be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root in the rest of

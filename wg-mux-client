@@ -210,18 +210,18 @@ def build_req(secret, ident, wg_key_pk):
 def parse_res(secret, ident, res):
 	if not res: return
 	try:
-		fmt = 'BBHB{}s{}s32s'.format(res[0], {4: 4, 6: 16}[res[1]])
+		fmt = 'BBHB{}s{}s'.format(res[0], {4: 4, 6: 16}[res[1]])
 		( ident_len, ip_len, wg_port, wg_mask, ident_buff,
-			wg_addr, wg_pk, salt, mac ) = struct.unpack(fmt + '8s32s', res)
+			wg_addr, salt, mac ) = struct.unpack(fmt + '8s32s', res)
 		mac_chk = hashlib.blake2s(
 			res[:struct.calcsize(fmt)], key=to_bytes(secret), salt=salt ).digest()
 		if not secrets.compare_digest(mac, mac_chk): raise AuthError('MAC mismatch')
 	except (KeyError, struct.error, AuthError) as err:
 		log.debug('Failed to parse/auth response value: {}', err)
 		return
-	wg_addr, wg_pk = ipaddress.ip_address(wg_addr), b64_encode(wg_pk)
+	wg_addr = ipaddress.ip_address(wg_addr)
 	wg_net = f'{wg_addr}/{wg_mask}'
-	return wg_pk, wg_addr, wg_net, wg_port
+	return wg_addr, wg_net, wg_port
 
 
 async def mux_negotiate(
@@ -266,6 +266,7 @@ def main(args=None, conf=None):
 	group.add_argument('host',
 		help='Host or address (to be resolved via gai) or a host[:port] spec.'
 			' "port" will be used for -m/--mux-port option, if specified here.')
+	group.add_argument('pubkey', help='Base64-encoded WireGuard server public key.')
 	group.add_argument('-m', '--mux-port',
 		default=conf.mux_port, type=int, metavar='port',
 		help='Remote UDP port on which corresponding'
@@ -297,10 +298,6 @@ def main(args=None, conf=None):
 	group = parser.add_argument_group('WireGuard options')
 	group.add_argument('--wg-iface', metavar='iface', default=conf.wg_iface,
 		help='WireGuard interface name to configure. Default: %(default)s')
-	group.add_argument('--wg-pk', metavar='base64-pubkey',
-		help='WireGuard server public key.'
-			' Be sure to specify this if it is important to authenticate server.'
-			' Default is to use one returned by mux-server.')
 	group.add_argument('--wg-port', type=int, metavar='port',
 		help='Remote WireGuard port to use. Default is to use one returned by mux-server.')
 	group.add_argument('--wg-psk', metavar='file',
@@ -371,6 +368,7 @@ def main(args=None, conf=None):
 
 	wg_cmd = opts.wg_cmd.split()
 	wg_addr_net = ipaddress.ip_network(opts.wg_net)
+	wg_pk = opts.pubkey
 
 	wg_key = derive_wg_key(
 		pl.Path(conf.key_source_ssh).expanduser(),
@@ -386,14 +384,13 @@ def main(args=None, conf=None):
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
 		try:
-			wg_pk, wg_addr, wg_mask, wg_port = loop.run_until_complete(
+			wg_addr, wg_mask, wg_port = loop.run_until_complete(
 				aio_wait_or_cancel(loop, muxer, opts.timeout) )
 		except (asyncio.CancelledError, asyncio.TimeoutError) as err:
 			log.debug('mux_negotiate cancelled: {}', err_fmt(err))
 			return
 
 	if opts.wg_port: wg_port = opts.wg_port
-	if opts.wg_pk: wg_pk = opts.wg_pk
 	if not wg_addr_net and not wg_net:
 		print( 'ERROR: mux-server returned address'
 			' without network, and no --wg-net is specified', file=sys.stderr )
