@@ -14,6 +14,7 @@ class WGMuxConfig:
 	wg_pk = bytes(32)
 	wg_port = 2200
 	wg_net = '10.215.72.0/24'
+	n_skip = 1 # to reserve e.g. 10.215.72.1/24 for server
 	ident_db_path = 'wg-mux-ident.db'
 
 
@@ -227,6 +228,11 @@ def main(args=None, conf=None):
 				' for a special binary with suid/capabilities. Default: %(default)s')
 
 	group = parser.add_argument_group('Misc options')
+	group.add_argument('-r', '--n-skip',
+		type=int, metavar='n', default=conf.n_skip,
+		help='Number of first addresses from --wg-net to skip, so that they'
+			' can be reserved for something else (e.g. server itself). Will only affect'
+			' peers with new ident strings, not existing ones. Default: %(default)s')
 	group.add_argument('-n', '--attempts',
 		type=int, metavar='n', default=conf.mux_attempts,
 		help='Number of UDP packets to send from'
@@ -248,6 +254,7 @@ def main(args=None, conf=None):
 	tun_offset = wg_net[0].compressed
 	tun_offset = 1 if tun_offset.endswith('.0') or tun_offset.endswith(':0') else 0
 	tun_b -= tun_offset
+	if opts.n_skip: tun_a += opts.n_skip
 
 	ident_db = shelve.open(str(pl.Path(opts.ident_db).expanduser()), 'c')
 	if opts.ident_list:
