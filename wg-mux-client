@@ -12,8 +12,6 @@ class WGMuxConfig:
 	mux_timeout = 10.0
 	wg_iface = 'wg'
 	wg_keepalive = 10
-	key_source_ssh = '~/.ssh/id_ed25519'
-	key_pbkdf2_rounds = 10000 # for ed25519_sk, done on every run
 	ping_err_code = 133
 
 
@@ -40,7 +38,6 @@ b64_encode = lambda s: base64.standard_b64encode(s).decode()
 b64_decode = lambda s: ( base64.urlsafe_b64decode
 	if '-' in s or '_' in s else base64.standard_b64decode )(s)
 to_bytes = lambda s: s if isinstance(s, bytes) else str(s).encode()
-dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 
 def str_part(s, sep, default=None):
 	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
@@ -86,93 +83,6 @@ def retries_within_timeout( tries, timeout,
 		if abs(error) < slack: return delays
 		elif error > 0: b = m
 		else: a = m
-
-
-def derive_wg_key(path, ident, auth_secret, person, rounds):
-	ident_key = hashlib.blake2b(
-		to_bytes(ident), key=auth_secret, person=person ).digest()
-	if not path.exists():
-		ident_repr = b64_encode(ident)[:10]
-		sp.run( ['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C',
-			f'wg-mux.{ident_repr}', '-f', str(path)], check=True, stdin=sp.DEVNULL )
-	ed25519_sk = ssh_key_parse(path)
-	key = bytearray(hashlib.pbkdf2_hmac( 'sha512',
-		password=ed25519_sk, salt=ident_key,
-		iterations=rounds, dklen=len(ed25519_sk) ))
-	key[0] &= 248
-	key[31] = (key[31] & 127) | 64
-	return b64_encode(key)
-
-class SSHKeyError(Exception): pass
-
-def ssh_key_parse(path):
-	lines, key, done = path.read_text().splitlines(), list(), False
-	for line in lines:
-		if line == '-----END OPENSSH PRIVATE KEY-----': done = True
-		if key and not done: key.append(line)
-		if line == '-----BEGIN OPENSSH PRIVATE KEY-----':
-			if done:
-				raise SSHKeyError( 'More than one'
-					f' private key detected in file, aborting: {path!r}' )
-			assert not key
-			key.append('')
-	if not done: raise SSHKeyError(f'Incomplete or missing key in file: {path!r}')
-	key_bytes = b64_decode(''.join(key))
-	key = io.BytesIO(key_bytes)
-
-	def key_read_bytes(src=None):
-		if src is None: src = key
-		n, = struct.unpack('>I', src.read(4))
-		return src.read(n)
-
-	def key_assert(chk, err, *fmt_args, **fmt_kws):
-		if chk: return
-		if fmt_args or fmt_kws: err = err.format(*fmt_args, **fmt_kws)
-		err += f' [key file: {path!r}, decoded: {key_bytes!r}]'
-		raise SSHKeyError(err)
-
-	def key_assert_read(field, val, fixed=False):
-		pos, chk = key.tell(), key.read(len(val)) if fixed else key_read_bytes()
-		key_assert( chk == val, 'Failed to match key field'
-			' {!r} (offset: {}) - expected {!r} got {!r}', field, pos, val, chk )
-
-	key_assert_read('AUTH_MAGIC', b'openssh-key-v1\0', True)
-	key_assert_read('ciphername', b'none')
-	key_assert_read('kdfname', b'none')
-	key_assert_read('kdfoptions', b'')
-	(pubkey_count,), pubkeys = struct.unpack('>I', key.read(4)), list()
-	for n in range(pubkey_count):
-		line = key_read_bytes()
-		key_assert(line, 'Empty public key #{}', n)
-		line = io.BytesIO(line)
-		key_t = key_read_bytes(line).decode()
-		key_assert(key_t == 'ssh-ed25519', 'Unsupported pubkey type: {!r}', key_t)
-		ed25519_pk = key_read_bytes(line)
-		line = line.read()
-		key_assert(not line, 'Garbage data after pubkey: {!r}', line)
-		pubkeys.append(ed25519_pk)
-	privkey = io.BytesIO(key_read_bytes())
-	pos, tail = key.tell(), key.read()
-	key_assert( not tail,
-		'Garbage data after private key (offset: {}): {!r}', pos, tail )
-
-	key = privkey
-	n1, n2 = struct.unpack('>II', key.read(8))
-	key_assert(n1 == n2, 'checkint values mismatch in private key spec: {!r} != {!r}', n1, n2)
-	key_t = key_read_bytes().decode()
-	key_assert(key_t == 'ssh-ed25519', 'Unsupported key type: {!r}', key_t)
-	ed25519_pk = key_read_bytes()
-	key_assert(ed25519_pk in pubkeys, 'Pubkey mismatch - {!r} not in {}', ed25519_pk, pubkeys)
-	ed25519_sk = key_read_bytes()
-	key_assert(
-		len(ed25519_pk) == 32 and len(ed25519_sk) == 64,
-		'Key length mismatch: {}/{} != 32/64', len(ed25519_pk), len(ed25519_sk) )
-	comment = key_read_bytes()
-	padding = key.read()
-	padding, padding_chk = bytearray(padding), bytearray(range(1, len(padding) + 1))
-	key_assert(padding == padding_chk, 'Invalid padding: {!r} != {!r}', padding, padding_chk)
-
-	return ed25519_sk[:32]
 
 
 class MuxClientProtocol:
@@ -257,15 +167,16 @@ def main(args=None, conf=None):
 
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Wrapper for "wg set" to derive key from (auto-generated if missing)'
-			' default ed25519 ssh key and query wg tunnel IP to use from server'
-			' (based on some unique id), substituting all that into resulting command.')
+		description='Wrapper for "wg set" + "ip addr" with peer/iface'
+			' config queried from remote server by some unique --ident-* info.')
 
-	group = parser.add_argument_group('Mux server')
+	group = parser.add_argument_group('Mux server info')
 	group.add_argument('host',
 		help='Host or address (to be resolved via gai) or a host[:port] spec.'
 			' "port" will be used for -m/--mux-port option, if specified here.')
 	group.add_argument('pubkey', help='Base64-encoded WireGuard server public key.')
+	group.add_argument('pubkey_client',
+		help='Base64-encoded public key of this client or a file with such.')
 	group.add_argument('-m', '--mux-port',
 		default=conf.mux_port, type=int, metavar='port',
 		help='Remote UDP port on which corresponding'
@@ -334,8 +245,7 @@ def main(args=None, conf=None):
 		type=float, metavar='seconds', default=conf.mux_timeout,
 		help='Negotiation response timeout on --mux-port, in seconds. Default: %(default)ss')
 	group.add_argument('--dry-run', action='store_true',
-		help='Do not change WireGuard configuration, only pretend to.'
-			' Still generates ssh keys however.')
+		help='Do not change WireGuard configuration, only pretend to.')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -386,21 +296,17 @@ def main(args=None, conf=None):
 	host, port_mux = sock_addr[:2]
 
 	wg_cmd, ip_cmd = opts.wg_cmd.split(), opts.ip_cmd.split()
-	wg_net = ipaddress.ip_network(opts.wg_net)
-	wg_pk = opts.pubkey
-	wg_psk = ( opts.wg_psk and 'PresharedKey = '
-		'{}\n'.format(pl.Path(opts.wg_psk).read_text().strip()) )
-
-	wg_key = derive_wg_key(
-		pl.Path(conf.key_source_ssh).expanduser(),
-		ident, auth_secret, conf.auth_salt, conf.key_pbkdf2_rounds )
-	wg_key_pk = sp.run( wg_cmd + ['pubkey'], check=True,
-		input=wg_key.encode(), stdout=sp.PIPE ).stdout.decode().strip()
+	wg_net_check = ipaddress.ip_network(opts.wg_net)
+	wg_pk, wg_pk_client = opts.pubkey, pl.Path(opts.pubkey_client)
+	if wg_pk_client.exists(): wg_pk_client = wg_pk_client.read_text().strip()
+	else: wg_pk_client = opts.pubkey_client
+	wg_psk = list()
+	if opts.wg_psk: wg_psk.extend(['preshared-key', opts.wg_psk])
 
 	retry_delays = retries_within_timeout(opts.attempts+1, opts.timeout)[:-1]
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		muxer = loop.create_task(mux_negotiate(
-			loop, auth_secret, ident, wg_key_pk,
+			loop, auth_secret, ident, wg_pk_client,
 			sock_af, sock_p, host, port_mux, retry_delays ))
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
@@ -412,33 +318,25 @@ def main(args=None, conf=None):
 			return
 
 	if opts.wg_port: wg_port = opts.wg_port
-	if wg_addr not in wg_net:
+	if wg_addr not in wg_net_check:
 		print( 'ERROR: mux-server returned address'
 			f' outside of specified --wg-net: {wg_addr}', file=sys.stderr )
 		return 1
 	wg_ep = f'{host}:{wg_port}'
+	wg_net = ipaddress.ip_network(f'{wg_addr}/{wg_mask}', strict=False)
 
 	log.debug( 'Negotiated wg params: ep={} addr={}/{}'
 		' pubkey={}', wg_ep, wg_addr, wg_mask, wg_pk )
-	wg_conf = dedent(f'''
-		[Interface]
-		PrivateKey = {wg_key}
-
-		[Peer]
-		PublicKey = {wg_pk}
-		AllowedIPs = {wg_net}
-		Endpoint = {wg_ep}
-		PersistentKeepalive = {opts.wg_keepalive}
-		{wg_psk}''')
-	cmd = ip_cmd + ['addr', 'add', f'{wg_addr}/{wg_mask}', 'dev', opts.wg_iface]
+	cmd_peer = wg_cmd + [
+		'set', opts.wg_iface, 'peer', wg_pk, 'allowed-ips', str(wg_net),
+		'endpoint', wg_ep, 'persistent-keepalive', str(opts.wg_keepalive) ] + wg_psk
+	cmd_iface = ip_cmd + ['addr', 'add', f'{wg_addr}/{wg_mask}', 'dev', opts.wg_iface]
 	if not opts.dry_run:
-		sp.run(wg_cmd + ['setconf', opts.wg_iface,
-			'/dev/stdin' ], check=True, input=wg_conf.encode())
-		sp.run(cmd, stderr=sp.DEVNULL)
+		sp.run(cmd_peer, check=True)
+		sp.run(cmd_iface, stderr=sp.DEVNULL)
 	else:
-		log.debug('Config for wg peer: {}', ' '.join(
-			(line.replace(' ', '') or '//') for line in wg_conf.splitlines() ))
-		log.debug('Config for wg iface: {}', ' '.join(cmd))
+		log.debug('Config for peer: {}', ' '.join(cmd_peer))
+		log.debug('Config for iface: {}', ' '.join(cmd_iface))
 
 	if opts.ping_cmd:
 		for sig in 'int term'.upper().split():
