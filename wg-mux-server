@@ -263,7 +263,7 @@ def main(args=None, conf=None):
 		return
 
 	if not opts.auth_secret:
-		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
+		log.debug('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
 		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
 		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
 	auth_secret = hashlib.blake2s(to_bytes(opts.auth_secret), person=conf.auth_salt).digest()

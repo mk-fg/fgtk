@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, io, logging, contextlib, asyncio, socket, signal
+import os, sys, io, logging, contextlib, asyncio, socket, signal, time
 import math, hashlib, secrets, struct, base64, ipaddress, textwrap
 import pathlib as pl, subprocess as sp
 
@@ -14,6 +14,7 @@ class WGMuxConfig:
 	wg_keepalive = 10
 	key_source_ssh = '~/.ssh/id_ed25519'
 	key_pbkdf2_rounds = 10000 # for ed25519_sk, done on every run
+	ping_err_code = 133
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -314,6 +315,16 @@ def main(args=None, conf=None):
 			' Will be run as "ip addr add <addr/mask> dev <wg-iface>".'
 			' Wrapper can be used to do more stuff. Split on spaces. Default: %(default)s')
 
+	group = parser.add_argument_group('Endless-run options')
+	group.add_argument('-p', '--ping-cmd', metavar='cmd',
+		help='Run specified ping-command in a loop after negotiating a tunnel,'
+				f' exiting with code={conf.ping_err_code} if/when it exits with non-zero code.'
+			' Command is split on spaces. Example: ping -q -w15 -c3 -i3 10.123.0.1')
+	group.add_argument('--ping-interval', type=float, metavar='seconds', default=600,
+		help='Interval between running --ping-cmd in a loop until it fails. Default: %(default)s')
+	group.add_argument('--ping-silent', action='store_true',
+		help='Suppress stdout/stderr for --ping-cmd.')
+
 	group = parser.add_argument_group('Misc options')
 	group.add_argument('-n', '--attempts',
 		type=int, metavar='n', default=conf.mux_attempts,
@@ -332,7 +343,7 @@ def main(args=None, conf=None):
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
 	if not opts.auth_secret:
-		print('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
+		log.debug('Reading --auth-secret from stdin (exact value, incl. spaces and newlines).')
 		with open(sys.stdin.fileno(), 'rb') as src: opts.auth_secret = src.read()
 		if not opts.auth_secret: parser.error('No --auth-secret specified and none provided on stdin.')
 	auth_secret = hashlib.blake2s(to_bytes(opts.auth_secret), person=conf.auth_salt).digest()
@@ -423,10 +434,23 @@ def main(args=None, conf=None):
 	if not opts.dry_run:
 		sp.run(wg_cmd + ['setconf', opts.wg_iface,
 			'/dev/stdin' ], check=True, input=wg_conf.encode())
-		sp.run(cmd)
+		sp.run(cmd, stderr=sp.DEVNULL)
 	else:
 		log.debug('Config for wg peer: {}', ' '.join(
 			(line.replace(' ', '') or '//') for line in wg_conf.splitlines() ))
 		log.debug('Config for wg iface: {}', ' '.join(cmd))
+
+	if opts.ping_cmd:
+		for sig in 'int term'.upper().split():
+			signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
+		ping_cmd, ping_kws = opts.ping_cmd.split(), dict()
+		if opts.ping_silent: ping_kws.update(stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+		while True:
+			time.sleep(opts.ping_interval)
+			res = sp.run(ping_cmd, **ping_kws)
+			if res.returncode:
+				print( f'ERROR: --ping-cmd exited with code {res.returncode},'
+					f' exiting with code {conf.ping_err_code}', file=sys.stderr )
+				return conf.ping_err_code
 
 if __name__ == '__main__': sys.exit(main())

@@ -873,6 +873,65 @@ Runs "wg set" commands to update configuration, which need privileges,
 but can be wrapped in sudo or suid/caps stuff via --wg-cmd to avoid root
 in the rest of the script.
 
+Example systemd unit for server::
+
+	# wg.service + auth.secret psk.secret key.secret
+	# useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
+	# cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
+	[Unit]
+	Wants=network.target
+	After=network.target
+
+	[Service]
+	Type=exec
+	User=wg
+	WorkingDirectory=~
+	Restart=always
+	RestartSec=60
+	StandardInput=file:/home/wg/auth.secret
+	StandardOutput=journal
+	ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; \
+		ip addr add 10.123.0.1/24 dev wg 2>/dev/null; ip link set wg up'
+	ExecStartPre=+wg set wg listen-port 1500 private-key key.secret
+	ExecStart=wg-mux-server --mux-port=1501 --wg-port=1500 \
+		--wg-net=10.123.0.0/24 --wg-cmd=./wg --wg-psk=psk.secret
+
+	[Install]
+	WantedBy=multi-user.target
+
+Client::
+
+	# wg.service + auth.secret psk.secret
+	# useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
+	# cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
+	# cd ~wg && cp /usr/bin/ip . && chown root:wg ip && chmod 4110 ip
+	[Unit]
+	Wants=network.target
+	After=network.target
+
+	[Service]
+	Type=exec
+	User=wg
+	WorkingDirectory=~
+	Restart=always
+	RestartSec=10
+	StandardInput=file:/home/wg/auth.secret
+	StandardOutput=journal
+	ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; ip link set wg up'
+	ExecStart=wg-mux-client \
+		20.88.203.92:1501 BcOn/q9D5zcqK0hrWmXGQHtaEKGGf6g5nTxZUZ0P4HY= \
+		--ident-rpi --wg-net=10.123.0.0/24 --wg-cmd=./wg --ip-cmd=./ip --wg-psk=psk.secret \
+		--ping-cmd='ping -q -w15 -c3 -i3 10.123.0.1' --ping-silent
+
+	[Install]
+	WantedBy=multi-user.target
+
+When enabled, these should be enough to setup reliable tunnel up on client boot,
+and keep it alive from there indefinitely (--ping-cmd + systemd restart).
+
+Explicit iface/IP init in these units can be replaced by systemd-networkd
+.netdev + .network stuff, as it supports wireguard configuration there.
+
 ssh-tunnels-cleanup
 '''''''''''''''''''
 
