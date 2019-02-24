@@ -13,7 +13,7 @@ class WGMuxConfig:
 	wg_iface = 'wg'
 	wg_keepalive = 10
 	key_source_ssh = '~/.ssh/id_ed25519'
-	key_pbkdf2_rounds = 100 # for ed25519_sk, done on every run
+	key_pbkdf2_rounds = 10000 # for ed25519_sk, done on every run
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -91,9 +91,9 @@ def derive_wg_key(path, ident, auth_secret, person, rounds):
 	ident_key = hashlib.blake2b(
 		to_bytes(ident), key=auth_secret, person=person ).digest()
 	if not path.exists():
-		sp.run(
-			['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', f'wg-mux.{ident}', '-f', str(path)],
-			check=True, stdin=sp.DEVNULL )
+		ident_repr = b64_encode(ident)[:10]
+		sp.run( ['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C',
+			f'wg-mux.{ident_repr}', '-f', str(path)], check=True, stdin=sp.DEVNULL )
 	ed25519_sk = ssh_key_parse(path)
 	key = bytearray(hashlib.pbkdf2_hmac( 'sha512',
 		password=ed25519_sk, salt=ident_key,
@@ -219,8 +219,7 @@ def parse_res(auth_secret, ident, res):
 		log.debug('Failed to parse/auth response value: {}', err)
 		return
 	wg_addr = ipaddress.ip_address(wg_addr)
-	wg_net = f'{wg_addr}/{wg_mask}'
-	return wg_addr, wg_net, wg_port
+	return wg_addr, wg_mask, wg_port
 
 
 async def mux_negotiate(
@@ -306,10 +305,14 @@ def main(args=None, conf=None):
 			' This is required if mux-server is configured to only return last IP octet.')
 	group.add_argument('--wg-keepalive', metavar='seconds', default=conf.wg_keepalive,
 		help='WireGuard keepalive interval. Default: %(default)s')
-	group.add_argument('-c', '--wg-cmd', metavar='cmd', default='wg',
+	group.add_argument('--wg-cmd', metavar='cmd', default='wg',
 		help='"wg" command to run, split on spaces.'
 			' Use e.g. "sudo wg" to have it run via sudo or full path'
 				' for a special binary with suid/capabilities. Default: %(default)s')
+	group.add_argument('--ip-cmd', metavar='cmd', default='ip',
+		help='"ip" command to use for assigning IP address to the interface.'
+			' Will be run as "ip addr add <addr/mask> dev <wg-iface>".'
+			' Wrapper can be used to do more stuff. Split on spaces. Default: %(default)s')
 
 	group = parser.add_argument_group('Misc options')
 	group.add_argument('-n', '--attempts',
@@ -371,9 +374,11 @@ def main(args=None, conf=None):
 			('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p) ]) )
 	host, port_mux = sock_addr[:2]
 
-	wg_cmd = opts.wg_cmd.split()
-	wg_addr_net = ipaddress.ip_network(opts.wg_net)
+	wg_cmd, ip_cmd = opts.wg_cmd.split(), opts.ip_cmd.split()
+	wg_net = ipaddress.ip_network(opts.wg_net)
 	wg_pk = opts.pubkey
+	wg_psk = ( opts.wg_psk and 'PresharedKey = '
+		'{}\n'.format(pl.Path(opts.wg_psk).read_text().strip()) )
 
 	wg_key = derive_wg_key(
 		pl.Path(conf.key_source_ssh).expanduser(),
@@ -396,25 +401,16 @@ def main(args=None, conf=None):
 			return
 
 	if opts.wg_port: wg_port = opts.wg_port
-	if not wg_addr_net and not wg_net:
+	if wg_addr not in wg_net:
 		print( 'ERROR: mux-server returned address'
-			' without network, and no --wg-net is specified', file=sys.stderr )
+			f' outside of specified --wg-net: {wg_addr}', file=sys.stderr )
 		return 1
-	elif wg_addr_net:
-		if isinstance(wg_addr, int): wg_addr = wg_addr_net[wg_addr]
-		elif wg_addr not in wg_addr_net:
-			print( 'ERROR: mux-server returned address'
-				f' outside of specified --wg-net: {wg_addr}', file=sys.stderr )
-			return 1
-		wg_net = wg_addr_net
-	wg_psk = '' if not opts.wg_psk else f'PresharedKey = {opts.wg_psk}\n'
 	wg_ep = f'{host}:{wg_port}'
 
-	log.debug( 'Negotiated wg params:'
-		' ep={} addr={} pubkey={}', wg_ep, wg_addr, wg_pk )
+	log.debug( 'Negotiated wg params: ep={} addr={}/{}'
+		' pubkey={}', wg_ep, wg_addr, wg_mask, wg_pk )
 	wg_conf = dedent(f'''
 		[Interface]
-		Address = {wg_addr}
 		PrivateKey = {wg_key}
 
 		[Peer]
@@ -423,13 +419,14 @@ def main(args=None, conf=None):
 		Endpoint = {wg_ep}
 		PersistentKeepalive = {opts.wg_keepalive}
 		{wg_psk}''')
+	cmd = ip_cmd + ['addr', 'add', f'{wg_addr}/{wg_mask}', 'dev', opts.wg_iface]
 	if not opts.dry_run:
-		sp.run(wg_cmd + [ 'set', opts.wg_iface,
-			'peer', wg_pk, 'remove' ], stderr=sp.DEVNULL)
 		sp.run(wg_cmd + ['setconf', opts.wg_iface,
 			'/dev/stdin' ], check=True, input=wg_conf.encode())
+		sp.run(cmd)
 	else:
-		log.debug('Config for wg: {}', ' '.join(
+		log.debug('Config for wg peer: {}', ' '.join(
 			(line.replace(' ', '') or '//') for line in wg_conf.splitlines() ))
+		log.debug('Config for wg iface: {}', ' '.join(cmd))
 
 if __name__ == '__main__': sys.exit(main())

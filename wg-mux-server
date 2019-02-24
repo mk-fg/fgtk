@@ -184,7 +184,9 @@ def main(args=None, conf=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Multiplexer for WireGuard connections,'
-			' assigning each one unique IP(s) according to provided ident-sting.')
+				' assigning each one unique IP(s) according to provided ident-sting.'
+			' --wg-iface should be pre-configured with listening port,'
+				' have IP address and in UP state for setup connections to work.')
 
 	group = parser.add_argument_group('Bind socket options')
 	group.add_argument('bind', nargs='?', default='::',
@@ -311,10 +313,7 @@ def main(args=None, conf=None):
 			n, wg_addr, ident_repr(ident), req_addr )
 		cmd = wg_cmd + ['set', opts.wg_iface, 'peer', wg_pk_peer, 'allowed-ips', str(wg_addr)]
 		if opts.wg_psk: cmd.extend(['preshared-key', opts.wg_psk])
-		if not opts.dry_run:
-			sp.run(wg_cmd + [ 'set', opts.wg_iface,
-				'peer', wg_pk_peer, 'remove' ], stderr=sp.DEVNULL)
-			sp.run(cmd, check=True)
+		if not opts.dry_run: sp.run(cmd, check=True)
 		else: log.debug('Config for peer: {}', ' '.join(cmd))
 		return wg_addr, wg_net, opts.wg_port
 
