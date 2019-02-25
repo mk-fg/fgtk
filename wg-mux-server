@@ -300,14 +300,15 @@ def main(args=None, conf=None):
 
 	def init_peer(ident, wg_pk_peer, req_addr):
 		n = ident_db.get(ident)
-		if not n or not tun_a <= n <= tun_b:
+		if n is None:
 			try: n = next(ns_iter)
 			except StopIteration:
 				log.error( 'No more ns to allocate'
 					' ident: {} (addr={})', ident_repr(ident), req_addr )
 				return
-		ident_db[ident], wg_addr = n, wg_net[n + tun_offset]
-		ident_db.sync()
+			ident_db[ident] = n
+			ident_db.sync()
+		wg_addr = wg_net[n + tun_offset]
 		log.debug(
 			'Allocated [n={}, addr={}] for ident: {} (addr={})',
 			n, wg_addr, ident_repr(ident), req_addr )
