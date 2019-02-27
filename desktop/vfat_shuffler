@@ -128,7 +128,7 @@ def PreDataRegion(fsinfo=False, fats=True):
 	return Struct(*entries)
 
 
-class File(object):
+class File:
 
 	name_long = None
 
