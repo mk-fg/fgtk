@@ -362,12 +362,12 @@ def main(args=None, conf=None):
 		ping_cmd_call, ping_kws = callable(ping_cmd[0]), dict()
 		if opts.ping_silent: ping_kws.update(stdout=sp.DEVNULL, stderr=sp.DEVNULL)
 		while True:
-			time.sleep(opts.ping_interval)
 			if not ping_cmd_call: code = sp.run(ping_cmd, **ping_kws).returncode
 			else: code = ping_cmd[0](ping_cmd[1:])
 			if code:
 				print( f'ERROR: --ping-cmd exited with code {code},'
 					f' exiting with code {conf.ping_err_code}', file=sys.stderr )
 				return conf.ping_err_code
+			time.sleep(opts.ping_interval)
 
 if __name__ == '__main__': sys.exit(main())
