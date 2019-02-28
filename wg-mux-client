@@ -180,7 +180,7 @@ def main(args=None, conf=None):
 	group.add_argument('-m', '--mux-port',
 		default=conf.mux_port, type=int, metavar='port',
 		help='Remote UDP port on which corresponding'
-				' mux-server script is listening on (default: %(default)s).'
+				' mux-server script is listening (default: %(default)s).'
 			' Can also be specified in the "host" argument, which overrides this option.')
 
 	group = parser.add_argument_group('Auth/ident options')
@@ -230,7 +230,10 @@ def main(args=None, conf=None):
 	group.add_argument('-p', '--ping-cmd', metavar='cmd',
 		help='Run specified ping-command in a loop after negotiating a tunnel,'
 				f' exiting with code={conf.ping_err_code} if/when it exits with non-zero code.'
-			' Command is split on spaces. Example: ping -q -w15 -c3 -i3 10.123.0.1')
+			' Command and arguments are split on spaces.'
+			' Command can include ":" to load it as python'
+				' script and call function there with all other args in a list.'
+			' Examples: ping -q -w15 -c3 -i3 10.123.0.1, ident-client.py:main 10.123.0.1')
 	group.add_argument('--ping-interval', type=float, metavar='seconds', default=600,
 		help='Interval between running --ping-cmd in a loop until it fails. Default: %(default)s')
 	group.add_argument('--ping-silent', action='store_true',
@@ -274,6 +277,21 @@ def main(args=None, conf=None):
 		else:
 			with open('/etc/machine-id', 'rb') as src:
 				ident = hashlib.blake2s(src.read(), key=auth_secret).digest()
+
+	ping_cmd = opts.ping_cmd
+	if ping_cmd:
+		ping_cmd = ping_cmd.split()
+		if ':' in ping_cmd[0]:
+			import runpy
+			src, func = ping_cmd[0].rsplit(':', 1)
+			p = pl.Path(src)
+			if not p.exists():
+				for p in os.environ.get('PATH', '').split(':'):
+					p = pl.Path(p) / src
+					if p.exists(): break
+				else: parser.error(f'Failed to find import path --ping-cmd: {ping_cmd[0]}')
+			ping_cmd[0] = runpy.run_path(p, run_name='ping_cmd')[func]
+			if not callable(ping_cmd[0]): parser.error(f'--ping-cmd spec not callable: {ping_cmd}')
 
 	host, port_mux, family = opts.host, opts.mux_port, 0
 	if host.count(':') > 1: host, port_mux = str_part(host, ']:>', port_mux)
@@ -338,16 +356,17 @@ def main(args=None, conf=None):
 		log.debug('Config for peer: {}', ' '.join(cmd_peer))
 		log.debug('Config for iface: {}', ' '.join(cmd_iface))
 
-	if opts.ping_cmd:
+	if ping_cmd:
 		for sig in 'int term'.upper().split():
 			signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
-		ping_cmd, ping_kws = opts.ping_cmd.split(), dict()
+		ping_cmd_call, ping_kws = callable(ping_cmd[0]), dict()
 		if opts.ping_silent: ping_kws.update(stdout=sp.DEVNULL, stderr=sp.DEVNULL)
 		while True:
 			time.sleep(opts.ping_interval)
-			res = sp.run(ping_cmd, **ping_kws)
-			if res.returncode:
-				print( f'ERROR: --ping-cmd exited with code {res.returncode},'
+			if not ping_cmd_call: code = sp.run(ping_cmd, **ping_kws).returncode
+			else: code = ping_cmd[0](ping_cmd[1:])
+			if code:
+				print( f'ERROR: --ping-cmd exited with code {code},'
 					f' exiting with code {conf.ping_err_code}', file=sys.stderr )
 				return conf.ping_err_code
 

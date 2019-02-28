@@ -154,7 +154,7 @@ async def mux_send(loop, transport, response, addr, delays):
 		transport.sendto(response, addr)
 		await asyncio.sleep(delay, loop=loop)
 
-async def mux_listen( loop, auth_secret, ident_db,
+async def mux_listen( loop, auth_secret,
 		sock_af, sock_p, host, port, init_peer, delays ):
 	responses = dict()
 	transport, proto = await loop.create_datagram_endpoint(
@@ -321,7 +321,7 @@ def main(args=None, conf=None):
 	retry_delays = retries_within_timeout(opts.attempts, opts.timeout)
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		muxer = loop.create_task(mux_listen( loop, auth_secret,
-			ident_db, sock_af, sock_p, host, port_mux, init_peer, retry_delays ))
+			sock_af, sock_p, host, port_mux, init_peer, retry_delays ))
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
 		try: return loop.run_until_complete(muxer)
