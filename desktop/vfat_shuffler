@@ -188,8 +188,9 @@ class File:
 			else:
 				name = entry.name
 				if name[0] == 0x05: name = b'\xe5' + name[1:] # 0x05 - Initial character is actually 0xE5
-				entry.lfns, entry.name_long = list(),\
-					'{}.{}'.format(name.decode(), entry.extension.decode())
+				name, ext = name.decode().strip(), entry.extension.decode().strip()
+				if ext: name = '{name}.{ext}'
+				entry.lfns, entry.name_long = list(), name
 
 			is_dir = entry.attributes.subDirectory
 			log.debug('Parsing %s: %r (%s)', entry_id, entry.name_long, 'dir' if is_dir else 'file')
@@ -405,7 +406,7 @@ def run_proc(cmd, sudo=False, out=True, **kws):
 	res = subprocess.run(cmd, **kws)
 	return res.stdout.decode() if out is True else res
 
-def op_resolve_mp(vfs_path):
+def op_resolve_mp(vfs_path, error_func):
 	import json, pathlib as pl
 	path = pl.Path(vfs_path).resolve()
 	lsblk = json.loads(run_proc('lsblk --json --paths'.split()))
@@ -419,7 +420,7 @@ def op_resolve_mp(vfs_path):
 		except ValueError: pass
 		else: mp_list.append((dev['name'], str(p), str(mp)))
 	dev, path, mp = sorted(mp_list, key=lambda dev: len(dev[2]))[-1]
-	if mp == '/': parser.error(f'Failed to resolve path to non-root mountpoint: {path}')
+	if mp == '/': error_func(f'Failed to resolve path to non-root mountpoint: {path}')
 	return dev, path, mp
 
 def op_navigate(root, path):
@@ -632,7 +633,7 @@ def main(args=None):
 	dev, path, mp = opts.dev_or_vfs_path, opts.path, None
 	try:
 		if not path:
-			dev, path, mount = op_resolve_mp(dev)
+			dev, path, mount = op_resolve_mp(dev, parser.error)
 			os.chdir('/') # umount might fail otherwise
 			run_proc(['umount', mount], sudo=opts.sudo)
 			mp = mount
