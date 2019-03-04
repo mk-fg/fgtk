@@ -13,7 +13,7 @@ class WGMuxConfig:
 	wg_iface = 'wg'
 	wg_port = 2200
 	wg_net = '10.215.72.0/24'
-	n_skip = 1 # to reserve e.g. 10.215.72.1/24 for server
+	n_skip, n_max = 2, None # to reserve e.g. 10.215.72.1/24 for server
 	ident_db_path = 'wg-mux-ident.db'
 
 
@@ -193,7 +193,7 @@ def main(args=None, conf=None):
 		help='Host or address (to be resolved via gai) to listen on.'
 			' Can include port, which will override -m/--mux-port option, if specified here.'
 			' Default is to use "::" wildcard IPv4/IPv6 binding.')
-	group.add_argument('-m', '--mux-port',
+	group.add_argument('-p', '--mux-port',
 		default=conf.mux_port, type=int, metavar='port',
 		help='Local UDP port to listen on for muxer requests from clients (default: %(default)s).'
 			' Can also be specified in the "bind" argument, which overrides this option.')
@@ -230,8 +230,12 @@ def main(args=None, conf=None):
 	group.add_argument('-r', '--n-skip',
 		type=int, metavar='n', default=conf.n_skip,
 		help='Number of first addresses from --wg-net to skip, so that they'
-			' can be reserved for something else (e.g. server itself). Will only affect'
-			' peers with new ident strings, not existing ones. Default: %(default)s')
+				' can be reserved for something else (e.g. .0 + .1 for server itself).'
+			' Will only affect peers with new ident strings, not existing ones. Default: %(default)s')
+	group.add_argument('-m', '--n-max',
+		type=int, metavar='n', default=conf.n_max,
+		help='Last number of address from --wg-net to hand out.'
+			' Same idea as with --n-skip, i.e. to have part of range reserved. Default: no limit.')
 	group.add_argument('-n', '--attempts',
 		type=int, metavar='n', default=conf.mux_attempts,
 		help='Number of UDP packets to send from'
@@ -250,16 +254,14 @@ def main(args=None, conf=None):
 	wg_cmd = opts.wg_cmd.split()
 	wg_net = ipaddress.ip_network(opts.wg_net)
 	tun_a, tun_b = 0, wg_net.num_addresses - 1
-	tun_offset = wg_net[0].compressed
-	tun_offset = 1 if tun_offset.endswith('.0') or tun_offset.endswith(':0') else 0
-	tun_b -= tun_offset
 	if opts.n_skip: tun_a += opts.n_skip
+	if opts.n_max: tun_b = opts.n_max
+	log.debug('Using wg network {} [{} - {}]', wg_net, wg_net[tun_a], wg_net[tun_b])
 
 	ident_db = shelve.open(str(pl.Path(opts.ident_db).expanduser()), 'c')
 	if opts.ident_list:
 		for ident, n in ident_db.items():
-			print('n={} addr={} :: {}'.format(
-				n, wg_net[n + tun_offset], ident_repr(ident) ))
+			print('n={} addr={} :: {}'.format(n, wg_net[n], ident_repr(ident)))
 		return
 
 	if not opts.auth_secret:
@@ -308,7 +310,7 @@ def main(args=None, conf=None):
 				return
 			ident_db[ident] = n
 			ident_db.sync()
-		wg_addr = wg_net[n + tun_offset]
+		wg_addr = wg_net[n]
 		log.debug(
 			'Allocated [n={}, addr={}] for ident: {} (addr={})',
 			n, wg_addr, ident_repr(ident), req_addr )
