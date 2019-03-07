@@ -1714,6 +1714,26 @@ as simple text files there.
 | Can also be pointed to maildir subdirs (same thing) or individual files.
 | Uses python stdlib email.* modules for all processing.
 
+dns-update-proxy
+''''''''''''''''
+
+Small py3/asyncio UDP listener that receives ~100B ``pk || box(name:addr)``
+libnacl-encrypted packets, decrypts (name, addr) tuples from there,
+checking that:
+
+- Name doesn't resolve to same IP already, among any others (-c/--check option).
+- Name has one of the allowed domain suffixes (-d/--update option).
+
+And if both conditions pass, as well as implicit auth via crypto,
+then it sends request to specified DNS service API to update address for name,
+with several retries on any fails (-r/--retry option) and rate-limiting,
+as well as --debug logging.
+
+Useful wrapper for DNS APIs that only provide all-or-nothing access,
+while you want to setup convenience names from some shared-access VM,
+without giving away creds for your whole account on these services,
+with all other names and subdomains there.
+
 
 
 [dev] Dev tools

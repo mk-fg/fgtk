@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+
+import os, sys, logging, contextlib, asyncio, socket, signal
+import base64, json, inspect, pathlib as pl
+
+import aiohttp
+import libnacl, libnacl.public
+
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+log = get_logger('dup.main')
+
+
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+b64_decode = lambda s: ( base64.urlsafe_b64decode
+	if '-' in s or '_' in s else base64.standard_b64decode )(s)
+
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
+def sockopt_resolve(prefix, v):
+	prefix = prefix.upper()
+	for k in dir(socket):
+		if not k.startswith(prefix): continue
+		if getattr(socket, k) == v: return k[len(prefix):]
+	return v
+
+async def aio_await_wrap(res):
+	'Wraps coroutine, callable that creates one or any other awaitable.'
+	if not inspect.isawaitable(res) and callable(res): res = res()
+	if inspect.isawaitable(res): res = await res
+	return res
+
+async def aio_task_cancel(task_list):
+	'Cancel and await a task or a list of such, which can have empty values mixed-in.'
+	if inspect.isawaitable(task_list): task_list = [task_list]
+	task_list = list(filter(None, task_list))
+	for task in task_list:
+		with contextlib.suppress(asyncio.CancelledError): task.cancel()
+	for task in task_list:
+		with contextlib.suppress(asyncio.CancelledError): await task
+
+def retries_within_timeout( tries, timeout,
+		backoff_func=lambda e,n: ((e**n-1)/e), slack=1e-2 ):
+	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
+	a, b = 0, timeout
+	while True:
+		m = (a + b) / 2
+		delays = list(backoff_func(m, n) for n in range(tries))
+		error = sum(delays) - timeout
+		if abs(error) < slack: return delays
+		elif error > 0: b = m
+		else: a = m
+
+
+class StacklessContext:
+	'''Like AsyncContextStack, but for tracking tasks that
+		can finish at any point without leaving stack frames.'''
+
+	def __init__(self, log=None): self.tasks, self.log = dict(), log
+	async def __aenter__(self): return self
+	async def __aexit__(self, *err):
+		if self.tasks:
+			task_list, self.tasks = self.tasks.values(), None
+			await aio_task_cancel(task_list)
+	async def close(self): await self.__aexit__(None, None, None)
+
+	def add_task(self, coro, run_after=None):
+		'Start task eating its own tail, with an optional success-only callback'
+		task_id = None
+		async def _task_wrapper(coro=coro):
+			try:
+				await aio_await_wrap(coro)
+				if run_after:
+					coro = run_after()
+					await aio_await_wrap(coro)
+			except asyncio.CancelledError: pass
+			except Exception as err:
+				if self.log: self.log.exception('Background task failed: {} - {}', coro, err_fmt(err))
+			finally:
+				assert task_id is not None, task_id
+				if self.tasks: self.tasks.pop(task_id, None)
+		task = asyncio.create_task(_task_wrapper())
+		task_id = id(task)
+		self.tasks[task_id] = task
+		return task
+	add = add_task
+
+
+class DUPServerProtocol:
+
+	transport = None
+
+	def __init__(self, loop):
+		self.updates = asyncio.Queue(loop=loop)
+		self.log = get_logger('dup.udp')
+
+	def connection_made(self, transport):
+		self.log.debug('Connection made')
+		self.transport = transport
+
+	def datagram_received(self, data, addr):
+		self.log.debug('Received {:,d}B from {!r}', len(data), addr)
+		self.updates.put_nowait((data, addr))
+
+	def connection_lost(self, err):
+		self.log.debug('Connection lost: {}', err or 'done')
+		self.updates.put_nowait(None)
+
+
+class DUPServerError(Exception): pass
+
+def parse_update_blob(auth_key, req, req_addr):
+	n = libnacl.crypto_box_PUBLICKEYBYTES
+	pk, req = req[:n], req[n:]
+	try: update = libnacl.public.Box(auth_key, pk).decrypt(req)
+	except libnacl.CryptError: return
+	return update.decode().split(':', 1)
+
+async def dup_listen( loop, auth_key,
+		sock_af, sock_p, host, port, api_conf ):
+	update_ts = dict()
+	async with contextlib.AsyncExitStack() as ctx:
+		transport, proto = await loop.create_datagram_endpoint(
+			lambda: DUPServerProtocol(loop), local_addr=(host, port), family=sock_af, proto=sock_p )
+		ctx.callback(transport.close)
+		tasks = await ctx.enter_async_context(StacklessContext(log))
+
+		if api_conf.get('gandi'):
+			api_conf.http = await ctx.enter_async_context(aiohttp.ClientSession(
+				headers = {'X-Api-Key': api_conf.gandi},
+				timeout=aiohttp.ClientTimeout(connect=40.0, sock_connect=30.0) ))
+
+		while True:
+			req, req_addr = await proto.updates.get()
+			update = parse_update_blob(auth_key, req, req_addr)
+			if not update: continue
+			domain, addr = update
+			if api_conf.update_filter:
+				for d in api_conf.update_filter:
+					if domain == d or domain.endswith(f'.{d}'): break
+				else: continue
+			ts, ts_chk = loop.time(), update_ts.get(domain)
+			if ts_chk and ts_chk + api_conf.update_timeout > ts: continue
+			update_ts[domain] = ts
+			tasks.add(dns_update(loop, api_conf, domain, addr))
+
+async def dns_update(loop, api_conf, domain, addr):
+	if api_conf.check:
+		try: dns_addr_list = await loop.getaddrinfo(domain, None, family=socket.AF_INET)
+		except (socket.gaierror, socket.error) as err: dns_addr_list = None
+		for gai_tuple in dns_addr_list or list():
+			if gai_tuple[4][0] == addr: return
+	if api_conf.get('gandi'): await dns_update_gandi(loop, api_conf, domain, addr)
+
+async def dns_update_gandi(loop, api_conf, domain, addr):
+	suffix = f'.{api_conf.gandi_zone}'
+	if not domain.endswith(suffix): return
+	rec = domain[:-len(suffix)]
+	rec_t = 'AAAA' if ':' in addr else 'A'
+	rec_url = ( 'https://dns.api.gandi.net/api/'
+		f'v5/domains/{api_conf.gandi_zone}/records/{rec}/{rec_t}' )
+	rec_addr = dict(rrset_values=[addr], rrset_ttl=10 * 60)
+	for n, delay in enumerate(api_conf.delays + [0], 1):
+		deadline = loop.time() + delay
+		log.debug('[{}] Gandi zone update (attempt={}): {} {}', rec, n, rec_url, rec_addr)
+		res = await api_conf.http.put(rec_url, json=rec_addr)
+		async with res as res:
+			if res.status in [200, 201]:
+				log.debug('[{}] Gandi zone update success (attempt={})', rec, n)
+				return
+			res_body = await res.read()
+			log_func = log.info if not delay else log.error
+			log_func(
+				'[{}] Failed to set record {!r} to {}={!r} (attempt={}): {} {} - {}',
+				rec, rec, rec_t, addr, n, res.status, res.reason, res_body )
+		if delay: await asyncio.sleep(max(0, deadline - loop.time()))
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Script to update DNS information via received UDP packets.')
+
+	group = parser.add_argument_group('Update options')
+	group.add_argument('-d', '--update', metavar='domain', action='append',
+		help='Domain(s) to update subdomains in. Requests to update other ones are ignored.')
+	group.add_argument('-c', '--check', action='store_true',
+		help='Check if received domain name already resolves to IP before updating it.'
+			' Any IP in getaddrinfo() counts, any system-wide options for that apply.')
+
+	group = parser.add_argument_group('Bind/auth options')
+	group.add_argument('bind', nargs='?', default='::',
+		help='Host or address (to be resolved via gai) to listen on.'
+			' Can include port, which will override -p/--port option, if specified here.'
+			' Default is to use "::" wildcard IPv4/IPv6 binding.')
+	group.add_argument('-p', '--port',
+		default=1234, type=int, metavar='port',
+		help='Local UDP port to listen on for info from clients (default: %(default)s).'
+			' Can also be specified in the "bind" argument, which overrides this option.')
+	group.add_argument('-k', '--key-file', required=True, metavar='path',
+		help='Path to file with base64-encrypted ed25519 key to use for incoming packets.')
+
+	group = parser.add_argument_group('DNS update - gandi.net')
+	group.add_argument('--gandi-api-key-file', metavar='path',
+		help='Path to gandi.net LiveDNS API key (X-Api-Key header).')
+	group.add_argument('--gandi-zone', metavar='domain',
+		help='Top-level domain to operate on, corresponding to zone name.')
+
+	group = parser.add_argument_group('Misc options')
+	group.add_argument('-t', '--update-timeout', type=float, metavar='s', default=1800,
+		help='Min delay before checking/updating same domain again. Default: %(default)ss')
+	group.add_argument('-r', '--retry', metavar='n:sec', default='5:600',
+		help='DNS update retry options, in "attempts:timespan" format. Default: %(default)s')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+
+	auth_key = b64_decode(pl.Path(opts.key_file).read_text().strip())
+	retry_n, retry_timeout = opts.retry.split(':', 1)
+	api_conf = adict( check=opts.check,
+		delays=retries_within_timeout(int(retry_n), float(retry_timeout)),
+		update_timeout=opts.update_timeout,
+		update_filter=list(d.strip('.') for d in (opts.update or list())) )
+
+	if not opts.gandi_api_key_file:
+		parser.error('No DNS update APIs enabled, exiting')
+
+	if opts.gandi_api_key_file:
+		if not opts.gandi_zone:
+			parser.error('gandi: --gandi-zone must be specified')
+		api_conf.update( gandi_zone=opts.gandi_zone,
+			gandi=pl.Path(opts.gandi_api_key_file).read_text().strip() )
+
+	host, port, family = opts.bind, opts.port, 0
+	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
+	else: host, port = str_part(host, ':>', port)
+	if '[' in host: family = socket.AF_INET6
+	host, port = host.strip('[]'), int(port)
+	try:
+		addrinfo = socket.getaddrinfo( host, str(port),
+			family=family, type=socket.SOCK_DGRAM, proto=socket.IPPROTO_UDP )
+		if not addrinfo: raise socket.gaierror(f'No addrinfo for host: {host}')
+	except (socket.gaierror, socket.error) as err:
+		parser.error( 'Failed to resolve socket parameters'
+			' via getaddrinfo: {!r} - {}'.format((host, port), err_fmt(err)) )
+	sock_af, sock_t, sock_p, _, sock_addr = addrinfo[0]
+	log.debug(
+		'Resolved host:port {!r}:{!r} to endpoint: {} (family: {}, type: {}, proto: {})',
+		host, port, sock_addr,
+		*(sockopt_resolve(pre, n) for pre, n in [
+			('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p) ]) )
+	host, port = sock_addr[:2]
+
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		dup = loop.create_task(dup_listen( loop,
+			auth_key, sock_af, sock_p, host, port, api_conf ))
+		for sig in 'INT TERM'.split():
+			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), dup.cancel)
+		try: return loop.run_until_complete(dup)
+		except asyncio.CancelledError: return
+
+if __name__ == '__main__': sys.exit(main())
