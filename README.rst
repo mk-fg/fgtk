@@ -1721,11 +1721,11 @@ Small py3/asyncio UDP listener that receives ~100B ``pk || box(name:addr)``
 libnacl-encrypted packets, decrypts (name, addr) tuples from there,
 checking that:
 
+- Public key of the sender is in -a/--auth-key list.
 - Name doesn't resolve to same IP already, among any others (-c/--check option).
 - Name has one of the allowed domain suffixes (-d/--update option).
 
-And if both conditions pass, as well as implicit auth via crypto,
-then it sends request to specified DNS service API to update address for name,
+If all these pass, specified DNS service API is used to update address for name,
 with several retries on any fails (-r/--retry option) and rate-limiting,
 as well as --debug logging.
 

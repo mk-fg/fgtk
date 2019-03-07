@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os, sys, logging, contextlib, asyncio, socket, signal
-import base64, json, inspect, pathlib as pl
+import base64, json, inspect, secrets, pathlib as pl
 
 import aiohttp
 import libnacl, libnacl.public
@@ -132,15 +132,17 @@ class DUPServerProtocol:
 
 class DUPServerError(Exception): pass
 
-def parse_update_blob(auth_key, req, req_addr):
+def parse_update_blob(box_key, pk_whitelist, req, req_addr):
 	n = libnacl.crypto_box_PUBLICKEYBYTES
 	pk, req = req[:n], req[n:]
-	try: update = libnacl.public.Box(auth_key, pk).decrypt(req)
+	if pk_whitelist and not any(
+		secrets.compare_digest(pk, pk_chk) for pk_chk in pk_whitelist ): return
+	try: update = libnacl.public.Box(box_key, pk).decrypt(req)
 	except libnacl.CryptError: return
 	return update.decode().split(':', 1)
 
-async def dup_listen( loop, auth_key,
-		sock_af, sock_p, host, port, api_conf ):
+async def dup_listen( loop, box_key,
+		pk_whitelist, sock_af, sock_p, host, port, api_conf ):
 	update_ts = dict()
 	async with contextlib.AsyncExitStack() as ctx:
 		transport, proto = await loop.create_datagram_endpoint(
@@ -155,8 +157,10 @@ async def dup_listen( loop, auth_key,
 
 		while True:
 			req, req_addr = await proto.updates.get()
-			update = parse_update_blob(auth_key, req, req_addr)
-			if not update: continue
+			update = parse_update_blob(box_key, pk_whitelist, req, req_addr)
+			if not update:
+				log.debug('Skipping update-blob [{}B] from {} - auth/crypto error', len(req), req_addr)
+				continue
 			domain, addr = update
 			if api_conf.update_filter:
 				for d in api_conf.update_filter:
@@ -204,7 +208,7 @@ def main(args=None):
 	parser = argparse.ArgumentParser(
 		description='Script to update DNS information via received UDP packets.')
 
-	group = parser.add_argument_group('Update options')
+	group = parser.add_argument_group('Update checks')
 	group.add_argument('-d', '--update', metavar='domain', action='append',
 		help='Domain(s) to update subdomains in. Requests to update other ones are ignored.')
 	group.add_argument('-c', '--check', action='store_true',
@@ -222,6 +226,10 @@ def main(args=None):
 			' Can also be specified in the "bind" argument, which overrides this option.')
 	group.add_argument('-k', '--key-file', required=True, metavar='path',
 		help='Path to file with base64-encrypted ed25519 key to use for incoming packets.')
+	group.add_argument('-a', '--auth-key', metavar='key/path',
+		help='Space-separated list base64-encoded client public keys'
+				' or path to a file with such, if it starts with "." or "/".'
+			' If specified, only these clients will be authorized for name-update requests.')
 
 	group = parser.add_argument_group('DNS update - gandi.net')
 	group.add_argument('--gandi-api-key-file', metavar='path',
@@ -240,7 +248,12 @@ def main(args=None):
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 
-	auth_key = b64_decode(pl.Path(opts.key_file).read_text().strip())
+	box_key = b64_decode(pl.Path(opts.key_file).read_text().strip())
+	pk_whitelist = (opts.auth_key or '').strip() or set()
+	if pk_whitelist:
+		if pk_whitelist[0] in './': pk_whitelist = pl.Path(pk_whitelist).read_text()
+		pk_whitelist = set(map(b64_decode, pk_whitelist.split()))
+
 	retry_n, retry_timeout = opts.retry.split(':', 1)
 	api_conf = adict( check=opts.check,
 		delays=retries_within_timeout(int(retry_n), float(retry_timeout)),
@@ -278,7 +291,7 @@ def main(args=None):
 
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		dup = loop.create_task(dup_listen( loop,
-			auth_key, sock_af, sock_p, host, port, api_conf ))
+			box_key, pk_whitelist, sock_af, sock_p, host, port, api_conf ))
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), dup.cancel)
 		try: return loop.run_until_complete(dup)
