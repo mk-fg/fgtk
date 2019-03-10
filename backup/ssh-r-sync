@@ -272,6 +272,9 @@ def main(args=None):
 	group.add_argument('-n', '--name', metavar='name',
 		help='Local machine name, which is used for backup'
 			' cleanup and deduplication. Picked as uname.nodename, if not specified.')
+	group.add_argument('--name-rpi', action='store_true',
+		help='Use "Serial" field from /proc/cpuinfo,'
+			' provided there by RPi kernel, as board-specific name.')
 	group.add_argument('-f', '--filter-file', metavar='path',
 		help='Local file to use as rsync daemon filter rules,'
 			' to be passed as "filter = merge <file>" in its config.')
@@ -347,7 +350,15 @@ def main(args=None):
 		if ssh_port and ssh_port != opts.port:
 			parser.error('Two different ssh ports specified via -p/--port option and in destination')
 		ssh_port = opts.port
-	name = opts.name or os.uname().nodename
+	if opts.name_rpi:
+		import re
+		with open('/proc/cpuinfo') as src:
+			for line in src:
+				m = re.search(r'^\s*Serial\s*:\s*(\S+)\s*$', line)
+				if m: break
+			else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
+		name = m.group(1)
+	else: name = opts.name or os.uname().nodename
 	if opts.no_ssh_opts: conf.ssh_opts.clear()
 
 	if opts.debug: p(f'----- sync name={name} dst={ssh_dst}:{ssh_port or 22}')
