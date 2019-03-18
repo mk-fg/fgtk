@@ -13,11 +13,11 @@ vde_path=~/tmp/vde
 dump_inc=
 restore=
 net_only=
-img=install
+img=linux/install.qcow2.inc
 video=( -nographic )
 fs=
 
-[[ "$1" = -i || "$1" = --img ]] && { img="$2"; shift; shift; }
+[[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
 [[ "$1" = -g || "$1" = --graphic ]] && {
@@ -147,7 +147,7 @@ qemu_opts=(
 	-smp 2
 	"${video[@]}"
 
-	-drive file=linux/"$img".qcow2.inc,if=virtio,aio=native,cache=writeback,cache.direct=on
+	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
 	# -cdrom linux/install.iso
 )
 
