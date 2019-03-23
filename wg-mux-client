@@ -198,8 +198,10 @@ def main(args=None, conf=None):
 	group.add_argument('--ident-rpi', action='store_true',
 		help='Use hash of "Serial" from /proc/cpuinfo as ident.'
 			' Only available on Raspberry Pi boards.')
-	group.add_argument('--ident-cmd',
-		metavar='shell-cmd',
+	group.add_argument('--ident-file', metavar='path',
+		help='Read specified file contents as the ident string, stripping spaces.'
+			' E.g. /sys/class/dmi/id/board_serial can be used on x86 platforms, if accessible.')
+	group.add_argument('--ident-cmd', metavar='shell-cmd',
 		help='Shell command to run to get ident string on stdout.'
 			' Must exit with code 0, otherwise script will abort.'
 			' Resulting string be stripped of spaces, otherwise sent as-is,'
@@ -271,8 +273,11 @@ def main(args=None, conf=None):
 					if m: break
 				else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
 				ident = hashlib.blake2s(m.group(1).encode(), key=auth_secret).digest()
+		elif opts.ident_file:
+			ident = pl.Path(opts.ident_file).read_bytes().strip()
+			ident = hashlib.blake2s(ident, key=auth_secret).digest()
 		elif opts.ident_cmd:
-			res = subprocess.run(opts.ident_cmd, shell=True, check=True, stdout=subprocess.PIPE)
+			ident = sp.run(opts.ident_cmd, shell=True, check=True, stdout=sp.PIPE)
 			ident = res.stdout.decode().strip()
 		else:
 			with open('/etc/machine-id', 'rb') as src:
