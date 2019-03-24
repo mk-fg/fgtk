@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import os, sys, logging, contextlib, asyncio, socket, signal
-import base64, json, inspect, secrets, pathlib as pl
+import stat, tempfile, re, string, base64, json, inspect, secrets
+import unicodedata, pathlib as pl, subprocess as sp
 
-import aiohttp
 import libnacl, libnacl.public
 
 
@@ -33,6 +33,8 @@ class adict(dict):
 
 b64_decode = lambda s: ( base64.urlsafe_b64decode
 	if '-' in s or '_' in s else base64.standard_b64decode )(s)
+
+str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 def str_part(s, sep, default=None):
 	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
@@ -73,6 +75,27 @@ def retries_within_timeout( tries, timeout,
 		if abs(error) < slack: return delays
 		elif error > 0: b = m
 		else: a = m
+
+@contextlib.contextmanager
+def safe_replacement(path, *open_args, mode=None, **open_kws):
+	path = str(path)
+	if mode is None:
+		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
+		except OSError: pass
+	open_kws.update( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	if not open_args: open_kws['mode'] = 'w'
+	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			yield tmp
+			if not tmp.closed:
+				os.fsync(tmp.fileno())
+				tmp.close()
+			os.rename(tmp.name, path)
+		finally:
+			try: os.unlink(tmp.name)
+			except OSError: pass
 
 
 class StacklessContext:
@@ -151,6 +174,7 @@ async def dup_listen( loop, box_key,
 		tasks = await ctx.enter_async_context(StacklessContext(log))
 
 		if api_conf.get('gandi'):
+			import aiohttp
 			api_conf.http = await ctx.enter_async_context(aiohttp.ClientSession(
 				headers = {'X-Api-Key': api_conf.gandi},
 				timeout=aiohttp.ClientTimeout(connect=40.0, sock_connect=30.0) ))
@@ -177,13 +201,13 @@ async def dns_update(loop, api_conf, domain, addr):
 		except (socket.gaierror, socket.error) as err: dns_addr_list = None
 		for gai_tuple in dns_addr_list or list():
 			if gai_tuple[4][0] == addr: return
+	if api_conf.get('zone_file'): await dns_update_local(loop, api_conf, domain, addr)
 	if api_conf.get('gandi'): await dns_update_gandi(loop, api_conf, domain, addr)
 
 async def dns_update_gandi(loop, api_conf, domain, addr):
 	suffix = f'.{api_conf.gandi_zone}'
 	if not domain.endswith(suffix): return
-	rec = domain[:-len(suffix)]
-	rec_t = 'AAAA' if ':' in addr else 'A'
+	rec, rec_t = domain[:-len(suffix)], 'AAAA' if ':' in addr else 'A'
 	rec_url = ( 'https://dns.api.gandi.net/api/'
 		f'v5/domains/{api_conf.gandi_zone}/records/{rec}/{rec_t}' )
 	rec_addr = dict(rrset_values=[addr], rrset_ttl=10 * 60)
@@ -201,6 +225,33 @@ async def dns_update_gandi(loop, api_conf, domain, addr):
 				'[{}] Failed to set record {!r} to {}={!r} (attempt={}): {} {} - {}',
 				rec, rec, rec_t, addr, n, res.status, res.reason, res_body )
 		if delay: await asyncio.sleep(max(0, deadline - loop.time()))
+
+async def dns_update_local(loop, api_conf, domain, addr):
+	suffix = f'.{api_conf.zone_name}'
+	if not domain.endswith(suffix): return
+	rec, rec_t = domain[:-len(suffix)], 'AAAA' if ':' in addr else 'A'
+	zone, replaced = list(), None
+	line_re = re.compile(
+		r'(?i)^(\s*' + re.escape(rec)
+		+ r'\s+IN\s+' + rec_t + r'\s+)(\S+)\s*$' )
+	for line in api_conf.zone_file.read_text().splitlines():
+		m = line_re.search(line)
+		if m:
+			if str_norm(m.group(2)) == str_norm(addr): replaced = False
+			if replaced is None: line, replaced = m.group(1) + addr, True
+			elif replaced is True: line = None
+		if line is not None: zone.append(line.rstrip())
+	log.debug('[{}] Zone line replace-status: {!r}', rec, replaced)
+	if replaced is False: return # no change needed
+	if replaced is None:
+		while zone and not zone[-1].strip(): zone.pop()
+		zone.append(f'{rec} IN {rec_t} {addr}')
+	if zone and zone[-1] != '': zone.append('')
+	with safe_replacement(api_conf.zone_file) as dst: dst.write('\n'.join(zone))
+	log.debug('[{}] Zone file updated ({} lines)', rec, len(zone))
+	if api_conf.zone_cmd:
+		log.debug('[{}] Running zone-update cmd: {}', rec, ' '.join(api_conf.zone_cmd))
+		sp.run(api_conf.zone_cmd)
 
 
 def main(args=None):
@@ -231,6 +282,15 @@ def main(args=None):
 				' or path to a file with such, if it starts with "." or "/".'
 			' If specified, only these clients will be authorized for name-update requests.')
 
+	group = parser.add_argument_group('DNS update - local zone file')
+	group.add_argument('--zone-file', metavar='path',
+		help='Path to BIND-style zone file in which'
+			' to lookup/add/update corresponding A record.')
+	group.add_argument('--zone-name', metavar='domain',
+		help='Zone name/suffix to assume/strip for names in --zone-file.')
+	group.add_argument('--zone-update-cmd', metavar='cmd',
+		help='Command to run after --zone-file is updated, split on spaces.')
+
 	group = parser.add_argument_group('DNS update - gandi.net')
 	group.add_argument('--gandi-api-key-file', metavar='path',
 		help='Path to gandi.net LiveDNS API key (X-Api-Key header).')
@@ -260,7 +320,7 @@ def main(args=None):
 		update_timeout=opts.update_timeout,
 		update_filter=list(d.strip('.') for d in (opts.update or list())) )
 
-	if not opts.gandi_api_key_file:
+	if not (opts.gandi_api_key_file or opts.zone_file):
 		parser.error('No DNS update APIs enabled, exiting')
 
 	if opts.gandi_api_key_file:
@@ -268,6 +328,15 @@ def main(args=None):
 			parser.error('gandi: --gandi-zone must be specified')
 		api_conf.update( gandi_zone=opts.gandi_zone,
 			gandi=pl.Path(opts.gandi_api_key_file).read_text().strip() )
+
+	if opts.zone_file:
+		zone_file = pl.Path(opts.zone_file)
+		if not zone_file.exists():
+			parser.error(f'Specified --zone-file does not exists: {str(zone_file)!r}')
+		zone_cmd = opts.zone_update_cmd
+		if zone_cmd: zone_cmd = zone_cmd.split()
+		api_conf.update( zone_file=zone_file,
+			zone_name=opts.zone_name, zone_cmd=zone_cmd )
 
 	host, port, family = opts.bind, opts.port, 0
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)

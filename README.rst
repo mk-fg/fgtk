@@ -1725,14 +1725,17 @@ checking that:
 - Name doesn't resolve to same IP already, among any others (-c/--check option).
 - Name has one of the allowed domain suffixes (-d/--update option).
 
-If all these pass, specified DNS service API is used to update address for name,
-with several retries on any fails (-r/--retry option) and rate-limiting,
-as well as --debug logging.
+If all these pass, specified BIND-format zone-file (for e.g. nsd_) is updated,
+or DNS service API used to same effect, with several retries on any fails
+(-r/--retry option) and rate-limiting, as well as --debug logging.
 
-Useful wrapper for DNS APIs that only provide all-or-nothing access,
+Useful wrapper for auto-updating names in delegated nsd-managed zone,
+or doing same via DNS APIs that only provide all-or-nothing access,
 while you want to setup convenience names from some shared-access VM,
-without giving away creds for your whole account on these services,
+without giving away creds for the whole account on these services,
 with all other names and subdomains there.
+
+.. _nsd: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
 
 
