@@ -1223,8 +1223,16 @@ stuff, just like mailx would do, but also allowing to pass custom headers
 passgen
 '''''''
 
-Uses adict english dictionaly to generate easy-to-remember passphrase.  Should
-be weak if bruteforce attack picks words instead of individual lettters.
+Uses aspell english dictionaly to generate easy-to-remember passphrase -
+a `Diceware-like`_ method.
+
+Use -e option to get a rough entropy estimate for the resulting passphrase,
+based on number of words in aspell dictionary dump that is being used.
+
+Other options allow for picking number of words and sanity-checks like min/max length
+(to avoid making it too unwieldy or easy to bruteforce via other methods).
+
+.. _Diceware-like: https://en.wikipedia.org/wiki/Diceware
 
 urlparse
 ''''''''

@@ -1,49 +1,51 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals, print_function
+#!/usr/bin/env python3
 
-import itertools as it, operator as op, functools as ft
-import types
-try:
-	map, filter, zip, range = it.imap, it.ifilter, it.izip, xrange # py2.X
-	str = types.StringTypes
-except AttributeError: pass # py3.X
+import os, sys, math, random, subprocess as sp
 
 
-import argparse
-parser = argparse.ArgumentParser(description='Generate random passphrase.')
-parser.add_argument('-w', '--words', type=int, default=4,
-	help='Passphrase word count (default: %(default)s).')
-parser.add_argument('-f', '--char-count-min', type=int, default=15,
-	help='Min passphrase character count (default: %(default)s).')
-parser.add_argument('-t', '--char-count-max', type=int, default=30,
-	help='Max passphrase character count (default: %(default)s).')
-parser.add_argument('-i', '--id', help='Add some ID to one of the words.')
-optz = parser.parse_args()
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Generate random passphrase'
+			' using Diceware method and aspell "en" dictionary.')
+	parser.add_argument('-w', '--words', metavar='n', type=int, default=5,
+		help='Passphrase word count (default: %(default)s).')
+	parser.add_argument('-f', '--char-count-min', metavar='n', type=int, default=20,
+		help='Min passphrase character count (default: %(default)s).')
+	parser.add_argument('-t', '--char-count-max', metavar='n', type=int, default=60,
+		help='Max passphrase character count (default: %(default)s).')
+	parser.add_argument('-i', '--id', metavar='string',
+		help='Add some ID string (with randomized separator) to one of the words.')
+	parser.add_argument('-e', '--entropy-estimate', action='store_true',
+		help='Print rough entropy estimate of the'
+			' resulting passphrase (not counting the --id, if any).')
+	opts = parser.parse_args()
 
-from subprocess import Popen, PIPE
-from random import random, choice
+	aspell = sp.run(['aspell', '-d', 'en', 'dump', 'master'], stdout=sp.PIPE)
+	aspell_words = list(set(aspell.stdout.decode().splitlines()))
+	aspell_words_ent = math.log(len(aspell_words), 2)
 
-aspell = Popen(['aspell', '-d', 'en', 'dump', 'master'], stdout=PIPE)
-aspell_words = list(set(map(op.methodcaller('strip'), aspell.stdout)))
+	def get_word():
+		word = random.choice(aspell_words)
+		if word.endswith("'s"): word = word[:-2]
+		return word
 
-def get_word():
-	word = choice(aspell_words)
-	if word.endswith("'s"): word = word[:-2]
-	return word
+	words = list(get_word() for n in range(opts.words))
 
-words = list(get_word() for i in xrange(optz.words))
+	for n in range(100):
+		words[random.choice(range(len(words)))] = get_word()
+		words_len = sum(map(len, words))
+		if opts.char_count_min <= words_len <= opts.char_count_max: break
 
-for i in xrange(100):
-	words[choice(range(len(words)))] = get_word()
-	words_len = sum(map(len, words))
-	if words_len >= optz.char_count_min and words_len <= optz.char_count_max: break
+	if opts.id:
+		id_sep = random.choice('#@$%&^*!<>/?\|')
+		id_word = random.choice(range(len(words)))
+		word = words[id_word]
+		words[id_word] = ''.join( [opts.id, id_sep, word]
+			if random.random() > 0.5 else [word, id_sep, opts.id] )
 
-if optz.id:
-	id_sep = choice('#@$%&^*!<>/?\|')
-	id_word = choice(range(len(words)))
-	word = words[id_word]
-	words[id_word] = ''.join([optz.id, id_sep, word]\
-		if random() > 0.5 else [word, id_sep, optz.id])
+	print(' '.join(words))
+	if opts.entropy_estimate:
+		print('Entropy estimate: {:,.1f}b'.format(aspell_words_ent * len(words)))
 
-print(' '.join(words))
+if __name__ == '__main__': sys.exit(main())
