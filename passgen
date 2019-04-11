@@ -21,7 +21,7 @@ def main(args=None):
 			' resulting passphrase (not counting the --id, if any).')
 	opts = parser.parse_args()
 
-	aspell = sp.run(['aspell', '-d', 'en', 'dump', 'master'], stdout=sp.PIPE)
+	aspell = sp.run(['aspell', '-d', 'en', 'dump', 'master'], check=True, stdout=sp.PIPE)
 	aspell_words = list(set(aspell.stdout.decode().splitlines()))
 	aspell_words_ent = math.log(len(aspell_words), 2)
 
@@ -31,18 +31,18 @@ def main(args=None):
 		return word
 
 	words = list(get_word() for n in range(opts.words))
-
-	for n in range(100):
-		words[random.choice(range(len(words)))] = get_word()
+	tries, a, b = 999, opts.char_count_min, opts.char_count_max
+	for n in range(tries):
 		words_len = sum(map(len, words))
-		if opts.char_count_min <= words_len <= opts.char_count_max: break
+		if a <= words_len <= b: break
+		words[random.choice(range(len(words)))] = get_word()
+	else: parser.error(f'Failed to pick password of {a}-{b} chars within {tries} attempts')
 
 	if opts.id:
 		id_sep = random.choice('#@$%&^*!<>/?\|')
-		id_word = random.choice(range(len(words)))
-		word = words[id_word]
-		words[id_word] = ''.join( [opts.id, id_sep, word]
-			if random.random() > 0.5 else [word, id_sep, opts.id] )
+		n = random.choice(range(len(words)))
+		words[n] = ''.join( [opts.id, id_sep, words[n]]
+			if random.random() > 0.5 else [words[n], id_sep, opts.id] )
 
 	print(' '.join(words))
 	if opts.entropy_estimate:
