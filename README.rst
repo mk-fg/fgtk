@@ -1735,6 +1735,32 @@ while you want to setup convenience names from some shared-access VM,
 without giving away creds for the whole account on these services,
 with all other names and subdomains there.
 
+Example snippet for sending update packets::
+
+  import socket, time, libnacl.public, base64, pathlib as pl
+
+  b64_decode = lambda s: ( base64.urlsafe_b64decode
+    if '-' in s or '_' in s else base64.standard_b64decode )(s)
+
+  class Conf:
+    proxy_addr = 'dns-proxy.host.net'
+    proxy_pk = 'wnQvfuzUNyjDgFhPa23y0z5iXJl8TuZ+rdL0G3vefxQ='
+    sk_file = 'local_key.secret' # use e.g. "wg genkey" or libnacl
+    key = libnacl.public.SecretKey(b64_decode(pl.Path(sk_file).read_text()))
+    box = libnacl.public.Box(key, b64_decode(proxy_pk))
+    encrypt = lambda s, msg: s.key.pk + s.box.encrypt(msg)
+  proxy_conf = Conf()
+
+  def update_dns(conf, name, addr):
+    msg = conf.encrypt(f'{name}:{addr}'.encode())
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+      for delay in [0.1, 0.5, 1, 3, 0]:
+        try: s.sendto(msg, conf.proxy_addr)
+        except (socket.gaierror, socket.error): pass
+        if delay: time.sleep(delay)
+
+  update_dns(proxy_conf, 'my.ddns.host.net', '1.2.3.4')
+
 .. _nsd: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
 
