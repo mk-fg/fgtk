@@ -278,7 +278,7 @@ def main(args=None, conf=None):
 			ident = hashlib.blake2s(ident, key=auth_secret).digest()
 		elif opts.ident_cmd:
 			ident = sp.run(opts.ident_cmd, shell=True, check=True, stdout=sp.PIPE)
-			ident = res.stdout.decode().strip()
+			ident = ident.stdout.decode().strip()
 		else:
 			with open('/etc/machine-id', 'rb') as src:
 				ident = hashlib.blake2s(src.read(), key=auth_secret).digest()
