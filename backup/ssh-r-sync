@@ -2,8 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import os, sys, contextlib, collections, subprocess, socket, pwd
-import hashlib, math, json, base64, signal, time
-import tempfile, pathlib as pl
+import hashlib, math, json, base64, signal, time, re, tempfile, pathlib as pl
 
 
 p_fmt = lambda fmt,*a,**k: (
@@ -275,6 +274,9 @@ def main(args=None):
 	group.add_argument('--name-rpi', action='store_true',
 		help='Use "Serial" field from /proc/cpuinfo,'
 			' provided there by RPi kernel, as board-specific name.')
+	group.add_argument('--name-file', metavar='path',
+		help='Read specified file contents as the name, stripping spaces, slashes and such.'
+			' E.g. /sys/class/dmi/id/board_serial can be used on x86 platforms, if accessible.')
 	group.add_argument('-f', '--filter-file', metavar='path',
 		help='Local file to use as rsync daemon filter rules,'
 			' to be passed as "filter = merge <file>" in its config.')
@@ -351,13 +353,19 @@ def main(args=None):
 			parser.error('Two different ssh ports specified via -p/--port option and in destination')
 		ssh_port = opts.port
 	if opts.name_rpi:
-		import re
 		with open('/proc/cpuinfo') as src:
 			for line in src:
 				m = re.search(r'^\s*Serial\s*:\s*(\S+)\s*$', line)
 				if m: break
 			else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
 		name = m.group(1)
+	elif opts.name_file:
+		name = pl.Path(opts.name_file).read_text().strip()
+		for sub_re, sub in {
+				r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
+				r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
+				'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }.items():
+			name = re.sub(sub_re, sub, name)
 	else: name = opts.name or os.uname().nodename
 	if opts.no_ssh_opts: conf.ssh_opts.clear()
 
