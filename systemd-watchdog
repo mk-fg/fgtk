@@ -27,8 +27,7 @@ class rtmsg(ct.Structure):
 			'family dst_len src_len tos table protocol scope type'.split() )
 		+ [('flags', ct.c_int)] )
 
-class mnl_socket(ct.Structure):
-	_fields_ = [('fd', ct.c_int), ('sockaddr_nl', ct.c_int)]
+class mnl_socket(ct.Structure): pass
 
 class ifaddrmsg(ct.Structure):
 	_fields_ = [ ('family', ct.c_uint8), ('prefixlen', ct.c_uint8),
@@ -74,14 +73,15 @@ class LibMNL:
 			libmnl.mnl_nlmsg_put_extra_header.restype = ct.POINTER(ct.c_void_p)
 			libmnl.mnl_nlmsg_next = ct.POINTER(nlmsghdr)
 			libmnl.mnl_attr_put_u32.argtypes = [ct.POINTER(nlmsghdr), ct.c_uint16, ct.c_uint32]
-			libmnl.mnl_socket_open.restype = mnl_socket
+			libmnl.mnl_socket_open.restype = ct.POINTER(mnl_socket)
 			libmnl.mnl_socket_open.errcheck = _check()
-			libmnl.mnl_socket_bind.argtypes = [mnl_socket, ct.c_uint, ct.c_int32]
+			libmnl.mnl_socket_bind.argtypes = [ct.POINTER(mnl_socket), ct.c_uint, ct.c_int32]
 			libmnl.mnl_socket_bind.errcheck = _check(lambda v: v >= 0)
 			libmnl.mnl_socket_get_portid.restype = ct.c_uint
-			libmnl.mnl_socket_get_portid.argtypes = [mnl_socket]
+			libmnl.mnl_socket_get_portid.argtypes = [ct.POINTER(mnl_socket)]
 			libmnl.mnl_socket_sendto.restype = ct.c_ssize_t
-			libmnl.mnl_socket_sendto.argtypes = [mnl_socket, ct.POINTER(nlmsghdr), ct.c_size_t]
+			libmnl.mnl_socket_sendto.argtypes = [
+				ct.POINTER(mnl_socket), ct.POINTER(nlmsghdr), ct.c_size_t ]
 			libmnl.mnl_socket_sendto.errcheck = _check(lambda v: v >= 0)
 			libmnl.mnl_socket_recvfrom.restype = ct.c_ssize_t
 			libmnl.mnl_nlmsg_get_payload.restype = ct.POINTER(ct.c_void_p)
