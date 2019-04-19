@@ -240,6 +240,11 @@ def main(args=None, conf=None):
 		help='Interval between running --ping-cmd in a loop until it fails. Default: %(default)s')
 	group.add_argument('--ping-silent', action='store_true',
 		help='Suppress stdout/stderr for --ping-cmd.')
+	group.add_argument('--ping-systemd', action='store_true',
+		help='Use systemd service notification/watchdog'
+				' mechanisms when running as a daemon, if enabled in systemd unit.'
+			' Service start notification is only issued after first successful ping command.'
+			' Requres python systemd module installed.')
 
 	group = parser.add_argument_group('Misc options')
 	group.add_argument('-n', '--attempts',
@@ -297,6 +302,16 @@ def main(args=None, conf=None):
 				else: parser.error(f'Failed to find import path --ping-cmd: {ping_cmd[0]}')
 			ping_cmd[0] = runpy.run_path(p, run_name='ping_cmd')[func]
 			if not callable(ping_cmd[0]): parser.error(f'--ping-cmd spec not callable: {ping_cmd}')
+		ping_sd = opts.ping_systemd
+		if ping_sd:
+			from systemd import daemon
+			sd_pid, sd_usec = (os.environ.get(k) for k in ['WATCHDOG_PID', 'WATCHDOG_USEC'])
+			if sd_pid and sd_pid.isdigit() and int(sd_pid) == os.getpid():
+				sd_ping_interval = float(sd_usec) / 2e6 # half of interval in seconds
+				if sd_ping_interval <= 0: parser.error('Passed WATCHDOG_USEC interval <= 0')
+				log.debug('Initializing systemd watchdog pinger with interval: {:,.1f}s', sd_ping_interval)
+			else: sd_ping_interval = None
+			sd_ready, sd_ping_ts = False, sd_ping_interval and time.monotonic() + sd_ping_interval
 
 	host, port_mux, family = opts.host, opts.mux_port, 0
 	if host.count(':') > 1: host, port_mux = str_part(host, ']:>', port_mux)
@@ -366,6 +381,7 @@ def main(args=None, conf=None):
 			signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
 		ping_cmd_call, ping_kws = callable(ping_cmd[0]), dict()
 		if opts.ping_silent: ping_kws.update(stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+
 		while True:
 			if not ping_cmd_call: code = sp.run(ping_cmd, **ping_kws).returncode
 			else: code = ping_cmd[0](ping_cmd[1:])
@@ -373,6 +389,19 @@ def main(args=None, conf=None):
 				print( f'ERROR: --ping-cmd exited with code {code},'
 					f' exiting with code {conf.ping_err_code}', file=sys.stderr )
 				return conf.ping_err_code
-			time.sleep(opts.ping_interval)
+
+			delay, delay_sd = opts.ping_interval, None
+			if ping_sd:
+				if not sd_ready:
+					daemon.notify('READY=1')
+					daemon.notify(f'STATUS=Running with wg addr: {wg_addr}/{wg_mask}')
+					sd_ready = True
+				if sd_ping_ts:
+					delay_sd = sd_ping_ts - time.monotonic()
+					if delay_sd <= delay: delay, delay_sd = delay_sd, True
+			if delay > 0: time.sleep(delay)
+			if delay_sd is True:
+				sd_ping_ts += sd_ping_interval
+				daemon.notify('WATCHDOG=1')
 
 if __name__ == '__main__': sys.exit(main())
