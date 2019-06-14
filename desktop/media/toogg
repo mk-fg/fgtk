@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 from collections import OrderedDict, namedtuple
-from asyncio import subprocess
+from asyncio import subprocess as sp
 import math, datetime as dt
 import os, sys, re, logging, pathlib
 import contextlib, asyncio, signal, json, tempfile, shutil
@@ -78,7 +78,8 @@ class FFProc:
 	async def run(self, wait=True):
 		assert not self.proc
 		log.debug('[{!r}] running: {}', self.src, self.cmd_repr)
-		if self.progress_func: self.kws['stdout'] = subprocess.PIPE
+		self.kws.setdefault('stdin', sp.DEVNULL)
+		if self.progress_func: self.kws['stdout'] = sp.PIPE
 		self.proc = await asyncio.create_subprocess_exec(*self.cmd, **self.kws)
 		for k in 'stdin', 'stdout', 'stderr': setattr(self, k, getattr(self.proc, k))
 		self.finished = self.loop.create_task(self.wait())
@@ -443,7 +444,7 @@ class AudioConv:
 		ytdl_opts = ['youtube-dl', '--newline'] + ytdl_opts
 		async with YTDLProc( self.loop, url,
 				ytdl_opts + ['--get-filename', url],
-				stdout=subprocess.PIPE ) as proc:
+				stdin=sp.DEVNULL, stdout=sp.PIPE ) as proc:
 			src = (await proc.stdout.read()).strip().decode()
 			await proc.finished
 		if not src or '\n' in src:
@@ -468,7 +469,7 @@ class AudioConv:
 				[ 'ffprobe', '-v', 'fatal', '-show_entries',
 					'stream=codec_type,codec_name,duration:format=duration',
 					'-print_format', 'json', str(src) ],
-				stdout=subprocess.PIPE ) as proc:
+				stdout=sp.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
 			src_duration = src_codec = None
@@ -541,7 +542,7 @@ class AudioConv:
 		async with job.ffmpeg( 'loudnorm-info [2/3]',
 				[ '-v', 'info', '-i', job.tmp_file('src.wav'),
 					'-af', f'loudnorm={opts}print_format=json', '-f', 'null', '/dev/null' ],
-				env=ffmpeg_env, stderr=subprocess.PIPE ) as proc:
+				env=ffmpeg_env, stderr=sp.PIPE ) as proc:
 			norm_info, ffmpeg_stderr = list(), list()
 			while True:
 				line = await proc.readline('stderr')
