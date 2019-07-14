@@ -57,21 +57,6 @@ def bin_pack(fmt, *args):
 	return struct.pack(fmt.replace('z', '{}s').format(
 		*(len(s) for s in args if isinstance(s, bytes)) ), *args)
 
-async def aio_wait_or_cancel(
-		loop, task, timeout, default=..., cancel_suppress=None ):
-	'Like asyncio.wait_for, but also awaits the task that it cancels.'
-	if asyncio.iscoroutine(task): task = loop.create_task(task)
-	try: return await asyncio.wait_for(task, timeout)
-	except asyncio.TimeoutError:
-		if default is ...:
-			err = sys.exc_info()
-			err = err[1].with_traceback(err[2])
-		task.cancel()
-		with contextlib.suppress(
-			asyncio.CancelledError, *(cancel_suppress or list()) ): await task
-		if default is ...: raise err from None
-		else: return default
-
 def retries_within_timeout( tries, timeout,
 		backoff_func=lambda e,n: ((e**n-1)/e), slack=1e-2 ):
 	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
@@ -148,7 +133,7 @@ async def mux_negotiate(
 			if delay:
 				while True:
 					try:
-						response = await aio_wait_or_cancel( loop,
+						response = await asyncio.wait_for(
 							proto.responses.get(), max(0, deadline - loop.time()) )
 					except asyncio.TimeoutError: break
 					if response is None:
@@ -349,8 +334,8 @@ def main(args=None, conf=None):
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), muxer.cancel)
 		try:
-			wg_addr, wg_mask, wg_port = loop.run_until_complete(
-				aio_wait_or_cancel(loop, muxer, opts.timeout) )
+			wg_addr, wg_mask, wg_port = \
+				loop.run_until_complete(asyncio.wait_for(muxer, opts.timeout))
 		except (asyncio.CancelledError, asyncio.TimeoutError) as err:
 			log.debug('mux_negotiate cancelled: {}', err_fmt(err))
 			return

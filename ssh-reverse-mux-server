@@ -30,17 +30,6 @@ class LogStyleAdapter(logging.LoggerAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
-async def asyncio_wait_or_cancel(
-		loop, task, timeout, default=..., cancel_suppress=None ):
-	if asyncio.iscoroutine(task): task = loop.create_task(task)
-	try: return await asyncio.wait_for(task, timeout)
-	except asyncio.TimeoutError as err:
-		task.cancel()
-		with contextlib.suppress(
-			asyncio.CancelledError, *(cancel_suppress or list()) ): await task
-		if default is ...: raise err
-		else: return default
-
 def retries_within_timeout( tries, timeout,
 		backoff_func=lambda e,n: ((e**n-1)/e), slack=1e-2 ):
 	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
