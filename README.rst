@@ -3274,6 +3274,33 @@ useful for GUIs, alas.
 
 .. _GPM: https://github.com/telmich/gpm
 
+rsyslogs
+^^^^^^^^
+
+Wrappers to test tools that tend to spam /dev/log regardless of their settings.
+
+rsyslogs.c is a SUID wrapper binary that uses mount --bind + unshare to replace
+/dev/log with /dev/null within namespace where it'd run rsyslog, and is made to
+silence rsyslogd in particular.
+
+Example use (see also top of rsyslogs.c itself)::
+
+  % gcc -O2 -o rsyslogs scraps/rsyslogs.c && strip rsyslogs
+  % sudo chown root:user rsyslogs && sudo chmod 4110 rsyslogs
+  % cp scraps/rsyslogs.conf rsyslog.conf
+  % ./rsyslogs
+
+rsyslogs.ldpreload.c is an LD_PRELOAD wrapper suitable for simplier
+single-process tools (e.g. "logger") where it's enough to override
+connect/sendto/sendmsg and such::
+
+  % gcc -nostartfiles -fpic -shared -ldl -D_GNU_SOURCE rsyslogs.ldpreload.c -o sd.so
+  % LD_PRELOAD=./sd.so logger test
+
+Use something like these occasionally when setting up logging on a dev machine,
+where such uncommon spam to syslog gets delivered via desktop notifications
+(see desktop/notifications/logtail tool in this repo) and annoys me.
+
 
 License (WTFPL)
 ---------------
