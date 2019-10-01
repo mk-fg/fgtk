@@ -1,0 +1,99 @@
+#!/bin/dash
+### Note: top part of the script is dash, bottom is python, latter should be run from dash
+
+':' ''# \
+''' '
+
+usage() {
+	bin=${0##*/}
+	echo >&2 "Usage: $bin [-x] { -l | -c | -q } { -u unit | slice }"
+	echo >&2 "Usage: $bin [-x] [-q] [-u unit] slice -- cmd [args...]"
+	echo >&2
+	echo >&2 "Run command via 'systemd-run --scope' within specified slice, or inspect slice/scope."
+	echo >&2 "Slice should be pre-defined via .slice unit and starts/stops automatically."
+	echo >&2 "--system or --user mode is detected automatically from uid (--system for root, --user otherwise)."
+	echo >&2
+	echo >&2 "Extra options:"
+	echo >&2 "-u name - scope unit name, derived from command basename by default."
+	echo >&2 "   Starting scope with same unit name as already running one will fail."
+	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
+	echo >&2 "-q - wait for all pids in slice/scope (with same name) to exit before start."
+	echo >&2 "-l - list all pids within specified slice recursively."
+	echo >&2 "-c - same as -l, but only uses exit code check, 35 = pids exist, 0 = empty."
+	echo >&2 "-x - 'set -x' debug mode."
+	echo >&2
+	exit ${1:-1}
+}
+set -e
+
+check= list= queue= unit= slice=
+while getopts xhclqu: a; do case $a in
+	h) usage 0 ;;
+	c) check=t ;;
+	l) list=t ;;
+	q) queue=t ;;
+	u) unit=$OPTARG ;;
+	x) set -x ;;
+	\?) usage ;;
+	esac
+done
+shift $(($OPTIND - 1))
+
+
+[ $(id -u) -ne 0 ] && t=--user || t=--system
+
+cg=
+setcg() {
+	local u
+	[ -z "$cg" ] || return
+	[ -z "$slice" ] || { u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"; }
+	[ -z "$unit" ] || { u=$unit; [ "${u%.scope}" != "$u" ] || u="${u}.scope"; }
+	cg="$(systemctl -q "$t" show -p ControlGroup --value -- "$u")"
+}
+
+procs=
+setprocs() {
+	setcg
+	[ -n "$cg" ] || { procs=; return; }
+	procs=$(find /sys/fs/cgroup"$cg" -name cgroup.procs -exec cat '{}' + 2>/dev/null)
+}
+
+
+### list / check
+[ -z "$check" -a -z "$list" ] || {
+	[ -n "$unit" ] || { slice=$1; shift; }
+	[ $# -eq 0 ] || { echo >&2 "ERROR - unrecognized args: $@"; usage; }
+	[ -z "$queue" ] || { echo >&2 "ERROR - -q option not allowed with -l/-c"; usage; }
+	setprocs
+	[ -n "$procs" ] || exit 0
+	[ -z "$check" ] && echo "$procs" || exit 35
+	exit
+}
+
+slice=$1
+[ -n "$slice" ] && shift || { [ -n "$unit" ] || usage 0; }
+
+
+### queue
+[ -z "$queue" ] || {
+	setcg
+	while :; do
+		setprocs
+		[ -z "$procs" ] || break
+		sleep 7
+	done
+	[ -z "$1" ] || exit 0 # wait without command
+}
+
+
+### run
+[ -n "$1" ] || usage 0
+[ "$1" = -- ] || { echo >&2 "ERROR - args where -- should be: $@"; usage; }
+shift; [ -n "$1" ] || { echo >&2 "ERROR - no command specified"; usage; }
+
+[ -n "$unit" ] && u="--unit $unit" || u= # dash doesn't support arrays
+exec systemd-run -q "$t" --scope $u --slice "$slice" -- "$@"
+
+
+exit # everything afterwards is reserved for python script
+'''

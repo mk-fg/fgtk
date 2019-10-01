@@ -683,6 +683,59 @@ e.g. to dump network configuration info as in example above.
 Useless without systemd and requires systemd python3 module, plus fping tool if
 -n/--check-net-gw option is used.
 
+cgrc
+''''
+
+Wrapper for `systemd.resource control`_ stuff to run commands in transient
+scopes within pre-defined slices, as well as wait for these and list pids
+within them easily.
+
+Replacement for things like libcgroup, cgmanager and my earlier `cgroup-tools
+project`_, compatible with `unified cgroup-v2 hierarchy`_ and working on top of
+systemd (use ``systemd.unified_cgroup_hierarchy`` on cmdline, if non-default).
+
+Resource limits for cgrc scopes should be defined via hierarchical slices like these::
+
+  # apps.slice
+  [Slice]
+
+  CPUWeight=30
+  IOWeight=30
+
+  MemoryHigh=5G
+  MemoryMax=8G
+  MemorySwapMax=1G
+
+  # apps-browser.slice
+  [Slice]
+  CPUWeight=30
+  IOWeight=30
+  MemoryHigh=3G
+
+And then script can be used to start things there::
+
+  % cgrc apps-browser -- chromium
+  % cgrc -u ff apps-browser -- firefox --profile myprofile
+
+Where e.g. last command would end up running something like this::
+
+  % systemd-run -q --user --scope --unit ff \
+    --slice apps-browser -- firefox --profile myprofile
+
+Note that .scope cgroups are always transient (vanish after run), and only
+.slice ones can be pre-defined with limits.
+Both get started/stopped by systemd on as-needed basis.
+
+Tool also allows to check or list pids within scopes/slices with -c/-l options
+(to e.g. check if named scope already started or something running in a slice),
+as well as wait on these (-q option, can be used to queue/run commands in sequence).
+
+Run without any args/opts or with -h/--help to get more detailed usage info.
+
+.. _systemd.resource control: https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html
+.. _cgroup-tools project: https://github.com/mk-fg/cgroup-tools
+.. _unified cgroup-v2 hierarchy: https://www.kernel.org/doc/Documentation/cgroup-v2.txt
+
 
 
 SSH and WireGuard related
@@ -872,59 +925,59 @@ and probably should not have direct access to these
 
 Example systemd unit for server::
 
-	# wg.service + auth.secret psk.secret key.secret
-	# useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
-	# cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
-	[Unit]
-	Wants=network.target
-	After=network.target
+  # wg.service + auth.secret psk.secret key.secret
+  # useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
+  # cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
+  [Unit]
+  Wants=network.target
+  After=network.target
 
-	[Service]
-	Type=exec
-	User=wg
-	WorkingDirectory=~
-	Restart=always
-	RestartSec=60
-	StandardInput=file:/home/wg/auth.secret
-	StandardOutput=journal
-	ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; \
-	  ip addr add 10.123.0.1/24 dev wg 2>/dev/null; ip link set wg up'
-	ExecStartPre=+wg set wg listen-port 1500 private-key key.secret
-	ExecStart=wg-mux-server --mux-port=1501 --wg-port=1500 \
-	  --wg-net=10.123.0.0/24 --wg-cmd=./wg --wg-psk=psk.secret
+  [Service]
+  Type=exec
+  User=wg
+  WorkingDirectory=~
+  Restart=always
+  RestartSec=60
+  StandardInput=file:/home/wg/auth.secret
+  StandardOutput=journal
+  ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; \
+    ip addr add 10.123.0.1/24 dev wg 2>/dev/null; ip link set wg up'
+  ExecStartPre=+wg set wg listen-port 1500 private-key key.secret
+  ExecStart=wg-mux-server --mux-port=1501 --wg-port=1500 \
+    --wg-net=10.123.0.0/24 --wg-cmd=./wg --wg-psk=psk.secret
 
-	[Install]
-	WantedBy=multi-user.target
+  [Install]
+  WantedBy=multi-user.target
 
 Client::
 
-	# wg.service + auth.secret psk.secret
-	# useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
-	# cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
-	# cd ~wg && cp /usr/bin/ip . && chown root:wg ip && chmod 4110 ip
-	[Unit]
-	Wants=network.target
-	After=network.target
+  # wg.service + auth.secret psk.secret
+  # useradd -s /usr/bin/nologin wg && mkdir -m700 ~wg && chown wg: ~wg
+  # cd ~wg && cp /usr/bin/wg . && chown root:wg wg && chmod 4110 wg
+  # cd ~wg && cp /usr/bin/ip . && chown root:wg ip && chmod 4110 ip
+  [Unit]
+  Wants=network.target
+  After=network.target
 
-	[Service]
-	Type=exec
-	User=wg
-	WorkingDirectory=~
-	Restart=always
-	RestartSec=10
-	StandardInput=file:/home/wg/auth.secret
-	StandardOutput=journal
-	ExecStartPre=+sh -c '[ -e key.secret ] || { umask 077; wg genkey >key.secret; }
-	ExecStartPre=+sh -c '[ -e key.public ] || wg pubkey <key.secret >key.public
-	ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; ip link set wg up'
-	ExecStartPre=+wg set wg private-key key.secret
-	ExecStart=wg-mux-client \
-	  20.88.203.92:1501 BcOn/q9D5zcqK0hrWmXGQHtaEKGGf6g5nTxZUZ0P4HY= key.public \
-	  --ident-rpi --wg-net=10.123.0.0/24 --wg-cmd=./wg --ip-cmd=./ip --wg-psk=psk.secret \
-	  --ping-cmd='ping -q -w15 -c3 -i3 10.123.0.1' --ping-silent
+  [Service]
+  Type=exec
+  User=wg
+  WorkingDirectory=~
+  Restart=always
+  RestartSec=10
+  StandardInput=file:/home/wg/auth.secret
+  StandardOutput=journal
+  ExecStartPre=+sh -c '[ -e key.secret ] || { umask 077; wg genkey >key.secret; }
+  ExecStartPre=+sh -c '[ -e key.public ] || wg pubkey <key.secret >key.public
+  ExecStartPre=+sh -c 'ip link add wg type wireguard 2>/dev/null; ip link set wg up'
+  ExecStartPre=+wg set wg private-key key.secret
+  ExecStart=wg-mux-client \
+    20.88.203.92:1501 BcOn/q9D5zcqK0hrWmXGQHtaEKGGf6g5nTxZUZ0P4HY= key.public \
+    --ident-rpi --wg-net=10.123.0.0/24 --wg-cmd=./wg --ip-cmd=./ip --wg-psk=psk.secret \
+    --ping-cmd='ping -q -w15 -c3 -i3 10.123.0.1' --ping-silent
 
-	[Install]
-	WantedBy=multi-user.target
+  [Install]
+  WantedBy=multi-user.target
 
 When enabled, these should be enough to setup reliable tunnel up on client boot,
 and then keep it alive from there indefinitely (via --ping-cmd + systemd restart).
