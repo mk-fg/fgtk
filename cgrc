@@ -91,7 +91,7 @@ slice=$1
 [ "$1" = -- ] || { echo >&2 "ERROR - args where -- should be: $@"; usage; }
 shift; [ -n "$1" ] || { echo >&2 "ERROR - no command specified"; usage; }
 
-[ -n "$unit" ] && u="--unit $unit" || u= # dash doesn't support arrays
+[ -n "$unit" ] && u="--unit $unit" || u="--unit ${1##*/}"
 exec systemd-run -q "$t" --scope $u --slice "$slice" -- "$@"
 
 
