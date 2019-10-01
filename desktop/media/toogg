@@ -668,6 +668,7 @@ def main(args=None):
 				for root, dirs, files, dir_fd in os.fwalk(p, follow_symlinks=True):
 					root = Path(root)
 					for p in files: src_list.append(root / p)
+			else: src_list.append(p)
 		os.chdir(opts.dst_dir or '/')
 	elif opts.dst_dir: os.chdir(opts.dst_dir)
 	start, length, chunks = map(parse_pos_spec, [opts.start, opts.length, opts.chunks])
