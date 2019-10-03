@@ -2889,19 +2889,6 @@ Cheatsheet for qemu-img commands::
 
 
 
-[sysdig]
-~~~~~~~~
-
-Lua `"chisels"`_ for `sysdig tool`_.
-
-Basically simple scripts to filter and format data that sysdig reads or collects
-in real-time for various common tasks.
-
-.. _"chisels": https://github.com/draios/sysdig/wiki/Chisels%20User%20Guide
-.. _sysdig tool: https://github.com/draios/sysdig/
-
-
-
 [aufs]
 ~~~~~~
 
