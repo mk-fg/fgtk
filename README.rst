@@ -2889,6 +2889,21 @@ Cheatsheet for qemu-img commands::
 
 
 
+[bpf] Linux eBPF filters
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+eBPF at this point is kinda like generic "extension language" in linux,
+and supported `at an ever-growing number of points
+<https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md>`_,
+from tracing and accounting or network filtering to limiting sysctl in containers.
+
+See head of specific .c files for compilation/loading/usage instructions.
+
+(also, as of 2019, Cilium project
+`has best docs on it <https://docs.cilium.io/en/latest/bpf/>`_)
+
+
+
 [aufs]
 ~~~~~~
 
