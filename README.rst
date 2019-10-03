@@ -2904,33 +2904,6 @@ See head of specific .c files for compilation/loading/usage instructions.
 
 
 
-[aufs]
-~~~~~~
-
-A few tools to work with a layered aufs filesystem on arm boards.
-
-aubrsync
-^^^^^^^^
-
-Modified script from aufs2-util.git, but standalone (with stuff from aufs.shlib
-baked-in) and not failing on ro-remounts, which seem to be a common thing for
-some places like /var or /home.
-
-aufs_sync
-^^^^^^^^^
-
-Convenience wrapper around aubrsync for mounts like ``none /var -o
-br:/aufs/rw/var=rw:/aufs/ro/var=ro``.
-
-Can also just list what's there to be synced with "check" command.
-
-::
-
-  Usage: aufs_sync { copy | move | check } module
-  Example (flushes /var): aufs_sync move var
-
-
-
 [arch] ArchLinux(+ARM)
 ~~~~~~~~~~~~~~~~~~~~~~
 
