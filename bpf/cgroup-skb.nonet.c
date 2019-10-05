@@ -64,9 +64,9 @@ int drop_all_packets(struct __sk_buff *skb) {
 
 	// IPv4 localhost - 127.0.0.1
 	if ( skb->protocol == ETH_P_IP
-			&& !bpf_skb_load_bytes( skb,
-				offsetof(struct iphdr, daddr), &dst_ip, sizeof(dst_ip) )
-			&& dst_ip == 0x100007f ) return 1;
+		&& !bpf_skb_load_bytes( skb,
+			offsetof(struct iphdr, daddr), &dst_ip, sizeof(dst_ip) )
+		&& dst_ip == 0x100007f ) return 1;
 
 	// IPv6 localhost - [::1]
 	if ( skb->protocol == ETH_P_IPV6
