@@ -1,12 +1,16 @@
 #!/bin/dash
+### Note: top part of the script is dash, bottom is python, latter should be run from dash
+
+':' ''# \
+''' '
 
 set -e
-check= list= queue= queue_delay=7 queue_timeout= unit= slice=
+check= list= queue= queue_delay=7 queue_timeout= unit= slice= stats=
 
 usage() {
 	bin=${0##*/}
 	echo >&2 "Usage: $bin [-x] { -l | -c | -q [opts] } { -u unit | slice }"
-	echo >&2 "       $bin [-x] [-q [-i N] [-t N]] [-u unit] slice -- cmd [args...]"
+	echo >&2 "       $bin [-x] [-s] [-q [-i N] [-t N]] [-u unit] slice -- cmd [args...]"
 	echo >&2
 	echo >&2 "Run command via 'systemd-run --scope'"
 	echo >&2 "  within specified slice, or inspect slice/scope."
@@ -22,12 +26,13 @@ usage() {
 	echo >&2 "   -t - timeout for -q wait (default=none), exiting with code 36 afterwards."
 	echo >&2 "-l - list all pids within specified slice recursively."
 	echo >&2 "-c - same as -l, but for exit code check: 35 = pids exist, 0 = empty."
+	echo >&2 "-s - print cgroup resource usage stats to stdout after running command."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	exit ${1:-1}
 }
 
-while getopts xhclqi:t:u: a; do case $a in
+while getopts xhclqi:t:u:s a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
@@ -35,6 +40,7 @@ while getopts xhclqi:t:u: a; do case $a in
 	i) queue_delay=$OPTARG ;;
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
+	s) stats=t ;;
 	x) set -x ;;
 	\?) usage ;;
 	esac
@@ -97,5 +103,82 @@ slice=$1
 [ "$1" = -- ] || { echo >&2 "ERROR - args where -- should be: $@"; usage; }
 shift; [ -n "$1" ] || { echo >&2 "ERROR - no command specified"; usage; }
 
-[ -n "$unit" ] && u="--unit $unit" || u="--unit ${1##*/}"
-exec systemd-run -q "$t" --scope $u --slice "$slice" -- "$@"
+# Unit names should have no spaces, so command can be expanded from string
+[ -n "$unit" ] && u="--unit $unit" || { u=${1##*/}; u="--unit ${u%% *}"; }
+wrapper="systemd-run -q $t --scope $u --slice $slice --"
+
+if [ -z "$stats" ]
+then exec $wrapper "$@"
+else
+	cg= unit=; setcg # finds slice path
+	[ -n "$cg" ] || {
+		u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"
+		systemctl start "$u" || exit 1; setcg; }
+	[ -n "$cg" ] || { echo >&2 "ERROR - no slice for -s option"; exit 1; }
+	exec python3 "$0" "$cg" $wrapper "$@"
+fi
+
+exit # everything afterwards is reserved for python script
+: < <<EOF
+'''
+import os, sys, time, pathlib as pl
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
+def run(*cmd):
+	if not os.fork(): os.execvp(cmd[0], cmd)
+	else: return (os.wait()[1] >> 8) & 0xff
+
+def print_stats_diff(ts_diff, s1, s2):
+	rmsuff = lambda s, suff, r='': (s[:-len(suff)]+r) if s.endswith(suff) else s
+	print('cgroup-stats:')
+	print(f'  time [s] :: {ts_diff:,.3f}')
+	for s in s1, s2:
+		s.cpu = adict(line.strip().split(None, 1) for line in s.cpu.split('\n') if line.strip())
+		s.io = adict( (k, adict(v.split('=', 1) for v in st.split()))
+			for k, st in (line.strip().split(None, 1) for line in s.io.split('\n') if line.strip()) )
+	print('  cpu-time [s] ::', ' : '.join(
+		f'{rmsuff(k, "_usec")} {{:,.1f}}'.format((int(s2.cpu[k]) - int(v1)) / 1e6)
+		for k, v1 in s1.cpu.items() ))
+	dev_map, p_dev = dict(), pl.Path('/dev/disk/by-label')
+	for p in p_dev.iterdir():
+		try:
+			n = (p_dev / p).stat().st_rdev
+			dev_map['{}:{}'.format(os.major(n), os.minor(n))] = p.name
+		except: pass
+	# io.stat doesn't seem to get updated fast enough, so this is always empty
+	io_header = True
+	for k, st2 in s2.io.items():
+		if k not in s1.io or k not in dev_map: continue # only lists labelled devs
+		st1, dev, diff = s1.io[k], dev_map.get(k, k), list()
+		for t, v in ((t, int(st1.get(t, v2)) - int(v2)) for t, v2 in st2.items()):
+			if v <= 0: continue
+			elif v < 1000: r, v = 'B', f'{v:,}'
+			elif v < 1000 * 2**20: r, v = 'M', f'{v/2**20:,.1f}'
+			else: r, v = 'G', f'{v/2**30:,.1f}'
+			diff.append(f'{rmsuff(t, "bytes", r)} {v}')
+		if diff:
+			if io_header: io_header = print('  io ::')
+			print(f'    {dev} ::', ' : '.join(diff))
+
+def main():
+	cmd, cg = sys.argv[2:], pl.Path('/sys/fs/cgroup') / sys.argv[1].strip('/')
+	stats = adict(dict.fromkeys('cpu io'.split()))
+	for p in stats: stats[p] = (cg / f'{p}.stat').read_text()
+	ts_diff = time.monotonic()
+	err = run(*cmd)
+	ts_diff = time.monotonic() - ts_diff
+	stats_new = adict((p, (cg / f'{p}.stat').read_text()) for p in stats)
+	print_stats_diff(ts_diff, stats, stats_new)
+	return err
+
+try: sys.exit(main())
+except Exception as err:
+	print(
+		'ERROR - cgroup-stats wrapper failed:'
+		f' [{err.__class__.__name__}] {err}', file=sys.stderr )
+	sys.exit(1)
+EOF
