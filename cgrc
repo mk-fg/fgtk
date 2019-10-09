@@ -149,7 +149,7 @@ def print_stats_diff(ts_diff, s1, s2):
 			n = (p_dev / p).stat().st_rdev
 			dev_map['{}:{}'.format(os.major(n), os.minor(n))] = p.name
 		except: pass
-	# io.stat doesn't seem to get updated fast enough, so this is always empty
+	# io.stat doesn't seem to get updated fast enough for quick-to-exit no-fsync apps
 	io_header = True
 	for k, st2 in s2.io.items():
 		if k not in s1.io or k not in dev_map: continue # only lists labelled devs
@@ -160,9 +160,9 @@ def print_stats_diff(ts_diff, s1, s2):
 			elif v < 1000 * 2**20: r, v = 'M', f'{v/2**20:,.1f}'
 			else: r, v = 'G', f'{v/2**30:,.1f}'
 			diff.append(f'{rmsuff(t, "bytes", r)} {v}')
-		if diff:
-			if io_header: io_header = print('  io ::')
-			print(f'    {dev} ::', ' : '.join(diff))
+		if not diff: continue
+		if io_header: io_header = print('  io ::')
+		print(f'    {dev} ::', ' : '.join(diff))
 
 def main():
 	cmd, cg = sys.argv[2:], pl.Path('/sys/fs/cgroup') / sys.argv[1].strip('/')
