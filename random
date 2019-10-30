@@ -6,6 +6,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Generate a pseudorandom strings.')
 parser.add_argument('-n', '--length', type=int, default=40, help='Length of a produced string.')
 parser.add_argument('-r', '--rows', type=int, default=10, help='Rows of passwords to produce.')
+parser.add_argument('-s', '--simple', action='store_true', help='Use only letters/numbers.')
 parser.add_argument('-1', '--one', action='store_true', help='Output just one generated password.')
 argz = parser.parse_args()
 
@@ -29,9 +30,10 @@ def get_terminal_size():
 	if not cr: cr = 0, 0
 	return int(cr[1]), int(cr[0])
 
-chr_range = bytes( string.ascii_letters + string.digits\
-	+ string.punctuation.replace("'", '').replace('"', '')\
-		.replace('`', '').replace('\\', '').replace('!', '').replace('$', '') )
+chr_range = bytes(string.ascii_letters + string.digits)
+if not argz.simple:
+	chr_range += bytes( string.punctuation.replace("'", '')
+		.replace('"', '').replace('`', '').replace('\\', '').replace('!', '').replace('$', '') )
 
 def src():
 	with open('/dev/urandom', 'rb') as src:
