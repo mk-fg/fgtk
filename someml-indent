@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+
+import os, sys, re
+
+
+def parse_tags(src):
+	'Returns "content" list of strings or (tag, attrs, content) tuples.'
+	dst = list()
+
+	while True:
+		m = re.search(
+			r'^(?P<pre>.*?)<\s*(?P<tag>[^\s>]+)\s*(?:(?P<attrs>[^>]+))?>'
+			r'(?P<content>.*?)' r'</\s*(?P=tag)\s*>', src, re.DOTALL )
+		if not m:
+			if src.strip(): dst.append(src)
+			break
+		src = src[m.end():]
+
+		pre, tag, attrs, c = m.groups()
+		if c: c = parse_tags(c)
+		if pre.strip(): dst.append(pre)
+		dst.append((tag, attrs, c))
+
+	return dst
+
+
+def print_tags(src, indent, pre=None, path=()):
+	if not src: return
+	inline = len(src) == 1
+	if pre is None: pre2 = ''
+	else: pre2 = (pre + indent) if not inline else pre
+	for n, v in enumerate(src):
+		if not inline: sys.stdout.write('\n' + pre2)
+		if isinstance(v, str):
+			sys.stdout.write(v.strip())
+			continue
+		tag, attrs, c = v
+		attrs = f' {attrs}' if attrs else ''
+		sys.stdout.write(f'<{tag}{attrs}>')
+		if c: print_tags(c, indent, pre2, path=path+(f'{tag}.{n}',))
+		sys.stdout.write(f'</{tag}>')
+	if not inline: sys.stdout.write('\n' + (pre or ''))
+	if pre is None: sys.stdout.write('\n')
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Insert newlines into XML-ish thing, without really'
+				' validating or messing it up otherwise, except for added/stripped spaces.'
+			' Input - stdin, output - stdout.')
+	parser.add_argument('-i', '--indent-spaces',
+		type=int, default=2, metavar='num',
+		help='Number of spaces to use for a level indent, -1 = use tabs (default: %(default)s).')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	src = sys.stdin.read()
+	src = parse_tags(src)
+	# exit(print(src))
+
+	indent = opts.indent_spaces
+	indent = (' '*indent) if indent >= 0 else '\t'
+	print_tags(src, indent)
+
+if __name__ == '__main__': sys.exit(main())
