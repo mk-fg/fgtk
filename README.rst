@@ -455,7 +455,7 @@ someml-indent
 '''''''''''''
 
 Simple and dirty regexp + backreferences something-ML (SGML/HTML/XML) parser to
-indent the tags/values in a compact way without messing-up anything else in there.
+indent tags/values in a compact way without messing-up anything else in there.
 
 I.e. non-closed tags are FINE, something like <@> doesn't cause parser to
 explode, etc.
@@ -463,8 +463,8 @@ explode, etc.
 Does not add any XML headers, does not mangle (or "canonize") tags/attrs/values
 in any way, except for stripping/adding those spaces.
 
-Kinda like BeautifulSoup, except trivial enough so it can be trusted not to do
-anything unnecessary like stuff mentioned above.
+Kinda like BeautifulSoup, except not limited to html and trivial enough so that
+it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when ``xmllint --format`` fail and/or break such kinda-ML-but-not-XML files.
 

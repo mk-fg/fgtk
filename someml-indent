@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
-import os, sys, re
+import os, sys, io, re
+
+
+p_err = lambda *a,**k: print(*a, file=sys.stderr, **k) or 1
 
 
 def parse_tags(src):
@@ -9,7 +12,7 @@ def parse_tags(src):
 
 	while True:
 		m = re.search(
-			r'^(?P<pre>.*?)<\s*(?P<tag>[^\s>]+)\s*(?:(?P<attrs>[^>]+))?>'
+			r'^(?P<pre>.*?)<\s*(?P<tag>[^\s>]+)\s*(?:\s(?P<attrs>[^>]+))?>'
 			r'(?P<content>.*?)' r'</\s*(?P=tag)\s*>', src, re.DOTALL )
 		if not m:
 			if src.strip(): dst.append(src)
@@ -17,30 +20,33 @@ def parse_tags(src):
 		src = src[m.end():]
 
 		pre, tag, attrs, c = m.groups()
-		if c: c = parse_tags(c)
+		if c:
+			if re.search(fr'<\s*{tag}\s*(?:\s[^>]+)?>', c):
+				p_err(f'WARNING: nested <{tag}> tags were matched incorrectly')
+			c = parse_tags(c)
 		if pre.strip(): dst.append(pre)
 		dst.append((tag, attrs, c))
 
 	return dst
 
 
-def print_tags(src, indent, pre=None, path=()):
+def print_tags(src, dst, indent, pre=None, path=()):
 	if not src: return
 	inline = len(src) == 1
 	if pre is None: pre2 = ''
 	else: pre2 = (pre + indent) if not inline else pre
 	for n, v in enumerate(src):
-		if not inline: sys.stdout.write('\n' + pre2)
+		if not inline: dst.write('\n' + pre2)
 		if isinstance(v, str):
-			sys.stdout.write(v.strip())
+			dst.write(v.strip())
 			continue
 		tag, attrs, c = v
 		attrs = f' {attrs}' if attrs else ''
-		sys.stdout.write(f'<{tag}{attrs}>')
-		if c: print_tags(c, indent, pre2, path=path+(f'{tag}.{n}',))
-		sys.stdout.write(f'</{tag}>')
-	if not inline: sys.stdout.write('\n' + (pre or ''))
-	if pre is None: sys.stdout.write('\n')
+		dst.write(f'<{tag}{attrs}>')
+		if c: print_tags(c, dst, indent, pre2, path=path+(f'{tag}.{n}',))
+		dst.write(f'</{tag}>')
+	if not inline: dst.write('\n' + (pre or ''))
+	if pre is None: dst.write('\n')
 
 
 def main(args=None):
@@ -55,11 +61,12 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src = sys.stdin.read()
-	src = parse_tags(src)
+	src, dst = parse_tags(src), io.StringIO()
 	# exit(print(src))
 
 	indent = opts.indent_spaces
 	indent = (' '*indent) if indent >= 0 else '\t'
-	print_tags(src, indent)
+	print_tags(src, dst, indent)
+	print(dst.getvalue().strip())
 
 if __name__ == '__main__': sys.exit(main())
