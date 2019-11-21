@@ -1,17 +1,7 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-import argparse
-parser = argparse.ArgumentParser(description='Generate a pseudorandom strings.')
-parser.add_argument('-n', '--length', type=int, default=40, help='Length of a produced string.')
-parser.add_argument('-r', '--rows', type=int, default=10, help='Rows of passwords to produce.')
-parser.add_argument('-s', '--simple', action='store_true', help='Use only letters/numbers.')
-parser.add_argument('-1', '--one', action='store_true', help='Output just one generated password.')
-argz = parser.parse_args()
-
-import itertools as it, operator as op, functools as ft
 import os, sys, string
+
 
 def get_terminal_size():
 	def ioctl_GWINSZ(fd):
@@ -30,28 +20,45 @@ def get_terminal_size():
 	if not cr: cr = 0, 0
 	return int(cr[1]), int(cr[0])
 
-chr_range = bytes(string.ascii_letters + string.digits)
-if not argz.simple:
-	chr_range += bytes( string.punctuation.replace("'", '')
-		.replace('"', '').replace('`', '').replace('\\', '').replace('!', '').replace('$', '') )
 
-def src():
-	with open('/dev/urandom', 'rb') as src:
-		while True: yield src.read(1)
-src = it.ifilter(ft.partial(op.contains, chr_range), src())
-getpass = lambda n: bytearray(next(src) for i in xrange(n))
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(description='Generate a pseudorandom strings.')
+	parser.add_argument('-n', '--length',
+		type=int, default=40, metavar='n',
+		help='Length of a produced string.')
+	parser.add_argument('-r', '--rows',
+		type=int, default=10, metavar='n',
+		help='Rows of passwords to produce.')
+	parser.add_argument('-s', '--simple',
+		action='store_true', help='Use only letters/numbers.')
+	parser.add_argument('-1', '--one',
+		action='store_true', help='Output just one generated password.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-if argz.one:
-	print(getpass(argz.length))
+	chr_range = (string.ascii_letters + string.digits).encode()
+	if not opts.simple:
+		chr_range += ( string.punctuation.replace("'", '').replace('"', '')
+			.replace('`', '').replace('\\', '').replace('!', '').replace('$', '') ).encode()
 
-else:
+	def src():
+		with open('/dev/urandom', 'rb') as src:
+			while True: yield src.read(1)
+	src = (c for c in src() if c in chr_range)
+	getpass = lambda n: bytearray(ord(next(src)) for m in range(n)).decode()
+
+	if opts.one:
+		return print(getpass(opts.length))
+
 	(w, h), pad = get_terminal_size(), 3
-	for i in xrange(argz.rows):
+	for n in range(opts.rows):
 		row_left = w
 		while True:
-			print(getpass(argz.length), end='')
-			row_left -= argz.length
-			if not row_left or row_left < (pad + argz.length): break
+			print(getpass(opts.length), end='')
+			row_left -= opts.length
+			if not row_left or row_left < (pad + opts.length): break
 			print(' '*pad, end='')
 			row_left -= pad
 		print()
+
+if __name__ == '__main__': sys.exit(main())
