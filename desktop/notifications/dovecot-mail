@@ -162,7 +162,7 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 		#   lda(fraggod): sieve: msgid=<20131126165018.BFDC02A0EA2@malediction.core>: stored mail into mailbox 'INBOX'\n"
 		match = re.search(
 			r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}) mail\.info dovecot\[(-|\d+)\]:\s+'
-			r'lda\([^)]+\): sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified):'
+			r'lda\([^)]+\): sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
 			r' stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
 		if not match:
 			log.warn('Failed to match line: %r', line.strip())
