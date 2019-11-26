@@ -606,11 +606,12 @@ def main(args=None):
 				' with .ogg ones in the same dir(s) where they are found.'
 			' All "src" args must be paths.'
 			' Does not imply --remove-src (creates copies next to src files), unless specified.')
-	group.add_argument('-f', '--inplace-name-filter', metavar='glob',
+	group.add_argument('-f', '--inplace-name-filter', action='append', metavar='glob',
 		help='Case-insensitive (!!!) shell-style glob/fnmatch'
-				' pattern to match against each file basename for --inplace conversion.'
-			' All files that do not match will be ignored. Remember to quote it, if used from shell.'
-			' Example: toogg -i -f "*.flac" somedir')
+				' pattern(s) to match against each file basename for --inplace conversion.'
+			' All files that do not match will be ignored.'
+			' Can be specified multiple times, combined via "any match" logic.'
+			' Remember to quote pattern(s) in shells. Example: toogg -i -f \'*.flac\' somedir')
 	group.add_argument('-t', '--dst-dir', metavar='path',
 		help='Existing path to store resulting files in. Defaults to current one (unless --inplace).'
 			' With --inplace also specified, full dst realpath (!!!) will be re-created under this dir.')
@@ -669,10 +670,10 @@ def main(args=None):
 		for src in opts.src )
 
 	if opts.inplace:
-		name_filter = opts.inplace_name_filter
+		name_filter = opts.inplace_name_filter or list()
 		if name_filter:
 			import fnmatch
-			name_filter = ft.partial(fnmatch.fnmatch, pat=name_filter)
+			name_filter = list(ft.partial(fnmatch.fnmatch, pat=pat) for pat in name_filter)
 		src_list, src_list_old = list(), src_list
 		for p in src_list_old:
 			if not isinstance(p, Path):
@@ -681,7 +682,7 @@ def main(args=None):
 				for root, dirs, files, dir_fd in os.fwalk(p, follow_symlinks=True):
 					root = Path(root)
 					for p in files:
-						if name_filter and not name_filter(p):
+						if name_filter and not any(m(p) for m in name_filter):
 							log.debug('Skipping file due to fnmatch=false: {}', root / p)
 							continue
 						src_list.append(root / p)
