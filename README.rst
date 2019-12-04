@@ -2883,6 +2883,19 @@ caveats as above.
 
 .. _xclip: https://github.com/astrand/xclip
 
+rss-get
+'''''''
+
+Python3/feedparser script to download items attached to RSS feeds fast using
+aria2_ tool, or just printing the info/URLs.
+
+Example use can be grabbing some range of podcast mp3s from a feed URL.
+
+aria2 allows for parallel multi-chunk downloads of throttled items, and wrapper
+script has option to pass it destination filenames according to item date/time
+instead of the usual nonsensical, incoherent and inconsistent names authors seem
+to inevitably assign to files on a regular-content feeds.
+
 
 
 [vm] VM scripts
