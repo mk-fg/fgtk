@@ -5,7 +5,9 @@
 ''' '
 
 set -e
-check= list= queue= queue_delay=7 queue_timeout= unit= slice= stats=
+
+check= list= unit= slice= stats= mode=scope
+queue= queue_delay=7 queue_timeout=
 
 usage() {
 	bin=${0##*/}
@@ -27,16 +29,19 @@ usage() {
 	echo >&2 "-l - list all pids within specified slice recursively."
 	echo >&2 "-c - same as -l, but for exit code check: 35 = pids exist, 0 = empty."
 	echo >&2 "-s - print cgroup resource usage stats to stdout after running command."
+	echo >&2 "-r - Run command as a terminal-connected service unit instead of scope."
+	echo >&2 "     Main diff is that forked pids will be killed after main one exits."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	exit ${1:-1}
 }
 
-while getopts xhclqi:t:u:s a; do case $a in
+while getopts xhclqri:t:u:s a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
 	q) queue=t ;;
+	r) mode=service ;;
 	i) queue_delay=$OPTARG ;;
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
@@ -55,7 +60,7 @@ setcg() {
 	local u
 	[ -z "$cg" ] || return 0
 	[ -z "$slice" ] || { u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"; }
-	[ -z "$unit" ] || { u=$unit; [ "${u%.scope}" != "$u" ] || u="${u}.scope"; }
+	[ -z "$unit" ] || { u=$unit; [ "${u%.$mode}" != "$u" ] || u="${u}.$mode"; }
 	cg=$(systemctl -q "$t" show -p ControlGroup --value -- "$u")
 }
 
@@ -105,7 +110,9 @@ shift; [ -n "$1" ] || { echo >&2 "ERROR - no command specified"; usage; }
 
 # Unit names should have no spaces, so command can be expanded from string
 [ -n "$unit" ] && u="--unit $unit" || { u=${1##*/}; u="--unit ${u%% *}"; }
-wrapper="systemd-run -q $t --scope $u --slice $slice --"
+[ "$mode" = scope ] && tu=--scope \
+	|| tu='--service-type=exec --same-dir --wait --pty --collect'
+wrapper="systemd-run -q $t $tu $u --slice $slice --"
 
 if [ -z "$stats" ]
 then exec $wrapper "$@"
