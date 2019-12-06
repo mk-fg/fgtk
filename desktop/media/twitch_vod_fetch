@@ -148,7 +148,7 @@ class TVFReqError(TVFError): pass
 
 async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
 	exit_code, log = 1, get_logger('tvf.fetcher')
-	task = asyncio.Task.current_task(loop)
+	task = asyncio.current_task(loop)
 	def sig_handler(sig, code):
 		log.info('Exiting on {} signal with code: {}', sig, code)
 		nonlocal exit_code
@@ -280,7 +280,7 @@ class TVFAria2Proc:
 			await self.ws_closed.wait()
 			triggered = True
 			task.cancel()
-		triggered, task = False, asyncio.Task.current_task(self.loop)
+		triggered, task = False, asyncio.current_task(self.loop)
 		ev_wait_task = self.loop.create_task(_ev_wait())
 		try: yield
 		except asyncio.CancelledError:
