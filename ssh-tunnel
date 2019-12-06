@@ -7,7 +7,8 @@ usage() {
 	echo >&2 "  $bin <ssh -L forwarding spec> <ssh destination spec> { kill | -k }"
 	echo >&2
 	echo >&2 "Starts non-interactive ssh -L tunnel through specified destination host,"
-	echo >&2 " saving pid file in /tmp, which can be used to stop tunnel via kill/-k option."
+	echo >&2 " saving pid file in $XDG_RUNTIME_DIR,"
+	echo >&2 " which can be used to stop tunnel via kill/-k option."
 	echo >&2 "Example: $bin 8080:127.0.0.1:80 root@my.example.host"
 	echo >&2
 	echo >&2 "Options:"
@@ -42,7 +43,8 @@ shift $((OPTIND-1))
 fwd=$1 dst=$2
 shift; shift
 
-pid_file="/tmp/.$(basename $0).$(echo "$fwd.$dst" | md5sum | cut -b-5)"
+pid_file="$XDG_RUNTIME_DIR/.$(basename $0)"`
+	`".$(echo "$fwd.$dst" | md5sum | cut -b-5)"
 
 [[ "$1" = kill || "$1" = -k ]] && {
 	pid=$(cat "$pid_file" 2>/dev/null)
@@ -91,8 +93,10 @@ exec 3>"$pid_file"
 		[[ -z "$tping" ]] || {
 			ts0=$(printf '%(%s)T' -1)
 			tping "${tping_opts[@]}" "$dst"; }
+		touch "$pid_file"
 		ssh "${ssh_opts[@]}" "$tun" "$fwd" "$dst"
-		[[ -z "$tping" ]] || interval=$(( $ts0 + $interval_base - $(printf '%(%s)T' -1) ))
+		[[ -z "$tping" ]] || interval=$((
+			$ts0 + $interval_base - $(printf '%(%s)T' -1) ))
 		[[ "$interval" -le 0 ]] || sleep "$interval"
 	done ) &
 
