@@ -7,19 +7,21 @@
 set -e
 
 check= list= unit= slice= stats= mode=scope
-queue= queue_delay=7 queue_timeout=
+queue= queue_delay=7 queue_timeout= value=
 
 usage() {
 	bin=${0##*/}
 	echo >&2 "Usage: $bin [-x] { -l | -c | -q [opts] } { -u unit | slice }"
-	echo >&2 "       $bin [-x] [-s] [-q [-i N] [-t N]] [-u unit] slice -- cmd [args...]"
+	echo >&2 "       $bin [-x] -v key[=value] { -u unit | slice }"
+	echo >&2 "       $bin [-x] [run-opts] [-u unit] slice -- cmd [args...]"
+	echo >&2 "Run-opts: [-s] [-r] [-q [-i N] [-t N]] [-v key[=value]]"
 	echo >&2
 	echo >&2 "Run command via 'systemd-run --scope'"
-	echo >&2 "  within specified slice, or inspect slice/scope."
+	echo >&2 "  within specified slice, or inspect slice/scope and limits there."
 	echo >&2 "Slice should be pre-defined via .slice unit and starts/stops automatically."
 	echo >&2 "--system/--user mode detected from uid (--system for root, --user otherwise)."
 	echo >&2
-	echo >&2 "Extra options:"
+	echo >&2 "Options:"
 	echo >&2 "-u name - scope unit name, derived from command basename by default."
 	echo >&2 "   Starting scope with same unit name as already running one will fail."
 	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
@@ -31,21 +33,24 @@ usage() {
 	echo >&2 "-s - print cgroup resource usage stats to stdout after running command."
 	echo >&2 "-r - Run command as a terminal-connected service unit instead of scope."
 	echo >&2 "     Main diff is that forked pids will be killed after main one exits."
+	echo >&2 "-v - Show or set target cgroup parameter. Both key and value are raw strings."
+	echo >&2 "     Examples: -v cpu.max, -v cpu.max='900000 500000'"
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	exit ${1:-1}
 }
 
-while getopts xhclqri:t:u:s a; do case $a in
+while getopts xhclqsri:t:u:v: a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
 	q) queue=t ;;
+	s) stats=t ;;
 	r) mode=service ;;
 	i) queue_delay=$OPTARG ;;
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
-	s) stats=t ;;
+	v) value=$OPTARG ;;
 	x) set -x ;;
 	\?) usage ;;
 	esac
@@ -103,6 +108,17 @@ slice=$1
 }
 
 
+### limit value
+[ -z "$value" ] || {
+	setcg
+	k=${value%%=*}; v=${value##*=}; p=/sys/fs/cgroup"$cg/$k"
+	[ -n "$cg" ] || { echo >&2 "ERROR - no such scope/slice"; usage; }
+	[ -n "$k" ] || { echo >&2 "ERROR - invalid -v key=value arg: $value"; usage; }
+	if [ "$k" = "$v" ]; then cat "$p"; else echo "$v" > "$p"; fi
+	[ -n "$1" ] || exit 0 # limit get/set without command
+}
+
+
 ### run
 [ -n "$1" ] || usage 0
 [ "$1" = -- ] || { echo >&2 "ERROR - args where -- should be: $@"; usage; }
@@ -124,6 +140,7 @@ else
 	[ -n "$cg" ] || { echo >&2 "ERROR - no slice for -s option"; exit 1; }
 	exec python3 "$0" "$cg" $wrapper "$@"
 fi
+
 
 exit # everything afterwards is reserved for python script
 : < <<EOF
