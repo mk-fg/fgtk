@@ -7,11 +7,11 @@
 set -e
 
 check= list= unit= slice= stats= mode=scope
-queue= queue_delay=7 queue_timeout= value=
+queue= queue_delay=7 queue_timeout= value= path=
 
 usage() {
 	bin=${0##*/}
-	echo >&2 "Usage: $bin [-x] { -l | -c | -q [opts] } { -u unit | slice }"
+	echo >&2 "Usage: $bin [-x] [-r] { -l | -c | -p | -q [opts] } { -u unit | slice }"
 	echo >&2 "       $bin [-x] -v key[=value] { -u unit | slice }"
 	echo >&2 "       $bin [-x] [run-opts] [-u unit] slice -- cmd [args...]"
 	echo >&2 "Run-opts: [-s] [-r] [-q [-i N] [-t N]] [-v key[=value]]"
@@ -35,18 +35,20 @@ usage() {
 	echo >&2 "     Main diff is that forked pids will be killed after main one exits."
 	echo >&2 "-v - Show or set target cgroup parameter. Both key and value are raw strings."
 	echo >&2 "     Examples: -v cpu.max, -v cpu.max='900000 500000'"
+	echo >&2 "-p - Print path to specified scope/slice/service."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	exit ${1:-1}
 }
 
-while getopts xhclqsri:t:u:v: a; do case $a in
+while getopts xhclqsrpi:t:u:v: a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
 	q) queue=t ;;
 	s) stats=t ;;
 	r) mode=service ;;
+	p) path=t ;;
 	i) queue_delay=$OPTARG ;;
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
@@ -62,9 +64,12 @@ shift $(($OPTIND - 1))
 
 cg=
 setcg() {
+	start=$1
 	local u
 	[ -z "$cg" ] || return 0
-	[ -z "$slice" ] || { u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"; }
+	[ -z "$slice" ] || {
+		u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"
+		[ -z "$start" ] || systemctl start "$u"; }
 	[ -z "$unit" ] || { u=$unit; [ "${u%.$mode}" != "$u" ] || u="${u}.$mode"; }
 	cg=$(systemctl -q "$t" show -p ControlGroup --value -- "$u")
 }
@@ -77,11 +82,12 @@ setprocs() {
 }
 
 
-### list / check
-[ -z "$check" -a -z "$list" ] || {
+### list / check / print
+[ -z "$check" -a -z "$list" -a -z "$path" ] || {
 	[ -n "$unit" ] || { slice=$1; shift; }
 	[ $# -eq 0 ] || { echo >&2 "ERROR - unrecognized args: $@"; usage; }
-	[ -z "$queue" ] || { echo >&2 "ERROR - -q option not allowed with -l/-c"; usage; }
+	[ -z "$queue" ] || { echo >&2 "ERROR - -q option not allowed with -l/-c/-p"; usage; }
+	[ -z "$path" ] || { setcg start; [ -z "$cg" ] || echo /sys/fs/cgroup"$cg"; exit; }
 	setprocs
 	[ -n "$procs" ] || exit 0
 	[ -z "$check" ] && echo "$procs" || exit 35
@@ -111,7 +117,7 @@ slice=$1
 ### limit value
 [ -z "$value" ] || {
 	setcg
-	k=${value%%=*}; v=${value##*=}; p=/sys/fs/cgroup"$cg/$k"
+	k=${value%%=*}; v=${value#*=}; p=/sys/fs/cgroup"$cg/$k"
 	[ -n "$cg" ] || { echo >&2 "ERROR - no such scope/slice"; usage; }
 	[ -n "$k" ] || { echo >&2 "ERROR - invalid -v key=value arg: $value"; usage; }
 	if [ "$k" = "$v" ]; then cat "$p"; else echo "$v" > "$p"; fi
