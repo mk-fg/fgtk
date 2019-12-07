@@ -120,7 +120,8 @@ slice=$1
 	k=${value%%=*}; v=${value#*=}; p=/sys/fs/cgroup"$cg/$k"
 	[ -n "$cg" ] || { echo >&2 "ERROR - no such scope/slice"; usage; }
 	[ -n "$k" ] || { echo >&2 "ERROR - invalid -v key=value arg: $value"; usage; }
-	if [ "$k" = "$v" ]; then cat "$p"; else echo "$v" > "$p"; fi
+	[ "$k" = "$v" ] || echo "$v" > "$p"
+	cat "$p"
 	[ -n "$1" ] || exit 0 # limit get/set without command
 }
 
