@@ -117,6 +117,7 @@ slice=$1
 
 ### limit value
 [ -z "$value" ] || {
+	err=0
 	setcg
 	k=${value%%=*}; v=${value#*=}; p=/sys/fs/cgroup"$cg/$k"
 	[ -n "$cg" ] || { echo >&2 "ERROR - no such scope/slice"; usage; }
@@ -124,10 +125,11 @@ slice=$1
 	if [ "$k" = list ]
 	then ls -1p /sys/fs/cgroup"$cg" | grep -v '/$'
 	else
-		[ "$k" = "$v" ] || echo "$v" > "$p"
+		[ "$k" = "$v" ] || echo "$v" > "$p" \
+			|| { err=$?; echo >&2 "ERROR - failed to set $k=$v [$p]"; }
 		cat "$p"
 	fi
-	[ -n "$1" ] || exit 0 # limit get/set without command
+	[ -n "$1" ] || exit $err # limit get/set without command
 }
 
 
