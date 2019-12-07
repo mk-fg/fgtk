@@ -745,7 +745,8 @@ Both get started/stopped by systemd on as-needed basis.
 
 Tool also allows to check or list pids within scopes/slices with -c/-l options
 (to e.g. check if named scope already started or something running in a slice),
-as well as wait on these (-q option, can be used to queue/run commands in sequence).
+as well as waiting on these (-q option, can be used to queue/run commands in sequence)
+and manipulating associated cgroup limits easily (-v option).
 
 Run without any args/opts or with -h/--help to get more detailed usage info.
 

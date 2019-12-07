@@ -34,7 +34,8 @@ usage() {
 	echo >&2 "-r - Run command as a terminal-connected service unit instead of scope."
 	echo >&2 "     Main diff is that forked pids will be killed after main one exits."
 	echo >&2 "-v - Show or set target cgroup parameter. Both key and value are raw strings."
-	echo >&2 "     Examples: -v cpu.max, -v cpu.max='900000 500000'"
+	echo >&2 "     Special value 'list' will list available cgroup knobs in cgroup dir."
+	echo >&2 "     Examples: -v list, -v cpu.max, -v cpu.max='900000 500000'"
 	echo >&2 "-p - Print path to specified scope/slice/service."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
@@ -120,8 +121,12 @@ slice=$1
 	k=${value%%=*}; v=${value#*=}; p=/sys/fs/cgroup"$cg/$k"
 	[ -n "$cg" ] || { echo >&2 "ERROR - no such scope/slice"; usage; }
 	[ -n "$k" ] || { echo >&2 "ERROR - invalid -v key=value arg: $value"; usage; }
-	[ "$k" = "$v" ] || echo "$v" > "$p"
-	cat "$p"
+	if [ "$k" = list ]
+	then ls -1p /sys/fs/cgroup"$cg" | grep -v '/$'
+	else
+		[ "$k" = "$v" ] || echo "$v" > "$p"
+		cat "$p"
+	fi
 	[ -n "$1" ] || exit 0 # limit get/set without command
 }
 
