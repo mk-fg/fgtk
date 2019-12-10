@@ -85,6 +85,26 @@ def feed_entry_ts(entry):
 	return ts_str, ts
 
 
+_name_subs = {
+	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
+	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
+	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }
+def name_for_fs( name, fallback=...,
+		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
+	if not name and fallback is not ...: return fallback
+	for sub_re, sub in _name_subs: name = sub_re.sub(sub, name)
+	return name
+
+def name_dedup(name, name_set, n=3):
+	suff_n, suff_re, suff_fmt = 1, re.compile(r'\.x' + r'\d'*n + r'$'), f'.x{{:0{n}d}}'
+	while name in name_set:
+		if m := suff_re.search(name): name = name.rsplit(m.group(0))[0]
+		name += suff_fmt.format(suff_n)
+		suff_n += 1
+	name_set.add(name)
+	return name
+
+
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
@@ -108,7 +128,11 @@ def main(args=None):
 	parser.add_argument('-p', '--print-urls', action='store_true',
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	parser.add_argument('-t', '--ts-names', action='store_true',
-		help='Use timestamp-derived names in "YY-mm-dd.HHMM.N.ext" format, if possible.')
+		help='Use timestamp-derived names in "YY-mm-dd.HHMM.N.ext" format, if possible.'
+			' Takes priority over next --something-names options, but those can'
+				' still be used as a fallback for e.g. items/feeds with no timestamps.')
+	parser.add_argument('-v', '--headline-names', action='store_true',
+		help='Derive enclosure filename from item headline, if possible.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	ranges = list()
@@ -153,20 +177,27 @@ def main(args=None):
 
 		url = enc_urls[0]
 		if opts.print_urls: print(url)
-		else: file_urls[url] = adict(ts=ts, n=n)
+		else: file_urls[url] = adict(title=e.title.strip(), ts=ts, n=n)
 
 	if not file_urls: return
 
-	if not opts.ts_names:
+	if not (opts.ts_names or opts.headline_names):
 		file_list = ''.join(f'{url}\n' for url in file_urls)
 	else:
-		file_list = list()
+		file_list, name_set = list(), set()
 		for url, meta in file_urls.items():
 			file_list.append(f'{url}\n')
-			if meta.ts:
+			if opts.ts_names and meta.ts:
 				ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
 				p = meta.ts.strftime(f'%y-%m-%d.%H%M.{meta.n:03d}.{ext}')
-				file_list.append(f'  out={p}\n')
+				file_list.append(f'  out={name_dedup(p, name_set)}\n')
+				continue
+			if opts.headline_names and meta.title:
+				ext = url.rsplit('.', 1)
+				if len(ext) != 2 or '/' in ext[-1] or len(ext[-1]) > 8: continue
+				p = f'{name_for_fs(meta.title)}.{ext[-1]}'
+				file_list.append(f'  out={name_dedup(p, name_set)}\n')
+				continue
 		file_list = ''.join(file_list)
 
 	sp.run(
