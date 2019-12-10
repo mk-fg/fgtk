@@ -129,8 +129,8 @@ def main(args=None):
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	parser.add_argument('-t', '--ts-names', action='store_true',
 		help='Use timestamp-derived names in "YY-mm-dd.HHMM.N.ext" format, if possible.'
-			' Takes priority over next --something-names options, but those can'
-				' still be used as a fallback for e.g. items/feeds with no timestamps.')
+			' Takes priority over --<something>-names options listed after this one,'
+				' but those can still be used as a fallback for e.g. items/feeds with no timestamps.')
 	parser.add_argument('-v', '--headline-names', action='store_true',
 		help='Derive enclosure filename from item headline, if possible.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -201,7 +201,7 @@ def main(args=None):
 		file_list = ''.join(file_list)
 
 	sp.run(
-		[ 'aria2c', '-s8', '-x8', '-k', '2M',
+		[ 'aria2c', '-s8', '-x8', '-k', '2M', '--console-log-level=warn',
 			'--input-file', '-', '--user-agent', conf.feed_user_agent ],
 		input=file_list.encode(), check=True )
 
