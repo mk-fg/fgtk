@@ -101,20 +101,21 @@ def main(args=None):
 			' Examples: audio/mp3, audio/mpeg, mp3, ogg')
 	parser.add_argument('-o', '--out', metavar='file',
 		help='Cache fetched feed to specified file and parse from there.')
-	parser.add_argument('-n', '--num', metavar='n[-m]',
+	parser.add_argument('-n', '--num', metavar='n[-m]', action='append',
 		help='Item(s) to print/download. Downloads them by default.'
-			' Can be either an integer item number (1 is latest), or N-M for first-last (inclusive).')
+			' Can be either an integer item number (1 is latest), or N-M for first-last (inclusive).'
+			' Can be specified multiple times for multiple items/ranges.')
 	parser.add_argument('-p', '--print-urls', action='store_true',
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	parser.add_argument('-t', '--ts-names', action='store_true',
 		help='Use timestamp-derived names in "YY-mm-dd.HHMM.N.ext" format, if possible.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	a = b = None
-	if opts.num:
-		m = re.search(r'^(\d+)(?:-(\d+))?$', opts.num)
-		if not m: parser.error('Invalid format for -n/--num option, should be N[-M]')
-		a, b = int(m.group(1)) or 1, int(m.group(2) or 0)
+	ranges = list()
+	for v in opts.num or list():
+		m = re.search(r'^(\d+)(?:-(\d+))?$', v)
+		if not m: parser.error(f'Invalid format for -n/--num option, should be N[-M]: {v!r}')
+		ranges.append((int(m.group(1)) or 1, int(m.group(2) or 0)))
 
 	feed_url = opts.url
 	if ( not opts.file
@@ -133,18 +134,22 @@ def main(args=None):
 		enc_urls = feed_entry_enclosures(e, opts.file_type)
 		ts_str, ts = feed_entry_ts(e)
 
-		if not a:
+		if not ranges:
 			print(f'--- [{n: 2d}] {e.title}')
 			print(f'    [{ts_str}] {e.link}')
 			for url in enc_urls: print(f'    {url}')
 			print()
 			continue
 
-		if n < a: continue
-		if b:
-			if n > b: continue
-		elif n != a: continue
-		if not enc_urls: continue
+		else:
+			for a, b in ranges:
+				if n < a: continue
+				if b:
+					if n > b: continue
+				elif n != a: continue
+				break # n in range
+			else: continue
+			if not enc_urls: continue # only care about enclosures here
 
 		url = enc_urls[0]
 		if opts.print_urls: print(url)
