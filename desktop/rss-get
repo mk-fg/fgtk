@@ -128,11 +128,10 @@ def main(args=None):
 	parser.add_argument('-p', '--print-urls', action='store_true',
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	parser.add_argument('-t', '--ts-names', action='store_true',
-		help='Use timestamp-derived names in "YY-mm-dd.HHMM.N.ext" format, if possible.'
-			' Takes priority over --<something>-names options listed after this one,'
-				' but those can still be used as a fallback for e.g. items/feeds with no timestamps.')
+		help='Use timestamp-derived "YY-mm-dd.HHMM.N.ext" filename, if possible.')
 	parser.add_argument('-v', '--headline-names', action='store_true',
-		help='Derive enclosure filename from item headline, if possible.')
+		help='Derive enclosure filename from item headline, if possible.'
+			' Can be used together with -t/--ts-names to get timestamp + heanline filename.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	ranges = list()
@@ -187,17 +186,15 @@ def main(args=None):
 		file_list, name_set = list(), set()
 		for url, meta in file_urls.items():
 			file_list.append(f'{url}\n')
+			name = list()
 			if opts.ts_names and meta.ts:
-				ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
-				p = meta.ts.strftime(f'%y-%m-%d.%H%M.{meta.n:03d}.{ext}')
-				file_list.append(f'  out={name_dedup(p, name_set)}\n')
-				continue
+				name.append(meta.ts.strftime(f'%y-%m-%d.%H%M.{1000-meta.n:03d}'))
 			if opts.headline_names and meta.title:
-				ext = url.rsplit('.', 1)
-				if len(ext) != 2 or '/' in ext[-1] or len(ext[-1]) > 8: continue
-				p = f'{name_for_fs(meta.title)}.{ext[-1]}'
-				file_list.append(f'  out={name_dedup(p, name_set)}\n')
-				continue
+				name.append(f'{name_for_fs(meta.title)}')
+			if name:
+				ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
+				name = name_dedup('_-_'.join(name), name_set) + f'.{ext}'
+				file_list.append(f'  out={name}\n')
 		file_list = ''.join(file_list)
 
 	sp.run(
