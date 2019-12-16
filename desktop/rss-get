@@ -132,7 +132,15 @@ def main(args=None):
 	parser.add_argument('-v', '--headline-names', action='store_true',
 		help='Derive enclosure filename from item headline, if possible.'
 			' Can be used together with -t/--ts-names to get timestamp + heanline filename.')
+	parser.add_argument('-l', '--max-filename-len', type=int, metavar='n', default=90,
+		help='Maximum length for filenames produced by -t and/or -v opts (in characters, not bytes).'
+			' Anything beyond that will be cut and replaced by "--" before dot-extension suffix.'
+			' Default: %(default)s')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.max_filename_len < 16:
+		parser.error( '-l/--max-filename-len must be at'
+			f' least 16 chars (parsed as {opts.max_filename_len})' )
 
 	ranges = list()
 	for v in opts.num or list():
@@ -180,22 +188,22 @@ def main(args=None):
 
 	if not file_urls: return
 
-	if not (opts.ts_names or opts.headline_names):
-		file_list = ''.join(f'{url}\n' for url in file_urls)
-	else:
-		file_list, name_set = list(), set()
-		for url, meta in file_urls.items():
-			file_list.append(f'{url}\n')
-			name = list()
-			if opts.ts_names and meta.ts:
-				name.append(meta.ts.strftime(f'%y-%m-%d.%H%M.{1000-meta.n:03d}'))
-			if opts.headline_names and meta.title:
-				name.append(f'{name_for_fs(meta.title)}')
-			if name:
-				ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
-				name = name_dedup('_-_'.join(name), name_set) + f'.{ext}'
-				file_list.append(f'  out={name}\n')
-		file_list = ''.join(file_list)
+	file_list, name_set = list(), set()
+	for url, meta in file_urls.items():
+		file_list.append(f'{url}\n')
+		name = list()
+		if opts.ts_names and meta.ts:
+			name.append(meta.ts.strftime(f'%y-%m-%d.%H%M.{1000-meta.n:03d}'))
+		if opts.headline_names and meta.title:
+			name.append(f'{name_for_fs(meta.title)}')
+		if not name: continue
+		name = '_-_'.join(name)
+		if len(name) > opts.max_filename_len:
+			name = name[:opts.max_filename_len] + '--'
+		name = name_dedup(name, name_set)
+		ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
+		file_list.append(f'  out={name}.{ext}\n')
+	file_list = ''.join(file_list)
 
 	sp.run(
 		[ 'aria2c', '-s8', '-x8', '-k', '2M', '--console-log-level=warn',
