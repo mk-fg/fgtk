@@ -14,7 +14,10 @@ class adict(dict):
 		super().__init__(*args, **kwargs)
 		self.__dict__ = self
 
+# Custom accept_header is for github specifically - returns html instead of feed if */* is in there
 conf = adict( version='1.0', socket_timeout=20.0,
+	accept_header='application/atom+xml,application/rdf+xml,'
+		'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2',
 	feed_user_agent='rss-get/{ver} (github.com/mk-fg/fgtk#rss-get) feedparser/{ver_fp}' )
 conf.feed_user_agent = conf.feed_user_agent.format(ver=conf.version, ver_fp=fp.__version__)
 
@@ -30,7 +33,8 @@ def feed_cache(url, path):
 	path = pl.Path(path).resolve()
 	if not feed_url_check(url) and pl.Path(url).resolve() == path: return path
 	try:
-		req = ul.Request(url, headers={'User-Agent': conf.feed_user_agent})
+		req = ul.Request(url, headers={
+			'User-Agent': conf.feed_user_agent, 'Accept': conf.accept_header })
 		with ul.urlopen(req) as req: status, err, body = req.getcode(), req.reason, req.read()
 	except ule.URLError as err_ex: status, err = 1000, str(err_ex)
 	if status >= 300:
@@ -41,7 +45,8 @@ def feed_cache(url, path):
 
 def feed_parse(url):
 	'Return parsed feed with entries for url, raising FeedError on any issues.'
-	feed = fp.parse(url, agent=conf.feed_user_agent)
+	feed = fp.parse( url,
+		agent=conf.feed_user_agent, request_headers=dict(Accept=conf.accept_header) )
 	status, bozo, bozo_err = (
 		feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
 	fetch_fail = (not status and bozo) or (status or 1000) >= 400
