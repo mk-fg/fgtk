@@ -26,12 +26,13 @@ class FeedError(Exception): pass
 
 def feed_url_check(url):
 	'Return if arg looks like an URL and not just local path.'
-	return re.search(r'^[\w\d]+:', url)
+	return re.search(r'^[\w\d]+:', str(url))
 
 def feed_cache(url, path):
 	'Cache feed into path and return it or raise FeedError.'
 	path = pl.Path(path).resolve()
 	if not feed_url_check(url) and pl.Path(url).resolve() == path: return path
+	if path.exists(): return path
 	try:
 		req = ul.Request(url, headers={
 			'User-Agent': conf.feed_user_agent, 'Accept': conf.accept_header })
@@ -144,7 +145,8 @@ def main(args=None):
 			' Extension gets picked from last slug of the enclosure URLs.'
 			' Examples: audio/mp3, audio/mpeg, mp3, ogg')
 	parser.add_argument('-o', '--out', metavar='file',
-		help='Cache fetched feed to specified file and parse from there.')
+		help='Cache fetched feed to specified file and parse from there.'
+			' If file already exists (cached), it will be used instead of fetching URL.')
 	parser.add_argument('-n', '--num', metavar='n[-m]', action='append',
 		help='Item(s) to print/download. Downloads them by default.'
 			' Can be either an integer item number (1 is latest), or N-M for first-last (inclusive).'
@@ -184,16 +186,18 @@ def main(args=None):
 		feed = feed_parse(feed_url)
 	except FeedError as err: return p_err(err)
 
-	ts0, file_urls, entries = None, dict(), list(enumerate(feed.entries, 1))
+	entries = list(enumerate(feed.entries, 1))
+	ts0, n0, file_urls = None, entries[0][0], dict()
 	for n, e in reversed(entries):
 		enc_urls = feed_entry_enclosures(e, opts.file_type)
 		ts_str, ts = feed_entry_ts(e)
-		ts0, ts_diff = ts, None if not ts0 else (ts - ts0)
 
 		if not ranges:
-			if ts_diff: ts_diff = f' +{ts_diff_str(ts_diff)}'
+			ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
+			ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
 			print(f'--- [{n: 2d}] {e.title}')
-			print(f'    [{ts_str}]{ts_diff or ""} {e.link}')
+			print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
+			print(f'    {e.link}')
 			for url in enc_urls: print(f'    {url}')
 			print()
 			continue
