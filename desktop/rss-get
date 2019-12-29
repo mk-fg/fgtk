@@ -94,7 +94,7 @@ def feed_entry_ts(entry):
 _name_subs = {
 	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
 	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
-	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }
+	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_', '#': 'N' }
 def name_for_fs( name, fallback=...,
 		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
 	if not name and fallback is not ...: return fallback
