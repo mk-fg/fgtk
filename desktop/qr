@@ -62,7 +62,7 @@ opts=( $opts )
 
 qr=
 qr_set() {
-	[[ -z "$qr" ]] || { echo >&2 "ERROR: conflicting data-encoding types specified"; usage; }
+	[[ -z "$qr" ]] || { echo >&2 "ERROR: conflicting data-encoding types specified"; exit 1; }
 	qr=$1
 }
 
@@ -80,5 +80,5 @@ then
 		trap 'rm -f "$dst"' EXIT INT
 		feh --force-aliasing -FZYxs --image-bg white "$dst" ||:
 	fi
-else echo >&2 "ERROR: no parameters to encode specified"
+else echo >&2 "ERROR: no parameters to encode specified"; exit 1
 fi
