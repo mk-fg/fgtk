@@ -39,6 +39,14 @@ usage() {
 	echo >&2 "-p - Print path to specified scope/slice/service."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
+	echo >&2 "Examples:"
+	echo >&2 "  cgrc -ru ff apps-browser -- firefox --profile myprofile"
+	echo >&2 "  cgrc -rcu ff && echo 'ff process exited'"
+	echo >&2 "  cgrc -q apps-leech -- curl -OL http://site.com/file-to-queue.bin"
+	echo >&2 "  cgrc -l apps | xargs ps u"
+	echo >&2 "  cgrc -v cpu.max apps-pacman"
+	echo >&2 "  cgrc -v cpu.max='1500000 500000' apps-pacman"
+	echo >&2
 	exit ${1:-1}
 }
 
