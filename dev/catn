@@ -2,15 +2,18 @@
 
 usage() {
 	bin=$(basename $0)
-	echo >&2 "Usage: $bin [-q] file line ctx_lines"
-	echo >&2 "  or: $bin [-q] file line[:ctx_lines]"
-	echo >&2 "  or: $bin [-q] file:line[:ctx_lines]"
-	exit ${1:-0}
-}
-[[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin [-q] file line ctx_lines"
+	echo "  or: $bin [-q] file line[:ctx_lines]"
+	echo "  or: $bin [-q] file:line[:ctx_lines]"
+	# [[ $1 -ne 0 ]] || { echo; echo "more help stuff"; }
+	exit ${1:-1}; }
+[[ "$1" = -h || "$1" = --help ]] && usage 0
 
 q=
 [[ "$1" = -q ]] && { q=t; shift; }
+[[ -n "$1" ]] || usage 1
+# set -eo pipefail
 
 ctx=
 case "$#" in
