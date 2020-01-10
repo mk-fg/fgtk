@@ -160,10 +160,12 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 	for line in iter(log_tailer.next, u''):
 		# u"2013-11-26T22:50:19.455012+06:00 mail.info dovecot[-]:
 		#   lda(fraggod): sieve: msgid=<20131126165018.BFDC02A0EA2@malediction.core>: stored mail into mailbox 'INBOX'\n"
+		# u"Jan 10 04:47:56 daedalus dovecot[899]: lda(fraggod)<899><kdxmBqy7F16DAwAAMpFoNw>:
+		#   sieve: msgid=<20200109234725.4A0D5A277F@malediction.host.fraggod.net>: fileinto action: stored mail into mailbox 'reports'"
 		match = re.search(
 			r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}) mail\.info dovecot\[(-|\d+)\]:\s+'
-			r'lda\([^)]+\): sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
-			r' stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
+			r'lda\([^)]+\)(<\d+><[^>]+>)?: sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
+			r'( fileinto action:)? stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
 		if not match:
 			log.warn('Failed to match line: %r', line.strip())
 			continue
