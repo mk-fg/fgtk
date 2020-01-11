@@ -158,9 +158,16 @@ def main(args=None):
 	parser.add_argument('-v', '--headline-names', action='store_true',
 		help='Derive enclosure filename from item headline, if possible.'
 			' Can be used together with -t/--ts-names to get timestamp + heanline filename.')
-	parser.add_argument('-l', '--max-filename-len', type=int, metavar='n', default=90,
+	parser.add_argument('--max-filename-len', type=int, metavar='n', default=90,
 		help='Maximum length for filenames produced by -t and/or -v opts (in characters, not bytes).'
 			' Anything beyond that will be cut and replaced by "--" before dot-extension suffix.'
+			' Default: %(default)s')
+	parser.add_argument('-l', '--list', action='store_true',
+		help='List feed item titles only, one per line.')
+	parser.add_argument('-m', '--list-meta', metavar='fields', default='{e.title}',
+		help='Only with --list - specify output format for each item/line.'
+			' Python str formatting is used, with "e" being feed entry object from feedparser module.'
+			' See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.'
 			' Default: %(default)s')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -193,13 +200,15 @@ def main(args=None):
 		ts_str, ts = feed_entry_ts(e)
 
 		if not ranges:
-			ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
-			ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
-			print(f'--- [{n: 2d}] {e.title}')
-			print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
-			print(f'    {e.link}')
-			for url in enc_urls: print(f'    {url}')
-			print()
+			if not opts.list:
+				ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
+				ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
+				print(f'--- [{n: 2d}] {e.title}')
+				print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
+				print(f'    {e.link}')
+				for url in enc_urls: print(f'    {url}')
+				print()
+			else: print(opts.list_meta.format(e=e))
 			continue
 
 		else:
