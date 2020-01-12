@@ -16,7 +16,9 @@ net_only=
 img=linux/install.qcow2.inc
 video=( -nographic )
 fs=
+uid_root=
 
+[[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
 [[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
@@ -26,6 +28,9 @@ fs=
 	# video+=( -display vnc 0 )
 	shift
 }
+
+[[ "$UID" -ne 0 || -n "$uid_root" ]] \
+	|| { echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
 
 case "$1" in
 	d|dump)
@@ -66,7 +71,7 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
+		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		cat >&2 <<EOF
 
@@ -93,21 +98,24 @@ esac
 cd "$root"
 
 
-### Slugfest otherwise
+### Too slow otherwise
 
+err=0
 modprobe kvm || exit 1
-modprobe kvm-intel
-modprobe kvm-amd
+modprobe kvm-intel 2>/dev/null || (( err += 1 ))
+modprobe kvm-amd 2>/dev/null || (( err += 1 ))
+[[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to load kvm intel/amd modules"; exit 1; }
 
 
 ### VDE
 
+pid1=$$ pid2=$$
 mkdir -p "$vde_path"
 
-cgrc vm/misc vde_switch\
-	-s "$vde_path"/link.sock\
-	-M "$vde_path"/mgmt.sock &
-pid1=$!
+cgrc -rcu vde && {
+	cgrc -ru vde apps-vm -- vde_switch
+		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &
+	pid1=$!; }
 
 for n in {0..50}; do
 	[[ -e "$vde_path"/link.sock ]] && break
@@ -115,16 +123,18 @@ for n in {0..50}; do
 done
 [[ $n -eq 50 ]] && { echo >&2 "vde switch startup failed"; exit 1; }
 
-cgrc vm/misc sudo vde_plug2tap\
-	-s "$vde_path"/link.sock\
-	vde &
-pid2=$!
+cgrc -rcu vde-tap && {
+	cgrc -ru vde-tap apps-vm -- sudo vde_plug2tap \
+		-s "$vde_path"/link.sock vde &
+	pid2=$!; }
 
 # Add a little delay if vde stuff is just starting
+kill -0 "$pid1" "$pid2" || { echo >&2 "ERROR: vde failed to start"; exit 1; }
 for n in {0..5}; do
-	kill -0 $pid1 $pid2 2>/dev/null || break
+	err=t; ip link show vde &>/dev/null && { err=; break; }
 	sleep 0.1
 done
+[[ -z "$err" ]] || { echo >&2 "ERROR: vde failed to start (no iface)"; exit 1; }
 
 [[ -n "$net_only" ]] && exit 0
 
@@ -147,8 +157,11 @@ qemu_opts=(
 	-smp 2
 	"${video[@]}"
 
-	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
-	# -cdrom linux/install.iso
+	# -device usb-ehci,id=usb,bus=pci.0,addr=0x4
+	# -device usb-host,hostbus=1,hostaddr=3
+
+	# -drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
+	# -cdrom ~/DLz/grml64-small_2018.12.iso
 )
 
 ulimit -c 0
@@ -156,4 +169,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
-exec cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
+exec cgrc -ru qemu-linux apps-vm -- qemu-system-x86_64 "${qemu_opts[@]}"

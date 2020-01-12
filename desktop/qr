@@ -1,0 +1,84 @@
+#!/bin/bash
+
+set -e
+
+usage() {
+	echo >&2 "Usage: ${0##*/} $(gawk -v line_n=100 \
+		'/^\s+case\>/ {parse=1; next}
+		/^\s+esac\>/ {exit}
+		!parse {next}
+		match($0, /^\s*([\-|a-z0-9]+)\)/, a) {
+			if (ac==0 || ac<2) ac=""; else ac=sprintf(ac==2?" ..":" <%s>", ac-1)
+			if (ap) {
+				ac=sprintf("[%s%s] ", ap, ac); acn=length(ac)
+				if (an && an+acn>line_n) { printf("\n  "); an=acn; } else an+=acn
+				printf("%s", ac); }
+			ap=a[1]; ac=0 }
+		{for (i=1;i<NF;i++) if (match($i, /\<shift\>/)) ac++}' $0)"
+	echo >&2
+	echo >&2 "Create QR code image for smartphone and either display it"
+	echo >&2 " (using feh, default if DISPLAY= is set) or print its path to stdout."
+	echo >&2 "Different parameters determine type of data encoded there."
+	echo >&2 "NOTE: anything running on the system can see all passed command-line options!!!"
+	echo >&2
+	echo >&2 "Examples:"
+	echo >&2 "  Raw string: qr -r a-raw-line-of-data"
+	echo >&2 "  WiFi AP: qr -v -s myssid -p some-long-passphrase"
+	echo >&2
+	exit ${1:-1}
+}
+
+display= out= opts= verbose=
+raw= wifi= wifi_ssid= wifi_pass=
+
+while [[ -n "$1" ]]; do
+	case "$1" in
+		-h|--help) usage 0 ;;
+		-v) shift; verbose=t ;;
+		-x) shift; set -x ;;
+
+		-d|--display) shift; display=t; shift ;;
+		-o|--out-file) shift; out=$1; shift ;;
+		--opts) shift; opts=$1; shift ;;
+
+		-r|--raw-line) shift; raw=$1; shift ;;
+
+		-s|--ssid) shift; wifi=t; wifi_ssid=$1; shift ;;
+		-p|--pass) shift; wifi=t; wifi_pass=$1; shift ;;
+
+		welp) exit 1 ;;
+		*) echo "Unknown option: $1" && exit 1 ;;
+	esac
+done
+
+[[ -n "$display" || -n "$out" || -z "$DISPLAY" ]] || display=t
+dst=$out
+[[ -n "$dst" ]] || {
+	[[ -z "$display" ]] \
+		&& { dst="$HOME"/Desktop; [[ -d "$dst" ]] || dst=$HOME; } \
+		|| { [[ -n "$XDG_RUNTIME_DIR" ]] && dst=$XDG_RUNTIME_DIR || dst=/tmp; }
+	dst="${dst}/qr-$(printf '%(%Y%m%d%H%M%S)T' -1).png"; }
+opts=( $opts )
+
+qr=
+qr_set() {
+	[[ -z "$qr" ]] || { echo >&2 "ERROR: conflicting data-encoding types specified"; exit 1; }
+	qr=$1
+}
+
+[[ -z "$raw" ]] || qr_set "$raw"
+[[ -z "$wifi" ]] || qr_set "WIFI:T:WPA;S:${wifi_ssid};P:${wifi_pass};;"
+
+if [[ -n "$qr" ]]
+then
+	[[ -z "$verbose" ]] || echo "$qr"
+	qrencode -o "$dst" "${opts[@]}" "$qr" \
+		|| { err=$?; echo >&2 "ERROR: qrencode operation failed"; exit $err; }
+	if [[ -z "$display" ]]
+	then [[ -n "$out" ]] || echo "$dst"
+	else
+		trap 'rm -f "$dst"' EXIT INT
+		feh --force-aliasing -FZYxs --image-bg white "$dst" ||:
+	fi
+else echo >&2 "ERROR: no parameters to encode specified"; exit 1
+fi

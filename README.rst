@@ -2897,6 +2897,20 @@ script has option to pass it destination filenames according to item date/time
 instead of the usual nonsensical, incoherent and inconsistent names authors seem
 to inevitably assign to files on a regular-content feeds.
 
+qr
+'''
+
+Bash wrapper around qrencode_ to assemble and display QR-encoded strings in
+a fullscreen feh_ window, cleaning-up after itself afterwards.
+
+For example, to pass WiFi AP data to any smartphone that way:
+``qr -s myssid -p some-passphrase``
+
+Has bunch of other options for different common use-cases.
+
+.. _qrencode: https://fukuchi.org/works/qrencode/index.html.en
+.. _feh: https://feh.finalrewind.org/
+
 
 
 [vm] VM scripts
