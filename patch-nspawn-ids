@@ -54,6 +54,7 @@ def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False):
 			# Linux can drop stuff like suid/sgid bits after chown, so restore these
 			if not stat.S_ISLNK(s.st_mode):
 				os.chmod(p, stat.S_IMODE(s.st_mode))
+	if path.is_file(): shift_node(path)
 	for top, dirs, files in os.walk(path):
 		p = pathlib.Path(top)
 		for fn in dirs: shift_node(p / fn)
@@ -101,6 +102,7 @@ def main(args=None):
 		s = p.lstat()
 		cid = id_cid(s.st_uid)
 		assert_cid_match(p, cid, s.st_gid)
+		log.debug(f'Reference cid-hex={cid:x} (from uid-hex={s.st_uid:x})')
 
 	paths = list(pathlib.Path(p).resolve() for p in opts.path)
 	for p in paths:
