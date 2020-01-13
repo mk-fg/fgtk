@@ -205,7 +205,7 @@ def main(args=None):
 				ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
 				print(f'--- [{n: 2d}] {e.title}')
 				print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
-				print(f'    {e.link}')
+				if url := e.get('link'): print(f'    {url}')
 				for url in enc_urls: print(f'    {url}')
 				print()
 			else: print(opts.list_meta.format(e=e))
