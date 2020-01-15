@@ -1,10 +1,10 @@
 (* Simple app to watch directory for new files,
- *   read magnet links from them and run transmission-remote to add them.
+ *   read magnet links from them and run "transmission-remote -a" on these.
  *
  * Build with:
- *   % ocamlc -c magnet_relay_transmission.c
- *   % ocamlopt -o transmission-magnet -O2 \
- *       unix.cmxa str.cmxa magnet_relay_transmission.o magnet_relay_transmission.ml
+ *   % ocamlc -c magnet_relay_transmission_glue.c
+ *   % ocamlopt -o transmission-magnet -O2 unix.cmxa str.cmxa \
+ *       magnet_relay_transmission_glue.o magnet_relay_transmission.ml
  *   % strip transmission-magnet
  *
  * Usage:
@@ -15,6 +15,7 @@
 let cli_debug = ref false
 let cli_path_specified = ref false
 let cli_path = ref "."
+let cli_path_suffix = ref ".magnet"
 let cli_cmd = ref "transmission-remote -a"
 let cli_cmd_max = ref 3
 let cli_link_len_max = ref (20 * int_of_float (2. ** 10.))
@@ -26,8 +27,12 @@ let () =
 	Arg.parse
 		[ ("-c", Arg.Set_string cli_cmd,
 				"-- Command to run with magnet link as a last argument.\n" ^
-					"        Will be split on spaces. Default: " ^ !cli_cmd ^ "\n" ^
-					"        Note: never specify passwords on command-line (visible to all pids).");
+				"        Will be split on spaces. Default: " ^ !cli_cmd ^ "\n" ^
+				"        Note: never specify passwords on command-line (visible to all pids).");
+			("-s", Arg.Set_string cli_path_suffix,
+				"-- Suffix for files to be processed." ^
+					" Can be empty to process all.\n" ^
+				"        Case-sensitive. Default: " ^ !cli_path_suffix );
 			("-d", Arg.Set cli_debug, "     " ^ debug_desc);
 			("--debug", Arg.Set cli_debug, debug_desc) ]
 		( fun arg ->
@@ -68,6 +73,9 @@ let watch_path () =
 	let try_finally f x finally y =
 		let res = try f x with e -> finally y; raise e in finally y; res in
 
+	let re_link = Str.regexp "[^ \000\012\n\r\t]+" in
+	let re_path = Str.regexp ((Str.quote !cli_path_suffix) ^ "$") in
+
 	let path_queue = ref [] in
 	let fd = in_watch_path !cli_path in
 	Unix.set_close_on_exec(fd);
@@ -85,8 +93,7 @@ let watch_path () =
 				Bytes.sub_string read_buff 0 buff_len
 			with Unix.Unix_error _ -> "" in
 		if !fd = Unix.stdin then () else Unix.close !fd;
-		let re = Str.regexp "[^ \000\012\n\r\t]+" in
-		if Str.string_match re link 0
+		if Str.string_match re_link link 0
 			then Str.matched_string link else "" in
 
 
@@ -113,6 +120,8 @@ let watch_path () =
 				"--- - new-pid=%d [path-q=%d cmd-q=%d]: %s"
 				(List.hd !cmd_pids) (List.length !path_queue)
 				(List.length !cmd_pids) path ); in
+	(* XXX: cleanup link-files if command exits with 0 *)
+	(* XXX: log non-clean pid exits to stderr for systemd *)
 
 	let rec cmd_check () =
 		cmd_check_needed := false;
@@ -146,8 +155,13 @@ let watch_path () =
 				List.iter
 					( fun path ->
 						let path = Bytes.to_string path in
-						debug_print (Printf.sprintf "--- file: %s" path);
-						path_queue := !path_queue @ [path];
+						let path_match =
+							try ignore (Str.search_forward re_path path 0); true
+							with Not_found -> false in
+						if path_match then (
+							debug_print (Printf.sprintf "--- file: %s" path);
+							path_queue := !path_queue @ [path]
+						) else debug_print (Printf.sprintf "--- file [skip]: %s" path);
 						cmd_check () )
 					path_list;
 				 ev_process () in

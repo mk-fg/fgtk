@@ -2,15 +2,12 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/inotify.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>
-#include <caml/custom.h>
 #include <caml/fail.h>
-#include <caml/signals.h>
-
-#include <sys/inotify.h>
 
 
 int hdr_len = sizeof(struct inotify_event);
