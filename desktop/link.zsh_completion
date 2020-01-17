@@ -1,5 +1,0 @@
-#compdef link
-
-_arguments ':arg:('"`link -l`"')'
-
-return 0

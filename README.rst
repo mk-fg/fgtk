@@ -2603,17 +2603,6 @@ Uses plumbum_ to call "rsync --inplace" (faster than "cp" in most cases) and
 .. _3k files: http://ocremix.org/torrents/
 .. _plumbum: http://plumbum.readthedocs.org
 
-link
-''''
-
-ssh wrapper to save time on typing something like ``exec ssh -X -A -p3542
-root@1.2.3.4 'screen -DR'``, especially for N remote hosts.
-
-Also has the ability to "keep trying to connect", useful (to me, at least) for
-crappy shared-hosting servers, where botnets flood ssh with slowloris-like
-attacks on it's authentication, exceeding limit on unauthorized connections in
-sshd.
-
 e_config_backup
 '''''''''''''''
 
