@@ -69,7 +69,7 @@ import yaml, lya, rrdtool
 p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
 types_str = types.StringTypes
 
-yaml_load = yaml.load
+yaml_load = yaml.safe_load
 yaml_dump = lambda data, dst:\
 	yaml.safe_dump(data, dst, allow_unicode=True, default_flow_style=False)
 yaml.SafeDumper.add_representer(lya.AttrDict, yaml.SafeDumper.represent_dict)
