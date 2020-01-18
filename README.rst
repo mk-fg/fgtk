@@ -1305,6 +1305,40 @@ Other options allow for picking number of words and sanity-checks like min/max l
 
 .. _Diceware-like: https://en.wikipedia.org/wiki/Diceware
 
+hhash
+'''''
+
+Produces lower-entropy "human hash" phrase consisting of aspell english
+dictionary words for input arg(s) or data on stdin.
+
+It works by first calculating BLAKE2 hash of input string/data via libsodium_,
+and then encoding it using consistent word-alphabet, exactly like something like
+base32 or base64 does.
+
+Example::
+
+  % hhash -e AAAAC3NzaC1lZDI1NTE5AAAAIPh5/VmxDwgtJI0HiFBqZkbyV1I1YK+2DVjGjYydNp5o
+  allan avenues regrade windups flours
+  entropy-stats: word-count=5 dict-words=126643 word-bits=17.0 total-bits=84.8
+
+Here -e is used to print entropy estimate for produced words.
+
+Note that resulting entropy values can be fractional if word-alphabet ends up
+being padded to map exactly to N bits (e.g. 17 bits above), so that words in it
+can be repeated, hence not exactly 17 bits of distinct values.
+
+Written in OCAML, linked against libsodium_ (for BLAKE2 hash function) via small
+C glue code, build with::
+
+  % ocamlc -c hhash_glue.c
+  % ocamlopt -o hhash -O2 unix.cmxa str.cmxa hhash_glue.o -cclib -lsodium hhash.ml
+  % strip hhash
+
+Caches dictionary into a ~/.cache/hhash.dict (-c option) on first run to produce
+consistent results on this machine. Updating that dictionary will change outputs!
+
+.. _libsodium: https://libsodium.org/
+
 urlparse
 ''''''''
 

@@ -32,14 +32,14 @@ let () =
 			("-s", Arg.Set_string cli_path_suffix,
 				"-- Suffix for files to be processed." ^
 					" Can be empty to process all.\n" ^
-				"        Case-sensitive. Default: " ^ !cli_path_suffix );
+				"        Case-sensitive. Default: " ^ !cli_path_suffix);
 			("-d", Arg.Set cli_debug, "     " ^ debug_desc);
 			("--debug", Arg.Set cli_debug, debug_desc) ]
-		( fun arg ->
+		(fun arg ->
 			if !cli_path_specified
 				then raise (Arg.Bad ("Bogus extra arg : " ^ arg))
-				else ( cli_path := arg; cli_path_specified := true ) )
-		("Usage: " ^ Sys.argv.(0) ^ " [-d|--debug] [path]\
+				else (cli_path := arg; cli_path_specified := true))
+		("Usage: " ^ Sys.argv.(0) ^ " [-d|--debug] [opts] [path]\
 			\n\nWatch path for new .magnet files and run transmission-remote with link from each one.\
 			\nUses current directory if path is not specified.\n")
 
@@ -57,7 +57,7 @@ external in_ev_name : bytes -> int -> int -> bytes = "mlin_ev_name"
 let in_read_paths =
 	(* Note: buffer doesn't persist between reads, assuming that events are read all-or-nothing *)
 	let hdr_len = in_hdr_len () in
-	( fun fd ->
+	(fun fd ->
 		let buff_len = in_peek fd in
 		let buff = Bytes.make buff_len '\000' in
 		let buff_len = Unix.read fd buff 0 buff_len in
@@ -66,7 +66,7 @@ let in_read_paths =
 			if m >= buff_len then path_list else
 				let ev_name = in_ev_name buff buff_len n in
 				parse_ev (m + Bytes.length ev_name) (ev_name :: path_list) in
-		List.rev (parse_ev 0 []) )
+		List.rev (parse_ev 0 []))
 
 
 let watch_path () =
@@ -116,21 +116,21 @@ let watch_path () =
 			cmd_pids := (if !cli_debug
 				then cmd_func Unix.stdin Unix.stdout Unix.stderr
 				else cmd_func cmd_pipe cmd_pipe cmd_pipe) :: !cmd_pids;
-			debug_print ( Printf.sprintf
+			debug_print (Printf.sprintf
 				"--- - new-pid=%d [path-q=%d cmd-q=%d]: %s"
 				(List.hd !cmd_pids) (List.length !path_queue)
-				(List.length !cmd_pids) path ); in
+				(List.length !cmd_pids) path); in
 	(* XXX: cleanup link-files if command exits with 0 *)
 	(* XXX: log non-clean pid exits to stderr for systemd *)
 
 	let rec cmd_check () =
 		cmd_check_needed := false;
 		cmd_pids := List.filter
-			( fun pid ->
+			(fun pid ->
 				let pid, status =
 					try Unix.waitpid [Unix.WNOHANG] pid
 					with Unix.Unix_error (Unix.ECHILD, _, _) -> (1, Unix.WEXITED 0)
-				in pid == 0 )
+				in pid == 0)
 			!cmd_pids;
 		cmd_spawn ();
 		if !cmd_check_needed then cmd_check () else
@@ -153,7 +153,7 @@ let watch_path () =
 			if List.length x == 0 && List.length r >= 1 then
 				let path_list = in_read_paths fd in
 				List.iter
-					( fun path ->
+					(fun path ->
 						let path = Bytes.to_string path in
 						let path_match =
 							try ignore (Str.search_forward re_path path 0); true
@@ -162,7 +162,7 @@ let watch_path () =
 							debug_print (Printf.sprintf "--- file: %s" path);
 							path_queue := !path_queue @ [path]
 						) else debug_print (Printf.sprintf "--- file [skip]: %s" path);
-						cmd_check () )
+						cmd_check ())
 					path_list;
 				 ev_process () in
 		ev_process () in
