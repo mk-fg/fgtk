@@ -1,8 +1,8 @@
-(* Command-line tool to hash strings to words from cached aspell dictionary.
+(* Command-line tool to hash strings/data to words from cached aspell dictionary.
  *
  * Build with:
- *   % ocamlc -c hhash_glue.c
- *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa hhash_glue.o -cclib -lsodium hhash.ml
+ *   % ocamlc -c hhash.ml.c
+ *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa hhash.ml.o -cclib -lsodium hhash.ml
  *   % strip hhash
  *
  * Usage:
@@ -62,7 +62,7 @@ let word_count, word_bits, word_arr =
 		(find_in_path dict_cmd_bin (String.split_on_char ':' (Sys.getenv "PATH"))) :: (List.tl dict_cmd) in
 
 	(* Open cache-file or command output *)
-	(* src_is_proc is used for closeing and checked for whether to create cache-file later *)
+	(* src_is_proc is used for closing and checked for whether to create cache-file later *)
 	let src, src_is_proc =
 		try (open_in cache_file, false)
 		with Sys_error err ->

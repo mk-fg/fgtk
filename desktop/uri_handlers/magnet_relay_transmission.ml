@@ -2,9 +2,9 @@
  *   read magnet links from them and run "transmission-remote -a" on these.
  *
  * Build with:
- *   % ocamlc -c magnet_relay_transmission_glue.c
+ *   % ocamlc -c magnet_relay_transmission.ml.c
  *   % ocamlopt -o transmission-magnet -O2 unix.cmxa str.cmxa \
- *       magnet_relay_transmission_glue.o magnet_relay_transmission.ml
+ *       magnet_relay_transmission.ml.o magnet_relay_transmission.ml
  *   % strip transmission-magnet
  *
  * Usage:
