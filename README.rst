@@ -1330,8 +1330,7 @@ can be repeated, hence not exactly 17 bits of distinct values.
 Written in OCAML, linked against libsodium_ (for BLAKE2 hash function) via small
 C glue code, build with::
 
-  % ocamlc -c hhash.ml.c
-  % ocamlopt -o hhash -O2 unix.cmxa str.cmxa hhash.ml.o -cclib -lsodium hhash.ml
+  % ocamlopt -o hhash -O2 unix.cmxa str.cmxa -cclib -lsodium hhash.ml hhash.ml.c
   % strip hhash
 
 Caches dictionary into a ~/.cache/hhash.dict (-c option) on first run to produce

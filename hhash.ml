@@ -1,8 +1,7 @@
 (* Command-line tool to hash strings/data to words from cached aspell dictionary.
  *
  * Build with:
- *   % ocamlc -c hhash.ml.c
- *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa hhash.ml.o -cclib -lsodium hhash.ml
+ *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa -cclib -lsodium hhash.ml hhash.ml.c
  *   % strip hhash
  *
  * Usage:
