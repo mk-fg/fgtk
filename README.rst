@@ -1875,6 +1875,60 @@ Example snippet for sending update packets::
 
 .. _nsd: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
+nginx-access-log-stat-block
+'''''''''''''''''''''''''''
+
+Python3/ctypes script to be used alongside nginx-stat-check_ module, reliably
+tailing any kind of access.log-like file(s) where first (space-separated) field
+is IP address and creating files with name corresponding to these in specified
+db_dir.
+
+nginx-stat-check module then allows to use ``stat_check /some/db_dir/$remote_addr;``
+in nginx.conf to return 403 for all addresses processed in this way.
+
+Created files are automatically renamed and cleaned-up after specified
+unblock/forget-timeouts and block-timeout either get extended or multiplied by
+specified k value (2x default) on repeated blocks after expiry.
+
+Intended use it to block stupid bots and whatever spammers that don't care about
+robots.txt when these access some honeypot-file on nginx level (with proper 403
+on specific URL paths), which normally should never be requested.
+
+I.e. bots that are stupidly re-indexing giant file dumps or whatever dynamic
+content every N minutes.
+
+Example nginx.conf snippet::
+
+  load_module /usr/lib/nginx/modules/ngx_http_stat_check.so;
+  log_format stat-block '$remote_addr :: $time_iso8601 "$http_referer" "$http_user_agent"';
+  ...
+
+  location = /distro/package/mirror/open-and-get-banned.txt {
+    alias /srv/pkg-mirror/open-and-get-banned.txt;
+    access_log /var/log/nginx/bots.log stat-block;
+  }
+
+  location /distro/package/mirror {
+    alias /srv/pkg-mirror;
+    autoindex on;
+    stat_check /tmp/stat-block/$remote_addr;
+  }
+
+And run script to populate ``/tmp/stat-block/`` path from bots.log::
+
+  % ./nginx-access-log-stat-block --debug /tmp/stat-block/ /var/log/nginx/bots.log
+
+Check -h/--help output for default block-timeout and such values.
+
+Uses inotify to tail files via ctypes, detects log rotation but NOT truncation
+(use with append/remove-only logs), can tail multiple wildcard-matching files in
+a directory, closes opened/tailed logs after timeout.
+
+Always opens files at the end, so can loose a line or two due to that, which is
+fine for intended purpose (bots spam requests anyway).
+
+.. _nginx-stat-check: https://github.com/mk-fg/nginx-stat-check
+
 
 
 [dev] Dev tools

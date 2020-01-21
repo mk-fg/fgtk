@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import select, struct, enum, errno, fcntl, termios, collections as cs, ctypes as ct
+import pathlib as pl, contextlib as cl
+import os, sys, signal, logging, time, glob, re, fnmatch, binascii
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+
+class INotify:
+	# Based on inotify_simple module
+
+	class flags(enum.IntEnum): # see "man inotify"
+
+		access = 0x00000001
+		modify = 0x00000002
+		attrib = 0x00000004
+		close_write = 0x00000008
+		close_nowrite = 0x00000010
+		open = 0x00000020
+		moved_from = 0x00000040
+		moved_to = 0x00000080
+		create = 0x00000100
+		delete = 0x00000200
+		delete_self = 0x00000400
+		move_self = 0x00000800
+
+		unmount = 0x00002000
+		q_overflow = 0x00004000
+		ignored = 0x00008000
+
+		onlydir = 0x01000000
+		dont_follow = 0x02000000
+		excl_unlink = 0x04000000
+		mask_add = 0x20000000
+		isdir = 0x40000000
+		oneshot = 0x80000000
+
+		close = close_write | close_nowrite
+		move = moved_from | moved_to
+		all_events = (
+			access | modify | attrib | close_write | close_nowrite | open |
+			moved_from | moved_to | delete | create | delete_self | move_self )
+
+		@classmethod
+		def unpack(cls, mask):
+			return set( flag
+				for flag in cls.__members__.values()
+				if flag & mask == flag )
+
+	_INotifyEv_struct = 'iIII'
+	_INotifyEv_struct_len = struct.calcsize(_INotifyEv_struct)
+	INotifyEv = cs.namedtuple( 'INotifyEv',
+		['path', 'path_mask', 'wd', 'flags', 'cookie', 'name'] )
+
+	_libc = None
+	@classmethod
+	def _get_lib(cls):
+		if cls._libc is None:
+			libc = cls._libc = ct.CDLL('libc.so.6', use_errno=True)
+		return cls._libc
+
+	def _call(self, func, *args):
+		if isinstance(func, str): func = getattr(self._lib, func)
+		while True:
+			res = func(*args)
+			if res == -1:
+				err = ct.get_errno()
+				if err == errno.EINTR: continue
+				else: raise OSError(err, os.strerror(err))
+			return res
+
+	_fd = _poller = _lib = None
+
+	def __init__(self):
+		self._lib = self._get_lib()
+		self.wd_paths = dict()
+
+	def open(self):
+		self._fd = self._call('inotify_init')
+		self._poller = select.epoll()
+		self._poller.register(self._fd)
+
+	def close(self):
+		if self._fd:
+			os.close(self._fd)
+			self._fd = None
+		if self._poller:
+			self._poller.close()
+			self._poller = None
+		if self._lib: self._lib = None
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+	def add_watch(self, path, mask):
+		wd = self._call('inotify_add_watch', self._fd, bytes(path), mask)
+		self.wd_paths[wd] = path, mask
+		return wd
+
+	def rm_watch(self, wd):
+		self._call('inotify_rm_watch', self._fd, wd)
+		self.wd_paths.pop(wd)
+
+	def poll(self, timeout=None):
+		return bool(self._poller.poll(timeout))
+
+	def read(self, poll=True, **poll_kws):
+		evs = list()
+		if poll:
+			if not self.poll(**poll_kws): return evs
+		bs = ct.c_int()
+		fcntl.ioctl(self._fd, termios.FIONREAD, bs)
+		if bs.value <= 0: return evs
+		buff = os.read(self._fd, bs.value)
+		n, bs = 0, len(buff)
+		while n < bs:
+			wd, mask, cookie, name_len = struct.unpack_from(self._INotifyEv_struct, buff, n)
+			n += self._INotifyEv_struct_len
+			name = ct.c_buffer(buff[n:n + name_len], name_len).value.decode()
+			n += name_len
+			try:
+				evs.append(self.INotifyEv(
+					*self.wd_paths[wd], wd, self.flags.unpack(mask), cookie, name ))
+			except KeyError: pass # after rm_watch or IN_Q_OVERFLOW (wd=-1)
+		return evs
+
+	def __iter__(self):
+		while True:
+			for ev in self.read():
+				if (yield ev) is StopIteration: break
+			else: continue
+			break
+
+	@classmethod
+	def ev_wait(cls, path, mask=None):
+		return next(cls.ev_iter(path, mask))
+
+	@classmethod
+	def ev_iter(cls, path, mask=None):
+		with cls() as ify:
+			if not isinstance(path, (tuple, list)): path = [path]
+			for p in path: ify.add_watch(p, mask or INotify.flags.all_events)
+			ev_iter, chk = iter(ify), None
+			while True:
+				try: chk = yield ev_iter.send(chk)
+				except StopIteration: break
+
+
+class Logtail:
+
+	notifier = callback = None
+	fc_cleanup_k = 0.5 # * timeout
+
+	def __init__(self, paths, exclude=None, fc_timeout=60*60):
+		if not isinstance(paths, (tuple, list)): paths = [paths]
+		self.paths_mask, self.fc_timeout = paths, fc_timeout
+		if exclude and not isinstance(exclude, (tuple, list)): exclude = [exclude]
+		self.exclude = list(map(re.compile, exclude or list()))
+
+	def open(self):
+		masks, paths = self.paths_mask, list()
+		paths_to_watch = self.paths_to_watch = dict()
+		self.paths_pos, self.paths_buff = dict(), dict()
+
+		if not isinstance(masks, (tuple, list)): masks = [masks]
+		for mask in masks:
+			for mask in self.glob_alter(mask):
+				# All matched parent dirs - like /x/y/z for /x/*/z/file* - are watched for pattern
+				# Note that watchers won't be auto-added for /x/m/z, if it'll be created later on
+				paths_ext = list(
+					(pl.Path(p).resolve(), pl.Path(mask).name)
+					for p in glob.iglob(str(pl.Path(mask).parent)) )
+				paths.extend(paths_ext)
+				# If full pattern already match something, watch it if it's a dir - /x/dir1 for /x/dir*
+				# Note that watchers won't be auto-added for /x/dir2, if it'll be created later on
+				if paths_ext: # no point going deeper if parent dirs don't exist
+					paths_ext = list(pl.Path(p).resolve() for p in glob.iglob(mask))
+					paths.extend((p, '*') for p in paths_ext if p.is_dir())
+		# Aggregate path masks by-realpath
+		for p, mask in paths:
+			if not p.is_dir():
+				log.debug('Skipping special path: {}', p)
+				continue
+			if p not in paths_to_watch:
+				paths_to_watch[p] = {mask}
+			else: paths_to_watch[p].add(mask)
+
+		self.fc = dict()
+		self.file_cache_cleanup()
+		# for path_dir, masks in paths_to_watch.items():
+		# 	for mask in masks: self.handle_change(path_dir / mask, discard=True)
+
+		log.debug('Starting inotify watcher')
+		self.notifier = INotify()
+		self.notifier.open()
+		in_flags = self.notifier.flags.create | self.notifier.flags.modify
+		for p in paths_to_watch:
+			log.debug('Adding watcher for path: {}', p)
+			self.notifier.add_watch(p, in_flags)
+
+	def close(self):
+		if self.notifier: self.notifier = self.notifier.close()
+		if self.fc: self.fc = self.file_cache_cleanup(end=True)
+
+	def __enter__(self):
+		self.open()
+		return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+
+	@staticmethod
+	def glob_alter(pattern, _glob_cbex=re.compile(r'\{[^}]+\}')):
+		'''Shell-like glob with support for curly braces.
+			Usage of these braces in the actual name is not supported.'''
+		pattern, subs = str(pattern), list()
+		while True:
+			ex = _glob_cbex.search(pattern)
+			if not ex: break
+			subs.append(ex.group(0)[1:-1].split(','))
+			pattern = pattern[:ex.span()[0]] + '{}' + pattern[ex.span()[1]:]
+		return list(it.starmap(pattern.format, it.product(*subs)))
+
+	def run(self, line_cb, period=None, period_cb=None):
+		deadline = None if not (period and period_cb) else (time.monotonic() + period)
+		while True:
+			delay = None if not deadline else max(0, deadline - time.monotonic())
+			events = self.notifier.read(timeout=delay)
+			if deadline and (ts := time.monotonic()) > deadline:
+				period_cb(ts)
+				deadline = ts + period
+
+			for ev in events:
+				if not ev.name:
+					log.debug('Ignoring inotify ev without name: {}', ev)
+					continue
+				path = ev.path / ev.name
+				lines = self.handle_change(path, ev.flags) or list()
+				for line in lines:
+					log.debug('--- line [{}]: {!r}', path, line)
+					line_cb(path, line)
+
+
+	def file_cache_cleanup(self, end=False):
+		ts_now = time.monotonic()
+		if self.fc:
+			for key, (fc, ts) in list(self.fc.items()):
+				if end or ts_now - ts > self.fc_timeout: continue
+				fc.close()
+				del self.fc[key]
+		self.fc_ts_cleanup = ts_now + (self.fc_timeout * self.fc_cleanup_k)
+
+	def file_get(self, path_real):
+		try: st = path_real.stat()
+		except OSError: return
+		key = st.st_dev, st.st_ino
+		fc, ts_now = self.fc.get(key), time.monotonic()
+		if not fc:
+			fc = path_real.open('rb')
+			fc.seek(0, os.SEEK_END)
+			log.debug('New open file: {} [{k[0]} {k[1]}] at {}B', path_real, fc.tell(), k=key)
+			fc = self.fc[key] = [fc, ts_now]
+		else: fc[1] = ts_now
+		if ts_now > self.fc_ts_cleanup: self.file_cache_cleanup()
+		return fc[0]
+
+	def handle_change(self, path, flags=None, discard=False):
+		if flags: log.debug('Event: {} ({})', path, flags)
+
+		## Filtering
+		path_real = path.resolve()
+		if not path_real.is_file():
+			log.debug( 'Ignoring event for'
+				' non-regular file: {} (realpath: {})', path, path_real )
+			return
+		dir_key = path_real.resolve().parent
+		if dir_key not in self.paths_to_watch:
+			log.warn( 'Ignoring event for file outside of'
+				' watched set of paths: {} (realpath: {})', path, path_real )
+			return
+		for pat in self.paths_to_watch[dir_key]:
+			if fnmatch.fnmatch(path.name, pat): break
+		else:
+			log.debug( 'Non-matched path in one of'
+				' the watched dirs: {} (realpath: {})', path, path_real )
+			return
+		for pat in self.exclude:
+			if pat.search(str(path)):
+				log.debug( 'Matched path by exclude'
+					'-pattern ({}): {} (realpath: {})', pat, path, path_real )
+				return
+
+		src = self.file_get(path_real)
+		if not src: return
+		return src.readlines()
+
+
+class StatDB:
+
+	pre_suff = '.pre'
+	fmt_ver = 0
+	fmt = struct.Struct('BLI')
+
+	def __init__( self, db_path,
+			block_time=3600, block_k=2.0, forget_time=30 * 24 * 3600 ):
+		self.db_path = db_path
+		self.block_time, self.block_k = int(block_time), block_k
+		self.forget_time = forget_time
+
+
+	def entry_check(self, entry):
+		# Format: ver || block-start-ts || block-time || crc32
+		fmt_err = False
+		if entry:
+			fmt_err = entry[0] > self.fmt_ver or len(entry) < self.fmt.size
+			if not fmt_err:
+				entry, crc32 = entry[:self.fmt.size], entry[self.fmt.size:][:4]
+				print([entry, crc32, binascii.crc32(entry).to_bytes(4, 'big')])
+				if binascii.crc32(entry).to_bytes(4, 'big') != crc32: fmt_err = True
+		return entry, fmt_err
+
+	def entry_build(self, ts, td):
+		entry = self.fmt.pack(self.fmt_ver, int(ts), int(td))
+		entry += binascii.crc32(entry).to_bytes(4, 'big')
+		return entry
+
+
+	def line_block(self, path, line_raw):
+		addr = line_raw.split(b' ', 1)[0].strip()
+		if addr:
+			addr = addr.decode()
+			re.search(r'^(\d+\.\d+\.\d+\.\d+|\[?[\da-fA-F:]+\]?)\$', addr)
+			if not re.search(r'^(\d+\.\d+\.\d+\.\d+'
+				'|\[?[\da-fA-F:]+\]?)$', addr): addr = None
+		if not addr:
+			log.debug('Skipping unrecognized-format line: {!r}', line_raw)
+			return
+
+		p, p_pre, entry = self.db_path / addr, None, None
+		try: entry = p.read_bytes()
+		except OSError:
+			p_pre = self.db_path / (addr + self.pre_suff)
+			try: entry = p_pre.read_bytes()
+			except OSError: pass
+			else: p_pre.rename(p)
+		try: entry_mtime = int(p.stat().st_mtime)
+		except OSError: entry_mtime = None
+
+		# Block-time is only multiplied on expired entires, live ones just get renewed
+		entry, fmt_err = self.entry_check(entry)
+		if not entry or fmt_err:
+			if fmt_err: log.warning('Unrecognized entry format [{}]: {!r}', p, entry)
+			if entry is not None:
+				ts, td = entry_mtime, self.block_time
+				if p_pre: td *= self.block_k
+			else: ts, td = None, self.block_time
+		else:
+			v, ts, td = self.fmt.unpack(entry)
+			if p_pre: td *= self.block_k
+		p.write_bytes(self.entry_build(time.time(), td))
+		log.debug('Block update: {} [ts-pre={}]', p, ts)
+
+
+	def cleanup(self, ts_mono=None):
+		# OSError handling is to allow for any manual changes
+		ts_now = time.time()
+		ts_max, ts_forget = ts_now - self.block_time, ts_now - self.forget_time
+		n = n_pre = n_unblock = n_forget = 0
+		for p in self.db_path.iterdir():
+			n += 1
+			try:
+				mtime = p.stat().st_mtime
+				if mtime > ts_max: continue
+				if mtime < ts_forget: p.unlink()
+			except OSError: continue
+
+			pre = p.name.endswith(self.pre_suff)
+			if pre: n_pre += 1
+			try: entry = p.read_bytes()
+			except OSError: entry = None
+
+			entry, fmt_err = self.entry_check(entry)
+			if not entry or fmt_err:
+				if fmt_err: log.warning('Unrecognized entry format [{}]: {!r}', p, entry)
+				p.write_bytes(self.entry_build(mtime, self.block_time))
+				if not pre:
+					n_unblock += 1
+					with cl.suppress(OSError):
+						p.rename(self.db_path / (p.name + self.pre_suff))
+				continue
+
+			v, ts, td = self.fmt.unpack(entry)
+			if not pre:
+				if ts + td < ts_now:
+					n_unblock += 1
+					with cl.suppress(OSError):
+						p.rename(self.db_path / (p.name + self.pre_suff))
+			else:
+				if ts < ts_forget:
+					n_forget += 1
+					p.unlink(missing_ok=True)
+		log.debug( 'Check/cleanup stats:'
+			' total={} pre={} unblock={} forget={}', n, n_pre, n_unblock, n_forget )
+
+
+def main():
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='access.log tailer script to maintain filesystem-db of all remote-addr accesses.'
+			' File node will be created for logged addresses and unlinked after delay,'
+				' which will get auto-extended and bumped'
+				' by specified factor on each attempt after delay expires.')
+	parser.add_argument('db_dir', help='Directory where to create per-address files.')
+	parser.add_argument('log_patterns', nargs='+',
+		help='Glob patterns for access logs to monitor.'
+			' Logs must have address as the first space-separated field on each line.')
+	parser.add_argument('--exclude',
+		action='append', metavar='regexp',
+		help='Regexps to match against paths to exclude from monitoring.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+
+	group = parser.add_argument_group('Blocking time settings')
+	group.add_argument('-t', '--block-timeout',
+		metavar='sec', type=int, default=3600,
+		help='Initial blocking timeout, in seconds. Default: %(default)s')
+	group.add_argument('-k', '--block-k',
+		metavar='float', type=float, default=2.0,
+		help='Blocking timeout multiplier for repeated blocks. Default: %(default)s')
+	group.add_argument('-c', '--block-check-period', metavar='sec', type=int,
+		help='Period to check mtimes on block-files and rename/remove them as necessary.'
+			' Default: half of --block-timeout value.')
+	group.add_argument('--block-cleanup-timeout',
+		metavar='sec', type=int, default=30 * 24 * 3600,
+		help='Timeout to cleanup (forget) previous blocks after, in seconds. Default: 30 days')
+
+	opts = parser.parse_args()
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	db_path = pl.Path(opts.db_dir)
+	if not db_path.is_dir(): parser.error('Unable to access specified stat-block db dir')
+	block_check = opts.block_check_period or opts.block_timeout / 2
+
+	stat_db = StatDB( db_path,
+		block_time=opts.block_timeout, block_k=opts.block_k,
+		forget_time=opts.block_cleanup_timeout )
+
+	with Logtail(opts.log_patterns, exclude=opts.exclude) as tailer:
+		log.debug('Starting event loop...')
+		tailer.run(stat_db.line_block, period=block_check, period_cb=stat_db.cleanup)
+		log.debug('Event loop finished')
+
+if __name__ == '__main__':
+	for sig in 'int term'.upper().split():
+		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
+	main()
