@@ -50,17 +50,28 @@ def main(args=None):
 	if p_mv and not p_mv.is_dir():
 		parser.error(f'-m/--move path is not a directory: {p_mv}')
 
+	exit_code = 0
+	def p_err(*args):
+		nonlocal exit_code
+		print('ERROR:', *args, file=sys.stderr)
+		exit_code = 1
+
 	for p in opts.files:
 		p = pl.Path(p)
 		try: p_hash = get_hash(p)
 		except OSError as err:
-			print(f'ERROR: failed to process path [{p}]: {err}', file=sys.stderr)
+			p_err(f'failed to process path [{p}]: {err}')
 			continue
 		name, ext = name if len(name := p.name.rsplit('.', 1)) == 2 else (name[0], '')
 		name_new = '.'.join(filter(None, [name, p_hash, ext]))
 		print(p.name, '->', name_new)
 		if not opts.dry_run:
-			if not opts.move: p.rename(p.parent / name_new)
-			else: su.move(p, p_mv / name_new)
+			try:
+				if not opts.move: p.rename(p.parent / name_new)
+				else: su.move(p, p_mv / name_new)
+			except OSError as err:
+				p_err(f'failed to rename/move path [{p}]: {err}')
+
+	return exit_code
 
 if __name__ == '__main__': sys.exit(main())
