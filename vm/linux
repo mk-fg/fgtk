@@ -113,7 +113,7 @@ pid1=$$ pid2=$$
 mkdir -p "$vde_path"
 
 cgrc -rcu vde && {
-	cgrc -ru vde apps-vm -- vde_switch
+	cgrc -ru vde apps-vm -- vde_switch \
 		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &
 	pid1=$!; }
 

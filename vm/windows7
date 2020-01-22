@@ -10,7 +10,15 @@ vde_mac=52:54:00:12:34:62
 vde_path=~/tmp/vde
 dump_inc=
 restore=
+img=windows7/install.qcow2.inc
 net_only=
+uid_root=
+
+[[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
+[[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
+
+[[ "$UID" -ne 0 || -n "$uid_root" ]] \
+	|| { echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
 
 case "$1" in
 	d|dump)
@@ -58,21 +66,24 @@ esac
 cd "$root"
 
 
-### Slugfest otherwise
+### Too slow otherwise
 
+err=0
 modprobe kvm || exit 1
-modprobe kvm-intel
-modprobe kvm-amd
+modprobe kvm-intel 2>/dev/null || (( err += 1 ))
+modprobe kvm-amd 2>/dev/null || (( err += 1 ))
+[[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to load kvm intel/amd modules"; exit 1; }
 
 
 ### VDE
 
+pid1=$$ pid2=$$
 mkdir -p "$vde_path"
 
-cgrc vm/misc vde_switch\
-	-s "$vde_path"/link.sock\
-	-M "$vde_path"/mgmt.sock &
-pid1=$!
+cgrc -rcu vde && {
+	cgrc -ru vde apps-vm -- vde_switch \
+		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &
+	pid1=$!; }
 
 for n in {0..50}; do
 	[[ -e "$vde_path"/link.sock ]] && break
@@ -80,16 +91,18 @@ for n in {0..50}; do
 done
 [[ $n -eq 50 ]] && { echo >&2 "vde switch startup failed"; exit 1; }
 
-cgrc vm/misc sudo vde_plug2tap\
-	-s "$vde_path"/link.sock\
-	vde &
-pid2=$!
+cgrc -rcu vde-tap && {
+	cgrc -ru vde-tap apps-vm -- sudo vde_plug2tap \
+		-s "$vde_path"/link.sock vde &
+	pid2=$!; }
 
 # Add a little delay if vde stuff is just starting
+kill -0 "$pid1" "$pid2" || { echo >&2 "ERROR: vde failed to start"; exit 1; }
 for n in {0..5}; do
-	kill -0 $pid1 $pid2 2>/dev/null || break
+	err=t; ip link show vde &>/dev/null && { err=; break; }
 	sleep 0.1
 done
+[[ -z "$err" ]] || { echo >&2 "ERROR: vde failed to start (no iface)"; exit 1; }
 
 [[ -n "$net_only" ]] && exit 0
 
@@ -99,10 +112,10 @@ done
 qemu_opts=(
 	-name "$(basename "$0")"
 
-	-m 512
+	-m 1024
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
-	-net nic,macaddr=${vde_mac},name=vde
+	-net nic,macaddr=${vde_mac},id=vde
 	-net vde,sock="$vde_path"/link.sock
 	-k en-us
 
@@ -111,8 +124,11 @@ qemu_opts=(
 	-smp 2
 	-vga std
 
-	-cdrom windows7/win7.iso
-	-drive file=windows7/install_inc.qcow2,if=ide,aio=native,cache=writeback
+	# -chardev pty,id=serialport
+	# -device isa-serial,chardev=serialport
+
+	#-cdrom windows7/win7.iso
+	-drive file="$img",if=ide,aio=native,cache=writeback,cache.direct=on
 )
 
 ulimit -c 0
@@ -120,4 +136,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
-exec nice ionice -c3 cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
+exec cgrc -ru qemu-linux apps-vm -- qemu-system-x86_64 "${qemu_opts[@]}"
