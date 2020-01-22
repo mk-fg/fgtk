@@ -1929,6 +1929,25 @@ fine for intended purpose (bots spam requests anyway).
 
 .. _nginx-stat-check: https://github.com/mk-fg/nginx-stat-check
 
+hashname
+''''''''
+
+Script to add base32-encoded content hash to filenames.
+
+For example::
+
+  % hashnames -p *.jpg
+
+  wallpaper001.jpg -> wallpaper001.kw30e7cqytmmw.jpg
+  wallpaper893.jpg -> wallpaper893.vbf0t0qht4dd0.jpg
+  wallpaper895.jpg -> wallpaper895.q5mp0j95bxbdr.jpg
+  wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
+
+For collecting files with commonly-repeated names into some dir, like random
+"wallpaper.jpg" or "image.jpg" images above from the internets.
+
+Use -h/--help for info on more useful options.
+
 
 
 [dev] Dev tools

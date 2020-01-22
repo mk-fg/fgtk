@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+
+import itertools as it, operator as op, functools as ft
+import os, sys, base64, pathlib as pl, hashlib as hl, shutil as su
+
+
+it_adjacent = lambda seq, n: it.zip_longest(*([iter(seq)] * n))
+_b32_abcs = dict(zip(
+	# Python base32 - "Table 3: The Base 32 Alphabet" from RFC3548
+	'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+	# Crockford's base32 - http://www.crockford.com/wrmg/base32.html
+	'0123456789ABCDEFGHJKMNPQRSTVWXYZ' ))
+_b32_abcs['='] = ''
+
+def b32encode( v, chunk=4, simple=False,
+		_trans=str.maketrans(_b32_abcs),
+		_check=''.join(_b32_abcs.values()) + '*~$=U' ):
+	chksum = 0
+	for c in bytearray(v): chksum = chksum << 8 | c
+	res = base64.b32encode(v).decode().strip().translate(_trans)
+	if simple: return res.lower()
+	res = '-'.join(''.join(filter(None, s)) for s in it_adjacent(res, chunk))
+	return '{}-{}'.format(res, _check[chksum % 37].lower())
+
+
+hash_person = b'hashname.1'
+hash_size = 8
+hash_chunk = 1 * 2**20 # 1 MiB
+
+def get_hash(p, enc_func=ft.partial(b32encode, simple=True)):
+	p_hash = hl.blake2b(digest_size=hash_size, person=hash_person)
+	with p.open('rb') as src:
+		for chunk in iter(ft.partial(src.read, hash_chunk), b''): p_hash.update(chunk)
+	return enc_func(p_hash.digest())
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Give file(s) distinctive names using hash of their content.'
+			' Default naming scheme is "{name}.{hash}.{ext}".')
+	parser.add_argument('files', nargs='+', help='File(s) to rename.')
+	parser.add_argument('-p', '--dry-run',
+		action='store_true', help='Print renames but not actually do it.')
+	parser.add_argument('-m', '--move', metavar='dir',
+		help='Move renamed files to specified dir.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	p_mv = pl.Path(opts.move) if opts.move else None
+	if p_mv and not p_mv.is_dir():
+		parser.error(f'-m/--move path is not a directory: {p_mv}')
+
+	for p in opts.files:
+		p = pl.Path(p)
+		try: p_hash = get_hash(p)
+		except OSError as err:
+			print(f'ERROR: failed to process path [{p}]: {err}', file=sys.stderr)
+			continue
+		name, ext = name if len(name := p.name.rsplit('.', 1)) == 2 else (name[0], '')
+		name_new = '.'.join(filter(None, [name, p_hash, ext]))
+		print(p.name, '->', name_new)
+		if not opts.dry_run:
+			if not opts.move: p.rename(p.parent / name_new)
+			else: su.move(p, p_mv / name_new)
+
+if __name__ == '__main__': sys.exit(main())
