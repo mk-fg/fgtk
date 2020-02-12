@@ -106,6 +106,12 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
 .. _fatrace: https://launchpad.net/fatrace
 .. _fanotify: http://lwn.net/Articles/339253/
 
+fatrace-run
+'''''''''''
+
+Convenience wrapper around fatrace_ like fatrace-pipe above,
+but intended to only filter by path prefix and run command on specified event(s).
+
 findx
 '''''
 

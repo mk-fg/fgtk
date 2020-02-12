@@ -1,0 +1,32 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin [-p] [-e ... [-e ...]] path [fatrace-opts] [-- cmd args...]"
+	[[ $1 -ne 0 ]] || { echo; echo "fatrace usage options:"; fatrace --help; }
+	exit ${1:-1}; }
+[[ "$1" = -h || "$1" = --help ]] && usage 0
+set -eo pipefail
+
+print= declare -A ev_filter=()
+[[ "$1" != -p ]] || { print=t; shift; }
+while [[ "$1" = -e ]]; do shift; ev_filter["$1"]=t; shift; done
+[[ -n "$1" ]] || usage 1
+
+p=$1; shift
+cd "$p"
+p_prefix=$(realpath .)
+
+fatrace_opts=()
+while [[ -n "$1" && "$1" != -- ]]; do fatrace_opts+=( "$1" ); shift; done
+shift ||:
+
+while read pid ev p; do
+	[[ $p == "$p_prefix"* ]] || continue
+	[[ "${#ev_filter[@]}" -le 0 || -n "${ev_filter[$ev]}" ]] || continue
+
+	[[ -z "$print" ]] || echo "$pid $ev $p"
+	if [[ $# -ne 0 ]]; then "$@"
+	elif [[ -z "$print" ]]; then echo "$pid $ev $p"; fi
+done < <(stdbuf -oL fatrace -c "${fatrace_opts[@]}")
