@@ -112,6 +112,13 @@ fatrace-run
 Convenience wrapper around fatrace_ like fatrace-pipe above,
 but intended to only filter by path prefix and run command on specified event(s).
 
+For example, to e.g. reload nginx when anything under its config dir/subdirs changes::
+
+  # fatrace-run -p /etc/nginx -f 'WD<>' -- pkill -HUP -F /run/nginx.pid
+
+(-p to also echo events to stdout, "-f W" will filter file writes,
+D - deletions, <> - renames)
+
 findx
 '''''
 
