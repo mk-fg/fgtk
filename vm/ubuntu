@@ -15,12 +15,10 @@ restore=
 net_only=
 img=ubuntu/install.qcow2
 video=( -nographic )
-fs=
 uid_root=
 
 [[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
 [[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
-[[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
 [[ "$1" = -g || "$1" = --graphic ]] && {
 	video=( -vga std )
@@ -71,27 +69,33 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
+		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		cat >&2 <<EOF
 
 $script_info
-
--f/--fs option can be used to run single-fs cloudfs image file without bootloader.
 
 Cheatsheet for qemu-img:
   qemu-img create -f qcow2 install.qcow2 10G
   qemu-img create -b install.qcow2 -f qcow2 install.qcow2.inc
   qemu-img commit install.qcow2.inc && rm install.qcow2.inc
 
-Cheatsheet to init new cloudimg:
-  qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0 && mount /dev/nbd0 /mnt/nbd
-   && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
-   && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
-   && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
-   && touch /mnt/nbd/etc/cloud/cloud-init.disabled
-   && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
-   && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
+nbd for initial install:
+  modprobe nbd
+  qemu-nbd -c /dev/nbd0 install.qcow2
+  fsck -a /dev/nbd0p1
+  mount /dev/nbd0p1 /mnt/nbd
+  ...
+  umount /mnt/nbd
+  qemu-nbd -d /dev/nbd0
+
+virtiofs in initramfs:
+  echo virtiofs >> /etc/initramfs-tools/modules
+  update-initramfs -k all -c
+
+fstab:
+  : > /etc/fstab
+  rm /swapfile
 
 EOF
 		exit 1 ;;
@@ -141,28 +145,14 @@ done
 [[ -n "$net_only" ]] && exit 0
 
 
-### Get latest kernel/initrd from vm
+### virtiofsd daemon - has to run as root
+# uid=root is to allow access to local uid=root files
 
-# For new cloud images, see cheatsheet in -h/--help output
-
-fs_opts=()
-[[ -z "$fs" ]] || {
-	mountpoint -q /mnt/nbd || {
-		modprobe nbd || exit 1
-		sudo qemu-nbd -c /dev/nbd0 "$img"
-		mount /mnt/nbd || exit 1
-	}
-	rsync -Lt --inplace /mnt/nbd/vmlinuz ubuntu/"$img".kernel \
-		&& rsync -Lt --inplace /mnt/nbd/initrd.img ubuntu/"$img".initramfs \
-		&& umount /mnt/nbd \
-		&& sudo qemu-nbd -d /dev/nbd0 \
-		|| { echo >&2 "Failed to get kernel/initramfs from vm image"; exit 1; }
-	fs_opts+=(
-		-kernel ubuntu/"$img".kernel
-		-initrd ubuntu/"$img".initramfs
-		-append 'root=LABEL=cloudimg-rootfs cloudinit=disabled'
-	)
-}
+# /usr/lib/qemu/virtiofsd -f \
+#  -o source=/mnt/volatiles/vms/ubuntu/fs \
+#  --socket-path=/mnt/volatiles/vms/ubuntu/fs.sock \
+#  -o cache=always -o writeback -o flock -o xattr &
+# chmod 666 /mnt/volatiles/vms/ubuntu/fs.sock
 
 
 ### Run qemu
@@ -182,12 +172,22 @@ qemu_opts=(
 	-cpu host
 	-smp 2
 	"${video[@]}"
-	"${fs_opts[@]}"
 
 	# -device usb-ehci,id=usb,bus=pci.0,addr=0x4
 	# -device usb-host,hostbus=1,hostaddr=3
 
-	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
+	# access to these: chmod a+r /mnt/volatiles/vms/ubuntu/fs/boot/*
+	-kernel ubuntu/fs/boot/vmlinuz
+	-initrd ubuntu/fs/boot/initrd.img
+	-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
+
+	-chardev socket,id=vfs-root,path=/mnt/volatiles/vms/ubuntu/fs.sock
+	-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root
+	-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
+	-numa node,memdev=vfs-mem
+
+	## Install:
+	# -drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
 	# -cdrom ubuntu/ubuntu-mate-19.10-desktop-amd64.iso
 	# -cdrom ubuntu/ubuntu-18.04-desktop-amd64.iso
 )
