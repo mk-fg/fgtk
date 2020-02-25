@@ -13,20 +13,16 @@ vde_path=~/tmp/vde
 dump_inc=
 restore=
 net_only=
-img= iso=
-video=( -nographic )
 uid_root=
+img= iso=
+video=( -vga std )
+# video+=( -display gtk )
+# video+=( -display vnc 0 )
 
 [[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
 [[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -d || "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
-
-[[ "$1" = -g || "$1" = --graphic ]] && {
-	video=( -vga std )
-	# video+=( -display gtk )
-	# video+=( -display vnc 0 )
-	shift
-}
+[[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
 
 [[ "$UID" -ne 0 || -n "$uid_root" ]] \
 	|| { echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
@@ -70,7 +66,8 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] \\"
+		echo >&2 "Usage: $0 \\"
+		echo >&2 "  [-r|--root] [ {-i|--img} file.qcow2 ] [ {-d|--iso} image.iso ] [-c|--console] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		cat >&2 <<EOF
 
