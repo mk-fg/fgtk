@@ -1,5 +1,7 @@
 #!/bin/bash
 
+script_info='Ubuntu VM, installed to virtio-fs.'
+
 
 ### Management
 
@@ -11,11 +13,13 @@ vde_path=~/tmp/vde
 dump_inc=
 restore=
 net_only=
-img=install
+img=ubuntu/install.qcow2
 video=( -nographic )
 fs=
+uid_root=
 
-[[ "$1" = -i || "$1" = --img ]] && { img="$2"; shift; shift; }
+[[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
+[[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
 [[ "$1" = -g || "$1" = --graphic ]] && {
@@ -24,6 +28,9 @@ fs=
 	# video+=( -display vnc 0 )
 	shift
 }
+
+[[ "$UID" -ne 0 || -n "$uid_root" ]] \
+	|| { echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
 
 case "$1" in
 	d|dump)
@@ -64,9 +71,13 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
+		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		cat >&2 <<EOF
+
+$script_info
+
+-f/--fs option can be used to run single-fs cloudfs image file without bootloader.
 
 Cheatsheet for qemu-img:
   qemu-img create -f qcow2 install.qcow2 10G
@@ -74,7 +85,7 @@ Cheatsheet for qemu-img:
   qemu-img commit install.qcow2.inc && rm install.qcow2.inc
 
 Cheatsheet to init new cloudimg:
-  qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0 && mount /mnt/nbd
+  qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0 && mount /dev/nbd0 /mnt/nbd
    && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
    && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
    && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
@@ -89,38 +100,43 @@ esac
 cd "$root"
 
 
-### Slugfest otherwise
+### Too slow otherwise
 
+err=0
 modprobe kvm || exit 1
-modprobe kvm-intel
-modprobe kvm-amd
+modprobe kvm-intel 2>/dev/null || (( err += 1 ))
+modprobe kvm-amd 2>/dev/null || (( err += 1 ))
+[[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to load kvm intel/amd modules"; exit 1; }
 
 
 ### VDE
 
+pid1=$$ pid2=$$
 mkdir -p "$vde_path"
 
-cgrc vm/misc vde_switch\
-	-s "$vde_path"/link.sock\
-	-M "$vde_path"/mgmt.sock &
-pid1=$!
+cgrc -rcu vde && {
+	cgrc -ru vde apps-vm -- vde_switch \
+		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &
+	pid1=$!; }
 
 for n in {0..50}; do
 	[[ -e "$vde_path"/link.sock ]] && break
 	sleep 0.1
 done
-[[ $n -eq 50 ]] && { echo >&2 "vde switch startup failed"; exit 1; }
+[[ $n -lt 50 ]] || { echo >&2 "ERROR: vde switch startup failed"; exit 1; }
 
-cgrc vm/misc sudo vde_plug2tap\
-	-s "$vde_path"/link.sock\
-	vde &
-pid2=$!
+cgrc -rcu vde-tap && {
+	cgrc -ru vde-tap apps-vm -- sudo vde_plug2tap \
+		-s "$vde_path"/link.sock vde &
+	pid2=$!; }
 
 # Add a little delay if vde stuff is just starting
+kill -0 "$pid1" "$pid2" || { echo >&2 "ERROR: vde failed to start"; exit 1; }
 for n in {0..5}; do
-	kill -0 $pid1 $pid2 2>/dev/null || break
+	err=t; ip link show vde &>/dev/null && { err=; break; }
 	sleep 0.1
 done
+[[ -z "$err" ]] || { echo >&2 "ERROR: vde failed to start (no iface)"; exit 1; }
 
 [[ -n "$net_only" ]] && exit 0
 
@@ -133,7 +149,7 @@ fs_opts=()
 [[ -z "$fs" ]] || {
 	mountpoint -q /mnt/nbd || {
 		modprobe nbd || exit 1
-		sudo qemu-nbd -c /dev/nbd0 ubuntu/"$img".qcow2.inc
+		sudo qemu-nbd -c /dev/nbd0 "$img"
 		mount /mnt/nbd || exit 1
 	}
 	rsync -Lt --inplace /mnt/nbd/vmlinuz ubuntu/"$img".kernel \
@@ -158,7 +174,7 @@ qemu_opts=(
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
 	-usb -device usb-kbd -device usb-mouse
-	-net nic,macaddr=${vde_mac},name=vde
+	-net nic,macaddr=${vde_mac},id=vde
 	-net vde,sock="$vde_path"/link.sock
 	-k en-us
 
@@ -168,9 +184,12 @@ qemu_opts=(
 	"${video[@]}"
 	"${fs_opts[@]}"
 
-	-drive file=ubuntu/"$img".qcow2.inc,if=virtio,aio=native,cache=writeback,cache.direct=on
+	# -device usb-ehci,id=usb,bus=pci.0,addr=0x4
+	# -device usb-host,hostbus=1,hostaddr=3
+
+	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on
+	# -cdrom ubuntu/ubuntu-mate-19.10-desktop-amd64.iso
 	# -cdrom ubuntu/ubuntu-18.04-desktop-amd64.iso
-	# -drive id=disk,file=ubuntu/"$img".qcow2.inc,if=none -device ahci,id=ahci -device ide-drive,drive=disk,bus=ahci.0
 )
 
 ulimit -c 0
@@ -178,4 +197,4 @@ export QEMU_AUDIO_DRV=none
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
-exec cgrc vm/misc qemu-system-x86_64 "${qemu_opts[@]}"
+exec cgrc -ru qemu-ubuntu apps-vm -- qemu-system-x86_64 "${qemu_opts[@]}"

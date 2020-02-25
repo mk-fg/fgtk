@@ -15,12 +15,10 @@ restore=
 net_only=
 img=linux/install.qcow2.inc
 video=( -nographic )
-fs=
 uid_root=
 
 [[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
 [[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
-[[ "$1" = -f || "$1" = --fs ]] && { fs=t; shift; }
 
 [[ "$1" = -g || "$1" = --graphic ]] && {
 	video=( -vga std )
@@ -71,7 +69,7 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] [-f|--fs] \\"
+		echo >&2 "Usage: $0 [-r|--root] [ {-i|--img} basename] [-g|--graphic] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
 		cat >&2 <<EOF
 
