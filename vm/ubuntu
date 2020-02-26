@@ -15,7 +15,8 @@ restore=
 net_only=
 uid_root=
 img= iso=
-video=( -vga std )
+video=( -vga virtio -display gtk,gl=on )
+# video=( -vga std )
 # video+=( -display gtk )
 # video+=( -display vnc 0 )
 
