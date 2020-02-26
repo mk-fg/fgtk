@@ -149,11 +149,37 @@ done
 
 ### virtiofsd daemon - has to run as root:
 # # uid=root is to allow access to local uid=root files
+# # Note: SETLKW (fcntl wait for lock) is still not supported.
+# #   Workaround: bind-mount files that require it from /run, see this script for example .service.
 #
 # /usr/lib/qemu/virtiofsd -f \
-#  -o source=fs --socket-path=fs.sock \
+#  -o source=$(realpath fs) --socket-path=fs.sock \
 #  -o cache=always,writeback,xattr,flock,posix_lock &
 # chmod 666 fs.sock
+
+## setup-setlkw-hacks.service workaround for SETLKW in dpkg and such
+# [Unit]
+# DefaultDependencies=no
+# After=local-fs.target run.mount
+#
+# # Anything requiring SETLKW on these files should be listed here
+# Before=systemd-sysusers.service
+#
+# [Service]
+# Type=oneshot
+# RemainAfterExit=yes
+#
+# ExecStart=bash -c '\
+# 	mkdir -m700 /run/setlkw ; cd /run/setlkw ;\
+# 	touch dpkg-triggers ; mount -o bind dpkg-triggers /var/lib/dpkg/triggers/Lock ;\
+# 	touch passwd /etc/.pwd.lock ; mount -o bind passwd /etc/.pwd.lock ;\
+# '
+# ExecStop=bash -c '\
+# 	umount -l /var/lib/dpkg/triggers/Lock /etc/.pwd.lock ;\
+# '
+#
+# [Install]
+# WantedBy=multi-user.target
 
 
 ### img/iso options
