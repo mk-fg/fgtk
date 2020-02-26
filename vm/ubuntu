@@ -152,7 +152,7 @@ done
 #
 # /usr/lib/qemu/virtiofsd -f \
 #  -o source=fs --socket-path=fs.sock \
-#  -o cache=always -o writeback -o flock -o xattr &
+#  -o cache=always,writeback,xattr,flock,posix_lock &
 # chmod 666 fs.sock
 
 
@@ -167,7 +167,7 @@ if [[ -z "$img" ]]; then
 		-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
 
 		-chardev socket,id=vfs-root,path=/mnt/volatiles/vms/ubuntu/fs.sock
-		-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root
+		-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
 		-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
 		-numa node,memdev=vfs-mem
 	)
