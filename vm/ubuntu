@@ -14,15 +14,15 @@ dump_inc=
 restore=
 net_only=
 uid_root=
-img= iso=
-video=( -vga virtio -display gtk,gl=on )
+img= dev= iso=
+video=( -vga virtio -display sdl,gl=on )
 # video=( -vga std )
-# video+=( -display gtk )
-# video+=( -display vnc 0 )
+# video=( -display vnc 0 )
 
 [[ "$1" = -r || "$1" = --root ]] && { uid_root=t; shift; }
 [[ "$1" = -i || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
-[[ "$1" = -d || "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
+[[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
+[[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
 
 [[ "$UID" -ne 0 || -n "$uid_root" ]] \
@@ -67,9 +67,10 @@ EOF
 
 	'') ;;
 	*)
-		echo >&2 "Usage: $0 \\"
-		echo >&2 "  [-r|--root] [ {-i|--img} file.qcow2 ] [ {-d|--iso} image.iso ] [-c|--console] \\"
+		echo >&2 "Usage: $0 [-r|--root] \\"
+		echo >&2 "  [ {-i|--img} file.qcow2 ] [ {-d|--dev} /dev/xyz ] [ --iso image.iso ] [-c|--console] \\"
 		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
+		echo >&2 "(note: ordering of options matters)"
 		cat >&2 <<EOF
 
 $script_info
@@ -186,22 +187,21 @@ done
 ### img/iso options
 
 root_opts=()
-if [[ -z "$img" ]]; then
-	root_opts=(
-		# access to these: chmod a+r /mnt/volatiles/vms/ubuntu/fs/boot/*
-		-kernel ubuntu/fs/boot/vmlinuz
-		-initrd ubuntu/fs/boot/initrd.img
-		-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
+[[ -z "$img" ]] || root_opts+=(
+	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
+[[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
 
-		-chardev socket,id=vfs-root,path=/mnt/volatiles/vms/ubuntu/fs.sock
-		-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
-		-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
-		-numa node,memdev=vfs-mem
-	)
-else
-	root_opts+=( -drive
-		file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
-fi
+[[ ${#root_opts[@]} -gt 0 ]] || root_opts=(
+	# Fix access to these: chmod a+r fs/boot/*
+	-kernel ubuntu/fs/boot/vmlinuz
+	-initrd ubuntu/fs/boot/initrd.img
+	-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
+
+	-chardev socket,id=vfs-root,path=/mnt/volatiles/vms/ubuntu/fs.sock
+	-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
+	-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
+	-numa node,memdev=vfs-mem )
+
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 
 
