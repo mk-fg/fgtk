@@ -3,7 +3,7 @@
 script_info='Ubuntu VM, started from shared virtio-fs by default.'
 ins=1 mem=4G img= dev= iso=
 
-video=( -vga virtio -display sdl,gl=on )
+video=( -vga virtio -display gtk,gl=on )
 # video=( -vga std )
 # video=( -display vnc 0 )
 
