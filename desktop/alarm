@@ -304,6 +304,10 @@ def main(args=None):
 
 	elif not opts.time: parser.error('"time" argument must be specified.')
 
+	icon = opts.notification_icon
+	if icon and os.path.exists(icon): icon = os.path.realpath(icon)
+	os.chdir('/') # to release mountpoints in case of long sleep
+
 	pid_files, ts_env = None, os.environ.get('ALARM_AT_TS')
 	if not ts_env:
 		ts0, ts = datetime.now(), parse_timestamp(opts.time)
@@ -447,8 +451,7 @@ def main(args=None):
 		notify(
 			'Alarm: {}'.format(summary), body, fork=False,
 			critical=not opts.notification_non_critical,
-			timeout=opts.notification_timeout * 1000,
-			icon=opts.notification_icon or None )
+			timeout=opts.notification_timeout * 1000, icon=icon or None )
 
 		if proc:
 			err = proc.wait()
