@@ -3015,6 +3015,22 @@ Has bunch of other options for different common use-cases.
 .. _qrencode: https://fukuchi.org/works/qrencode/index.html.en
 .. _feh: https://feh.finalrewind.org/
 
+gtk-color-calc
+''''''''''''''
+
+CLI tool to calculate color values and print/convert them in various ways.
+
+Initially made to convert any kind of `GTK3 CSS color specs`_ to an actual color
+value, e.g. "mix(#eee, shade(olive, 0.8), 0.9)" -> #6b6b21.
+
+And for now that's the main use of it, as that CSS spec allows to mix and shade
+already, plan is to extend it later with any extra math as needed.
+
+Prints resulting color back in all possible formats, including HSL and CIE
+L\*a\*b\*, requires python3/gtk3 to run.
+
+.. _GTK3 CSS color specs: https://developer.gnome.org/gtk3/stable/chap-css-overview.html
+
 
 
 [vm] VM scripts

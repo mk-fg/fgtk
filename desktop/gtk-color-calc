@@ -1,0 +1,128 @@
+#!/usr/bin/python
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
+
+import os, sys, colorsys, collections as cs, functools as ft
+
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
+
+### LAB color math from http://www.easyrgb.com/en/math.php
+
+# XYZ (Tristimulus) Reference values of a perfect reflecting diffuser
+xyz_ref_csv = '''
+	illuminant;x2;y2;z2;x10;y10;z10;note
+	A;109.85;100.0;35.585;111.144;100.0;35.2;Incandescent/tungsten
+	B;99.0927;100.0;85.313;99.178;100.0;84.3493;Old direct sunlight at noon
+	C;98.074;100.0;118.232;97.285;100.0;116.145;Old daylight
+	D50;96.422;100.0;82.521;96.72;100.0;81.427;ICC profile PCS
+	D55;95.682;100.0;92.149;95.799;100.0;90.926;Mid-morning daylight
+	D65;95.047;100.0;108.883;94.811;100.0;107.304;Daylight, sRGB, Adobe-RGB
+	D75;94.972;100.0;122.638;94.416;100.0;120.641;North sky daylight
+	E;100.0;100.0;100.0;100.0;100.0;100.0;Equal energy
+	F1;92.834;100.0;103.665;94.791;100.0;103.191;Daylight Fluorescent
+	F2;99.187;100.0;67.395;103.28;100.0;69.026;Cool fluorescent
+	F3;103.754;100.0;49.861;108.968;100.0;51.965;White Fluorescent
+	F4;109.147;100.0;38.813;114.961;100.0;40.963;Warm White Fluorescent
+	F5;90.872;100.0;98.723;93.369;100.0;98.636;Daylight Fluorescent
+	F6;97.309;100.0;60.191;102.148;100.0;62.074;Lite White Fluorescent
+	F7;95.044;100.0;108.755;95.792;100.0;107.687;Daylight fluorescent, D65 simulator
+	F8;96.413;100.0;82.333;97.115;100.0;81.135;Sylvania F40, D50 simulator
+	F9;100.365;100.0;67.868;102.116;100.0;67.826;Cool White Fluorescent
+	F10;96.174;100.0;81.712;99.001;100.0;83.134;Ultralume 50, Philips TL85
+	F11;100.966;100.0;64.37;103.866;100.0;65.627;Ultralume 40, Philips TL84
+	F12;108.046;100.0;39.228;111.428;100.0;40.353;Ultralume 30, Philips TL83'''
+xyz_ref = iter(xyz_ref_csv.strip().splitlines())
+xyz_ref_t = cs.namedtuple('xyz_ref', next(xyz_ref).split(';'))
+xyz_ref = adict(
+	(line[0], xyz_ref_t(line[0], *map(float, line[1:-1]), line[-1]))
+	for line in (line.strip().split(';') for line in xyz_ref) )
+
+def cc_rgb_xyz(r, g, b):
+	r, g, b = (( ((c + 0.055) / 1.055) ** 2.4
+		if c > 0.04045 else c / 12.92 ) * 100 for c in (c/255 for c in (r,g,b)))
+	x, y, z = [
+		r * 0.4124 + g * 0.3576 + b * 0.1805,
+		r * 0.2126 + g * 0.7152 + b * 0.0722,
+		r * 0.0193 + g * 0.1192 + b * 0.9505 ]
+	return x, y, z
+
+def cc_xyz_lab(xyz, diff='E', t=10):
+	ref = xyz_ref[diff][slice(4,7) if t == 10 else slice(1,4)]
+	x, y, z = (
+		(c**(1/3) if c > 0.008856 else (7.787*c + 16/116))
+		for c in (c / ref[n] for n,c in enumerate(xyz)) )
+	return 116 * y - 16, 500 * (x - y), 200 * (y-z)
+
+
+def color_calc(ctx, app):
+	name, color_name = app.get_application_id(), 'test_color_2XaJWt'
+	win = Gtk.ApplicationWindow(name=name, title=name, application=app)
+	css = Gtk.CssProvider()
+	css.load_from_data(f'@define-color {color_name} {ctx.spec};'.encode())
+	Gtk.StyleContext.add_provider_for_screen(
+		win.get_screen(), css,
+		Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION )
+	color = win.get_style_context().lookup_color(color_name)
+	assert color[0], f'Test-color {color_name!r} lookup failed'
+	r, g, b, a = (round(c * 255) for c in color[1])
+	ctx.rgb_dec = f'rgb({r},{g},{b})'
+	ctx.rgb_hex = f'#{r:02x}{g:02x}{b:02x}'
+	ctx.rgba_dec = f'rgb({r},{g},{b},{a})'
+	ctx.rgba_hex = ctx.rgb_hex + f'{a:02x}'
+
+	xyz = cc_rgb_xyz(r,g,b)
+	ctx.lab = adict(zip('lab', cc_xyz_lab(xyz, diff=ctx.lab_diff)))
+	ctx.hsv = adict(zip('rgb', map(int, colorsys.rgb_to_hsv(r, g, b))))
+	ctx.alpha_dec = a
+	ctx.alpha_float = a / 255
+	app.quit()
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Translate specified color via GTK3 CSS system to #RRGGBB[AA] value.')
+	parser.add_argument('color_spec',
+		help='GTK3 css color specification. Can include any color expressions or theme color refs.')
+	parser.add_argument('-d', '--lab-diffusor', default='E', metavar='illuminant',
+		help='XYZ (Tristimulus) reference values of a perfect reflecting diffuser.'
+			' Default: %(default)s. Specify "l" or "list" to print table of illuminant values.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.lab_diffusor in ['l', 'list']:
+		header = dict((k, len(k)) for k in xyz_ref.E._fields)
+		for row in xyz_ref.values():
+			for n, k in enumerate(header.keys()):
+				header[k] = max(header[k], len(str(row[n])))
+		tpl = '  '.join(f'{{:{n}s}}' for n in header.values())
+		print(tpl.format(*header.keys()))
+		for row in xyz_ref.values(): print(tpl.format(*map(str, row)))
+		return 0
+
+	ctx = adict(spec=opts.color_spec, lab_diff=opts.lab_diffusor)
+	app = Gtk.Application.new('css-color-mixer.CeMhmO', 0)
+	app.connect('activate', ft.partial(color_calc, ctx))
+	app.run()
+
+	print(f'\nColor spec:\n  {opts.color_spec}\n')
+	print(f'Hex RGB / RGBA:\n  {ctx.rgb_hex}\n  {ctx.rgba_hex}\n')
+	print(f'Dec RGB / RGBA:\n  {ctx.rgb_dec}\n  {ctx.rgba_dec}\n')
+
+	print(f'Alpha dec/float: {ctx.alpha_dec} {ctx.alpha_float}')
+	print('HSV: {c.r} {c.g} {c.b}'.format(c=ctx.hsv))
+	print('CIE L*a*b*: {c.l} {c.a} {c.b}'.format(c=ctx.lab))
+
+	print()
+
+
+if __name__ == '__main__':
+	import signal
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	sys.exit(main())
