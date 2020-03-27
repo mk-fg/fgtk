@@ -1,10 +1,11 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/python
 
-import os, sys, termios
+from html.parser import HTMLParser
+import os, sys, math
+
 
 def termio_echo(state, fd=None):
+	import termios
 	if fd is None: fd = sys.stdin.fileno()
 	iflag, oflag, cflag, lflag, ispeed, ospeed, cc = termios.tcgetattr(fd)
 	if state: lflag |= termios.ECHO
@@ -12,7 +13,210 @@ def termio_echo(state, fd=None):
 	termios.tcsetattr( fd, termios.TCSANOW,
 		[iflag, oflag, cflag, lflag, ispeed, ospeed, cc] )
 
-termio_echo(False)
-try:
-	for line in iter(sys.stdin.readline, ''): sys.stdout.write(line)
-finally: termio_echo(True)
+
+def get_dbus_notify_func(**defaults):
+	import ctypes as ct
+	class sd_bus(ct.Structure): pass
+	class sd_bus_error(ct.Structure):
+		_fields_ = [('name', ct.c_char_p), ('message', ct.c_char_p), ('need_free', ct.c_int)]
+	class sd_bus_msg(ct.Structure): pass
+	lib = ct.CDLL('libsystemd.so')
+	def run(call, *args, sig=None, check=True):
+		func = getattr(lib, call)
+		if sig: func.argtypes = sig
+		res = func(*args)
+		if check and res < 0: raise OSError(-res, os.strerror(-res))
+		return res
+	bus, error, reply = (
+		ct.POINTER(sd_bus)(), sd_bus_error(), ct.POINTER(sd_bus_msg)() )
+
+	kws, defaults = defaults, dict(
+		app='', replaces_id=0, icon='',
+		summary='', body='', actions=None, hints=None, timeout=-1 )
+	for k in defaults:
+		if k in kws: defaults[k] = kws.pop(k)
+	assert not kws, kws
+	bb = lambda v: v.encode() if isinstance(v, str) else v
+
+	def encode_array(k, v):
+		if not v: sig, args = [ct.c_void_p], [None]
+		elif k == 'actions':
+			sig, args = [ct.c_int, [ct.c_char_p] * len(v)], [len(v), *map(bb, v)]
+		elif k == 'hints':
+			sig, args = [ct.c_int], [len(v)]
+			for ak, av in v.items():
+				sig.extend([ct.c_char_p, ct.c_char_p]) # key, type
+				args.append(bb(ak))
+				if isinstance(av, (str, bytes)):
+					av_sig, av_args = [ct.c_char_p], [b's', bb(av)]
+				elif isinstance(av, int): av_sig, av_args = [ct.c_int32], [b'i', av]
+				else: av_sig, av_args = av
+				args.extend(av_args)
+				sig.extend(av_sig)
+		else: raise ValueError(k)
+		return sig, args
+
+	def notify_func(
+			summary=None, body=None, app=None, icon=None,
+			replaces_id=None, actions=None, hints=None, timeout=None ):
+		args, kws, sig_arrays = list(), locals(), list()
+		for k, default in defaults.items():
+			v = kws.get(k)
+			if v is None: v = default
+			if k in ['actions', 'hints']:
+				arr_sig, arr_args = encode_array(k, v)
+				sig_arrays.extend(arr_sig)
+				args.extend(arr_args)
+			else: args.append(bb(v))
+		run( 'sd_bus_open_user', ct.byref(bus),
+			sig=[ct.POINTER(ct.POINTER(sd_bus))] )
+		try:
+			run( 'sd_bus_call_method',
+				bus,
+				b'org.freedesktop.Notifications', # dst
+				b'/org/freedesktop/Notifications', # path
+				b'org.freedesktop.Notifications', # iface
+				b'Notify', # method
+				ct.byref(error),
+				ct.byref(reply),
+				b'susssasa{sv}i', *args,
+				sig=[
+					ct.POINTER(sd_bus),
+					ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+					ct.POINTER(sd_bus_error),
+					ct.POINTER(ct.POINTER(sd_bus_msg)),
+					ct.c_char_p,
+					ct.c_char_p, ct.c_uint32,
+					ct.c_char_p, ct.c_char_p, ct.c_char_p,
+					*sig_arrays, ct.c_int32 ] )
+			note_id = ct.c_uint32()
+			n = run( 'sd_bus_message_read', reply, b'u', ct.byref(note_id),
+				sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_uint32)] )
+			assert n > 0, n
+		finally: run('sd_bus_flush_close_unref', bus, check=False)
+		return note_id.value
+
+	return notify_func
+
+
+def naturaltime_diff( ts, ts0, ext=None,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	delta = abs((ts - ts0) if not getattr(ts, 'total_seconds', False) else ts)
+
+	res, s = list(), delta.total_seconds()
+	for unit, unit_s in sorted(_units.items(), key=lambda v: v[1], reverse=True):
+		val = math.floor(s / float(unit_s))
+		if not val: continue
+		res.append('{:.0f}{}'.format(val, unit))
+		if len(res) >= 2: break
+		s -= val * unit_s
+
+	if not res: return 'now'
+	else:
+		if ext: res.append(ext)
+		return ' '.join(res)
+
+
+class MLStripper(HTMLParser):
+	def __init__(self):
+		super(MLStripper, self).__init__()
+		self.fed = list()
+	def handle_data(self, d): self.fed.append(d)
+	def get_data(self): return ''.join(self.fed)
+
+def strip_tags(html):
+	s = MLStripper()
+	s.feed(html)
+	s.close()
+	return s.get_data()
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	fill = lambda s,w=90,ind='  ',ind_next=None,**k: textwrap.fill(
+		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
+
+	parser = argparse.ArgumentParser(
+		description='Various terminal input/output piping helpers and tools.',
+		formatter_class=argparse.RawTextHelpFormatter )
+	cmds = parser.add_subparsers(title='Modes',
+		description='Modes/tools of the script to run. Default one is "out-paste".', dest='call')
+
+	cmd = cmds.add_parser('out-paste',
+		help=dd('''
+			Disable terminal echo, grab any stdin as-is and send it to stdout.
+			Example use: term-pipe out-paste |
+				curl -H \'Content-Type: application/json\' -X POST -d @- http://api'''))
+
+	cmd = cmds.add_parser('shell-notify',
+		formatter_class=argparse.RawTextHelpFormatter,
+		help='Send desktop notification when shell'
+			' prompt appears on stdin, for use from screenrc/tmux.conf.')
+	cmd.add_argument('-i', '--id', metavar='header',
+		help='Custom identification header to print in notifications for this console/input.')
+	cmd.add_argument('-l', '--log', metavar='file',
+		help=dd('''
+			Log all input lines as repr() of python byte strings to specified files.
+			Can be useful for debugging, to add/test matches for new shell prompts.
+			File will be overwritten on open, not appended to.'''))
+	cmd.add_argument('-p', '--plain', action='store_true',
+		help='Do not use (strip) pango tags in desktop notification messages.')
+	cmd.add_argument('-t', '--min-notification-delay',
+		type=float, metavar='seconds', default=1.0,
+		help=dd('''
+			Min delay between issuing notifications, in seconds (default: %(default)s).
+			Useful to avoid notification-storm when buffer gets redrawn entirely or such.
+			Set to <=0 value to disable this rate-limiting entirely.'''))
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+
+	if opts.call == 'out-paste':
+		termio_echo(False)
+		try:
+			for line in iter(sys.stdin.readline, ''): sys.stdout.write(line)
+		finally: termio_echo(True)
+
+
+	elif opts.call == 'shell-notify':
+		import re, time, contextlib as cl, datetime as dt
+
+		stdin = open(sys.stdin.fileno(), mode='rb', buffering=0)
+		notify_opts = dict(icon='console', timeout=0, app='tmux', hints=dict(urgency=2))
+		notify_func = get_dbus_notify_func(**(notify_opts or dict()))
+		prompt_re = re.compile( rb'(\x1b\[[\w;]+ *)?'
+			rb'# \x1b\[4m\w+@[-\w.]+~?\x1b\[24m:[-/~].{0,20}%' )
+		header = 'shell-notify: console prompt' if not opts.id else f'shell-notify: {opts.id}'
+		label_len, dt0 = 14, dt.datetime.now()
+		ts_last, td_min = 0, opts.min_notification_delay
+		if td_min <= 0: td_min = None
+
+		with cl.ExitStack() as ctx:
+			log_file = opts.log
+			if log_file: log_file = ctx.enter_context(open(log_file, 'w'))
+			for line in iter(stdin.readline, b''):
+				if log_file: print(repr(line), flush=True)
+				if not prompt_re.search(line): continue
+
+				ts_mono = time.monotonic()
+				if td_min and ts_last > ts_mono - td_min: continue
+				ts_last = ts_mono
+
+				body = ['<b>Detected shell prompt in console.</b>']
+				body_data = [
+						('Current time', dt.datetime.now()),
+						('Time delta', '{} (<b>{}</b>)'.format(
+							dt0, naturaltime_diff(dt.datetime.now(), dt0) )) ]
+				if opts.id: body_data.insert(0, ('ID string', opts.id))
+				body_str = '\n'.join(body) + '\n' + '\n'.join(
+					('<tt>{{:<{}s}}</tt>{{}}'.format(label_len).format(t + ':', v) if t else v)
+					for t, v in body_data )
+				if opts.plain: header, body_str = map(strip_tags, [header, body_str])
+				notify_func(header, body_str)
+
+
+	else: raise NotImplementedError(f'Command not implemented: {opts.call}')
+
+if __name__ == '__main__': sys.exit(main())

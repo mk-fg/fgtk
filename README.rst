@@ -368,10 +368,18 @@ process.
 term-pipe
 '''''''''
 
+Py3 script with various terminal input/output piping helpers and tools.
+
+Has multiple modes for different use-cases, collected in same script mostly
+because they're pretty simple and not worth remembering separate ones.
+
+out-paste
+`````````
+
 Disables terminal echo and outputs line-buffered stdin to stdout.
 
-Use-case is grepping through huge multiline strings (e.g. webpage source) pasted
-into terminal, i.e.::
+Example use-case can be grepping through huge multiline strings
+(e.g. webpage source) pasted into terminal, i.e.::
 
   % term-pipe | g -o '\<http://[^"]\+'
 
@@ -383,6 +391,32 @@ into terminal, i.e.::
 
 There are better tools for that particular use-case, but this solution is
 universal wrt any possible input source.
+
+shell-notify
+````````````
+
+Filter for screen/tmux/script output to send desktop notification (using sd-bus
+lib) when shell prompt is detected on stdin, to enable when some long job is
+running for example, so that you'd get notified immediately when it's done.
+
+Shell prompt detection is done via simple regexp, highly specific to my prompt(s)
+and use-case(s), so might need tweaks in the code for different ones.
+-l/--log option can be useful when doing that - will print all input lines
+(with proper repr() wrapping), which can then be checked for desired patterns
+and tested against new detection regexps as necessary.
+
+Example use in tmux.conf::
+
+  bind-key r pipe-pane 'exec term-pipe shell-notify'
+  bind-key R pipe-pane
+
+Should make "r" key (after prefix key) enable notifications and "shift+r" disable them.
+Use "pipe-pane -o" to toggle this via same key instead.
+
+"exec ..." command there is passed to shell, so to debug errors after any
+significant changes, something like "2>/tmp/errors.log" can be added at the end.
+
+Check options of this subcommand for rate-limiting and some other tweaks.
 
 yaml-to-pretty-json
 '''''''''''''''''''
