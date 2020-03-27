@@ -17,8 +17,8 @@ video=( -vga virtio -display gtk,gl=on )
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
 
-root=/mnt/volatiles/vms
-dst="$root"/ubuntu/live.dump
+root=$(dirname "$BASH_SOURCE")
+dst="$root"/live.dump
 telnet_port=$(( 8200 + $ins ))
 vde_mac=52:54:00:12:34:$(( 60 + $ins ))
 vde_path=~/tmp/vde
@@ -192,11 +192,11 @@ root_opts=()
 
 [[ ${#root_opts[@]} -gt 0 ]] || root_opts=(
 	# Fix access to these: chmod a+r fs/boot/*
-	-kernel ubuntu/fs/boot/vmlinuz
-	-initrd ubuntu/fs/boot/initrd.img
+	-kernel fs/boot/vmlinuz
+	-initrd fs/boot/initrd.img
 	-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
 
-	-chardev socket,id=vfs-root,path=/mnt/volatiles/vms/ubuntu/fs.sock
+	-chardev socket,id=vfs-root,path="$root"/fs.sock
 	-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
 	-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
 	-numa node,memdev=vfs-mem )
