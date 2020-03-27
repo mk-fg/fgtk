@@ -1,10 +1,9 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 mem=4G img= dev= iso=
+ins=1 mem=4G img= dev= iso= nets=1
 
-video=( -vga virtio -display gtk,gl=on )
-# video=( -vga std )
+video=( -vga std )
 # video=( -display vnc 0 )
 
 [[ "$1" = -r || "$1" = --root || "$UID" -ne 0 ]] || {
@@ -16,11 +15,14 @@ video=( -vga virtio -display gtk,gl=on )
 [[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
+[[ "$1" = -g || "$1" = --gtk ]] && { video=( -vga virtio -display gtk,gl=on ); shift; }
+[[ "$1" = -n2 || "$1" = --nets=2 ]] && { nets=2; shift; }
+[[ "$1" = -n3 || "$1" = --nets=3 ]] && { nets=3; shift; }
 
 root=$(dirname "$BASH_SOURCE")
 dst="$root"/live.dump
 telnet_port=$(( 8200 + $ins ))
-vde_mac=52:54:00:12:34:$(( 60 + $ins ))
+vde_mac_tail=54:00:12:34:$(( 60 + $ins )) # missing first (even) octet
 vde_path=~/tmp/vde
 dump_inc= restore= net_only=
 
@@ -150,6 +152,17 @@ root_opts=()
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 
 
+### net options
+
+mac_head=52 net_opts=()
+while [[ "$nets" -gt 0 ]]; do
+	net_opts+=(
+		-device virtio-net-pci,mac=${mac_head}:${vde_mac_tail},netdev=vde_${mac_head}
+		-netdev vde,sock="$vde_path"/link.sock,id=vde_${mac_head} )
+	(( nets -= 1 )); (( mac_head += 2 ))
+done
+
+
 ### Run qemu
 
 qemu_opts=(
@@ -158,8 +171,6 @@ qemu_opts=(
 	-rtc base=utc,clock=host
 	-monitor telnet:127.0.0.1:${telnet_port},server,nowait
 	-usb -device usb-kbd -device usb-mouse
-	-net nic,macaddr=${vde_mac},id=vde
-	-net vde,sock="$vde_path"/link.sock
 	-k en-us
 
 	-enable-kvm
@@ -168,6 +179,7 @@ qemu_opts=(
 	-m "$mem"
 	"${video[@]}"
 
+	"${net_opts[@]}"
 	"${root_opts[@]}"
 
 	# -device usb-ehci,id=usb,bus=pci.0,addr=0x4
