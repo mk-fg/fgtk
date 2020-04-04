@@ -32,12 +32,18 @@ def main(args=None):
 		help='Rows of passwords to produce.')
 	parser.add_argument('-s', '--simple',
 		action='store_true', help='Use only letters/numbers.')
+	parser.add_argument('-d', '--digits',
+		action='store_true', help='Use only numbers (digits).')
 	parser.add_argument('-1', '--one',
 		action='store_true', help='Output just one generated password.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	chr_range = (string.ascii_letters + string.digits).encode()
-	if not opts.simple:
+	if sum(map(bool, [opts.digits, opts.simple])) > 1:
+		parser.error('Multiple output modes specified at the same time')
+
+	if opts.digits: chr_range = string.digits.encode()
+	elif opts.simple: chr_range = (string.ascii_letters + string.digits).encode()
+	else:
 		chr_range += ( string.punctuation.replace("'", '').replace('"', '')
 			.replace('`', '').replace('\\', '').replace('!', '').replace('$', '') ).encode()
 
