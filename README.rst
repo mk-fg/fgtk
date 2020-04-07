@@ -1995,6 +1995,12 @@ For collecting files with commonly-repeated names into some dir, like random
 
 Use -h/--help for info on more useful options.
 
+sys-wait
+''''''''
+
+| Bash script to check and wait for various system conditions or thresholds like load average or PSI values.
+| E.g. ``sys-wait --load1 5 && run-next-heavy-task``
+
 
 
 [dev] Dev tools
