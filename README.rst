@@ -3513,7 +3513,7 @@ rsyslogs
 Wrappers to test tools that tend to spam /dev/log regardless of their settings.
 
 rsyslogs.c is a SUID wrapper binary that uses mount --bind + unshare to replace
-/dev/log with /dev/null within namespace where it'd run rsyslog, and is made to
+/dev/log with /dev/null within namespace where it'd run rsyslog_, and is made to
 silence rsyslogd in particular.
 
 Example use (see also top of rsyslogs.c itself)::
@@ -3533,6 +3533,27 @@ connect/sendto/sendmsg and such::
 Use something like these occasionally when setting up logging on a dev machine,
 where such uncommon spam to syslog gets delivered via desktop notifications
 (see desktop/notifications/logtail tool in this repo) and annoys me.
+
+.. _rsyslog: https://www.rsyslog.com/
+
+relp-test
+^^^^^^^^^
+
+Small .c binary around librelp_ to build and send syslog message over RELP
+protocol to daemons like rsyslog_ with specified timeout.
+
+It's basically sample_client.c from librelp repository which also adds
+current ISO8601 timestamp and puts syslog message fields in the right order.
+
+Usage::
+
+  % gcc -O2 -lrelp -o relp-test relp-test.c && strip relp-test
+  % ./relp-test 10.0.0.1 514 60 34 myhost myapp 'some message'
+
+Run binary without args to get more usage info and/or see .c file header for that.
+
+.. _librelp: https://github.com/rsyslog/librelp
+
 
 
 License (WTFPL)
