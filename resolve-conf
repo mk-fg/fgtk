@@ -168,13 +168,11 @@ class HostsNode:
 	_slots = 'addr sub path'.split()
 	_defaults = property(lambda s: (None, dict(), list()))
 	__slots__ = _slots
+
 	def __init__(self, *args, **kws):
 		for k,v in it.chain( zip(self._slots, self._defaults),
 			zip(self._slots, args), kws.items() ): setattr(self, k, v)
-	def init_key(self, k, v=None):
-		if k not in self.sub: self.sub[k] = HostsNode(path=self.path + [k])
-		if v: self.sub[k].addr = v
-		return self.sub[k]
+
 	def __repr__(self):
 		return '<HN [{} {} {}]>'.format(
 			'.'.join(self.path) or '-', self.addr or '-', self.sub or '.' )
@@ -187,6 +185,24 @@ class HostsNode:
 		except KeyError: raise KeyError(self.repr(), k)
 	def __setitem__(self, k, v): self.init_key(k, v)
 	__getattr__ = __getitem__
+
+	def init_key(self, k, v=None):
+		if k not in self.sub: self.sub[k] = HostsNode(path=self.path + [k])
+		if v: self.sub[k].addr = v
+		return self.sub[k]
+
+	def get_leaf(self, *path, check=False):
+		'Return final leaf node for specified path or KeyError/None.'
+		try:
+			node = self
+			for k in path:
+				if not node.sub: raise KeyError(k)
+				node = node.sub[k]
+			if node.sub: raise KeyError(node)
+			return node
+		except KeyError:
+			if not check: raise
+
 
 tpl_parse_hosts_flags = 'fwd fwd-deep rev rev-deep fwd-rev1'.split()
 def tpl_parse_hosts(flags):

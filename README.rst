@@ -305,6 +305,7 @@ Jinja2 env for template has following filters and values:
 
   | Can be used as a reliable dns/network-independent names.
   | ``--hosts-opts`` cli option allows some tweaks wrt how that file is parsed.
+  | See also HostsNode object for various helper methods to lookup those.
 
 - ``iface`` - current network interfaces and IPv4/IPv6 addresses assigned there
   (fetched from libc getifaddrs via ctypes).
