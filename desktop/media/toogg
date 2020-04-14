@@ -232,20 +232,24 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, loop, src_list, dst_name_tpl=None,
-			start=None, length=None, chunks=None,
+			start=None, length=None, chunks=None, chunks_beep=False,
 			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop, self.src_list, self.dst_name_tpl = loop, src_list, dst_name_tpl
 		self.max_parallel = max_parallel or os.cpu_count()
-		self.start, self.length, self.chunks, self.probe = start, length, chunks, probe
+		self.start, self.length, self.probe = start, length, probe
+		self.chunks, self.chunks_beep = chunks, chunks_beep
 		self.inplace, self.remove_src = inplace, remove_src
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
 		self.status_lines, self.chunk_dirs = dict(), set()
 
 	async def __aenter__(self):
-		self.conv_jobs, self.status_line_task = OrderedDict(), None
+		self.conv_jobs = OrderedDict()
+		self.status_line_task = self.chunks_beep_task = None
 		self.success, self.src_done, self.exit_sig = False, OrderedDict(), None
+		if self.chunks_beep and not self.probe:
+			self.chunks_beep_task = self.loop.create_task(self.chunks_beep_path())
 		return self
 
 	async def __aexit__(self, *err):
@@ -255,15 +259,18 @@ class AudioConv:
 			self.status_line_task.cancel()
 			await self.status_line_task
 			self.status_line_task = None
+		if self.chunks_beep:
+			if self.chunks_beep_task:
+				self.chunks_beep_task.cancel()
+				with contextlib.suppress(asyncio.CancelledError): await self.chunks_beep_task
+			self.chunks_beep = self.chunks_beep.unlink(missing_ok=True)
 		if self.chunk_dirs:
 			for p in self.chunk_dirs:
 				chunks_done = self.src_done.get(p.src, set())
 				if chunks_done != p.chunks:
-					for c in chunks_done:
-						with contextlib.suppress(OSError): c.unlink()
+					for c in chunks_done: c.unlink(missing_ok=True)
 				with contextlib.suppress(OSError): p.rmdir()
-				if p.cleanup:
-					with contextlib.suppress(OSError): p.src.unlink()
+				if p.cleanup: p.src.unlink(missing_ok=True)
 			self.chunk_dirs.clear()
 
 	async def run(self):
@@ -304,6 +311,41 @@ class AudioConv:
 	def status_line_set(self, key, line=None):
 		if line: self.status_lines[key] = line
 		elif key in self.status_lines: self.status_lines[key] += '\n'
+
+	async def chunks_beep_path(self):
+		if self.chunks_beep is True:
+			self.chunks_beep = fut = asyncio.Future()
+			proc, p_dir = None, os.environ.get('XDG_RUNTIME_DIR') or tempfile.gettempdir()
+			try:
+				with tempfile.NamedTemporaryFile( dir=p_dir,
+						prefix='toogg.chunks-beep.', suffix='.wav.tmp', delete=False ) as tmp:
+					p = Path(tmp.name)
+				proc = await asyncio.create_subprocess_exec(
+					*'ffmpeg -v error -hide_banner -y -f lavfi -i'.split(),
+					"aevalsrc='sin(PI/t^3)':s=44100:d=0.4,afade=in:st=0:d=0.2,afade=out:st=0.2:d=0.2",
+					*'-c:a libvorbis -ac:a 2 -f ogg'.split(), p )
+				await proc.wait()
+				if proc.returncode != 0 or not p.stat().st_size > 0:
+					raise AudioConvError('ffmpeg failed to generate chunks-beep audio file')
+				p_new = Path(str(p).rsplit('.', 1)[0])
+				p.rename(p_new) # strip .tmp suffix
+				self.chunks_beep = p_new
+				fut.set_result(p_new)
+			except Exception as err:
+				self.chunks_beep = err
+				fut.set_exception(err)
+				raise
+			finally:
+				if proc:
+					with contextlib.suppress(OSError): proc.terminate()
+					try: await asyncio.wait_for(proc.wait(), 2)
+					except asyncio.TimeoutError:
+						with contextlib.suppress(OSError): proc.kill()
+				p.unlink(missing_ok=True)
+			return self.chunks_beep
+		elif isinstance(self.chunks_beep, asyncio.Future): return await self.chunks_beep
+		elif isinstance(self.chunks_beep, Exception): raise self.chunks_beep
+		else: return self.chunks_beep
 
 
 	async def conv_cleanup(self, *task_ids, raise_errors=False):
@@ -458,8 +500,7 @@ class AudioConv:
 			async with YTDLProc( self.loop, src.name,
 					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
 				await proc.finished
-		finally:
-			with contextlib.suppress(OSError): src_part.unlink()
+		finally: src_part.unlink(missing_ok=True)
 		return AudioConvSubResult(src)
 
 
@@ -467,18 +508,18 @@ class AudioConv:
 		src_name, src_cleanup = src.name, isinstance(src, AudioConvSubResult)
 		async with FFProc( self.loop, src_name,
 				[ 'ffprobe', '-v', 'fatal', '-show_entries',
-					'stream=codec_type,codec_name,duration:format=duration',
+					'stream=codec_type,codec_name,channels,duration:format=duration',
 					'-print_format', 'json', str(src) ],
 				stdout=sp.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
-			src_duration = src_codec = None
+			src_duration = src_codec = src_chans = None
 			try:
 				src_info = json.loads(src_info)
 				for stream in src_info['streams']:
 					if stream.get('codec_type') != 'audio': continue
 					src_duration = float(stream.get('duration', 0))
-					src_codec = stream.get('codec_name')
+					src_codec, src_chans = stream.get('codec_name'), stream.get('channels')
 					break
 				if not src_duration:
 					src_duration = float(src_info['format']['duration'])
@@ -488,6 +529,7 @@ class AudioConv:
 			if src_duration:
 				if start: src_duration = max(0, src_duration - start)
 				if length: src_duration = min(src_duration, length)
+			if src_codec: src_codec = f'{src_codec}:{src_chans or 0}'
 			log.debug('[{!r}] Detected audio stream duration: {:.1f}s', src_name, src_duration)
 			log.debug('[{!r}] Detected audio stream codec: {!r}', src_name, src_codec)
 		return AudioConvProbed(src, src_cleanup, src_duration, src_codec)
@@ -512,11 +554,17 @@ class AudioConv:
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, job.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
 			prefix=pre, progress_func=self.status_line_set, **kws )
-		job.can_copy_stream = src.codec == 'vorbis'
+		job.can_copy_stream = src.codec == 'vorbis:2'
 
-		func = self.conv_src_simple if not self.loudnorm else self.conv_src_loudnorm
+		conv_func = ( self.conv_src_simple
+			if not self.loudnorm else self.conv_src_loudnorm )
 		try:
-			await func(job)
+			await conv_func(job)
+			if self.chunks_beep:
+				dst_pre = str(dst) + '.pre-beep'
+				paths.add(dst_pre)
+				os.rename(dst, dst_pre)
+				await self.conv_prepend_beep(job, dst_pre)
 			paths.remove(dst)
 		finally:
 			for p in paths:
@@ -527,6 +575,7 @@ class AudioConv:
 	async def conv_src_simple(self, job):
 		coding_opts = ['-vn']
 		if job.can_copy_stream: coding_opts += ['-c:a', 'copy']
+		else: coding_opts += ['-c:a', 'libvorbis', '-ac:a', '2']
 		await job.ffmpeg( 'to-ogg', ['-i', str(job.src)]
 			+ job.input_opts + coding_opts + ['-f', 'ogg', str(job.dst)] ).run()
 
@@ -576,6 +625,15 @@ class AudioConv:
 				'input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset' )(norm_info))
 		await job.ffmpeg( 'to-ogg [3/3]', [ '-i', job.tmp_file('src.wav'), '-af',
 				f'loudnorm={opts}{opts_ext}', '-ar', '48k', '-f', 'ogg', str(job.dst) ]).run()
+
+	async def conv_prepend_beep(self, job, src):
+		src_beep = await self.chunks_beep_path()
+		## Concat should be much simplier as it copies streams, but overlay sounds better
+		# src_concat = '|'.join(str(s).replace('|', r'\|') for s in [src_beep, src])
+		# await job.ffmpeg( 'add-beep',
+		# 	['-v', 'fatal', '-i', f'concat:{src_concat}', str(job.dst)] ).run()
+		await job.ffmpeg('add-beep', [ '-i', str(src_beep), '-i', str(src),
+			'-filter_complex', 'amix=inputs=2:duration=longest', '-f', 'ogg', str(job.dst) ]).run()
 
 
 def parse_pos_spec(pos):
@@ -650,6 +708,8 @@ def main(args=None):
 				' output pre-split into chunks of specified length.'
 			' Can be used for enable faster parallel encoding.'
 			' Length argument is optional and defaults to 15:00 (15 min).')
+	group.add_argument('-b', '--chunks-beep', action='store_true',
+		help='Prepend some static + beep sound to each chink-file, to make switch audible.')
 
 	group = parser.add_argument_group('Debug/misc')
 	group.add_argument('-j', '--max-parallel', type=int, metavar='n',
@@ -719,7 +779,8 @@ def main(args=None):
 		success = loop.run_until_complete(
 			AudioConv.run_async(
 				loop, src_list, dst_name_tpl=opts.name,
-				start=start, length=length, chunks=chunks,
+				start=start, length=length,
+				chunks=chunks, chunks_beep=bool(chunks and opts.chunks_beep),
 				max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
 				remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
 				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
