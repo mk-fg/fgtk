@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict, namedtuple
 from asyncio import subprocess as sp
-import math, datetime as dt
+import math, datetime as dt, collections as cs
 import os, sys, re, logging, pathlib
 import contextlib, asyncio, signal, json, tempfile, shutil
 
@@ -246,9 +245,9 @@ class AudioConv:
 		self.status_lines, self.chunk_dirs = dict(), set()
 
 	async def __aenter__(self):
-		self.conv_jobs = OrderedDict()
+		self.conv_jobs = cs.OrderedDict()
 		self.status_line_task = self.chunks_beep_task = None
-		self.success, self.src_done, self.exit_sig = False, OrderedDict(), None
+		self.success, self.src_done, self.exit_sig = False, cs.OrderedDict(), None
 		if self.chunks_beep and not self.probe:
 			self.chunks_beep_task = self.loop.create_task(self.chunks_beep_path())
 		return self
@@ -362,10 +361,23 @@ class AudioConv:
 
 	async def conv_list(self):
 		src_stack = list(reversed(self.src_list))
+
+		dst_name_aliases = dict()
 		def dst_name_format(name):
-			dst_name = self.dst_name_tpl
-			if dst_name: dst_name = dst_name.format(name=name.rsplit('.', 1)[0])
-			return (dst_name or name).rsplit('.', 1)[0]
+			dst_name = dst_name_aliases.get(name)
+			if not dst_name:
+				dst_name, name = self.dst_name_tpl, name.rsplit('.', 1)[0]
+				dst_name = dst_name.format(name=name) if dst_name else name
+			return dst_name
+
+		# Make disambiguation map for same dst names
+		dst_name_map = cs.defaultdict(list)
+		for name in sorted(map(os.path.basename, self.src_list)):
+			dst_name_map[dst_name_format(name)].append(name)
+		for dst_name, name_list in dst_name_map.items():
+			for n, name in enumerate(name_list, 1):
+				dst_name_aliases[name] = ( dst_name
+					if len(name_list) == 1 else f'{dst_name}.{n:02d}' )
 
 		while True:
 			# Processing sequence:
