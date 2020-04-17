@@ -44,6 +44,7 @@ def main(args=None):
 	if opts.digits: chr_range = string.digits.encode()
 	elif opts.simple: chr_range = (string.ascii_letters + string.digits).encode()
 	else:
+		chr_range = (string.ascii_letters + string.digits).encode()
 		chr_range += ( string.punctuation.replace("'", '').replace('"', '')
 			.replace('`', '').replace('\\', '').replace('!', '').replace('$', '') ).encode()
 
