@@ -44,6 +44,8 @@ def main(args=None):
 		action='store_true', help='Print renames but not actually do it.')
 	parser.add_argument('-m', '--move', metavar='dir',
 		help='Move renamed files to specified dir.')
+	parser.add_argument('-r', '--replace', action='store_true',
+		help='Replace name with hash, i.e. use "{name}.{ext}" template.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	p_mv = pl.Path(opts.move) if opts.move else None
@@ -63,7 +65,8 @@ def main(args=None):
 			p_err(f'failed to process path [{p}]: {err}')
 			continue
 		name, ext = name if len(name := p.name.rsplit('.', 1)) == 2 else (name[0], '')
-		name_new = '.'.join(filter(None, [name, p_hash, ext]))
+		name_new = [name, p_hash, ext] if not opts.replace else [p_hash, ext]
+		name_new = '.'.join(filter(None, name_new))
 		print(p.name, '->', name_new)
 		if not opts.dry_run:
 			try:
