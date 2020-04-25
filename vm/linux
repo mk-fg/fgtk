@@ -90,7 +90,7 @@ Cheatsheet to init new cloudimg:
    && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
    && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
 
-See vm/ubuntu for virtio-fs setup and info, not used here.
+See vm/ubuntu for virtio-fs setup and info on it, not used here.
 
 EOF
 		exit 1 ;;
@@ -146,9 +146,6 @@ root_opts=()
 [[ -z "$img" ]] || root_opts+=(
 	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
 [[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
-
-[[ ${#root_opts[@]} -gt 0 ]] || { echo >&2 "virtio-fs setup is not supported here"; exit 1; }
-
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 
 
