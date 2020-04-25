@@ -1,12 +1,13 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 mem=4G img= dev= vfs= iso= nets=1 efi= help_ext=
+ins=1 mem=4G img= dev= vfs= iso= nets=1 efi= help_ext= root_opts_file=()
 
 read -r -d '' script_usage <<EOF
 Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ]
-	[ {-q|--img} file.qcow2 ] [ {-d|--dev} /dev/xyz ] [ {-v|--vfs} dir ]
-	[ --iso image.iso ] [ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
+	[ {-o|--opts} file.opts ] [ {-q|--img} file.qcow2 ]
+	[ {-d|--dev} /dev/xyz ] [ {-v|--vfs} dir ] [ --iso image.iso ]
+	[ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
 	[-c|--console] [-g|--gtk]
 	[ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]
 (note: ordering of options matters)
@@ -68,13 +69,16 @@ video=( -vga std )
 
 [[ "$1" = -i || "$1" = --instance ]] && { ins=$2; shift; shift; }
 [[ "$1" = -m || "$1" = --mem ]] && { mem=$2; shift; shift; }
+[[ "$1" = -o || "$1" = --opts ]] && {
+	declare -a root_opts_file="($(<"$2"))"; shift; shift; }
 [[ "$1" = -q || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
 [[ "$1" = -v || "$1" = --vfs ]] && { vfs=$(realpath "$2"); shift; shift; }
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
-[[ "$1" = -g || "$1" = --gtk ]] && { video=( -vga virtio -display gtk,gl=on ); shift; }
+[[ "$1" = -g || "$1" = --gtk ]] && {
+	video=( -vga virtio -display gtk,gl=on ); shift; }
 [[ "$1" = -n2 || "$1" = --nets=2 ]] && { nets=2; shift; }
 [[ "$1" = -n3 || "$1" = --nets=3 ]] && { nets=3; shift; }
 
@@ -217,24 +221,31 @@ done
 ### img/iso options
 
 root_opts=()
+[[ "${#root_opts_file[@]}" -eq 0 ]] || root_opts+=( "${root_opts_file[@]}" )
 [[ -z "$img" ]] || root_opts+=(
 	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
 [[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
-[[ -z "$vfs" ]] || root_opts=(
-	# Fix access to these: chmod a+r fs/boot/*
-	# XXX: un-hardcode kernel/initramfs/append stuff here and for efi too
-	-kernel "$vfs"/boot/vmlinuz
-	-initrd "$vfs"/boot/initrd.img
-	-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
-
-	-chardev socket,id=vfs-root,path="$vfs".sock
-	-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
-	-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
-	-numa node,memdev=vfs-mem )
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 [[ -z "$efi" ]] || root_opts=(
 	-drive if=pflash,format=raw,readonly,file=/usr/share/ovmf/x64/OVMF_CODE.fd
 	-drive if=pflash,format=raw,file="$efi" )
+
+[[ -z "$vfs" ]] || {
+	root_opts+=(
+		-chardev socket,id=vfs-root,path="$vfs".sock
+		-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
+		-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
+		-numa node,memdev=vfs-mem )
+	root_opts_str="${root_opts[*]}"
+	# -o/--opts file can be used as alternative to these hardcoded opts
+	# Fix access to these: chmod a+r fs/boot/*
+	[[ $root_opts_str =~ (^|\ )-kernel\  ]] \
+		|| root_opts+=( -kernel "$vfs"/boot/vmlinuz )
+	[[ $root_opts_str =~ (^|\ )-append\  ]] \
+		|| root_opts+=( -initrd "$vfs"/boot/initrd.img )
+	[[ $root_opts_str =~ (^|\ )-initrd\  ]] \
+		|| root_opts+=( -append 'root=vio-root rootfstype=virtiofs rw quiet splash' )
+}
 
 
 ### net options
