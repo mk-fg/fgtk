@@ -1,7 +1,64 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 mem=4G img= dev= iso= nets=1
+ins=1 mem=4G img= dev= vfs= iso= nets=1 efi= help_ext=
+
+read -r -d '' script_usage <<EOF
+Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ]
+	[ {-q|--img} file.qcow2 ] [ {-d|--dev} /dev/xyz ] [ {-v|--vfs} dir ]
+	[ --iso image.iso ] [ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
+	[-c|--console] [-g|--gtk]
+	[ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]
+(note: ordering of options matters)
+EOF
+script_usage=${script_usage//	/  }
+
+read -r -d '' script_info_ext <<EOF
+$script_info
+
+Cheatsheet for qemu-img (to use with -q/--img option):
+	qemu-img create -f qcow2 install.qcow2 10G
+	qemu-img create -b install.qcow2 -f qcow2 install.qcow2.inc
+	qemu-img commit install.qcow2.inc && rm install.qcow2.inc
+
+Cheatsheet to init new cloudimg:
+	qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0p1 && mount /dev/nbd0p1 /mnt/nbd
+	 && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
+	 && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
+	 && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
+	 && touch /mnt/nbd/etc/cloud/cloud-init.disabled
+	 && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
+	 && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
+
+Cheatsheet for Virtio-FS (to use -v/--vfs option and "vfs" dir):
+
+	-- Initial install to qemu-img
+		qemu-img create -f qcow2 install.qcow2 10G
+		./ubuntu --img install.qcow2 --iso ubuntu/ubuntu-18.04-desktop-amd64.iso
+
+	-- ubuntu 19.X - add virtiofs.ko to initramfs (likely not needed later)
+		# needs kernel-5.4+ - https://kernel.ubuntu.com/~kernel-ppa/mainline/
+		echo virtiofs >> /etc/initramfs-tools/modules
+		update-initramfs -k all -c
+
+	-- rsync from nbd to shared fs/mount
+		modprobe nbd
+		qemu-nbd -c /dev/nbd0 install.qcow2
+		fsck -a /dev/nbd0p1
+		mount /dev/nbd0p1 /mnt/nbd
+
+		rsync -HaAxXS /mnt/nbd/. vfs/
+		: > vfs/etc/fstab && rm vfs/swapfile
+
+		umount /mnt/nbd
+		qemu-nbd -d /dev/nbd0
+
+	-- $(awk '!/^#/ {p=0} /^### virtiofsd/ {
+		p=1; sub(/^#+ ?/,"")} p {sub(/^#+ ?/,"  "); print}' $0)
+
+	-- run from virtio-fs: $0 --vfs vfs
+EOF
+script_info_ext=${script_info_ext//	/  }
 
 video=( -vga std )
 # video=( -display vnc 0 )
@@ -13,7 +70,9 @@ video=( -vga std )
 [[ "$1" = -m || "$1" = --mem ]] && { mem=$2; shift; shift; }
 [[ "$1" = -q || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
 [[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
+[[ "$1" = -v || "$1" = --vfs ]] && { vfs=$(realpath "$2"); shift; shift; }
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
+[[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
 [[ "$1" = -g || "$1" = --gtk ]] && { video=( -vga virtio -display gtk,gl=on ); shift; }
 [[ "$1" = -n2 || "$1" = --nets=2 ]] && { nets=2; shift; }
@@ -27,7 +86,7 @@ vde_path=~/tmp/vde
 dump_inc= restore= net_only=
 
 
-### Management
+### Management and one-off commands
 
 case "$1" in
 	d|dump)
@@ -67,32 +126,12 @@ EOF
 	n|net|net-only) net_only=t ;;
 
 	'') ;;
+	-h|--help-ext) echo "$script_usage";echo; echo "$script_info_ext"; exit 0 ;;
 	*)
-		echo >&2 "Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ] \\"
-		echo >&2 "  [ {-q|--img} file.qcow2 ] [ {-d|--dev} /dev/xyz ] [ --iso image.iso ] [-c|--console] \\"
-		echo >&2 "  [ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]"
-		echo >&2 "(note: ordering of options matters)"
-		cat >&2 <<EOF
-
-$script_info
-
-Cheatsheet for qemu-img:
-  qemu-img create -f qcow2 install.qcow2 10G
-  qemu-img create -b install.qcow2 -f qcow2 install.qcow2.inc
-  qemu-img commit install.qcow2.inc && rm install.qcow2.inc
-
-Cheatsheet to init new cloudimg:
-  qemu-nbd -c /dev/nbd0 install.qcow2.inc && fsck -a /dev/nbd0p1 && mount /dev/nbd0p1 /mnt/nbd
-   && chmod a+r /mnt/nbd/{vmlinuz,initrd.img}
-   && cat ~/.ssh/authorized_keys > /mnt/nbd/root/.ssh/authorized_keys
-   && cat ~/.ssh/authorized_keys > /mnt/nbd/home/ubuntu/.ssh/authorized_keys
-   && touch /mnt/nbd/etc/cloud/cloud-init.disabled
-   && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
-   && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
-
-See vm/ubuntu for virtio-fs setup and info on it, not used here.
-
-EOF
+		echo >&2 "$script_usage"
+		echo >&2
+		echo >&2 "$script_info"
+		echo >&2 "Use -h/--help-ext option for various qemu/option/setup cheatsheets."
 		exit 1 ;;
 esac
 
@@ -140,13 +179,62 @@ done
 [[ -n "$net_only" ]] && exit 0
 
 
+### virtiofsd daemon - has to run as root:
+# # uid=root is to allow access to local uid=root files
+# # Note: SETLKW (fcntl wait for lock) is still not supported.
+# #   Workaround: bind-mount files that require it from /run, see this script for example .service.
+#
+# /usr/lib/qemu/virtiofsd -f \
+#  -o source=$(realpath fs) --socket-path=vfs.sock \
+#  -o cache=always,writeback,xattr,flock,posix_lock &
+# chmod 666 vfs.sock
+
+## setup-setlkw-hacks.service workaround for SETLKW in dpkg and such
+# [Unit]
+# DefaultDependencies=no
+# After=local-fs.target run.mount
+#
+# # Anything requiring SETLKW on these files should be listed here
+# Before=systemd-sysusers.service
+#
+# [Service]
+# Type=oneshot
+# RemainAfterExit=yes
+#
+# ExecStart=bash -c '\
+# 	mkdir -m700 /run/setlkw ; cd /run/setlkw ;\
+# 	touch dpkg-triggers ; mount -o bind dpkg-triggers /var/lib/dpkg/triggers/Lock ;\
+# 	touch passwd /etc/.pwd.lock ; mount -o bind passwd /etc/.pwd.lock ;\
+# '
+# ExecStop=bash -c '\
+# 	umount -l /var/lib/dpkg/triggers/Lock /etc/.pwd.lock ;\
+# '
+#
+# [Install]
+# WantedBy=multi-user.target
+
+
 ### img/iso options
 
 root_opts=()
 [[ -z "$img" ]] || root_opts+=(
 	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
 [[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
+[[ -z "$vfs" ]] || root_opts=(
+	# Fix access to these: chmod a+r fs/boot/*
+	# XXX: un-hardcode kernel/initramfs/append stuff here and for efi too
+	-kernel "$vfs"/boot/vmlinuz
+	-initrd "$vfs"/boot/initrd.img
+	-append 'root=vio-root rootfstype=virtiofs rw quiet splash'
+
+	-chardev socket,id=vfs-root,path="$vfs".sock
+	-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
+	-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
+	-numa node,memdev=vfs-mem )
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
+[[ -z "$efi" ]] || root_opts=(
+	-drive if=pflash,format=raw,readonly,file=/usr/share/ovmf/x64/OVMF_CODE.fd
+	-drive if=pflash,format=raw,file="$efi" )
 
 
 ### net options
