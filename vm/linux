@@ -1,14 +1,15 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 mem=4G img= dev= vfs= iso= nets=1 efi= help_ext= root_opts_file=()
+ins=1 mem=4G nets=1 help_ext= root_opts_file=()
+img= dev_ro= dev= vfs= efi= iso=
 
 read -r -d '' script_usage <<EOF
 Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ]
 	[ {-o|--opts} file.opts ] [ {-q|--img} file.qcow2 ]
-	[ {-d|--dev} /dev/xyz ] [ {-v|--vfs} dir ] [ --iso image.iso ]
+	[ {-s|--dev-ro} disk.img ] [ {-d|--dev} /dev/xyz +] [ {-v|--vfs} dir ]
 	[ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
-	[-c|--console] [-g|--gtk]
+	[ --iso image.iso ] [-c|--console] [-g|--gtk]
 	[ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]
 (note: ordering of options matters)
 EOF
@@ -72,10 +73,11 @@ video=( -vga std )
 [[ "$1" = -o || "$1" = --opts ]] && {
 	declare -a root_opts_file="($(<"$2"))"; shift; shift; }
 [[ "$1" = -q || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
+[[ "$1" = -s || "$1" = --dev-ro ]] && { dev_ro=$(realpath "$2"); shift; shift; }
 [[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
 [[ "$1" = -v || "$1" = --vfs ]] && { vfs=$(realpath "$2"); shift; shift; }
-[[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
+[[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
 [[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
 [[ "$1" = -g || "$1" = --gtk ]] && {
 	video=( -vga virtio -display gtk,gl=on ); shift; }
@@ -224,6 +226,7 @@ root_opts=()
 [[ "${#root_opts_file[@]}" -eq 0 ]] || root_opts+=( "${root_opts_file[@]}" )
 [[ -z "$img" ]] || root_opts+=(
 	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
+[[ -z "$dev_ro" ]] || root_opts+=( -drive file="$dev_ro",if=virtio,readonly=on,format=raw )
 [[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 [[ -z "$efi" ]] || root_opts=(
