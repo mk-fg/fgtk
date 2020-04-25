@@ -2,12 +2,12 @@
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
 ins=1 mem=4G nets=1 help_ext= root_opts_file=()
-img= dev_ro= dev= vfs= efi= iso=
+img= dev_ro=() dev=() vfs= efi= iso=
 
 read -r -d '' script_usage <<EOF
 Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ]
 	[ {-o|--opts} file.opts ] [ {-q|--img} file.qcow2 ]
-	[ {-s|--dev-ro} disk.img ] [ {-d|--dev} /dev/xyz +] [ {-v|--vfs} dir ]
+	[ {-s|--dev-ro} disk.img +] [ {-d|--dev} /dev/xyz +] [ {-v|--vfs} dir ]
 	[ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
 	[ --iso image.iso ] [-c|--console] [-g|--gtk]
 	[ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]
@@ -73,8 +73,10 @@ video=( -vga std )
 [[ "$1" = -o || "$1" = --opts ]] && {
 	declare -a root_opts_file="($(<"$2"))"; shift; shift; }
 [[ "$1" = -q || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
-[[ "$1" = -s || "$1" = --dev-ro ]] && { dev_ro=$(realpath "$2"); shift; shift; }
-[[ "$1" = -d || "$1" = --dev ]] && { dev=$(realpath "$2"); shift; shift; }
+while [[ "$1" = -s || "$1" = --dev-ro ]]
+	do dev_ro+=( $(realpath "$2") ); shift; shift; done
+while [[ "$1" = -d || "$1" = --dev ]]
+	do dev+=( $(realpath "$2") ); shift; shift; done
 [[ "$1" = -v || "$1" = --vfs ]] && { vfs=$(realpath "$2"); shift; shift; }
 [[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
@@ -226,8 +228,10 @@ root_opts=()
 [[ "${#root_opts_file[@]}" -eq 0 ]] || root_opts+=( "${root_opts_file[@]}" )
 [[ -z "$img" ]] || root_opts+=(
 	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
-[[ -z "$dev_ro" ]] || root_opts+=( -drive file="$dev_ro",if=virtio,readonly=on,format=raw )
-[[ -z "$dev" ]] || root_opts+=( -drive file="$dev",if=virtio,format=raw )
+[[ "${#dev_ro[@]}" -eq 0 ]] || { for dev in "${dev_ro[@]}"
+	do root_opts+=( -drive file="$dev",if=virtio,readonly=on,format=raw ); done; }
+[[ "${#dev[@]}" -eq 0 ]] || { for dev in "${dev[@]}"
+	do root_opts+=( -drive file="$dev",if=virtio,format=raw ); done; }
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
 [[ -z "$efi" ]] || root_opts=(
 	-drive if=pflash,format=raw,readonly,file=/usr/share/ovmf/x64/OVMF_CODE.fd
