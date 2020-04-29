@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+
+import os, sys, base64, pathlib as pl, contextlib as cl
+
+
+def indent_replace(p_list, to_tabs, n, verbose):
+	p_tmp_rm, pre_src, pre_dst = None, ' '*n, '\t'
+	if not to_tabs: pre_src, pre_dst = pre_dst, pre_src
+	try:
+		for p in p_list:
+			src_old = p.read_text()
+			src_new = src_old.replace(pre_src, pre_dst)
+			if src_old == src_new: continue
+			if verbose: print(p)
+			p_tmp = p.parent / (p.name + '.tmp')
+			while p_tmp.exists():
+				suffix = ( base64.urlsafe_b64encode(os.urandom(4))
+					.decode().replace('-', '').replace('_', '').replace('=', '') )[:4]
+				p_tmp = p.parent / (p.name + f'.tmp.{suffix}')
+			p_tmp_rm = p_tmp
+			p_tmp.write_text(src_new)
+			p_tmp.rename(p)
+			p_tmp_rm = None
+	finally:
+		if p_tmp_rm: p_tmp_rm.unlink(missing_ok=True)
+
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Replace tabs with spaces in all files and back.')
+	parser.add_argument('files', nargs='+', help='File(s) to process.')
+	parser.add_argument('-t', '--tabs',
+		action='store_true', help='Replace spaces with tabs (default).')
+	parser.add_argument('-s', '--spaces',
+		action='store_true', help='Replace tabs with spaces.')
+	parser.add_argument('-n', '--space-count',
+		type=int, metavar='n', default=4,
+		help='Number of spaces to replace in either direction (default: %(default)s)')
+	parser.add_argument('-q', '--quiet',
+		action='store_true', help='Do not print processed filenames to stdout.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.tabs and opts.spaces:
+		parser.error( 'Both -t/--tabs or -s/--spaces'
+			' options cannot be used at the same time' )
+
+	p_list = list(map(pl.Path, opts.files))
+	for p in p_list:
+		if not p.is_file(): parser.error(f'Not a file: {p}')
+
+	indent_replace( p_list,
+		to_tabs=not opts.spaces,
+		n=opts.space_count, verbose=not opts.quiet )
+
+if __name__ == '__main__': sys.exit(main())

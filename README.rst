@@ -2009,29 +2009,15 @@ sys-wait
 
 Minor things I tend to use when writing code and stuff.
 
-tabs_filter
-^^^^^^^^^^^
+indent-replace
+^^^^^^^^^^^^^^
 
-My secret weapon in tabs-vs-spaces holywar.
+Very simple script to replace tabs with spaces and back, doing minor sanity
+checks and printing files with replacements to stdout.
 
-In my emacs, tab key always inserts "", marking spaces as a bug with
-develock-mode. This script transparently converts all indent-tabs into spaces
-and back, designed to be used from git content filters, and occasionally by
-hand.
-
-.git/config::
-
-  [filter "tabs"]
-    clean = tabs_filter clean %f
-    smudge = tabs_filter smudge %f
-
-.git/info/attributes or .gitattributes::
-
-  *.py filter=tabs
-  *.tac filter=tabs
-
-Not sure why people have such strong opinions on that trivial matter,
-but I find it easier never to mention that I use such script ;)
+Goal is to avoid all inconvenience with handling unfamiliar indent types in
+editor, and just have it setup for strictly one of those, doing translation
+before/after commits manually.
 
 golang_filter
 ^^^^^^^^^^^^^
