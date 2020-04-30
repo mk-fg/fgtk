@@ -23,6 +23,7 @@ usage() {
 
 interval=60
 load1= load5= load15=
+pgrep=
 
 while [[ -n "$1" ]]; do
 	case "$1" in
@@ -34,6 +35,8 @@ while [[ -n "$1" ]]; do
 		-l|--load1) shift; load1=$1; shift ;;
 		--load5) shift; load5=$1; shift ;;
 		--load15) shift; load15=$1; shift ;;
+
+		-p|--pgrep) shift; pgrep=$1; shift ;;
 
 		welp) exit 1 ;;
 		*) echo "ERROR: Unknown option - $1"; usage 1 ;;
@@ -65,6 +68,8 @@ while :; do
 		[[ -z "$load5" ]] || load_test "$m5" "$load5" || err=1
 		[[ -z "$load15" ]] || load_test "$m15" "$load15" || err=1
 	}
+
+	[[ -z "$pgrep" ]] || { pgrep $pgrep >/dev/null && err=1; }
 
 	[[ $err -ne 0 ]] || break
 	sleep $interval
