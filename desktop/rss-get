@@ -246,7 +246,7 @@ def main(args=None):
 
 	sp.run(
 		[ 'aria2c', '-s8', '-x8', '-k', '2M', '--console-log-level=warn',
-			'--input-file', '-', '--user-agent', conf.feed_user_agent ],
+			'--file-allocation=none', '--input-file', '-', '--user-agent', conf.feed_user_agent ],
 		input=file_list.encode(), check=True )
 
 if __name__ == '__main__': sys.exit(main())
