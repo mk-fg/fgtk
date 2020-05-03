@@ -1,0 +1,286 @@
+#!/usr/bin/env python
+
+import itertools as it, functools as ft
+import pathlib as pl, collections as cs, dbm.gnu as gdbm
+import os, sys, re, math, configparser, tempfile, time
+
+
+conf_path_default = '~/.filetag.ini'
+conf_example = '''
+;;;; This is an example INI file with specific sections/options.
+;; For format description and examples, see:
+;;   https://docs.python.org/3/library/configparser.html#supported-ini-file-structure
+;; Inline comments are not allowed. Multiline values are same as multiple same-key values.
+
+
+[paths]
+
+;;;; scan - paths to process files in, assigning tags to them.
+;; Paths can contain spaces. Symlinks are not followed.
+;; Can be specified multiple times for multiple paths.
+;; All files outside of these will be removed from db on update.
+;; Use separate configs/databases for multiple sets of scanned paths.
+scan = ~/src
+scan = ~/dev
+
+;;;; db - tag database path to use.
+db = ~/.filetag.db
+
+
+[filter-regexps]
+;; Regexps in python "re" module format to match scanned paths to include/skip.
+;; Directives can be used to selectively
+;;  include/exclude files and skip scanning directories entirely.
+;; All matched paths start with "/", which is scanned directory (from "scan=" above).
+;; "include" directives override "skip" ones.
+
+;; Scan this specific file from any ".git" directory.
+include = /\.git/config$
+
+;; And skip everything else in ".git" dirs
+;; Note "." to match files in a dir, so that dir itself won't be skipped.
+skip = /\.git/.
+
+;; Skip these directories entirely - they won't be recursed into.
+;; Slash at the end is the important part, "/\.hg/
+skip = /\.(hg|bzr|redo)/
+
+;; Skip files with specific extension(s).
+;; Note that this won't match directories (no trailing "/").
+skip = \.py[co]$
+
+;; Skip specific directories in the root of scanned path(s).
+skip = ^/(tmp|games)/
+
+;; Example of using python regexp flags (i - case-insensitive match).
+skip = (?i)/\.?svn(/|ignore)$
+
+;; This will match both files and dirs starting with "venv-" anywhere
+skip = /venv-
+'''
+
+
+# DB key namespaces (stored in first byte):
+#  - 0 - metadata var -> val
+#  - 1 - path index -> path
+#  - 2 - tag bit -> path indexes
+
+tag_map = dict(
+	# XXX: only code files for now
+	code_ext = {
+		'py|tac': 'py', 'go': 'go', 'c(c|pp|xx|\+\+)?|hh?|lex|y(acc)?': 'c',
+		'js(o?n(\.txt)?)?|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
+		'unit|service|taget|mount|desktop|rules': 'conf',
+		'[sx]?htm(l[45]?)?|css|less|jade': 'html', 'x[ms]l|xsd|dbk': 'xml',
+		'kml': 'kml', 'sgml|dtd': 'sgml',
+		'patch|diff|pat': 'diff', '(ba|z|k|c|fi)?sh|env|exheres-\d+|ebuild|initd?': 'sh', 'sql': 'sql',
+		'p(l|m|erl|od)|al': 'perl', 'ph(p[s45t]?|tml)': 'php',
+		'[cej]l|li?sp|rkt|sc[mh]|stk|ss': 'lisp', 'ml': 'ocaml',
+		'hs': 'haskell', 'rb': 'ruby', 'lua': 'lua', 'awk': 'awk', 'tcl': 'tcl', 'java': 'java',
+		'mk?d|markdown': 'md', 're?st': 'rst', 'te?xt': 'txt', 'log': 'log',
+		'rdf': 'rdf', 'xul': 'xul', 'po': 'po', 'csv': 'csv',
+		'f(or)?': 'fortran', 'p(as)?': 'pascal', 'dpr': 'delphi', 'ad[abs]|ad[bs].dg': 'ada',
+		'ya?ml': 'yaml', 'jso?n(\.txt)?': 'json', 'do': 'redo', 'm[k4c]|a[cm]|cmake': 'make' },
+	code_ext_suffixes = r'\.(in|tpl|(src-)?bak'
+		'|backup|default|example|sample|dist|\w+-new)|_t',
+	code_shebang = '(?i)^#!((/usr/bin/env)?\s+)?(/.*/)?(?P<bin>\S+)',
+	code_bin = {
+		'lua[-\d.]': 'lua', 'php\d?': 'php',
+		'j?ruby(\d\.\d)?|rbx': 'ruby',
+		'[jp]ython(\d(\.\d+)?)?': 'py',
+		'[gnm]?awk': 'awk',
+		'(mini)?perl(\d(\.\d+)?)?': 'perl',
+		'wishx?|tcl(sh)?': 'tcl',
+		'scm|guile|clisp|racket|(sb)?cl|emacs': 'lisp',
+		'([bdo]?a|t?c|k|z)?sh': 'sh' },
+	code_path = {
+		'/(Makefile|CMakeLists.txt|Imakefile|makepp|configure)$': 'make',
+		'rakefile': 'ruby', '/config$': 'conf', '/zsh/_[^/]+$': 'sh', 'patch': 'diff' } )
+
+
+class FileTreeTagger:
+
+	def __init__(self, db, tag_map, res_inc, res_skip, verbose=False):
+		self.db, self.res_inc, self.res_skip, self.verbose = db, res_inc, res_skip, verbose
+
+	def __enter__(self):
+		self.path_idx_iter = iter(range(1, 2**32))
+		self.tags = self.tag_map_compile(tag_map)
+		self.db[b'\0tag_bits'] = b'\0'.join(t.encode() for t in self.tags.bits.keys())
+		return self
+
+	def __exit__(self, *err): pass
+
+	@staticmethod
+	def tag_map_compile(tag_map):
+		tag_map, tag_set = tag_map.copy(), set()
+		tag_ext_suffixes = tag_map.pop('code_ext_suffixes')
+		for k, v in tag_map.items():
+			if isinstance(v, str): tag_map[k] = re.compile(v)
+			elif isinstance(v, dict):
+				taggers = tag_map[k] = list()
+				for rx, tag in v.items():
+					if k == 'code_ext': rx = rf'\.({rx})({tag_ext_suffixes})?$'
+					elif k == 'code_bin': rx = f'^{rx}$'
+					tag_set.add(tag)
+					taggers.append((re.compile(rx), tag))
+		tag_map['bits'] = dict((tag, n) for n,tag in enumerate(sorted(tag_set)))
+		tag_map['bits_len'] = math.ceil(len(tag_map['bits']).bit_length() / 8)
+		return type('TagMap', (object,), tag_map)
+
+	def process(self, p):
+		p, ts0 = str(p.resolve()), time.monotonic()
+		p_len = len(p)
+		for root, dirs, files in os.walk(p):
+			if not root.startswith(p): raise RuntimeError(p, root)
+			fn_root, root = root[p_len:] + '/', pl.Path(root)
+			for n, fn in enumerate(dirs):
+				fn = fn_root + fn + '/'
+				if self.path_filter_check(fn): continue
+				del dirs[n] # will skip going into dir
+			for fn in files:
+				fn, p_file = fn_root + fn, root / fn
+				if not self.path_filter_check(fn): continue
+				tagset = self.tag_file(p_file)
+				if self.verbose:
+					print(f'{time.monotonic()-ts0:.3f} {len(tagset)} {fn.lstrip("/")}')
+
+	def path_filter_check(self, fn):
+		if any(rx.search(fn) for rx in self.res_inc): return True
+		if any(rx.search(fn) for rx in self.res_skip): return False
+		return True
+
+	def tag_file(self, p):
+		## Build tagset for file
+		p_str, code_tagset = str(p), set()
+		for rx, tag in self.tags.code_ext:
+			if rx.search(p_str): code_tagset.add(tag)
+		if not code_tagset:
+			try:
+				with p.open() as src: shebang = src.readline().strip()
+			except (OSError, UnicodeDecodeError): shebang = ''
+			if (m := self.tags.code_shebang.search(shebang)):
+				bin_name = m.group('bin')
+				for rx, tag in self.tags.code_bin:
+					if rx.search(bin_name): code_tagset.add(tag)
+		if not code_tagset:
+			for rx, tag in self.tags.code_path:
+				if rx.search(p_str): code_tagset.add(tag)
+		tagset = code_tagset # no other tags for now
+
+		if tagset:
+			p_idx = b'\1' + next(self.path_idx_iter).to_bytes(4, 'big')
+			self.db[p_idx] = p_str.encode()
+			for tag in tagset:
+				tag_bit = b'\2' + self.tags.bits[tag].to_bytes(self.tags.bits_len, 'big')
+				self.db[tag_bit] = self.db.get(tag_bit, b'') + p_idx
+
+		return tagset
+
+
+def lookup_paths(db, tagsets):
+	tag_bits = dict((tag, n) for n, tag in enumerate(db[b'\0tag_bits'].decode().split('\0')))
+	tag_bits_len = math.ceil(len(tag_bits).bit_length() / 8)
+
+	tags_all = set()
+	for ts in tagsets: tags_all.update(ts)
+	for n, ts in enumerate(tagsets):
+		mask = 0
+		for tag in ts: mask |= 1 << tag_bits[tag]
+		tagsets[n] = ts, mask # pre-calc bitmask for each ts
+
+	path_masks = cs.defaultdict(int)
+	for tag in tags_all:
+		tag_bit = tag_bits[tag]
+		paths = db.get(b'\2' + tag_bit.to_bytes(tag_bits_len, 'big'))
+		if not paths: continue
+		for p_idx in (paths[n:n+5] for n in range(0, len(paths), 5)):
+			path_masks[p_idx] |= 1 << tag_bits[tag]
+
+	for (p_idx, p_mask), (ts, ts_mask) in it.product(path_masks.items(), tagsets):
+		if p_mask & ts_mask != ts_mask: continue
+		yield db[p_idx].decode()
+
+
+class ConfDict(cs.UserDict):
+	def __setitem__(self, k, v):
+		if isinstance(v, list) and k in self: self[k].extend(v)
+		else: super().__setitem__(k, v)
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
+		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
+
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] [command] [tags | paths]',
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Query or update file tagging database.')
+	parser.add_argument('tag', nargs='*', help=dd('''
+		For default tag-lookup mode - list files for specified tag(s).
+		"+" will combine tags via "and" logic, spaces and multiple args are "or".
+		Use DNF logic calculator to convert complex human-readable expressions
+			to simplified ones for use here, for example via
+			https://www.dcode.fr/boolean-expressions-calculator'''))
+	parser.add_argument('-c', '--conf',
+		action='append', metavar='path', default=list(),
+		help=dd(f'''
+			Path to configuration file, specifying db path and paths to process.
+			Use "--conf help" to print example config with all supported options.
+			Can be specified multiple times, with values in later files overriding earlier ones.
+			Default config path, if none are specified: {conf_path_default}'''))
+
+	group = parser.add_argument_group('Update tags mode')
+	group.add_argument('-u', '--update', action='store_true',
+		help='Update tag database for specified path argument(s).')
+	group.add_argument('-v', '--verbose', action='store_true',
+		help='Print all files being processed and precise timestamps for benchmarking.')
+
+	group = parser.add_argument_group('Query/lookup options (ignored in -u/--update mode)')
+	group.add_argument('-e', '--existing', action='store_true',
+		help='Only print paths that are currently accessible for stat().')
+	group.add_argument('-0', '-z', '--print0', action='store_true',
+		help='Output NUL-separated (\\x00 byte) paths instead of newline-separated.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if 'help' in opts.conf: return print(conf_example.strip())
+
+	conf = configparser.ConfigParser(strict=False, dict_type=ConfDict, interpolation=None)
+	conf.read(list(pl.Path(p).expanduser() for p in (opts.conf or [conf_path_default])))
+	conf_paths = conf['paths']
+	try: conf_filter = conf['filter-regexps']
+	except KeyError: conf_filter = dict()
+	conf_list, conf_value = lambda v: v.split('\n'), lambda v: conf_list(v)[-1]
+	p_db = pl.Path(conf_value(conf_paths['db'])).expanduser()
+
+	if not opts.update:
+		tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tag).split())
+		print_func = ft.partial(print, end='\n' if not opts.print0 else '\0')
+		with gdbm.open(str(p_db), 'r') as db:
+			for p_str in lookup_paths(db, tagsets):
+				if opts.existing and not os.path.exists(p_str): continue
+				print_func(p_str)
+
+	else:
+		p_scan_list = (pl.Path(p).expanduser() for p in conf_list(conf_paths['scan']))
+		if not p_scan_list: parser.error('No paths to scan specified in config file')
+		res_inc, res_skip = (
+			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
+			for k in ['include', 'skip'] )
+		with \
+				tempfile.NamedTemporaryFile(
+					dir=p_db.parent, prefix=p_db.name+'.', delete=False ) as p_db_tmp, \
+				gdbm.open(p_db_tmp.name, 'nf', 0o600) as db:
+			p_db_tmp = pl.Path(p_db_tmp.name)
+			try:
+				with FileTreeTagger( db, tag_map,
+						res_inc, res_skip, verbose=opts.verbose ) as tagger:
+					for p in p_scan_list: tagger.process(p)
+			except:
+				p_db_tmp.unlink(missing_ok=True)
+				raise
+			else: p_db_tmp.rename(p_db)
+
+if __name__ == '__main__': sys.exit(main())

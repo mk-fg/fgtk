@@ -3068,6 +3068,30 @@ L\*a\*b\*, requires python3/gtk3 to run.
 
 .. _GTK3 CSS color specs: https://developer.gnome.org/gtk3/stable/chap-css-overview.html
 
+filetag
+'''''''
+
+Command-line python script to scan files for tagging based on paths or filename
+extensions (e.g. tag \*.py with "py"), script shebangs or magic bytes (binary header).
+
+Simplier and more performant replacement for earlier codetag_ tool, using gdbm
+db for more efficient tag storage and lookups instead of tmsu_.
+
+Allows for fast "sum of products" DNF queries, i.e. fairly arbitrary tag
+combinations, just convert them to DNF from whatever algebraic notation
+(e.g. via `dcode.fr calculator`_).
+
+List of tags and tagging criteria are hardcoded, currently mostly code-oriented,
+but should be trivial to expand with additional regexps for pretty much anything.
+
+My main use-case is to quickly lookup and grep all python files on the machine,
+to find where I already implemented something familiar just couple days ago and
+forgot already :)
+
+.. _codetag: https://github.com/mk-fg/codetag
+.. _tmsu: https://tmsu.org/
+.. _dcode.fr calculator: https://www.dcode.fr/boolean-expressions-calculator
+
 
 
 [vm] VM scripts
