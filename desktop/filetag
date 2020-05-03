@@ -128,7 +128,7 @@ class FileTreeTagger:
 		tag_map['bits_len'] = math.ceil(len(tag_map['bits']).bit_length() / 8)
 		return type('TagMap', (object,), tag_map)
 
-	def process(self, p):
+	def process_path(self, p):
 		p, ts0 = str(p.resolve()), time.monotonic()
 		p_len = len(p)
 		for root, dirs, files in os.walk(p):
@@ -214,10 +214,10 @@ def main(args=None):
 		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
 
 	parser = argparse.ArgumentParser(
-		usage='%(prog)s [options] [command] [tags | paths]',
+		usage='%(prog)s [options] [-u|--update] [ tags... ]',
 		formatter_class=argparse.RawTextHelpFormatter,
 		description='Query or update file tagging database.')
-	parser.add_argument('tag', nargs='*', help=dd('''
+	parser.add_argument('tags', nargs='*', help=dd('''
 		For default tag-lookup mode - list files for specified tag(s).
 		"+" will combine tags via "and" logic, spaces and multiple args are "or".
 		Use DNF logic calculator to convert complex human-readable expressions
@@ -226,18 +226,18 @@ def main(args=None):
 	parser.add_argument('-c', '--conf',
 		action='append', metavar='path', default=list(),
 		help=dd(f'''
-			Path to configuration file, specifying db path and paths to process.
+			Path to configuration file, specifying db file and paths to process.
 			Use "--conf help" to print example config with all supported options.
 			Can be specified multiple times, with values in later files overriding earlier ones.
 			Default config path, if none are specified: {conf_path_default}'''))
 
 	group = parser.add_argument_group('Update tags mode')
 	group.add_argument('-u', '--update', action='store_true',
-		help='Update tag database for specified path argument(s).')
+		help='Build/update tag database for all configured paths.')
 	group.add_argument('-v', '--verbose', action='store_true',
 		help='Print all files being processed and precise timestamps for benchmarking.')
 
-	group = parser.add_argument_group('Query/lookup options (ignored in -u/--update mode)')
+	group = parser.add_argument_group('Query/lookup options')
 	group.add_argument('-e', '--existing', action='store_true',
 		help='Only print paths that are currently accessible for stat().')
 	group.add_argument('-0', '-z', '--print0', action='store_true',
@@ -252,20 +252,13 @@ def main(args=None):
 	conf_paths = conf['paths']
 	try: conf_filter = conf['filter-regexps']
 	except KeyError: conf_filter = dict()
-	conf_list, conf_value = lambda v: v.split('\n'), lambda v: conf_list(v)[-1]
+	conf_list, conf_value = lambda v: re.split(r'\n+', v), lambda v: conf_list(v)[-1]
 	p_db = pl.Path(conf_value(conf_paths['db'])).expanduser()
 
-	if not opts.update:
-		tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tag).split())
-		print_func = ft.partial(print, end='\n' if not opts.print0 else '\0')
-		with gdbm.open(str(p_db), 'r') as db:
-			for p_str in lookup_paths(db, tagsets):
-				if opts.existing and not os.path.exists(p_str): continue
-				print_func(p_str)
-
-	else:
+	if opts.update:
 		p_scan_list = (pl.Path(p).expanduser() for p in conf_list(conf_paths['scan']))
-		if not p_scan_list: parser.error('No paths to scan specified in config file')
+		if not p_scan_list: parser.error('No paths to scan found in config file')
+		if not p_scan_list: parser.error('No paths to scan found in config file')
 		res_inc, res_skip = (
 			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
 			for k in ['include', 'skip'] )
@@ -277,10 +270,18 @@ def main(args=None):
 			try:
 				with FileTreeTagger( db, tag_map,
 						res_inc, res_skip, verbose=opts.verbose ) as tagger:
-					for p in p_scan_list: tagger.process(p)
+					for p in p_scan_list: tagger.process_path(p)
 			except:
 				p_db_tmp.unlink(missing_ok=True)
 				raise
 			else: p_db_tmp.rename(p_db)
+
+	if opts.tags:
+		tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tags).split())
+		print_func = ft.partial(print, end='\n' if not opts.print0 else '\0')
+		with gdbm.open(str(p_db), 'r') as db:
+			for p_str in lookup_paths(db, tagsets):
+				if opts.existing and not os.path.exists(p_str): continue
+				print_func(p_str)
 
 if __name__ == '__main__': sys.exit(main())
