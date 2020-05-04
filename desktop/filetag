@@ -65,23 +65,36 @@ skip = /venv-
 #  - 2 - tag bit -> path indexes
 
 tag_map = dict(
-	# XXX: only code files for now
+	# Useful binary formats
+	bin_ext = {
+		# Images
+		'jpe?g': 'image jpg', 'png': 'image png', 'webp': 'image webp',
+		'gif': 'image gif', 'svgz?': 'image svg', 'ico': 'image ico',
+		'xpm': 'image xpm', 'bmp': 'image bmp', 'tiff': 'image tiff', 'tga': 'image tga',
+		'xcf': 'image xcf', 'xcf': 'image psd',
+		# Crypto
+		'ghg': 'crypt ghg', 'gpg': 'crypt gpg',
+		# Fonts
+		'ttf|woff2?|eot|otf|pcf': 'font' },
+	bin_ext_suff = r'(\.(bak|old|tmp|\d+))*',
+
+	# Code formats
 	code_ext = {
-		'py|tac': 'py', 'go': 'go', 'c(c|pp|xx|\+\+)?|hh?|lex|y(acc)?': 'c',
-		'js(o?n(\.txt)?)?|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
+		'py|tac': 'py', 'go': 'go', r'c(c|pp|xx|\+\+)?|hh?|lex|y(acc)?': 'c',
+		r'js(o?n(\.txt)?)?|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
 		'unit|service|taget|mount|desktop|rules': 'conf',
 		'[sx]?htm(l[45]?)?|css|less|jade': 'html', 'x[ms]l|xsd|dbk': 'xml',
 		'kml': 'kml', 'sgml|dtd': 'sgml',
-		'patch|diff|pat': 'diff', '(ba|z|k|c|fi)?sh|env|exheres-\d+|ebuild|initd?': 'sh', 'sql': 'sql',
-		'p(l|m|erl|od)|al': 'perl', 'ph(p[s45t]?|tml)': 'php',
-		'[cej]l|li?sp|rkt|sc[mh]|stk|ss': 'lisp', 'ml': 'ocaml',
+		'patch|diff|pat': 'diff', r'(ba|z|k|c|fi)?sh|env|exheres-\d+|ebuild|initd?': 'sh',
+		'sql': 'sql', 'p(l|m|erl|od)|al': 'perl', 'ph(p[s45t]?|tml)': 'php',
+		'[cej]l|li?sp|rkt|sc[mh]|stk|ss': 'lisp', 'el(\.gz)?': 'el', 'ml': 'ml ocaml',
 		'hs': 'haskell', 'rb': 'ruby', 'lua': 'lua', 'awk': 'awk', 'tcl': 'tcl', 'java': 'java',
 		'mk?d|markdown': 'md', 're?st': 'rst', 'te?xt': 'txt', 'log': 'log',
 		'rdf': 'rdf', 'xul': 'xul', 'po': 'po', 'csv': 'csv',
 		'f(or)?': 'fortran', 'p(as)?': 'pascal', 'dpr': 'delphi', 'ad[abs]|ad[bs].dg': 'ada',
-		'ya?ml': 'yaml', 'jso?n(\.txt)?': 'json', 'do': 'redo', 'm[k4c]|a[cm]|cmake': 'make' },
-	code_ext_suffixes = r'\.(in|tpl|(src-)?bak'
-		'|backup|default|example|sample|dist|\w+-new)|_t',
+		'ya?ml': 'yaml', r'jso?n(\.txt)?': 'json', 'do': 'redo', 'm[k4c]|a[cm]|cmake': 'make' },
+	code_ext_suff = r'(\.(in|tpl|(src-)?bak|old|tmp|\d+'
+		'|backup|default|example|sample|dist|\w+-new)|_t)*',
 	code_shebang = '(?i)^#!((/usr/bin/env)?\s+)?(/.*/)?(?P<bin>\S+)',
 	code_bin = {
 		'lua[-\d.]': 'lua', 'php\d?': 'php',
@@ -113,16 +126,19 @@ class FileTreeTagger:
 	@staticmethod
 	def tag_map_compile(tag_map):
 		tag_map, tag_set = tag_map.copy(), set()
-		tag_ext_suffixes = tag_map.pop('code_ext_suffixes')
+		code_ext_suff, bin_ext_suff = (
+			tag_map.pop(k) for k in ['code_ext_suff', 'bin_ext_suff'] )
 		for k, v in tag_map.items():
 			if isinstance(v, str): tag_map[k] = re.compile(v)
 			elif isinstance(v, dict):
 				taggers = tag_map[k] = list()
-				for rx, tag in v.items():
-					if k == 'code_ext': rx = rf'\.({rx})({tag_ext_suffixes})?$'
-					elif k == 'code_bin': rx = f'^{rx}$'
-					tag_set.add(tag)
-					taggers.append((re.compile(rx), tag))
+				for rx, tags in v.items():
+					if k == 'code_ext': rx = rf'\.({rx}){code_ext_suff}$'
+					elif k == 'bin_ext': rx = rf'(?i)\.({rx}){bin_ext_suff}$'
+					elif k == 'code_bin': rx = rf'^{rx}$'
+					tags = tags.split()
+					tag_set.update(tags)
+					taggers.append((re.compile(rx), tags))
 		tag_map['bits'] = dict((tag, n) for n,tag in enumerate(sorted(tag_set)))
 		tag_map['bits_len'] = math.ceil(len(tag_map['bits']).bit_length() / 8)
 		return type('TagMap', (object,), tag_map)
@@ -151,22 +167,24 @@ class FileTreeTagger:
 
 	def tag_file(self, p):
 		## Build tagset for file
-		p_str, code_tagset = str(p), set()
-		for rx, tag in self.tags.code_ext:
-			if rx.search(p_str): code_tagset.add(tag)
-		if not code_tagset:
+		p_str, tagset = str(p), set()
+		for rx, tags in self.tags.code_ext: # code file extension
+			if rx.search(p_str): tagset.update(tags)
+		if not tagset:
+			for rx, tags in self.tags.bin_ext: # bin file extension
+				if rx.search(p_str): tagset.update(tags)
+		if not tagset: # code shebang
 			try:
 				with p.open('rb', 256) as src:
 					shebang = src.readline(200).decode().strip()
 			except (OSError, UnicodeDecodeError): shebang = ''
 			if (m := self.tags.code_shebang.search(shebang)):
 				bin_name = m.group('bin')
-				for rx, tag in self.tags.code_bin:
-					if rx.search(bin_name): code_tagset.add(tag)
-		if not code_tagset:
-			for rx, tag in self.tags.code_path:
-				if rx.search(p_str): code_tagset.add(tag)
-		tagset = code_tagset # no other tags for now
+				for rx, tags in self.tags.code_bin:
+					if rx.search(bin_name): tagset.update(tags)
+		if not tagset: # code filenames/paths
+			for rx, tags in self.tags.code_path:
+				if rx.search(p_str): tagset.update(tags)
 
 		if tagset:
 			p_idx = b'\1' + next(self.path_idx_iter).to_bytes(4, 'big')
