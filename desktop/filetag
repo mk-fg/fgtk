@@ -258,7 +258,6 @@ def main(args=None):
 	if opts.update:
 		p_scan_list = (pl.Path(p).expanduser() for p in conf_list(conf_paths['scan']))
 		if not p_scan_list: parser.error('No paths to scan found in config file')
-		if not p_scan_list: parser.error('No paths to scan found in config file')
 		res_inc, res_skip = (
 			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
 			for k in ['include', 'skip'] )
