@@ -3,6 +3,8 @@
 import pathlib as pl, collections as cs, dbm.gnu as gdbm
 import os, sys, re, math, configparser, tempfile, time
 
+p_err = lambda msg,*a,**k: print(msg, *a, **k, file=sys.stderr, flush=True)
+
 
 conf_path_default = '~/.filetag.ini'
 conf_example = '''
@@ -201,10 +203,14 @@ def lookup_paths(db, tagsets):
 	tag_bits_len = math.ceil(len(tag_bits).bit_length() / 8)
 
 	tags_all = set()
-	for ts in tagsets: tags_all.update(ts)
 	for n, ts in enumerate(tagsets):
 		mask = 0
-		for tag in ts: mask |= 1 << tag_bits[tag]
+		for tag in ts:
+			try: mask |= 1 << tag_bits[tag]
+			except KeyError:
+				p_err(f'--- NOTE: dropping unknown tag from query - {tag!r}')
+				continue
+			tags_all.add(tag)
 		tagsets[n] = ts, mask # pre-calc bitmask for each ts
 
 	path_masks = cs.defaultdict(int)
