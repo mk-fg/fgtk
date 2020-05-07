@@ -1923,6 +1923,35 @@ Example snippet for sending update packets::
 
 .. _nsd: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
+dns-test-daemon
+'''''''''''''''
+
+Python3 + `async_dns`_ authoritative DNS resolver daemon to return hashed-name
+results for testing DNS resolver operation.
+
+For example::
+
+  % ./dns-test-daemon -k hash-key -b 127.0.0.1:5533 &
+  % dig -p5533 @127.0.0.1 aaaa test.com
+  ...
+  test.com. 300 IN AAAA eb5:7823:f2d2:2ed2:ba27:dd79:a33e:f762
+  ...
+
+Here, for AAAA "test.com" query, script returned first 16 bytes of
+"blake2s(test.com, key=hash-key, person=dnstd.1)" hash digest as a reponse
+(converted to address via inet_ntop).
+
+Its purpose is to be run as an authoritative resolver for some stub zone
+forwarded to it, e.g. "\*.test.mydomain.com", and then be able to make sure that
+any local DNS resolver works by querying e.g. "12345.test.mydomain.com" and
+checking that resulting address hash matches expected value (dependent only on
+queried name, hash key and that hardcoded person= string).
+
+If any local DNS resolver in question mangles or fails to work in any way,
+address either won't match expected hash or won't be returned at all.
+
+.. _async_dns: https://github.com/gera2ld/async_dns
+
 nginx-access-log-stat-block
 '''''''''''''''''''''''''''
 
