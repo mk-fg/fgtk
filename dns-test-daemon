@@ -96,8 +96,70 @@ async def bind_resolver(resolver, host, port):
 			' {} port {} ', *(transport.get_extra_info('sockname')[:2]) )
 
 
-def main(args=None):
+class HashTestChecker:
+
 	name_noise_len = 12
+
+	def __init__( self, name,
+			af=socket.AF_INET, hash_key=b'',
+			match_any=False, ping_host=None ):
+		import ipaddress, string, random
+		def _name_noise_func():
+			alphabet = string.ascii_lowercase + string.digits
+			return ''.join(random.choice(alphabet) for n in range(self.name_noise_len))
+		self.ip_addr, self.name_noise = ipaddress.ip_address, _name_noise_func
+		self.name, self.af, self.hash_key = name, af, hash_key
+		self.match_any, self.ping_host = match_any, ping_host
+		self.log_check = get_logger(f'dnstd.check.{_name_noise_func()[:4]}')
+
+	def check(self):
+		fqdn = self.name
+		while '@' in fqdn: fqdn = fqdn.replace('@', self.name_noise(), 1)
+		fqdn_addr = self.ip_addr(
+			HashTestResolver.hash_fqdn(fqdn, self.af, self.hash_key) )
+		self.log_check.debug('Expected address for {!r} [af={}]: {}', fqdn, self.af, fqdn_addr)
+		try: addr_list = socket.getaddrinfo(fqdn, 0, self.af)
+		except OSError: addr_list = list()
+		addr_list = set(self.ip_addr(addr[4][0]) for addr in addr_list)
+		match = list(addr == fqdn_addr for addr in addr_list)
+		match = bool(match) and (any(match) if self.match_any else all(match))
+		self.log_check.debug( 'Match result = {}, address list: {}',
+			str(match).lower(), ', '.join(sorted(map(str, addr_list))) )
+		if self.ping_host and not match:
+			match = not self.check_ping()
+			if match:
+				self.log_check.debug( 'Match failure'
+					' discarded due to ping failure (host {!r}', self.ping_host )
+		return match
+
+	def check_ping(self):
+		import subprocess as sp
+		proc = sp.run(['fping', '-q', self.ping_host])
+		return proc.returncode == 0
+
+	def run(self, interval, retries, timeout):
+		import time
+		while True:
+			## Normal routine checks
+			if self.check():
+				time.sleep(interval)
+				continue
+			## retries + timeout recovery-check
+			recover, delay = False, timeout / retries
+			for n in range(1, retries+1):
+				log.debug( 'Retry after failed check [{} / {}]:'
+					' delay={:.1f} recover={}', n, retries, delay, recover )
+				time.sleep(delay)
+				if self.check():
+					if not recover: recover = n
+				elif recover: # flapping state is an instant fail
+					recover = False
+					break
+			if not recover: break
+			else: log.debug('Ignoring transient DNS failure, recovered on retry={}', recover)
+
+
+def main(args=None):
 
 	import argparse, textwrap
 	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
@@ -120,19 +182,28 @@ def main(args=None):
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	group = parser.add_argument_group('Client mode options')
-	group.add_argument('name', nargs='?', help=dd(f'''
-			DNS name to query via system libc resolver, checking reponse
-				address against expected hash value and exit with error code on mismatch.
-			Name can include optional @ character(s) to be
-				replaced by a randomized alphanumeric segment ({name_noise_len} chars).
-			If this name is specified, script runs in a simple
-				client/check mode instead of starting a persistent daemon.'''))
+	group.add_argument('name', nargs='?', help=dd('''
+		DNS name to query via system libc resolver, checking reponse
+			address against expected hash value and exit with error code on mismatch.
+		Name can include optional @ character(s) to be
+			replaced by a randomized alphanumeric segment ({n} chars).
+		If this name is specified, script runs in a simple
+			client/check mode instead of starting a persistent daemon.'''\
+		.format(n=HashTestChecker.name_noise_len)))
 	group.add_argument('-q', '--query-type', metavar='A/AAAA', default='A',
 		help='DNS query type to use in client mode - either A or AAAA, case-insensitive.')
 	group.add_argument('--any', action='store_true',
 		help=dd('''
 			Treat any matching address among ones returned by getaddrinfo() as success.
 			Default is to require all returned addresses to match, if there are >1.'''))
+	group.add_argument('-c', '--continuous', metavar='interval:retries:timeout', help=dd(f'''
+		Run DNS checks with specified interval (seconds) until they start failing.
+		Upon first failure, specified number of retries is made within timeout seconds,
+			and unless only last retries are successful, exit with non-zero error code.
+		This mode can be useful to run from e.g. systemd unit, with some on-failure action.'''))
+	group.add_argument('-p', '--ping', metavar='host', help=dd(f'''
+		Ping specified host via "fping" tool after failed dns check,
+			and don't fail if ping fails as well, treating it as an unrelated network failure.'''))
 
 	group = parser.add_argument_group('Daemon mode options')
 	group.add_argument('-b', '--bind',
@@ -141,7 +212,7 @@ def main(args=None):
 			IPv4/IPv6 address and optional TCP+UDP port to bind daemon to.
 			Examples: :53, 1.2.3.4:5533, 127.0.0.1, [::1]:55, fd00::1, localhost:5555
 			Default: %(default)s'''))
-	group.add_argument('-c', '--cache-ttl',
+	group.add_argument('--cache-ttl',
 		metavar='n', type=int, default=300,
 		help='Cache TTL value (seconds) in all returned responses. Default: %(default)s')
 
@@ -149,39 +220,28 @@ def main(args=None):
 
 	log_init('dnstd', opts.debug)
 	logging.getLogger('async_dns.core').handlers.clear() # see async_dns.core.logger
-
-	if opts.name:
-		if opts.query_type.lower() not in ['a', 'aaaa']:
-			parser.error(f'Invalid -q/--query-type value - {opts.query_type}, must be A or AAAA')
-		import ipaddress, string, random
-		def _noise(n):
-			s, alphabet = '', string.ascii_lowercase + string.digits
-			for c in range(n): s += random.choice(alphabet)
-			return s
-		fqdn = opts.name
-		while '@' in fqdn: fqdn = fqdn.replace('@', _noise(name_noise_len), 1)
-		family = socket.AF_INET if opts.query_type.lower() == 'a' else socket.AF_INET6
-		fqdn_addr = ipaddress.ip_address(
-			HashTestResolver.hash_fqdn(fqdn, family, opts.hash_key.encode()) )
-		log.debug('Expected address for {!r} [{}]: {}', fqdn, opts.query_type.upper(), fqdn_addr)
-		try: addr_list = socket.getaddrinfo(fqdn, 0, family)
-		except OSError: addr_list = list()
-		addr_list = set(ipaddress.ip_address(addr[4][0]) for addr in addr_list)
-		match = list(addr == fqdn_addr for addr in addr_list)
-		match = bool(match) and (any(match) if opts.any else all(match))
-		log.debug( 'Match result = {}, in address list: {}',
-			str(match).lower(), ', '.join(sorted(map(str, addr_list))) )
-		return 0 if match else 53
-
-	elif not async_dns:
-		parser.error('Failed to import async_dns module, which is required to run in daemon mode')
-
 	for sig in 'int term'.upper().split():
 		signal.signal(getattr(signal, f'SIG{sig}'), lambda sig,frm: sys.exit(0))
 
+	### DNS client mode
+	if opts.name:
+		if opts.query_type.lower() not in ['a', 'aaaa']:
+			parser.error(f'Invalid -q/--query-type value - {opts.query_type}, must be A or AAAA')
+		af = socket.AF_INET if opts.query_type.lower() == 'a' else socket.AF_INET6
+		checker = HashTestChecker(
+			opts.name, af, hash_key=opts.hash_key.encode(),
+			match_any=opts.any, ping_host=opts.ping )
+		if not opts.continuous: return 0 if checker.check() else 53
+		else:
+			interval, retries, timeout = map(float, opts.continuous.split(':', 2))
+			checker.run(interval, round(retries), timeout) # not supposed to finish
+			return 53
+
+	### DNS daemon mode
+	if not async_dns:
+		parser.error('Failed to import async_dns module, which is required to run in daemon mode')
 	bind_addr = adns_core.Address(opts.bind, allow_domain=True)
 	resolver = HashTestResolver(opts.hash_key, opts.cache_ttl)
-
 	loop = asyncio.get_event_loop()
 	loop.run_until_complete(bind_resolver(resolver, bind_addr.host, bind_addr.port))
 	log.debug('Starting resolver eventloop...')

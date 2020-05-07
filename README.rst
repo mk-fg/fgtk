@@ -1958,6 +1958,25 @@ value in any way.
 
 Does not import/use or require asyncio and async_dns modules in client mode.
 
+Its -c/--continuous mode can be used together with systemd to kick/restart
+unreliable resolver daemon (e.g. unbound) when it hangs or fails in other ways::
+
+  [Service]
+  Type=exec
+  User=dnstd
+  ExecStart=dns-test-daemon -c 150:6:100 -p 1.1.1.1 @.test.mydomain.com
+  ExecStopPost=+bash -c '[[ "$$SERVICE_RESULT" = success ]] || systemctl try-restart unbound'
+
+  # Using RestartForceExitStatus=53 should prevent unbound restarts on script bugs
+  RestartForceExitStatus=53
+  RestartSec=5min
+
+  [Install]
+  WantedBy=multi-user.service
+
+Note ``-p 1.1.1.1`` ping-option there to avoid restarting the daemon if whole
+network is down, which runs "fping" to check that on detected DNS failures.
+
 .. _async_dns: https://github.com/gera2ld/async_dns
 
 nginx-access-log-stat-block
