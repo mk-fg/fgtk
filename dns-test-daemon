@@ -97,6 +97,8 @@ async def bind_resolver(resolver, host, port):
 
 
 def main(args=None):
+	name_noise_len = 12
+
 	import argparse, textwrap
 	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 	fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
@@ -118,9 +120,11 @@ def main(args=None):
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	group = parser.add_argument_group('Client mode options')
-	group.add_argument('name', nargs='?', help=dd('''
+	group.add_argument('name', nargs='?', help=dd(f'''
 			DNS name to query via system libc resolver, checking reponse
 				address against expected hash value and exit with error code on mismatch.
+			Name can include optional @ character(s) to be
+				replaced by a randomized alphanumeric segment ({name_noise_len} chars).
 			If this name is specified, script runs in a simple
 				client/check mode instead of starting a persistent daemon.'''))
 	group.add_argument('-q', '--query-type', metavar='A/AAAA', default='A',
@@ -149,12 +153,18 @@ def main(args=None):
 	if opts.name:
 		if opts.query_type.lower() not in ['a', 'aaaa']:
 			parser.error(f'Invalid -q/--query-type value - {opts.query_type}, must be A or AAAA')
-		import ipaddress
+		import ipaddress, string, random
+		def _noise(n):
+			s, alphabet = '', string.ascii_lowercase + string.digits
+			for c in range(n): s += random.choice(alphabet)
+			return s
+		fqdn = opts.name
+		while '@' in fqdn: fqdn = fqdn.replace('@', _noise(name_noise_len), 1)
 		family = socket.AF_INET if opts.query_type.lower() == 'a' else socket.AF_INET6
 		fqdn_addr = ipaddress.ip_address(
-			HashTestResolver.hash_fqdn(opts.name, family, opts.hash_key.encode()) )
-		log.debug('Expected address for {!r} [{}]: {}', opts.name, opts.query_type.upper(), fqdn_addr)
-		try: addr_list = socket.getaddrinfo(opts.name, 0, family)
+			HashTestResolver.hash_fqdn(fqdn, family, opts.hash_key.encode()) )
+		log.debug('Expected address for {!r} [{}]: {}', fqdn, opts.query_type.upper(), fqdn_addr)
+		try: addr_list = socket.getaddrinfo(fqdn, 0, family)
 		except OSError: addr_list = list()
 		addr_list = set(ipaddress.ip_address(addr[4][0]) for addr in addr_list)
 		match = list(addr == fqdn_addr for addr in addr_list)

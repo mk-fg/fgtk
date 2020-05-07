@@ -1951,6 +1951,7 @@ To run script in tester-client mode, simply pass it a name to test, along with
 same -k/--hash-key parameter as for daemon on the other end, e.g.::
 
   % ./dns-test-daemon -k hash-key random-stuff.test.mydomain.com
+  % ./dns-test-daemon -k hash-key --debug @.test.mydomain.com
 
 It will exit with non-zero code if result is missing or doesn't match expected
 value in any way.
