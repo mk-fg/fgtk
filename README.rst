@@ -1926,8 +1926,8 @@ Example snippet for sending update packets::
 dns-test-daemon
 '''''''''''''''
 
-Python3 + `async_dns`_ authoritative DNS resolver daemon to return hashed-name
-results for testing DNS resolver operation.
+Python3 + `async_dns`_ authoritative DNS resolver daemon to return
+hashed-name results for testing DNS resolver operation.
 
 For example::
 
@@ -1947,8 +1947,15 @@ any local DNS resolver works by querying e.g. "12345.test.mydomain.com" and
 checking that resulting address hash matches expected value (dependent only on
 queried name, hash key and that hardcoded person= string).
 
-If any local DNS resolver in question mangles or fails to work in any way,
-address either won't match expected hash or won't be returned at all.
+To run script in tester-client mode, simply pass it a name to test, along with
+same -k/--hash-key parameter as for daemon on the other end, e.g.::
+
+  % ./dns-test-daemon -k hash-key random-stuff.test.mydomain.com
+
+It will exit with non-zero code if result is missing or doesn't match expected
+value in any way.
+
+Does not import/use or require asyncio and async_dns modules in client mode.
 
 .. _async_dns: https://github.com/gera2ld/async_dns
 
