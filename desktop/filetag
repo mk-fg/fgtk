@@ -180,7 +180,7 @@ class FileTreeTagger:
 				with p.open('rb', 256) as src:
 					shebang = src.readline(200).decode().strip()
 			except (OSError, UnicodeDecodeError): shebang = ''
-			if (m := self.tags.code_shebang.search(shebang)):
+			if m := self.tags.code_shebang.search(shebang):
 				bin_name = m.group('bin')
 				for rx, tags in self.tags.code_bin:
 					if rx.search(bin_name): tagset.update(tags)
