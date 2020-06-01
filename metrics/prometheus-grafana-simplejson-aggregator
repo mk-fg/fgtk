@@ -1,0 +1,464 @@
+#!/usr/bin/env python
+
+import urllib.request as ur, urllib.parse as up, urllib.error as ue
+import itertools as it, functools as ft, operator as op
+import contextlib as cl, datetime as dt, collections as cs
+import os, sys, json, logging, enum, calendar, time, re
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None): super().__init__(logger, extra or dict())
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(f'grafana-agg.{name}'))
+
+
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
+def date_inc(date, d=0, w=0, m=0, y=0):
+	if y: date = date.replace(year=date.year + y)
+	if m:
+		month = date.month - 1 + m
+		year = date.year + month // 12
+		month = month % 12 + 1
+		day = min(date.day, calendar.monthrange(year, month)[1])
+		date = dt.date(year, month, day)
+	if w: date += dt.timedelta(days=w * 7)
+	if d: date += dt.timedelta(days=d)
+	return date
+
+def date_round(date, span, up=False):
+	if span is Span.year: date = date.replace(day=1, month=1)
+	elif span is Span.month: date = date.replace(day=1)
+	elif span is Span.week: date -= dt.timedelta(days=date.weekday())
+	if up: date = date_inc(date, **{span.value: 1})
+	return date
+
+
+class Span(enum.Enum):
+	day = 'd'
+	week = 'w'
+	month = 'm'
+	year = 'y'
+
+class AggMode(enum.Enum):
+	total = 'total'
+	# sum = 'sum'
+
+class AggDB:
+
+	# db_migrations can have multiple statements, separated by ;
+	_db, _db_migrations = None, ['''
+		create table if not exists meta (
+			var text not null primary key, val text not null );
+		create table if not exists data (
+			id integer not null primary key autoincrement,
+			metric text not null, span text not null,
+			date text not null, labels text not null, value int not null );
+		create unique index if not exists data_points on data (metric, span, date, labels);''']
+
+	def __init__(self, path, lock_timeout=60, lazy=True):
+		import sqlite3
+		self._sqlite, self._ts_activity = sqlite3, 0
+		self._db_kws = dict( database=path,
+			isolation_level='IMMEDIATE', timeout=lock_timeout )
+		self.log = get_logger('db')
+		if not lazy: self._db_init()
+
+	def close(self, inactive_timeout=None):
+		if ( inactive_timeout is not None
+			and (time.monotonic() - self._ts_activity) < inactive_timeout ): return
+		if self._db:
+			self._db.close()
+			self._db = None
+	def __enter__(self): return self
+	def __exit__(self, *err): self.close()
+
+	def _db_init(self):
+		self._db = self._sqlite.connect(**self._db_kws)
+		sk, sv_new = 'schema-version', len(self._db_migrations)
+		with self._db_cursor() as c:
+			c.execute('pragma journal_mode=wal')
+			c.execute('savepoint sv')
+			try:
+				# Ideally this would be "select ... for update", but not with sqlite
+				c.execute('select val from meta where var = ?', (sk,))
+				row = c.fetchall()
+			except self._sqlite.OperationalError as err:
+				if not err.args[0].startswith('no such table:'): raise
+				c.execute('rollback to sv')
+				row = None
+			c.execute('release sv')
+			sv = int(row[0][0]) if row else 0
+			if sv_new <= sv: return
+			for sv, sql in enumerate(self._db_migrations[sv:], sv+1):
+				for st in sql.split(';'): c.execute(st)
+			c.execute('replace into meta (var, val) values (?, ?)', (sk, str(sv)))
+
+	@cl.contextmanager
+	def _db_cursor(self):
+		self._ts_activity = time.monotonic()
+		if not self._db: self._db_init()
+		with self._db as conn, cl.closing(conn.cursor()) as c: yield c
+
+	def add_point(self, metric, span, date, labels, value):
+		with self._db_cursor() as c:
+			c.execute(
+				'replace into data (metric, span, date, labels, value)'
+				' values (?, ?, ?, ?, ?)', (metric, span.value, date, labels, value) )
+
+	def get_last_date(self, metric, span, labels):
+		with self._db_cursor() as c:
+			c.execute(
+				'select date from data where metric = ? and span = ?'
+				' and labels = ? order by date desc', (metric, span.value, labels) )
+			v = c.fetchone()
+			if v: v = v[0]
+		return v
+
+	def get_metric_list(self):
+		with self._db_cursor() as c:
+			c.execute( 'select metric, labels from data'
+				' group by metric, labels order by metric, labels' )
+			return list(f'{row[0]}[{row[1]}]' for row in (c.fetchall() or list()))
+
+	_metric_row = cs.namedtuple('metric', 'date metric labels value')
+	def get_metric_data(self, metric, labels=None, date_range=None):
+		keys = ', '.join(self._metric_row._fields)
+		with self._db_cursor() as c:
+			q_where, q_order, q_vals = 'metric = ?', 'metric, span', [metric]
+			if date_range:
+				date0, date1 = date_range
+				q_where, q_order = q_where + ' and (date >= ? and date <= ?)', q_order + ', date'
+				q_vals.extend([date0, date1])
+			if labels:
+				q_where, q_order = q_where + ' and labels = ?', q_order + ', labels'
+				q_vals.append(labels)
+			q = f'select {keys} from data where {q_where} order by {q_order}'
+			self.log.debug('Q: {!r} {}', q, q_vals)
+			c.execute(q, q_vals)
+			return list(self._metric_row(*row) for row in (c.fetchall() or list()))
+
+
+### ----- Aggregator mode
+
+class AggError(Exception): pass
+
+class Aggregator:
+
+	def __init__(self, db, src, dst, labels, mode, url, spans):
+		self.src, self.dst, self.labels = src, dst, labels
+		self.db, self.mode, self.url = db, mode, url
+		self.spans, self.val_cache = list(Span(s) for s in spans), dict()
+		self.log = get_logger('agg')
+		if self.mode != AggMode.total: raise NotImplementedError(self.mode)
+
+	def _q_all(self, m='query', q=None, **kws):
+		url = f'{self.url}/api/v1/{m}'
+		if q or kws:
+			req_qs = up.urlencode(dict(query=q, **kws))
+			url = f'{url}?{req_qs}'
+		if url in self.val_cache: return self.val_cache[url]
+		# self.log.debug('prms-q: {}', url)
+		with ur.urlopen(url) as res_http:
+			res = json.loads(res_http.read().decode())
+		if res.get('status') != 'success': raise AggError(res)
+		self.val_cache[url] = res['data']
+		return res['data']
+
+	def _q(self, *args, res_type=None, lvs_filter=None, **kws):
+		res = self._q_all(*args, **kws)
+		if res_type and res['resultType'] != res_type: raise AggError(res)
+		if lvs_filter:
+			for rs in res.get('result') or list():
+				for k, v in lvs_filter:
+					if rs['metric'][k] != v: break
+				else: return rs
+			else: raise AggError(lvs_filter, res)
+		return res
+
+	def run(self):
+		label_values = list()
+		for v in self.labels: label_values.append(self._q(f'label/{v}/values'))
+		for s, *lvs in it.product(self.spans, *label_values): self.agg_span(s, lvs)
+
+	def agg_span(self, span, lvs):
+		lvs_filter = list(zip(self.labels, lvs))
+		labels = ' '.join(sorted(f'{k}={v}' for k,v in lvs_filter))
+		metric_src = f'{self.src}_total'
+		metric_dst = self.dst.format(span=span.name)
+		date0 = self.db.get_last_date(metric_dst, span, labels)
+		if date0: date0 = dt.date(*map(int, date0.split('-')))
+		else:
+			rs = self._q(q=f'{self.src}_created', res_type='vector', lvs_filter=lvs_filter)
+			date0 = date_round(dt.date.fromtimestamp(float(rs['value'][1])), span)
+		self.log.debug('agg-span [{} {}]: {}+', span.value, labels, date0)
+
+		# XXX: can be optimized, as all intervals are fetched by-day anyway
+		date_now = dt.date.today()
+		date_fmt = lambda date: dt.datetime(date.year, date.month, date.day).timestamp()
+		while date0 <= date_now:
+			value, date1 = None, date_inc(date0, **{span.value: 1})
+			try:
+				rs = self._q( 'query_range', metric_src, step='1d',
+					start=date_fmt(date0), end=date_fmt(date1), res_type='matrix', lvs_filter=lvs_filter )
+				# self.log.debug('agg-span-values [{} {} {}]: {}', span.value, date0, date1, rs['values'])
+				if len(rs['values']) < 2: raise AggError('value-count')
+			except AggError as err:
+				self.log.debug(
+					'Missing/bogus value {!r} [{}]: {} - {} [{}]',
+					self.src, labels, date0, date1, err )
+				value = 0
+			else:
+				(ts0, v0), (ts1, v1) = rs['values'][0], rs['values'][-1]
+				value = int(v1) - int(v0)
+			self.log.debug('agg-span-db [{} {} {}]: {!r} {}', span.value, date0, date1, labels, value)
+			self.db.add_point(metric_dst, span, date0, labels, value)
+			date0 = date1
+
+
+### ----- Export-httpd mode
+
+import io, base64
+
+httpd_debug, httpd_db_path = False, 'data.sqlite'
+log_uid = lambda: base64.urlsafe_b64encode(os.urandom(4 * 6 // 8)).rstrip(b'=').decode()
+
+def log_lines(log_func, lines, log_func_last=False, uid=None, **log_func_kws):
+	if isinstance(lines, str): lines = (line.rstrip() for line in lines.rstrip().split('\n'))
+	if uid is None: uid = log_uid()
+	n_last = len(lines := list(lines))
+	for n, line in enumerate(lines, 1):
+		if not isinstance(line, str): line = line[0].format(*line[1:])
+		if uid is not False: line = f'[{uid}] {line}'
+		if log_func_last and n == n_last: log_func_last(line)
+		else: log_func(line, **log_func_kws)
+
+def log_req_body( body, buff=None,
+		tail=20, len_repr=64 * 2**10, len_max=4 * 2**20, bs=2**20 ):
+	body_repr = body.read(len_repr)
+	if buff: buff.write(body_repr)
+	c = body.read(1)
+	if c:
+		if buff: buff.write(c)
+		n, chunk = len(body_repr) + 1, b''
+		while n < len_max:
+			chunk = body.read(bs)
+			if not chunk: break
+			n += len(chunk)
+			if buff: buff.write(chunk)
+		n = f'{n:,d} B' if not chunk else f'{n:,d}+ B'
+		body_repr += f' ...(len=[{n}])'.encode()
+	try: return body_repr.decode()
+	except UnicodeDecodeError:
+		h = body_repr[:tail].decode('utf-8', 'surrogateescape')
+		t = body_repr[-tail:].decode('utf-8', 'surrogateescape')
+		return f'<binary [{len(body_repr):,d} B] [{h} ... {t}]>'
+
+def log_req(e, body=None, err_file=sys.stderr, buff=None):
+	headers = dict((k[5:], e.pop(k)) for k in list(e) if k.startswith('HTTP_'))
+	body_lines = (log_req_body(body, buff) or list()) if body else list()
+	if body_lines: body_lines = list(('  ' + line) for line in body_lines.split('\n'))
+	req_get = lambda k: e.get(k.upper()) or '???'
+	log_func = ft.partial(log_lines, lambda line: err_file.write(line + '\n'))
+	log_func([
+		( '--- req: {} {} {}', req_get('request_method'),
+			req_get('path_info'), req_get('server_protocol') ),
+		'- headers:', *(('  {}: {}', k, v) for k, v in headers.items()),
+		'- env:', *(('  {}: {}', k, v) for k, v in sorted(e.items(), key=op.itemgetter(0))),
+		('- body [{:,d} line(s)]:', len(body_lines)), *body_lines, '--- req end' ])
+
+def log_req_print_res(res, **print_kws):
+	info_lines = res.info().as_string().strip().split('\n')
+	body = res.read().decode('utf-8', 'surrogateescape')
+	print('Reponse:', str(res.getcode()), str(res.geturl()).strip(), **print_kws)
+	print('Info:\n' + '\n'.join(f'  {line}' for line in info_lines), **print_kws)
+	print(f'Body:\n----------\n{body}\n----------', **print_kws)
+
+class HTTPResponse(Exception):
+	def __init__(self, res_code='200 OK', res=None, res_ct='text/plain'):
+		if isinstance(res, bytes): pass
+		elif isinstance(res, str): res = res.encode()
+		elif res is None: res = (res_code + '\n').encode()
+		else: res, res_ct = json.dumps(res).encode(), 'application/json'
+		super().__init__(res_code, res, res_ct)
+
+def export_httpd(e, body, err_file, start_response):
+	if httpd_debug:
+		body, body_raw = io.BytesIO(), body
+		log_req(e, body_raw, err_file, buff=body)
+		body.seek(0)
+	if not getattr(export_httpd, 'log', None):
+		export_httpd.log = get_logger('httpd')
+
+	res_code, res = '500 Internal Server Error', b''
+	res_headers, res_ct = dict(), 'text/plain'
+	try: export_httpd_req(e, body)
+	except HTTPResponse as res_ex: res_code, res, res_ct = res_ex.args
+	if e.get('REQUEST_METHOD', '').lower() == 'head': res = b''
+
+	start_response(res_code, [
+		('Access-Control-Allow-Origin', '*'),
+		('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'),
+		('Access-Control-Allow-Headers',
+			'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'),
+		('Content-type', res_ct),
+		('Content-Length', str(len(res))) ])
+	if httpd_debug: print(f'--- res-data: {res}', file=err_file, flush=True)
+	return [res]
+
+def export_httpd_req(e, body):
+	req = up.urlparse(e.get('REQUEST_URI', ''))
+	req_verb = e.get('REQUEST_METHOD', '').lower()
+	if req.path == '/':
+		if req_verb not in ['get', 'head', 'options']:
+			raise HTTPResponse('405 Method Not Allowed')
+		raise HTTPResponse('200 OK', b'OK\n')
+	else:
+		if e.get('REQUEST_METHOD', '').lower() not in ['get', 'post', 'head']:
+			raise HTTPResponse('405 Method Not Allowed')
+		if not getattr(export_httpd, 'db', None):
+			export_httpd.db = AggDB(httpd_db_path)
+			check_sig, check_timeout, check_interval = 153, 60, 450
+			uwsgi.register_signal(check_sig, f'worker{uwsgi.worker_id()}', lambda n: (
+				export_httpd.db.close(check_timeout), uwsgi.add_rb_timer(check_sig, check_interval, 1) ))
+			uwsgi.add_rb_timer(check_sig, check_interval, 1) # iterations=1 to stop on error/gc/etc
+		if req.path == '/search':
+			raise HTTPResponse(res=export_httpd.db.get_metric_list())
+		elif req.path == '/query':
+			query = body.read(256 * 2**10)
+			if body.read(1): raise ValueError('body too large')
+			try: query = json.loads(query.decode('utf-8', 'backslashreplace'))
+			except json.JSONDecodeError: raise HTTPResponse('400 Bad Request')
+			export_httpd_query(query)
+	raise HTTPResponse('400 Bad Request')
+
+def export_httpd_query(q):
+	# Query example: iface_traffic_bytes_day[dir=in]:m@traffic-in
+	#  ":m" - optional span (default=d), "@traffic-in" - resulting value name
+	# https://github.com/grafana/simple-json-datasource
+	# https://grafana.com/grafana/plugins/grafana-simple-json-datasource
+	parse_date = lambda ts: dt.date.fromtimestamp(
+		dt.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp() )
+	res = list()
+	date0, date1 = (parse_date(d) for d in [q['range']['from'], q['range']['to']])
+	for qt in q['targets']:
+		qk, qid, qtt = qt.get('target'), qt.get('refId'), qt.get('type')
+		qk, qa = str_part(qk, '@>')
+		qk, qs = str_part(qk, ':>')
+		qs = Span(qs) if qs else Span.day
+		date_range = date_round(date0, qs), date_round(date1, qs, up=True)
+		if qk and (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
+			metric, labels = m[0]
+			data = export_httpd.db.get_metric_data(metric, labels, date_range)
+			data = list( # (value, timestamp[ms])
+				(d.value, int(dt.datetime.fromisoformat(d.date).timestamp())*1000)
+				for d in data )
+		else: data = list()
+		if qtt == 'timeserie':
+			res.append(dict(target=qk, refId=qid, type=qtt, datapoints=data))
+		elif qtt == 'table':
+			res.append(dict(
+				target=qk, refId=qid, type=qtt, rows=data,
+				columns=[dict(text=qa or qk, type='number'), dict(text='Time', type='time')] ))
+		else: export_httpd.log.debug('Unrecognized query target type: {!r}', qtt)
+	raise HTTPResponse(res=res)
+
+
+### ----- CLI / uwsgi
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
+		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
+
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] [-a|--aggregate]',
+		formatter_class=argparse.RawTextHelpFormatter,
+		description=dd('''
+			Aggregate data queried from prometheus by-day/w/mo/etc and store in sqlite
+				with -a/--aggregate option, or export it via Simple-JSON API for Grafana.
+			Default is to run export-httpd under uwsgi, latter is required.'''))
+
+	group = parser.add_argument_group('Common/basic options')
+	group.add_argument('-d', '--db',
+		metavar='path', default=httpd_db_path,
+		help=dd('''
+			Path to sqlite database to update and load values from.
+			Can be specified as PMA_DB_PATH env var in uwsgi mode.'''))
+	group.add_argument('--debug', action='store_true',
+		help='Verbose operation mode.'
+			' Non-empty PMA_DEBUG env will enable it in uwsgi mode.')
+
+	group = parser.add_argument_group('Aggregation mode')
+	group.add_argument('-a', '--aggregate', metavar='src:dst',
+		help=dd('''
+			Aggregate src -> dst metric.
+			Source metric will be queried for specified timespans,
+				and will be auto-suffixed by _total and _created and such, as necessary.
+			Destination metric name should be a template in python str.format,
+				with one templated parameter - "span" (daily, weekly, monthly, yearly).'''))
+	group.add_argument('-m', '--agg-mode',
+		metavar='mode', default='total', choices=['total'],
+		help=dd('''
+			Aggregation mode (default: %(default)s):
+			- "total" - compare values at the start and end of each period.
+			- "sum" - not implemented, sum values for each period.'''))
+	group.add_argument('-p', '--prometheus-url', metavar='url',
+		default='http://localhost:9090/', help='Prometheus base URL. Default: %(default)s')
+	group.add_argument('--agg-spans', metavar='letters', default='dwmy',
+		help='Letters for timespans for which'
+			' to aggregate data (d=day, w=week, etc). Default: %(default)s')
+	group.add_argument('--agg-labels', metavar='labels',
+		help='Space/comma-separated labels to query for metric.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	if not opts.aggregate: parser.error('Running in server mode, but uwsgi not detected')
+	if set(opts.agg_spans).difference(s.value for s in Span):
+		parser.error(f'Unknown/extra span type(s): {opts.agg_spans!r}')
+	if not opts.agg_labels: parser.error('Option --agg-labels is required')
+
+	if ':' not in opts.aggregate:
+		parser.error( '-a/--aggregate must be in'
+			f' "src-metric:dst-metric" format: {opts.aggregate!r}' )
+	src, dst = opts.aggregate.split(':', 1)
+	log.debug('Running in aggregator mode...')
+	with AggDB(opts.db) as db:
+		Aggregator( db, src, dst, labels=opts.agg_labels.replace(',', ' ').split(),
+			mode=AggMode(opts.agg_mode), url=opts.prometheus_url, spans=opts.agg_spans ).run()
+	log.debug('Finished')
+
+if __name__ == '__main__': sys.exit(main())
+elif __name__.startswith('uwsgi_'):
+	import uwsgi # to make sure uwsgi is there
+	httpd_debug = bool(os.environ.get('PMA_DEBUG'))
+	httpd_db_path = os.environ.get('PMA_DB_PATH') or httpd_db_path
+	logging.basicConfig(level=logging.DEBUG if httpd_debug else logging.WARNING)
+	log = get_logger('httpd')
+	log.debug('Running in export-httpd mode...')
+	log.debug('uwsgi-env config: debug={} db-path={!r}', httpd_debug, httpd_db_path)
+	import traceback as tb
+	def application(e, start_response):
+		body, err_file = map(e.pop, ['wsgi.input', 'wsgi.errors'])
+		try: yield from export_httpd(e, body, err_file, start_response)
+		except Exception as err:
+			tb.print_exc(file=err_file)
+			raise
+		err_file.flush()

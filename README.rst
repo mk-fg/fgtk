@@ -1396,51 +1396,6 @@ command on two outputs) with another URL.
 No more squinting at some huge incomprehensible ecommerce URLs before scraping
 the hell out of them!
 
-graphite-scratchpad
-'''''''''''''''''''
-
-Tool to load/dump stored graphite_ graphs through formats easily editable by
-hand.
-
-For example, creating even one dashboard there is a lot of clicky-clicks, and 10
-slightly different dashboards is mission impossible, but do
-``graphite-scratchpad dash:top`` (loaded straight from graphite db) and you
-get::
-
-  name: top
-
-  defaultGraphParams:
-    from: -24hours
-    height: 250
-    until: -20minutes
-    width: 400
-
-  ...
-
-  graphs:
-    - target:
-        - *.memory.allocation.reclaimable
-    - target:
-        - *.disk.load.sdb.utilization
-        - *.disk.load.sda.utilization
-      yMax: 100
-      yMin: 0
-    - target:
-        - *.cpu.all.idle
-      yMax: 100
-      yMin: 0
-  ...
-
-That's all graph-building data in an easily readable, editable and parseable
-format (yaml, nicely-spaced with pyaml_ module).
-
-Edit that and do ``graphite-scratchpad yaml dash:top < dash.yaml`` to replace
-the thing in graphite db with an updated thing. Much easier than doing anything
-with GUI.
-
-.. _graphite: http://graphite.readthedocs.org/
-.. _pyaml: https://github.com/mk-fg/pretty-yaml
-
 ip-ext
 ''''''
 
@@ -1579,55 +1534,6 @@ localhost:1080``) link::
 
   % openssl-fingerprint google.com localhost:1080
   SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
-
-rrd-sensors-logger
-''''''''''''''''''
-
-Daemon script to grab data from whatever sensors and log it all via rrdtool.
-
-Self-contained, configurable, handles clock jumps and weirdness (for e.g. arm
-boards that lack battery-backed RTC), integrates with systemd (Type=notify,
-watchdog), has commands to easily produce graphs from this data (and can serve
-these via http), print last values.
-
-Auto-generates rrd schema from config (and filename from that), inits db, checks
-for time jumps and aborts if necessary (rrdtool can't handle these, and they are
-common on arm boards), cleans up after itself.
-
-Same things can be done by using rrdtool directly, but it requires a ton of
-typing for graph options and such, while this script generates it all for you,
-and is designed to be "hands-off" kind of easy.
-
-Using it to keep track of SoC sensor readings on boards like RPi (to see if
-maybe it's time to cram a heatsink on top of one or something), for more serious
-systems something like collectd + graphite might be a better option.
-
-Command-line usage::
-
-  % rrd-sensors-logger daemon --http-listen --http-opts-allow &
-
-  % rrd-sensors-logger print-conf-example
-  ### rrd-sensors-logger configuration file (format: YAML)
-  ### Place this file into ~/.rrd-sensors-logger.yaml or specify explicitly with --conf option.
-  ...
-
-  % rrd-sensors-logger print-last
-  cpu.t: 30.22513627594576
-  gpu.t: 39.44316309653439
-  mb_1.t: 41.77566666851852
-  mb_2.t: 41.27842380952381
-
-  % curl -o graph.png http://localhost:8123/
-  % curl -o graph.png http://localhost:8123/t
-  % curl -o graph.png 'http://localhost:8123/t/width:+1900,height:+800'
-  % curl -o graph.png 'http://localhost:8123//start:+-2d,logarithmic:+true,title:+my+graph'
-
-  % feh $(rrd-sensors-logger graph t -o 'start: -3h')
-
-See top of the script for yaml config (also available via "print-conf-example")
-and systemd unit file example ("print-systemd-unit" command).
-
-Uses: layered-yaml-attrdict-config (lya), rrdtool.
 
 nsh
 '''
@@ -3332,6 +3238,193 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 
 .. _archlinux-pkgbuilds: https://github.com/mk-fg/archlinux-pkgbuilds
 .. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
+
+
+
+[metrics] Metrics
+~~~~~~~~~~~~~~~~~
+
+Tools for working with various time-series databases and metrics-monitoring
+systems - collection, aggregation, configuration, graphs, etc.
+
+rrd-sensors-logger
+^^^^^^^^^^^^^^^^^^
+
+Daemon script to grab data from whatever sensors and log it all via rrdtool.
+
+Self-contained, configurable, handles clock jumps and weirdness (for e.g. arm
+boards that lack battery-backed RTC), integrates with systemd (Type=notify,
+watchdog), has commands to easily produce graphs from this data (and can serve
+these via http), print last values.
+
+Auto-generates rrd schema from config (and filename from that), inits db, checks
+for time jumps and aborts if necessary (rrdtool can't handle these, and they are
+common on arm boards), cleans up after itself.
+
+Same things can be done by using rrdtool directly, but it requires a ton of
+typing for graph options and such, while this script generates it all for you,
+and is designed to be "hands-off" kind of easy.
+
+Using it to keep track of SoC sensor readings on boards like RPi (to see if
+maybe it's time to cram a heatsink on top of one or something), for more serious
+systems something like collectd + graphite might be a better option.
+
+Command-line usage::
+
+  % rrd-sensors-logger daemon --http-listen --http-opts-allow &
+
+  % rrd-sensors-logger print-conf-example
+  ### rrd-sensors-logger configuration file (format: YAML)
+  ### Place this file into ~/.rrd-sensors-logger.yaml or specify explicitly with --conf option.
+  ...
+
+  % rrd-sensors-logger print-last
+  cpu.t: 30.22513627594576
+  gpu.t: 39.44316309653439
+  mb_1.t: 41.77566666851852
+  mb_2.t: 41.27842380952381
+
+  % curl -o graph.png http://localhost:8123/
+  % curl -o graph.png http://localhost:8123/t
+  % curl -o graph.png 'http://localhost:8123/t/width:+1900,height:+800'
+  % curl -o graph.png 'http://localhost:8123//start:+-2d,logarithmic:+true,title:+my+graph'
+
+  % feh $(rrd-sensors-logger graph t -o 'start: -3h')
+
+See top of the script for yaml config (also available via "print-conf-example")
+and systemd unit file example ("print-systemd-unit" command).
+
+Uses: layered-yaml-attrdict-config (lya), rrdtool.
+
+graphite-scratchpad
+^^^^^^^^^^^^^^^^^^^
+
+Tool to load/dump stored graphite_ graphs through formats easily editable by
+hand.
+
+For example, creating even one dashboard there is a lot of clicky-clicks, and 10
+slightly different dashboards is mission impossible, but do
+``graphite-scratchpad dash:top`` (loaded straight from graphite db) and you
+get::
+
+  name: top
+
+  defaultGraphParams:
+    from: -24hours
+    height: 250
+    until: -20minutes
+    width: 400
+
+  ...
+
+  graphs:
+    - target:
+        - *.memory.allocation.reclaimable
+    - target:
+        - *.disk.load.sdb.utilization
+        - *.disk.load.sda.utilization
+      yMax: 100
+      yMin: 0
+    - target:
+        - *.cpu.all.idle
+      yMax: 100
+      yMin: 0
+  ...
+
+That's all graph-building data in an easily readable, editable and parseable
+format (yaml, nicely-spaced with pyaml_ module).
+
+Edit that and do ``graphite-scratchpad yaml dash:top < dash.yaml`` to replace
+the thing in graphite db with an updated thing. Much easier than doing anything
+with GUI.
+
+.. _graphite: http://graphite.readthedocs.org/
+.. _pyaml: https://github.com/mk-fg/pretty-yaml
+
+prometheus-snmp-iface-counters-exporter
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Script to poll 64-bit IF-MIB SNMPv3 counters for specified interface,
+checking for resets on these via NETSERVER-MIB::hrSystemUptime
+(uptime reset = fresh counter) and export these to prometheus_.
+
+It runs SNMP queries with specified -t/--snmp-poll-interval to check uptime,
+polls interface name table to find counter indexes, and then hr-counters for actual values.
+
+Exports ``iface_traffic_bytes`` metric (with "iface" and "dir" labels for interface/direction),
+as well as ``snmp_query_*`` metrics for info on general router responsiveness.
+Use -m/--metric-prefix option to add some namespace-prefix to these.
+
+Usage example::
+
+  % prometheus-snmp-iface-counters-exporter \
+     -i lte router:161 snmp-auth.secret counters.json
+
+(run with -h/--help to get info on various options)
+
+Uses `prometheus_client`_ and pysnmp_ modules for exporting and querying.
+
+.. _prometheus: https://prometheus.io/
+.. _prometheus_client: https://github.com/prometheus/client_python
+.. _pysnmp: https://github.com/etingof/pysnmp
+
+prometheus-grafana-simplejson-aggregator
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Aggregator to query prometheus_ server for specified metrics/labels, aggregate
+them by-day/week/month/year to sqlite db tables and export these via uWSGI_ for
+`Grafana Simple JSON Datasource`_.
+
+For building nice "traffic by day" (and week, month, year) bar-charts in Grafana_.
+
+Has two modes of operation:
+
+- Cron/timer mode to update aggregated values.
+
+  Example for counters from "prometheus-snmp-iface-counters-exporter" script above::
+
+    % prometheus-grafana-simplejson-aggregator \
+       --agg-labels 'dir iface' \
+       -p http://localhost:9090/p -d aggregate.sqlite \
+       -a 'iface_traffic_bytes:iface_traffic_bytes_{span}'
+
+  All combinations of existing labels will be queried and aggregated.
+  See also -h/--help output for more options/tweaks.
+
+  Will update aggregation timespans from last one stored in db (for each
+  specified metric/label combos) to the current one.
+
+- uWSGI_ application for serving values for Grafana SimpleJson plugin.
+
+  To run from terminal::
+
+    % uwsgi --http :9091 --wsgi-file prometheus-grafana-simplejson-aggregator
+
+  Proper ini file and e.g. systemd socket activation can be used in the real setup.
+
+  Settings can be controlled via environment vars (--env uwsgi directive):
+
+  - ``PMA_DEBUG=t`` - enable verbose logging, printing all headers, requests, etc.
+  - ``PMA_DB_PATH=/path/to/db.sqlite`` - aggregation database to use.
+
+  Use "table" queries in grafna in the following format::
+
+    "metric" ["[" label "=" val "]"] [":" span] ["@" name]
+
+  Example - ``iface_traffic_bytes_day[dir=in]:m@traffic-in`` - where:
+
+  - "iface_traffic_bytes_day" - metric name.
+  - "dir=in" - specific combination of label values, in alpha-sorted order.
+  - "m" - monthly aggregation (default - daily).
+  - "@traffic-in" - export values with "traffic-in" name/label for legend.
+
+These should always be combined to update db on some interval and serve values
+from there on as-needed basis (uWSGI provides a lot of options for interfaces
+and to optimize efficiency).
+
+.. _Grafana: https://grafana.com
+.. _Grafana Simple JSON Datasource: https://grafana.com/grafana/plugins/grafana-simple-json-datasource
+.. _uWSGI: https://uwsgi-docs.readthedocs.io/
 
 
 
