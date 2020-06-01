@@ -3241,8 +3241,8 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 
 
 
-[metrics] Metrics
-~~~~~~~~~~~~~~~~~
+[metrics] Charts and metrics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Tools for working with various time-series databases and metrics-monitoring
 systems - collection, aggregation, configuration, graphs, etc.
@@ -3470,14 +3470,14 @@ Has two modes of operation:
 
   Use "table" queries in grafna in the following format::
 
-    "metric" ["[" label "=" val "]"] [":" span] ["@" name]
+    metric ["[" label "=" val "]"] [":" span] ["@" name]
 
   Example - ``iface_traffic_bytes_day[dir=in]:m@traffic-in`` - where:
 
   - "iface_traffic_bytes_day" - metric name.
   - "dir=in" - specific combination of label values, in alpha-sorted order.
-  - "m" - monthly aggregation (default - daily).
-  - "@traffic-in" - export values with "traffic-in" name/label for legend.
+  - "m" - monthly aggregation (default - daily, see --agg-spans option).
+  - "traffic-in" - export values with "traffic-in" name/label for graph legend.
 
 These should always be combined to update db on some interval and serve values
 from there on as-needed basis (uWSGI provides a lot of options for interfaces

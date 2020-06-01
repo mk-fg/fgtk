@@ -23,7 +23,7 @@ usage() {
 
 interval=60
 load1= load5= load15=
-pgrep=
+pgrep= pid=$$
 
 while [[ -n "$1" ]]; do
 	case "$1" in
@@ -69,7 +69,10 @@ while :; do
 		[[ -z "$load15" ]] || load_test "$m15" "$load15" || err=1
 	}
 
-	[[ -z "$pgrep" ]] || { pgrep $pgrep >/dev/null && err=1; }
+	[[ -z "$pgrep" ]] || {
+		# Skipping pids of script/subshell because e.g. "pgrep -f" can also match these
+		pids=$(spid=$BASHPID; pgrep $pgrep | grep -v '^'$spid'\|'$pid'$' ||:)
+		[[ -z "$pids" ]] || err=1; }
 
 	[[ $err -ne 0 ]] || break
 	sleep $interval
