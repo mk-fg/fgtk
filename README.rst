@@ -3341,6 +3341,67 @@ with GUI.
 .. _graphite: http://graphite.readthedocs.org/
 .. _pyaml: https://github.com/mk-fg/pretty-yaml
 
+gnuplot-free
+^^^^^^^^^^^^
+
+Rolling plot of "free" output via gnuplot.
+
+Mostly a reminder of how to use the thing and what one can do with it.
+
+There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
+
+.. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
+
+d3-line-chart-boilerplate
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Boilerplate `d3.js`_ page for basic line chart to plot arbitrary JS function
+outputs or data array with axii, grid, mouseover datapoint tooltips and such.
+
+Useful when for a quick chart to figure out some data or function output,
+or make it into a useful non-static link to someone,
+and don't want to deal with d3-v3/coding-style/JS diffs from bl.ocks.org.
+
+.. _d3.js: http://d3js.org/
+
+d3-temp-rh-sensor-tsv-series-chart
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`d3.js`_-based ES6 graphing app for time-series data from rather common
+temperature (t) and relative humidity (rh) sensors (DHT22, sht1x, etc) in tsv
+(tab-separated-values) files with [iso8601-ts, t, rh] fields.
+
+Can be used directly via gh-pages: `d3-temp-rh-sensor-tsv-series-chart.html`_
+
+Bunch of real-world sample tsv files for it can be found alongside the html in
+`d3-temp-rh-sensor-tsv-series-chart.zip`_.
+
+Assembled (from simple html, d3.v4.js and main js) via html-embed script from
+this repo, doesn't have any external links, can be easily used as a local file.
+
+More info can be found in the `d3-chart-for-common-temperaturerh-time-series-data`_
+blog post.
+
+.. _d3-temp-rh-sensor-tsv-series-chart.html: https://mk-fg.github.io/fgtk/scraps/d3-temp-rh-sensor-tsv-series-chart.html
+.. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
+.. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
+
+d3-du-disk-space-usage-layout
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`d3.js`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
+display directory hierarchy as d3 "partition" layout, with node size
+proportional to directory size from du output.
+
+Can be used directly via gh-pages (`d3-du-disk-space-usage-layout.html`_)
+or as a local file, doesn't have any external links.
+
+Allows uploading multiple files to display in the same hierarchy, if paths in
+them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
+
+.. _xdiskusage: http://xdiskusage.sourceforge.net/
+.. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/scraps/d3-du-disk-space-usage-layout.html
+
 prometheus-snmp-iface-counters-exporter
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -3434,17 +3495,6 @@ and to optimize efficiency).
 Misc prefabs and *really* ad-hoc scripts,
 mostly stored here as templates to make something out of later.
 
-gnuplot-free
-^^^^^^^^^^^^
-
-Rolling plot of "free" output via gnuplot.
-
-Mostly a reminder of how to use the thing and what one can do with it.
-
-There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
-
-.. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
-
 rsync-diff
 ^^^^^^^^^^
 
@@ -3509,56 +3559,6 @@ blog post.
 .. _sleuthkit: http://www.sleuthkit.org/sleuthkit
 .. _util-linux: https://www.kernel.org/pub/linux/utils/util-linux/
 .. _parted: http://www.gnu.org/software/parted/parted.html
-
-d3-line-chart-boilerplate
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Boilerplate `d3.js`_ page for basic line chart to plot arbitrary JS function
-outputs or data array with axii, grid, mouseover datapoint tooltips and such.
-
-Useful when for a quick chart to figure out some data or function output,
-or make it into a useful non-static link to someone,
-and don't want to deal with d3-v3/coding-style/JS diffs from bl.ocks.org.
-
-.. _d3.js: http://d3js.org/
-
-d3-temp-rh-sensor-tsv-series-chart
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-`d3.js`_-based ES6 graphing app for time-series data from rather common
-temperature (t) and relative humidity (rh) sensors (DHT22, sht1x, etc) in tsv
-(tab-separated-values) files with [iso8601-ts, t, rh] fields.
-
-Can be used directly via gh-pages: `d3-temp-rh-sensor-tsv-series-chart.html`_
-
-Bunch of real-world sample tsv files for it can be found alongside the html in
-`d3-temp-rh-sensor-tsv-series-chart.zip`_.
-
-Assembled (from simple html, d3.v4.js and main js) via html-embed script from
-this repo, doesn't have any external links, can be easily used as a local file.
-
-More info can be found in the `d3-chart-for-common-temperaturerh-time-series-data`_
-blog post.
-
-.. _d3-temp-rh-sensor-tsv-series-chart.html: https://mk-fg.github.io/fgtk/scraps/d3-temp-rh-sensor-tsv-series-chart.html
-.. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
-.. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
-
-d3-du-disk-space-usage-layout
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-`d3.js`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
-display directory hierarchy as d3 "partition" layout, with node size
-proportional to directory size from du output.
-
-Can be used directly via gh-pages (`d3-du-disk-space-usage-layout.html`_)
-or as a local file, doesn't have any external links.
-
-Allows uploading multiple files to display in the same hierarchy, if paths in
-them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
-
-.. _xdiskusage: http://xdiskusage.sourceforge.net/
-.. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/scraps/d3-du-disk-space-usage-layout.html
 
 asciitree-parse
 ^^^^^^^^^^^^^^^
