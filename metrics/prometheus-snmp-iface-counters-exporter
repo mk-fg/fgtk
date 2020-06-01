@@ -120,8 +120,8 @@ class SNMP:
 
 class SNMPPoller:
 
-	def __init__(self, snmp, interval, metric_prefix_tpl, spool_file, spool_tmp):
-		self.snmp, self.interval, self.prefix = snmp, interval, metric_prefix_tpl
+	def __init__(self, snmp, interval, metric_prefix, spool_file, spool_tmp):
+		self.snmp, self.interval, self.prefix = snmp, interval, metric_prefix
 		self.spool_file, self.spool_tmp = spool_file, spool_tmp
 		self.log = get_logger('poller')
 
@@ -288,7 +288,7 @@ def main(args=None):
 
 	log.debug('Starting poller loop...')
 	SNMPPoller( snmp,
-		opts.snmp_poll_interval, opts.metric_prefix_tpl,
+		opts.snmp_poll_interval, opts.metric_prefix,
 		spool_file, spool_tmp ).run_query_loop()
 	log.debug('Finished')
 
