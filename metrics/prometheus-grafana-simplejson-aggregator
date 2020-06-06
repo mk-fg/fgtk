@@ -25,12 +25,13 @@ def str_part(s, sep, default=None):
 	'''Splits string by separator, always returning two values.
 		Separator can be empty to split on spaces. Examples:
 			str_part("user@host", "<@", "root"), str_part("host:port", ":>")
-			word, rest = str_part("some random words", "")'''
-	c = sep.strip('<>') or None
-	fill_left = sep.strip(c) == '<'
+			word, rest = str_part("some random words", "<<")'''
+	seps = sep.strip(c := sep.strip('<>') or None)
+	fill_left = seps.startswith('<')
 	ss = s.split(c, 1) if fill_left else s.rsplit(c, 1)
 	if len(ss) == 2: return ss
-	return [default, s] if fill_left else [s, default]
+	if not fill_left: return [s, default]
+	return [default, s] if seps != '<<' else [s, default]
 
 def val_bytes_iec(v):
 	if v < 1000: return f'{v:,} B'
@@ -430,15 +431,16 @@ class ExportHTTPd:
 		else: self.log.debug('Unrecognized query target type: {!r}', qtt)
 
 	def _query_table(self, qt, qs, qts, date0, date1):
-		# Query example: [table:m] iface_traffic_bytes_day[dir=in]@'traffic in'
-		# Same as export_query_metric, except returns a table with specified metrics
-		# First "Date" field will be auto-added, in a string-date format for timespan
+		# Query example: [table:m] date:-1@Date iface_traffic_bytes_day[dir=in]@'traffic in' ...
+		# Same as export_query_metric, except returns a table with specified metrics, same field order
+		# Special "date" column is a string representation of the specified timespan
 		# Metric name alias can be parsed as json string value if it's in double quotes
+		# -1 in "date:-1@Date" is a "sort by this first, reverse order", comes before alias part
 		qid, qtt, qs = qt.get('refId'), qt.get('type'), Span(qs or 'd')
 		date_range = date_round(date0, qs), date_round(date1, qs, up=True)
 
 		# Parse metrics/labels and processing tags from query
-		metric_label_list, metric_proc = list(), list()
+		m_label_list, m_meta, m_date_idx, m_sort = list(), list(), list(), list()
 		qts_base, alias_dec = qts, json.JSONDecoder()
 		while qts:
 			if re.search(r'^\S+@\S', qts):
@@ -446,34 +448,45 @@ class ExportHTTPd:
 				if qts[0] in '"': # decode as json string
 					qa, pos = alias_dec.raw_decode(qts, 0)
 					qts = qts[pos:].lstrip()
-				else:
-					qa, qts = str_part(qts, '<')
-					if not qa: qa, qts = qts, qa
-			else: qa, (qk, qts) = None, str_part(qts, '')
-			qk, q_conv = str_part(qk, ':') # unused - field overrides should be good enough
-			# if q_conv and q_conv != 'bytes':
-			# 	self.log.warning('Unknown value-conversion type [!r]: {!r}', qts_base, q_conv)
-			# 	q_conv = None
+				else: qa, qts = str_part(qts, '<<')
+			else: qa, (qk, qts) = None, str_part(qts, '<<')
+			qk, qo = str_part(qk, ':')
+			if not qa: qa = qk
 			if not (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
 				self.log.warning('Unrecognized query metric format: {!r}', qk)
 				continue
-			metric_label_list.append(m[0])
-			metric_proc.append((m[0], qa or qk, q_conv))
+			metric, labels = m = m[0]
+			if qo := int(qo or 0): m_sort.append((abs(qo), qo<0, len(m_label_list)))
+			if metric != 'date': m_label_list.append(m)
+			else: m_date_idx.append(len(m_label_list))
+			m_meta.append((m, qa))
 
-		# Build [date, metric1, metric2, ...] table
-		data = self._db.get_metric_data(metric_label_list, date_range)
+		# Build table with fields from m_meta in same order, sorted according to m_sort
+		# Group metrics by date
+		data = self._db.get_metric_data(m_label_list, date_range)
 		table = cs.defaultdict(dict)
 		for row in data:
-			date = date_span_repr(dt.date.fromisoformat(row.date), qs)
 			k_row = row.metric, row.labels
-			for k, alias, proc in metric_proc:
+			for k, alias in m_meta:
 				if k != k_row: continue
 				# if proc == 'bytes': v = val_bytes_iec(v)
-				table[date][alias] = row.value
-		table_header = ['Date'] + sorted(map(op.itemgetter(1), metric_proc))
-		table_types = ['string'] + ['number'] * (len(table_header) - 1)
-		table, get_vals = list(table.items()), op.itemgetter(*table_header[1:])
-		for n, (date, metrics) in enumerate(table): table[n] = date, *get_vals(metrics)
+				table[row.date][alias] = row.value
+			table[row.date]['date'] = row.date
+		# Sort columns as per m_meta
+		table_header = sorted(map(op.itemgetter(1), m_meta))
+		table_types = ['number'] * len(table_header)
+		table, get_vals = list(table.items()), op.itemgetter(*table_header)
+		for n, (date, metrics) in enumerate(table): table[n] = list(get_vals(metrics))
+		# Sort rows by m_sort specs
+		for _, rev, n in sorted(m_sort, reverse=True):
+			table.sort(key=lambda ms: ms[n], reverse=rev) # python has stable sort
+		# Format dates, now that they no longer have to be compared
+		if m_date_idx:
+			for n in m_date_idx: table_types[n] = 'string'
+			for ms in table:
+				date = ms[m_date_idx[0]] = date_span_repr(
+					dt.date.fromisoformat(ms[m_date_idx[0]]), qs )
+				for n in m_date_idx[1:]: ms[n] = date
 
 		# Results
 		if qtt == 'timeserie':
