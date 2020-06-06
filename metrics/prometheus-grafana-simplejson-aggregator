@@ -329,7 +329,7 @@ class HTTPResponse(Exception):
 
 class ExportHTTPd:
 
-	check_sig, check_timeout, check_interval = 153, 60, 450
+	db_check_sig, db_check_timeout, db_check_interval = 153, 60, 450
 
 	def __init__(self, db_path, debug=False):
 		self.db_path, self.debug = db_path, debug
@@ -341,13 +341,14 @@ class ExportHTTPd:
 		if not self.__db:
 			self.__db = AggDB(self.db_path)
 			# Timer gets rescheduled so that it can stop on error/gc/etc
-			uwsgi.register_signal(self.check_sig, f'worker{uwsgi.worker_id()}', self._db_close_check)
-			uwsgi.add_rb_timer(self.check_sig, self.check_interval, 1)
+			uwsgi.register_signal( self.db_check_sig,
+				f'worker{uwsgi.worker_id()}', self._db_close_check )
+			uwsgi.add_rb_timer(self.db_check_sig, self.db_check_interval, 1)
 		return self.__db
 
 	def _db_close_check(self, sig):
-		self.__db.close(self.check_timeout)
-		uwsgi.add_rb_timer(self.check_sig, self.check_interval, 1)
+		self.__db.close(self.db_check_timeout)
+		uwsgi.add_rb_timer(self.db_check_sig, self.db_check_interval, 1)
 
 	def req(self, e, body, err_file, start_response):
 		if self.debug:
