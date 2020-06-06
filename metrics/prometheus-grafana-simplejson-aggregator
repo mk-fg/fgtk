@@ -244,7 +244,7 @@ class Aggregator:
 			try:
 				rs = self._q( 'query_range', metric_src, step='1d',
 					start=date_fmt(date0), end=date_fmt(date1), res_type='matrix', lvs_filter=lvs_filter )
-				if len(rs['values']) < 2 and date1 > date_now:
+				if len(rs['values']) == 1 and date1 > date_now:
 					rs2 = self._q('query', metric_src, res_type='vector', lvs_filter=lvs_filter)
 					if rs2 and rs2['value']: rs['values'].append(rs2['value'])
 				# self.log.debug('agg-span-values [{} {} {}]: {}', span.value, date0, date1, rs['values'])
