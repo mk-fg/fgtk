@@ -22,10 +22,22 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(f'grafana-agg.{name}
 
 
 def str_part(s, sep, default=None):
-	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
-	c = sep.strip('<>')
-	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
-	else: return (s, default) if c not in s else s.rsplit(c, 1)
+	'''Splits string by separator, always returning two values.
+		Separator can be empty to split on spaces. Examples:
+			str_part("user@host", "<@", "root"), str_part("host:port", ":>")
+			word, rest = str_part("some random words", "")'''
+	c = sep.strip('<>') or None
+	fill_left = sep.strip(c) == '<'
+	ss = s.split(c, 1) if fill_left else s.rsplit(c, 1)
+	if len(ss) == 2: return ss
+	return [default, s] if fill_left else [s, default]
+
+def val_bytes_iec(v):
+	if v < 1000: return f'{v:,} B'
+	for n, u in enumerate('KMG', 1):
+		div = 2**(n*10)
+		if v < 1000 * div: break
+	return f'{v/div:,.1f} {u}iB'
 
 def date_inc(date, d=0, w=0, m=0, y=0):
 	if y: date = date.replace(year=date.year + y)
@@ -44,6 +56,16 @@ def date_round(date, span, up=False):
 	elif span is Span.month: date = date.replace(day=1)
 	elif span is Span.week: date -= dt.timedelta(days=date.weekday())
 	if up: date = date_inc(date, **{span.value: 1})
+	return date
+
+def date_span_repr(date, span):
+	if span == Span.day: date = date.strftime('%Y-%m-%d')
+	elif span == Span.week:
+		date_we = date + dt.timedelta(days=7)
+		date = date.strftime('%b %d %Y').split()
+		date = date[0] + date[1] + '-' + date_we.strftime('%d') + date[2]
+	elif span == Span.month: date = date.strftime('%b %Y')
+	elif span == Span.year: date = date.strftime('%Y')
 	return date
 
 
@@ -135,18 +157,25 @@ class AggDB:
 			return list(f'{row[0]}[{row[1]}]' for row in (c.fetchall() or list()))
 
 	_metric_row = cs.namedtuple('metric', 'date metric labels value')
-	def get_metric_data(self, metric, labels=None, date_range=None):
-		keys = ', '.join(self._metric_row._fields)
+
+	def get_metric_data(self, metric_label_list, date_range=None):
+		if not metric_label_list: return list()
 		with self._db_cursor() as c:
-			q_where, q_order, q_vals = 'metric = ?', 'metric, span', [metric]
+			q_where, q_vals, q_order = list(), list(), 'metric, labels'
+			for metric, labels in metric_label_list:
+				if labels:
+					q_where.append('(metric = ? and labels = ?)')
+					q_vals.extend([metric, labels])
+				else:
+					q_where.append('metric = ?')
+					q_vals.append(metric)
+			q_where = '(' + ' or '.join(q_where) + ')'
 			if date_range:
 				date0, date1 = date_range
 				q_where, q_order = q_where + ' and (date >= ? and date <= ?)', q_order + ', date'
 				q_vals.extend([date0, date1])
-			if labels:
-				q_where, q_order = q_where + ' and labels = ?', q_order + ', labels'
-				q_vals.append(labels)
-			q = f'select {keys} from data where {q_where} order by {q_order}'
+			q_keys = ', '.join(self._metric_row._fields)
+			q = f'select {q_keys} from data where {q_where} order by {q_order}'
 			self.log.debug('Q: {!r} {}', q, q_vals)
 			c.execute(q, q_vals)
 			return list(self._metric_row(*row) for row in (c.fetchall() or list()))
@@ -233,7 +262,6 @@ class Aggregator:
 
 import io, base64
 
-httpd_debug, httpd_db_path = False, 'data.sqlite'
 log_uid = lambda: base64.urlsafe_b64encode(os.urandom(4 * 6 // 8)).rstrip(b'=').decode()
 
 def log_lines(log_func, lines, log_func_last=False, uid=None, **log_func_kws):
@@ -295,89 +323,171 @@ class HTTPResponse(Exception):
 		else: res, res_ct = json.dumps(res).encode(), 'application/json'
 		super().__init__(res_code, res, res_ct)
 
-def export_httpd(e, body, err_file, start_response):
-	if httpd_debug:
-		body, body_raw = io.BytesIO(), body
-		log_req(e, body_raw, err_file, buff=body)
-		body.seek(0)
-	if not getattr(export_httpd, 'log', None):
-		export_httpd.log = get_logger('httpd')
+class ExportHTTPd:
 
-	res_code, res = '500 Internal Server Error', b''
-	res_headers, res_ct = dict(), 'text/plain'
-	try: export_httpd_req(e, body)
-	except HTTPResponse as res_ex: res_code, res, res_ct = res_ex.args
-	if e.get('REQUEST_METHOD', '').lower() == 'head': res = b''
+	check_sig, check_timeout, check_interval = 153, 60, 450
 
-	start_response(res_code, [
-		('Access-Control-Allow-Origin', '*'),
-		('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'),
-		('Access-Control-Allow-Headers',
-			'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'),
-		('Content-type', res_ct),
-		('Content-Length', str(len(res))) ])
-	if httpd_debug: print(f'--- res-data: {res}', file=err_file, flush=True)
-	return [res]
+	def __init__(self, db_path, debug=False):
+		self.db_path, self.debug = db_path, debug
+		self.log = get_logger('httpd')
 
-def export_httpd_req(e, body):
-	req = up.urlparse(e.get('REQUEST_URI', ''))
-	req_verb = e.get('REQUEST_METHOD', '').lower()
-	if req.path == '/':
-		if req_verb not in ['get', 'head', 'options']:
-			raise HTTPResponse('405 Method Not Allowed')
-		raise HTTPResponse('200 OK', b'OK\n')
-	else:
-		if e.get('REQUEST_METHOD', '').lower() not in ['get', 'post', 'head']:
-			raise HTTPResponse('405 Method Not Allowed')
-		if not getattr(export_httpd, 'db', None):
-			export_httpd.db = AggDB(httpd_db_path)
-			check_sig, check_timeout, check_interval = 153, 60, 450
-			uwsgi.register_signal(check_sig, f'worker{uwsgi.worker_id()}', lambda n: (
-				export_httpd.db.close(check_timeout), uwsgi.add_rb_timer(check_sig, check_interval, 1) ))
-			uwsgi.add_rb_timer(check_sig, check_interval, 1) # iterations=1 to stop on error/gc/etc
-		if req.path == '/search':
-			raise HTTPResponse(res=export_httpd.db.get_metric_list())
-		elif req.path == '/query':
-			query = body.read(256 * 2**10)
-			if body.read(1): raise ValueError('body too large')
-			try: query = json.loads(query.decode('utf-8', 'backslashreplace'))
-			except json.JSONDecodeError: raise HTTPResponse('400 Bad Request')
-			export_httpd_query(query)
-	raise HTTPResponse('400 Bad Request')
+	__db = None
+	@property
+	def _db(self):
+		if not self.__db:
+			self.__db = AggDB(self.db_path)
+			# Timer gets rescheduled so that it can stop on error/gc/etc
+			uwsgi.register_signal(self.check_sig, f'worker{uwsgi.worker_id()}', self._db_close_check)
+			uwsgi.add_rb_timer(self.check_sig, self.check_interval, 1)
+		return self.__db
 
-def export_httpd_query(q):
-	# Query example: iface_traffic_bytes_day[dir=in]:m@traffic-in
-	#  ":m" - optional span (default=d), "@traffic-in" - resulting value name
-	# https://github.com/grafana/simple-json-datasource
-	# https://grafana.com/grafana/plugins/grafana-simple-json-datasource
-	parse_date = lambda ts: dt.date.fromtimestamp(
-		dt.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp() )
-	res = list()
-	date0, date1 = (parse_date(d) for d in [q['range']['from'], q['range']['to']])
-	for qt in q['targets']:
-		qk, qid, qtt = qt.get('target'), qt.get('refId'), qt.get('type')
-		qk, qa = str_part(qk, '@>')
+	def _db_close_check(self, sig):
+		self.__db.close(self.check_timeout)
+		uwsgi.add_rb_timer(self.check_sig, self.check_interval, 1)
+
+	def req(self, e, body, err_file, start_response):
+		if self.debug:
+			body, body_raw = io.BytesIO(), body
+			log_req(e, body_raw, err_file, buff=body)
+			body.seek(0)
+
+		res_code, res = '500 Internal Server Error', b''
+		res_headers, res_ct = dict(), 'text/plain'
+		try: self._req_proc(e, body)
+		except HTTPResponse as res_ex: res_code, res, res_ct = res_ex.args
+		if e.get('REQUEST_METHOD', '').lower() == 'head': res = b''
+
+		start_response(res_code, [
+			('Access-Control-Allow-Origin', '*'),
+			('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'),
+			('Access-Control-Allow-Headers',
+				'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'),
+			('Content-type', res_ct),
+			('Content-Length', str(len(res))) ])
+		if self.debug: print(f'--- res-data: {res}', file=err_file, flush=True)
+		return [res]
+
+	def _req_proc(self, e, body):
+		req = up.urlparse(e.get('REQUEST_URI', ''))
+		req_verb = e.get('REQUEST_METHOD', '').lower()
+		if req.path == '/':
+			if req_verb not in ['get', 'head', 'options']:
+				raise HTTPResponse('405 Method Not Allowed')
+			raise HTTPResponse('200 OK', b'OK\n')
+		else:
+			if e.get('REQUEST_METHOD', '').lower() not in ['get', 'post', 'head']:
+				raise HTTPResponse('405 Method Not Allowed')
+			if req.path == '/search':
+				raise HTTPResponse(res=self._db.get_metric_list())
+			elif req.path == '/query':
+				query = body.read(256 * 2**10)
+				if body.read(1): raise ValueError('body too large')
+				try: query = json.loads(query.decode('utf-8', 'backslashreplace'))
+				except json.JSONDecodeError: raise HTTPResponse('400 Bad Request')
+				self._req_query(query)
+		raise HTTPResponse('400 Bad Request')
+
+	def _req_query(self, q):
+		res = list()
+		parse_date = lambda ts: dt.date.fromtimestamp(
+			dt.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S.%fZ').timestamp() )
+		date0, date1 = (parse_date(d) for d in [q['range']['from'], q['range']['to']])
+		for qt in q['targets']:
+			data, qts = None, qt.get('target') or ''
+			if m := re.search(r'^\[(\w+)(?::(\w))?\]\s+(\S+.*)', qts):
+				fmt, qs, qts = m.groups()
+				if fmt == 'table': data = self._query_table(qt, qs, qts, date0, date1)
+				else: self.log.debug('Unrecognized format in query: {!r}', fmt)
+			else: data = self._query_metric(qt, date0, date1)
+			res.append(data)
+		raise HTTPResponse(res=res)
+
+	def _query_metric(self, qt, date0, date1):
+		# Query example: iface_traffic_bytes_day[dir=in]:m@traffic-in
+		#  ":m" - optional span (default=d), "@traffic-in" - resulting value name
+		# https://github.com/grafana/simple-json-datasource
+		# https://grafana.com/grafana/plugins/grafana-simple-json-datasource
+		qt, qid, qtt = qt.get('target'), qt.get('refId'), qt.get('type')
+		qk, qa = str_part(qt, '@>')
 		qk, qs = str_part(qk, ':>')
 		qs = Span(qs) if qs else Span.day
 		date_range = date_round(date0, qs), date_round(date1, qs, up=True)
 		if qk and (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
 			metric, labels = m[0]
-			data = export_httpd.db.get_metric_data(metric, labels, date_range)
+			data = self._db.get_metric_data([(metric, labels)], date_range)
 			data = list( # (value, timestamp[ms])
 				(d.value, int(dt.datetime.fromisoformat(d.date).timestamp())*1000)
 				for d in data )
-		else: data = list()
+		else:
+			self.log.warning('Unrecognized query metric format: {!r}', qk)
+			data = list()
 		if qtt == 'timeserie':
-			res.append(dict(target=qk, refId=qid, type=qtt, datapoints=data))
+			return dict(target=qt, refId=qid, type=qtt, datapoints=data)
 		elif qtt == 'table':
-			res.append(dict(
-				target=qk, refId=qid, type=qtt, rows=data,
-				columns=[dict(text=qa or qk, type='number'), dict(text='Time', type='time')] ))
-		else: export_httpd.log.debug('Unrecognized query target type: {!r}', qtt)
-	raise HTTPResponse(res=res)
+			return dict(
+				target=qt, refId=qid, type=qtt, rows=data,
+				columns=[dict(text=qa or qk, type='number'), dict(text='Time', type='time')] )
+		else: self.log.debug('Unrecognized query target type: {!r}', qtt)
+
+	def _query_table(self, qt, qs, qts, date0, date1):
+		# Query example: [table:m] iface_traffic_bytes_day[dir=in]@'traffic in'
+		# Same as export_query_metric, except returns a table with specified metrics
+		# First "Date" field will be auto-added, in a string-date format for timespan
+		# Metric name alias can be parsed as json string value if it's in double quotes
+		qid, qtt, qs = qt.get('refId'), qt.get('type'), Span(qs or 'd')
+		date_range = date_round(date0, qs), date_round(date1, qs, up=True)
+
+		# Parse metrics/labels and processing tags from query
+		metric_label_list, metric_proc = list(), list()
+		qts_base, alias_dec = qts, json.JSONDecoder()
+		while qts:
+			if re.search(r'^\S+@\S', qts):
+				qk, qts = qts.split('@', 1)
+				if qts[0] in '"': # decode as json string
+					qa, pos = alias_dec.raw_decode(qts, 0)
+					qts = qts[pos:].lstrip()
+				else:
+					qa, qts = str_part(qts, '<')
+					if not qa: qa, qts = qts, qa
+			else: qa, (qk, qts) = None, str_part(qts, '')
+			qk, q_conv = str_part(qk, ':') # unused - field overrides should be good enough
+			# if q_conv and q_conv != 'bytes':
+			# 	self.log.warning('Unknown value-conversion type [!r]: {!r}', qts_base, q_conv)
+			# 	q_conv = None
+			if not (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
+				self.log.warning('Unrecognized query metric format: {!r}', qk)
+				continue
+			metric_label_list.append(m[0])
+			metric_proc.append((m[0], qa or qk, q_conv))
+
+		# Build [date, metric1, metric2, ...] table
+		data = self._db.get_metric_data(metric_label_list, date_range)
+		table = cs.defaultdict(dict)
+		for row in data:
+			date = date_span_repr(dt.date.fromisoformat(row.date), qs)
+			k_row = row.metric, row.labels
+			for k, alias, proc in metric_proc:
+				if k != k_row: continue
+				# if proc == 'bytes': v = val_bytes_iec(v)
+				table[date][alias] = row.value
+		table_header = ['Date'] + sorted(map(op.itemgetter(1), metric_proc))
+		table_types = ['string'] + ['number'] * (len(table_header) - 1)
+		table, get_vals = list(table.items()), op.itemgetter(*table_header[1:])
+		for n, (date, metrics) in enumerate(table): table[n] = date, *get_vals(metrics)
+
+		# Results
+		if qtt == 'timeserie':
+			data = list(dict(zip(table_header, m)) for m in table)
+			return dict(target=qt, refId=qid, type=qtt, datapoints=data)
+		elif qtt == 'table':
+			return dict( target=qt, refId=qid, type=qtt, rows=table,
+				columns=list(dict(text=k, type=t) for k, t in zip(table_header, table_types)) )
+		else: self.log.debug('Unrecognized query target type: {!r}', qtt)
 
 
 ### ----- CLI / uwsgi
+
+default_db_path = 'data.sqlite'
 
 def main(args=None):
 	import argparse, textwrap
@@ -395,7 +505,7 @@ def main(args=None):
 
 	group = parser.add_argument_group('Common/basic options')
 	group.add_argument('-d', '--db',
-		metavar='path', default=httpd_db_path,
+		metavar='path', default=default_db_path,
 		help=dd('''
 			Path to sqlite database to update and load values from.
 			Can be specified as PMA_DB_PATH env var in uwsgi mode.'''))
@@ -445,20 +555,27 @@ def main(args=None):
 			mode=AggMode(opts.agg_mode), url=opts.prometheus_url, spans=opts.agg_spans ).run()
 	log.debug('Finished')
 
-if __name__ == '__main__': sys.exit(main())
-elif __name__.startswith('uwsgi_'):
-	import uwsgi # to make sure uwsgi is there
-	httpd_debug = bool(os.environ.get('PMA_DEBUG'))
-	httpd_db_path = os.environ.get('PMA_DB_PATH') or httpd_db_path
-	logging.basicConfig(level=logging.DEBUG if httpd_debug else logging.WARNING)
-	log = get_logger('httpd')
+def init_uwsgi_handler():
+	httpd = ExportHTTPd(
+		db_path=os.environ.get('PMA_DB_PATH') or default_db_path,
+		debug=bool(os.environ.get('PMA_DEBUG')) )
+
+	logging.basicConfig(level=logging.DEBUG if httpd.debug else logging.WARNING)
+	log = get_logger('main')
 	log.debug('Running in export-httpd mode...')
-	log.debug('uwsgi-env config: debug={} db-path={!r}', httpd_debug, httpd_db_path)
+	log.debug('uwsgi-env config: debug={} db-path={!r}', httpd.debug, httpd.db_path)
+
 	import traceback as tb
 	def application(e, start_response):
 		body, err_file = map(e.pop, ['wsgi.input', 'wsgi.errors'])
-		try: yield from export_httpd(e, body, err_file, start_response)
+		try: yield from httpd.req(e, body, err_file, start_response)
 		except Exception as err:
 			tb.print_exc(file=err_file)
 			raise
 		err_file.flush()
+	return application
+
+if __name__ == '__main__': sys.exit(main())
+elif __name__.startswith('uwsgi_'):
+	import uwsgi # to make sure uwsgi is there
+	application = init_uwsgi_handler()
