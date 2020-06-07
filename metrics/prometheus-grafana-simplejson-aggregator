@@ -143,14 +143,14 @@ class AggDB:
 				' values (?, ?, ?, ?, ?)', (metric, span.value, date, labels, value) )
 
 	def get_last_date(self, metric, span, labels):
-		'''Returns date of last stored value for metric/span/labels,
+		'''Returns date (str) of last stored value for metric/span/labels,
 			but only if it's not the only value for these parameters, None otherwise.'''
 		with self._db_cursor() as c:
 			c.execute(
 				'select date from data where metric = ? and span = ?'
 				' and labels = ? order by date desc limit 2', (metric, span.value, labels) )
 			v = c.fetchall()
-		return v[0] if v and len(v) == 2 else None
+		return v[0][0] if v and len(v) == 2 else None
 
 	def get_metric_list(self):
 		with self._db_cursor() as c:
