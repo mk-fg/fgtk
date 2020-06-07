@@ -143,13 +143,14 @@ class AggDB:
 				' values (?, ?, ?, ?, ?)', (metric, span.value, date, labels, value) )
 
 	def get_last_date(self, metric, span, labels):
+		'''Returns date of last stored value for metric/span/labels,
+			but only if it's not the only value for these parameters, None otherwise.'''
 		with self._db_cursor() as c:
 			c.execute(
 				'select date from data where metric = ? and span = ?'
-				' and labels = ? order by date desc', (metric, span.value, labels) )
-			v = c.fetchone()
-			if v: v = v[0]
-		return v
+				' and labels = ? order by date desc limit 2', (metric, span.value, labels) )
+			v = c.fetchall()
+		return v[0] if v and len(v) == 2 else None
 
 	def get_metric_list(self):
 		with self._db_cursor() as c:
@@ -195,7 +196,7 @@ class Aggregator:
 		self.log = get_logger('agg')
 		if self.mode != AggMode.total: raise NotImplementedError(self.mode)
 
-	def _q_all(self, m='query', q=None, **kws):
+	def _q_all(self, m, q, **kws):
 		url = f'{self.url}/api/v1/{m}'
 		if q or kws:
 			req_qs = up.urlencode(dict(query=q, **kws))
@@ -204,19 +205,26 @@ class Aggregator:
 		# self.log.debug('prms-q: {}', url)
 		with ur.urlopen(url) as res_http:
 			res = json.loads(res_http.read().decode())
-		if res.get('status') != 'success': raise AggError(res)
+		if res.get('status') != 'success': raise AggError(m, q, res)
 		self.val_cache[url] = res['data']
 		return res['data']
 
-	def _q(self, *args, res_type=None, lvs_filter=None, **kws):
-		res = self._q_all(*args, **kws)
-		if res_type and res['resultType'] != res_type: raise AggError(res)
+	def _q(self, m='query', q=None, res_type=None, lvs_filter=None, **q_kws):
+		qi = lambda: f'({m} {q!r} {q_kws})'
+		try: res = self._q_all(m, q, **q_kws)
+		except ue.HTTPError as err: raise AggError(f'{qi()} http error: {err}')
+		if res_type and res['resultType'] != res_type:
+			raise AggError(f'{qi()} incorrect result type [{res_type} {lvs_filter}]: {res}')
 		if lvs_filter:
+			if lvs_filter is True:
+				rs = res.get('result', list())
+				if len(rs) == 1: return rs[0]
+				raise AggError(f'{qi()} expecting single value [{lvs_filter}]: {res}')
 			for rs in res.get('result') or list():
 				for k, v in lvs_filter:
 					if rs['metric'][k] != v: break
 				else: return rs
-			else: raise AggError(lvs_filter, res)
+			else: raise AggError(f'{qi()} no result for label(s) [{lvs_filter}]: {res}')
 		return res
 
 	def run(self):
@@ -224,42 +232,62 @@ class Aggregator:
 		for v in self.labels: label_values.append(self._q(f'label/{v}/values'))
 		for s, *lvs in it.product(self.spans, *label_values): self.agg_span(s, lvs)
 
+	def _agg_span_ext_val(self, t, m, ts, delta_days, lvs_filter):
+		# It can be inefficient to scan whole delta_days range (e.g. a year),
+		#  so compromise is to try and only get values for small timespans on each end here
+		err_last, q = None, ft.partial(self._q, 'query', lvs_filter=lvs_filter, res_type='vector')
+		for delta_max in [1, 7, 30, 120, 400]:
+			d = min(delta_max, delta_days)
+			ts_q = ts if t == 'max' else (ts + d * 24 * 3600)
+			try:
+				rs = q(f'{t}_over_time({m}[{d}d])', time=ts_q)
+				try: ts_v, v = rs['value']
+				except: raise AggError('value-end') from None
+				return d, ts_v, v
+			except AggError as err: err_last = err
+			if delta_max >= delta_days: break
+		raise err_last
+
 	def agg_span(self, span, lvs):
 		lvs_filter = list(zip(self.labels, lvs))
 		labels = ' '.join(sorted(f'{k}={v}' for k,v in lvs_filter))
 		metric_src = f'{self.src}_total'
 		metric_dst = self.dst.format(span=span.name)
-		date0 = self.db.get_last_date(metric_dst, span, labels)
-		if date0: date0 = dt.date(*map(int, date0.split('-')))
-		else:
-			rs = self._q(q=f'{self.src}_created', res_type='vector', lvs_filter=lvs_filter)
-			date0 = date_round(dt.date.fromtimestamp(float(rs['value'][1])), span)
-		self.log.debug('agg-span [{} {}]: {}+', span.value, labels, date0)
 
-		# XXX: can be optimized, as all intervals are fetched by-day anyway
+		date0 = self.db.get_last_date(metric_dst, span, labels)
+		if date0: date0_ts, date0 = None, dt.date(*map(int, date0.split('-')))
+		else:
+			metric_ts = f'{self.src}_created'
+			rs = self._q(
+				q=f'min_over_time({metric_ts}[10y])',
+				res_type='vector', lvs_filter=lvs_filter )
+			date0_ts = float(rs['value'][1]) # note: not usable for precise queries
+			date0 = date_round(dt.date.fromtimestamp(date0_ts), span)
 		date_now = dt.date.today()
-		date_fmt = lambda date: dt.datetime(date.year, date.month, date.day).timestamp()
+		self.log.debug( 'agg-span [{} {}]: {}+ [{}]', span.value,
+			labels, date0, date0_ts and dt.datetime.fromtimestamp(date0_ts) )
+
+		date_ts = lambda date: dt.datetime(date.year, date.month, date.day).timestamp()
 		while date0 <= date_now:
-			value, date1 = None, date_inc(date0, **{span.value: 1})
+			value, err, date1 = None, None, date_inc(date0, **{span.value: 1})
+			delta_days = (date1 - date0).days
 			try:
-				rs = self._q( 'query_range', metric_src, step='1d',
-					start=date_fmt(date0), end=date_fmt(date1), res_type='matrix', lvs_filter=lvs_filter )
-				if len(rs['values']) == 1 and date1 > date_now:
-					rs2 = self._q('query', metric_src, res_type='vector', lvs_filter=lvs_filter)
-					if rs2 and rs2['value']: rs['values'].append(rs2['value'])
-				# self.log.debug('agg-span-values [{} {} {}]: {}', span.value, date0, date1, rs['values'])
-				if len(rs['values']) < 2: raise AggError('value-count')
+				d0, ts0, v0 = self._agg_span_ext_val( 'min', metric_src,
+					date0_ts or date_ts(date0), delta_days, lvs_filter )
+				d1, ts1, v1 = self._agg_span_ext_val(
+					'max', metric_src, date_ts(date1), delta_days, lvs_filter )
+				value = int(v1) - int(v0)
+				# self.log.debug(
+				# 	'agg-span-values [{} {} {}]: {} [{}:{}] - {} [{}:{}]',
+				# 	span.value, date0, date1, v0, ts0, d0, v1, ts1, d1 )
 			except AggError as err:
 				self.log.debug(
 					'Missing/bogus value {!r} [{}]: {} - {} [{}]',
 					self.src, labels, date0, date1, err )
 				value = 0
-			else:
-				(ts0, v0), (ts1, v1) = rs['values'][0], rs['values'][-1]
-				value = int(v1) - int(v0)
-			self.log.debug('agg-span-db [{} {} {}]: {!r} {}', span.value, date0, date1, labels, value)
+			self.log.debug('agg-span-db [{} {} {}]: {!r} {:,}', span.value, date0, date1, labels, value)
 			self.db.add_point(metric_dst, span, date0, labels, value)
-			date0 = date1
+			date0, date0_ts = date1, None
 
 
 ### ----- Export-httpd mode
