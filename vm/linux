@@ -90,7 +90,7 @@ root=$(dirname "$BASH_SOURCE")
 dst="$root"/live.dump
 telnet_port=$(( 8200 + $ins ))
 vde_mac_tail=54:00:12:34:$(( 60 + $ins )) # missing first (even) octet
-vde_path=~/tmp/vde
+vde_path="$HOME"/tmp/vde
 dump_inc= restore= net_only=
 
 
@@ -156,13 +156,15 @@ modprobe kvm-amd 2>/dev/null || (( err += 1 ))
 
 
 ### VDE
+# Tend to break terminal for some reason, hence &>/dev/null on start
 
 pid1=$$ pid2=$$
 mkdir -p "$vde_path"
 
 cgrc -rcu vde && {
+	rm -rf "$vde_path"/link.sock
 	cgrc -ru vde apps-vm -- vde_switch \
-		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &
+		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &>/dev/null &
 	pid1=$!; }
 
 for n in {0..50}; do
@@ -172,8 +174,8 @@ done
 [[ $n -lt 50 ]] || { echo >&2 "ERROR: vde switch startup failed"; exit 1; }
 
 cgrc -rcu vde-tap && {
-	cgrc -ru vde-tap apps-vm -- sudo vde_plug2tap \
-		-s "$vde_path"/link.sock vde &
+	cgrc -ru vde-tap apps-vm -- \
+		sudo -n vde_plug2tap -s "$vde_path"/link.sock vde &>/dev/null &
 	pid2=$!; }
 
 # Add a little delay if vde stuff is just starting
