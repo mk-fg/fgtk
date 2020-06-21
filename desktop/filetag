@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import pathlib as pl, collections as cs, dbm.gnu as gdbm
+import pathlib as pl, collections as cs, contextlib as cl
 import os, sys, re, math, configparser, tempfile, time
 
 p_err = lambda msg,*a,**k: print(msg, *a, **k, file=sys.stderr, flush=True)
@@ -61,11 +61,6 @@ skip = /venv-
 '''
 
 
-# DB key namespaces (stored in first byte):
-#  - 0 - metadata var -> val
-#  - 1 - path index -> path
-#  - 2 - tag bit -> path indexes
-
 tag_map = dict(
 	# Useful binary formats
 	bin_ext = {
@@ -112,18 +107,82 @@ tag_map = dict(
 		'rakefile': 'ruby', '/config$': 'conf', '/zsh/_[^/]+$': 'sh', 'patch': 'diff' } )
 
 
+class TagDB:
+
+	# db_migrations can have multiple statements, separated by ;
+	_db, _db_migrations = None, ['''
+		create table if not exists meta (
+			var text not null primary key, val text not null );
+		create table if not exists paths (
+			tag text not null, path text not null );
+		create index if not exists paths_tag on paths (tag);''']
+
+	def __init__(self, path, lock_timeout=60, lazy=True):
+		import sqlite3
+		self._sqlite, self._ts_activity = sqlite3, 0
+		self._db_kws = dict( database=path,
+			isolation_level='IMMEDIATE', timeout=lock_timeout )
+		if not lazy: self._db_init()
+
+	def close(self, inactive_timeout=None):
+		if ( inactive_timeout is not None
+			and (time.monotonic() - self._ts_activity) < inactive_timeout ): return
+		if self._db:
+			self._db.close()
+			self._db = None
+	def __enter__(self): return self
+	def __exit__(self, *err): self.close()
+
+	def _db_init(self):
+		self._db = self._sqlite.connect(**self._db_kws)
+		sk, sv_new = 'schema-version', len(self._db_migrations)
+		with self._db_cursor() as c:
+			c.execute('pragma journal_mode=wal')
+			c.execute('savepoint sv')
+			try:
+				# Ideally this would be "select ... for update", but not with sqlite
+				c.execute('select val from meta where var = ?', (sk,))
+				row = c.fetchall()
+			except self._sqlite.OperationalError as err:
+				if not err.args[0].startswith('no such table:'): raise
+				c.execute('rollback to sv')
+				row = None
+			c.execute('release sv')
+			sv = int(row[0][0]) if row else 0
+			if sv_new <= sv: return
+			for sv, sql in enumerate(self._db_migrations[sv:], sv+1):
+				for st in sql.split(';'): c.execute(st)
+			c.execute('replace into meta (var, val) values (?, ?)', (sk, str(sv)))
+
+	@cl.contextmanager
+	def _db_cursor(self):
+		self._ts_activity = time.monotonic()
+		if not self._db: self._db_init()
+		with self._db as conn, cl.closing(conn.cursor()) as c: yield c
+
+	@cl.contextmanager
+	def tagger_context(self):
+		with self._db_cursor() as c:
+			tag_func = ( lambda tag, path:
+				c.execute('insert into paths (tag, path) values (?, ?)', (tag, path)) )
+			yield tag_func
+
+	def lookup_paths(self, tagsets):
+		q_where, q_args = list(), list()
+		for tag_group in filter(None, tagsets):
+			q_where.append('(' + ' and '.join(['tag = ?']*len(tag_group)) + ')')
+			q_args.extend(tag_group)
+		q_where = ('where ' + ' or '.join(q_where)) if q_where else ''
+		with self._db_cursor() as c:
+			c.execute(f'select path from paths {q_where}', q_args)
+			return (row[0] for row in (c.fetchall() or list()))
+
+
 class FileTreeTagger:
 
-	def __init__(self, db, tag_map, res_inc, res_skip, verbose=False):
-		self.db, self.res_inc, self.res_skip, self.verbose = db, res_inc, res_skip, verbose
-
-	def __enter__(self):
-		self.path_idx_iter = iter(range(1, 2**32))
+	def __init__(self, tag_func, tag_map, res_inc, res_skip, verbose=False):
+		self.tag_func, self.res_inc, self.res_skip, self.verbose = tag_func, res_inc, res_skip, verbose
 		self.tags = self.tag_map_compile(tag_map)
-		self.db[b'\0tag_bits'] = b'\0'.join(t.encode() for t in self.tags.bits.keys())
-		return self
-
-	def __exit__(self, *err): pass
 
 	@staticmethod
 	def tag_map_compile(tag_map):
@@ -141,8 +200,6 @@ class FileTreeTagger:
 					tags = tags.split()
 					tag_set.update(tags)
 					taggers.append((re.compile(rx), tags))
-		tag_map['bits'] = dict((tag, n) for n,tag in enumerate(sorted(tag_set)))
-		tag_map['bits_len'] = math.ceil(len(tag_map['bits']).bit_length() / 8)
 		return type('TagMap', (object,), tag_map)
 
 	def process_path(self, p):
@@ -159,8 +216,7 @@ class FileTreeTagger:
 				fn, p_file = fn_root + fn, root / fn
 				if not self.path_filter_check(fn): continue
 				tagset = self.tag_file(p_file)
-				if self.verbose:
-					print(f'{time.monotonic()-ts0:.3f} {len(tagset)} {fn.lstrip("/")}')
+				if self.verbose: print(f'{time.monotonic()-ts0:.3f} {len(tagset)} {fn.lstrip("/")}')
 
 	def path_filter_check(self, fn):
 		if any(rx.search(fn) for rx in self.res_inc): return True
@@ -168,7 +224,6 @@ class FileTreeTagger:
 		return True
 
 	def tag_file(self, p):
-		## Build tagset for file
 		p_str, tagset = str(p), set()
 		for rx, tags in self.tags.code_ext: # code file extension
 			if rx.search(p_str): tagset.update(tags)
@@ -188,42 +243,9 @@ class FileTreeTagger:
 			for rx, tags in self.tags.code_path:
 				if rx.search(p_str): tagset.update(tags)
 
-		if tagset:
-			p_idx = b'\1' + next(self.path_idx_iter).to_bytes(4, 'big')
-			self.db[p_idx] = p_str.encode()
-			for tag in tagset:
-				tag_bit = b'\2' + self.tags.bits[tag].to_bytes(self.tags.bits_len, 'big')
-				self.db[tag_bit] = self.db.get(tag_bit, b'') + p_idx
-
+		if tagset: # commit path tags to db
+			for tag in tagset: self.tag_func(tag, p_str)
 		return tagset
-
-
-def lookup_paths(db, tagsets):
-	tag_bits = dict((tag, n) for n, tag in enumerate(db[b'\0tag_bits'].decode().split('\0')))
-	tag_bits_len = math.ceil(len(tag_bits).bit_length() / 8)
-
-	tags_all = set()
-	for n, ts in enumerate(tagsets):
-		mask = 0
-		for tag in ts:
-			try: mask |= 1 << tag_bits[tag]
-			except KeyError:
-				p_err(f'--- NOTE: dropping unknown tag from query - {tag!r}')
-				continue
-			tags_all.add(tag)
-		tagsets[n] = ts, mask # pre-calc bitmask for each ts
-
-	path_masks = cs.defaultdict(int)
-	for tag in tags_all:
-		tag_bit = tag_bits[tag]
-		paths = db.get(b'\2' + tag_bit.to_bytes(tag_bits_len, 'big'))
-		if not paths: continue
-		for p_idx in (paths[n:n+5] for n in range(0, len(paths), 5)):
-			path_masks[p_idx] |= 1 << tag_bits[tag]
-
-	for p_idx, p_mask in path_masks.items():
-		if any(p_mask & ts_mask == ts_mask for ts, ts_mask in tagsets):
-			yield db[p_idx].decode()
 
 
 class ConfDict(cs.UserDict):
@@ -285,25 +307,25 @@ def main(args=None):
 		res_inc, res_skip = (
 			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
 			for k in ['include', 'skip'] )
-		with \
-				tempfile.NamedTemporaryFile(
-					dir=p_db.parent, prefix=p_db.name+'.', delete=False ) as p_db_tmp, \
-				gdbm.open(p_db_tmp.name, 'nf', 0o600) as db:
-			p_db_tmp = pl.Path(p_db_tmp.name)
-			try:
-				with FileTreeTagger( db, tag_map,
-						res_inc, res_skip, verbose=opts.verbose ) as tagger:
-					for p in p_scan_list: tagger.process_path(p)
-			except:
-				p_db_tmp.unlink(missing_ok=True)
-				raise
-			else: p_db_tmp.rename(p_db)
+		try:
+			with \
+					tempfile.NamedTemporaryFile(
+						dir=p_db.parent, prefix=p_db.name+'.', delete=False ) as p_db_tmp, \
+					TagDB(p_db_tmp.name) as db, db.tagger_context() as tag_func:
+				p_db_tmp = pl.Path(p_db_tmp.name)
+				tagger = FileTreeTagger(
+					tag_func, tag_map, res_inc, res_skip, verbose=opts.verbose )
+				for p in p_scan_list: tagger.process_path(p)
+		except:
+			p_db_tmp.unlink(missing_ok=True)
+			raise
+		else: p_db_tmp.rename(p_db)
 
 	if opts.tags:
 		tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tags).split())
 		print_func = lambda line: print(line, end='\n' if not opts.print0 else '\0')
-		with gdbm.open(str(p_db), 'r') as db:
-			for p_str in lookup_paths(db, tagsets):
+		with TagDB(p_db) as db:
+			for p_str in db.lookup_paths(tagsets):
 				if opts.existing and not os.path.exists(p_str): continue
 				print_func(p_str)
 
