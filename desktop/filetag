@@ -108,14 +108,11 @@ tag_map = dict(
 
 
 class TagDB:
-
-	# db_migrations can have multiple statements, separated by ;
-	_db, _db_migrations = None, ['''
-		create table if not exists meta (
-			var text not null primary key, val text not null );
+	# No migrations needed here, as db gets rebuilt on each run
+	_db, _db_schema = None, '''
 		create table if not exists paths (
-			tag text not null, path text not null );
-		create index if not exists paths_tag on paths (tag);''']
+			tag text not null, path text not null, mtime real not null );
+		create index if not exists paths_tag on paths (tag);'''
 
 	def __init__(self, path, lock_timeout=60, lazy=True):
 		import sqlite3
@@ -135,24 +132,8 @@ class TagDB:
 
 	def _db_init(self):
 		self._db = self._sqlite.connect(**self._db_kws)
-		sk, sv_new = 'schema-version', len(self._db_migrations)
 		with self._db_cursor() as c:
-			c.execute('pragma journal_mode=wal')
-			c.execute('savepoint sv')
-			try:
-				# Ideally this would be "select ... for update", but not with sqlite
-				c.execute('select val from meta where var = ?', (sk,))
-				row = c.fetchall()
-			except self._sqlite.OperationalError as err:
-				if not err.args[0].startswith('no such table:'): raise
-				c.execute('rollback to sv')
-				row = None
-			c.execute('release sv')
-			sv = int(row[0][0]) if row else 0
-			if sv_new <= sv: return
-			for sv, sql in enumerate(self._db_migrations[sv:], sv+1):
-				for st in sql.split(';'): c.execute(st)
-			c.execute('replace into meta (var, val) values (?, ?)', (sk, str(sv)))
+			for stmt in self._db_schema.split(';'): c.execute(stmt)
 
 	@cl.contextmanager
 	def _db_cursor(self):
@@ -163,8 +144,8 @@ class TagDB:
 	@cl.contextmanager
 	def tagger_context(self):
 		with self._db_cursor() as c:
-			tag_func = ( lambda tag, path:
-				c.execute('insert into paths (tag, path) values (?, ?)', (tag, path)) )
+			tag_func = lambda tag, path, mtime: c.execute(
+				'insert into paths (tag, path, mtime) values (?, ?, ?)', (tag, path, mtime) )
 			yield tag_func
 
 	def lookup_paths(self, tagsets):
@@ -174,7 +155,7 @@ class TagDB:
 			q_args.extend(tag_group)
 		q_where = ('where ' + ' or '.join(q_where)) if q_where else ''
 		with self._db_cursor() as c:
-			c.execute(f'select path from paths {q_where}', q_args)
+			c.execute(f'select path, mtime from paths {q_where} order by mtime desc', q_args)
 			return (row[0] for row in (c.fetchall() or list()))
 
 
@@ -225,6 +206,8 @@ class FileTreeTagger:
 
 	def tag_file(self, p):
 		p_str, tagset = str(p), set()
+		try: p_mtime = p.stat().st_mtime
+		except OSError: p_mtime = 0
 		for rx, tags in self.tags.code_ext: # code file extension
 			if rx.search(p_str): tagset.update(tags)
 		if not tagset:
@@ -244,7 +227,7 @@ class FileTreeTagger:
 				if rx.search(p_str): tagset.update(tags)
 
 		if tagset: # commit path tags to db
-			for tag in tagset: self.tag_func(tag, p_str)
+			for tag in tagset: self.tag_func(tag, p_str, p_mtime)
 		return tagset
 
 
@@ -268,7 +251,8 @@ def main(args=None):
 		"+" will combine tags via "and" logic, spaces and multiple args are "or".
 		Use DNF logic calculator to convert complex human-readable expressions
 			to simplified ones for use here, for example via
-			https://www.dcode.fr/boolean-expressions-calculator'''))
+			https://www.dcode.fr/boolean-expressions-calculator
+		Returned paths are ordered by stored modification time values.'''))
 	parser.add_argument('-c', '--conf',
 		action='append', metavar='path', default=list(),
 		help=dd(f'''
@@ -308,11 +292,12 @@ def main(args=None):
 			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
 			for k in ['include', 'skip'] )
 		try:
-			with \
-					tempfile.NamedTemporaryFile(
-						dir=p_db.parent, prefix=p_db.name+'.', delete=False ) as p_db_tmp, \
-					TagDB(p_db_tmp.name) as db, db.tagger_context() as tag_func:
+			with cl.ExitStack() as ctx:
+				p_db_tmp = ctx.enter_context(
+					tempfile.NamedTemporaryFile(dir=p_db.parent, prefix=p_db.name+'.', delete=False) )
 				p_db_tmp = pl.Path(p_db_tmp.name)
+				db = ctx.enter_context(TagDB(p_db_tmp))
+				tag_func = ctx.enter_context(db.tagger_context())
 				tagger = FileTreeTagger(
 					tag_func, tag_map, res_inc, res_skip, verbose=opts.verbose )
 				for p in p_scan_list: tagger.process_path(p)
@@ -327,6 +312,7 @@ def main(args=None):
 		with TagDB(p_db) as db:
 			for p_str in db.lookup_paths(tagsets):
 				if opts.existing and not os.path.exists(p_str): continue
-				print_func(p_str)
+				try: print_func(p_str)
+				except BrokenPipeError: break
 
 if __name__ == '__main__': sys.exit(main())
