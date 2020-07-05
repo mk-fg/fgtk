@@ -234,7 +234,8 @@ class FileTreeTagger:
 				if rx.search(p_str): tagset.update(tags)
 		if not tagset: # code shebang
 			try:
-				with p.open('rb', 256) as src:
+				with p.open('rb', 255) as src:
+					os.posix_fadvise(src.fileno(), 0, 256, os.POSIX_FADV_NOREUSE)
 					shebang = src.readline(200).decode().strip()
 			except (OSError, UnicodeDecodeError): shebang = ''
 			if m := self.tags.code_shebang.search(shebang):
@@ -285,6 +286,14 @@ def main(args=None):
 		help='Build/update tag database for all configured paths.')
 	group.add_argument('-v', '--verbose', action='store_true',
 		help='Print all files being processed and precise timestamps for benchmarking.')
+	group.add_argument('--nice', metavar='[prio:][io-class[.io-level]]', default='15:idle',
+		help=dd('''
+			Set "nice" and/or "ionice" (CFQ I/O) priorities.
+			"nice" prio value, if specified, must be
+				in -20-20 range, where lower = higher prio, and base=0.
+			"ionice" value should be in class[:level] format, where
+				"class" is one of [rt, be, idle] and "level" in 0-7 range (0=highest prio).
+			See setpriority(2) / ioprio_set(2) for more info. Default: %(default)s'''))
 
 	group = parser.add_argument_group('Query/lookup options')
 	group.add_argument('-e', '--existing', action='store_true',
@@ -312,6 +321,23 @@ def main(args=None):
 		for k in ['include', 'skip'] ))
 
 	if opts.update:
+		if opts.nice is not None:
+			nice, ionice = (opts.nice + ':').split(':', 1)
+			if not ionice and not nice.isdigit(): nice, ionice = None, nice
+			if nice: os.setpriority(os.PRIO_PROCESS, os.getpid(), int(nice))
+			if ionice: # grep -r ioprio_set /usr/share/gdb/syscalls/
+				scid = os.uname().machine
+				try: scid = dict(x86_64=251, armv7l=314, aarch64=30)[scid]
+				except KeyError: parser.error(f'--nice ionice is not supported on arch: {scid}')
+				ionice = ionice.rstrip(':').split('.', 1)
+				if len(ionice) == 1: ionice.append(0)
+				ionice[0] = dict(rt=1, be=2, idle=3)[ionice[0].lower()]
+				if ionice[0] == 3: ionice[1] = 0
+				elif 0 <= ionice[1] <= 7: parser.error('--nice ionice prio level must be in 0-7 range')
+				ionice = (ionice[0] << 13) | ionice[1]
+				import ctypes as ct
+				err = ct.CDLL('libc.so.6', use_errno=True).syscall(scid, 1, os.getpid(), ionice)
+				if err != 0: raise OSError(e := ct.get_errno(), f'ionice_set failed - {os.strerror(e)}')
 		if not p_scan_list: parser.error('No paths to scan found in config file')
 		try:
 			with cl.ExitStack() as ctx:
