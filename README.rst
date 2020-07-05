@@ -2721,21 +2721,6 @@ Uses plumbum_ to call "rsync --inplace" (faster than "cp" in most cases) and
 .. _3k files: http://ocremix.org/torrents/
 .. _plumbum: http://plumbum.readthedocs.org
 
-e_config_backup
-'''''''''''''''
-
-Yapps2_-based (grammar as-is in \*.g file) parser script for Enlightenment (E17)
-config file (doing eet-decoding beforehand) for the purposes of it's backup in
-`de-setup git repo`_ alongside other DE-related configuration.
-
-Whole purpose of decoding/encoding dance is to sort the sections (which E orders
-at random) and detect/filter-out irrelevant changes like remembered window
-positions or current (`auto-rotated`_) wallpaper path.
-
-.. _Yapps2: https://github.com/mk-fg/yapps
-.. _de-setup git repo: https://github.com/mk-fg/de-setup
-.. _auto-rotated: http://desktop-aura.sourceforge.net/
-
 vfat_shuffler
 '''''''''''''
 
