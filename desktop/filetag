@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import itertools as it, operator as op, functools as ft
 import pathlib as pl, collections as cs, contextlib as cl
 import os, sys, re, math, configparser, tempfile, time
 
@@ -148,7 +149,7 @@ class TagDB:
 				'insert into paths (tag, path, mtime) values (?, ?, ?)', (tag, path, mtime) )
 			yield tag_func
 
-	def lookup_paths(self, tagsets):
+	def lookup_tags(self, tagsets):
 		q_where, q_args = list(), list()
 		for tag_group in filter(None, tagsets):
 			q_where.append('(' + ' and '.join(['tag = ?']*len(tag_group)) + ')')
@@ -158,11 +159,34 @@ class TagDB:
 			c.execute(f'select path, mtime from paths {q_where} order by mtime desc', q_args)
 			return (row[0] for row in (c.fetchall() or list()))
 
+	def lookup_paths(self, paths):
+		q_where, q_args = list(), list()
+		for p_str in paths:
+			q_where.append('path = ?')
+			q_args.append(p_str)
+		q_where = ('where ' + ' or '.join(q_where)) if q_where else ''
+		with self._db_cursor() as c:
+			c.execute(f'select path, tag from paths {q_where} order by path', q_args)
+			return list(
+				(p_str, set(map(op.itemgetter(1), p_tags)))
+				for p_str, p_tags in it.groupby(c.fetchall() or list(), key=op.itemgetter(0)) )
+
+
+class PathFilter:
+
+	def __init__(self, res_inc, res_skip):
+		self.res_inc, self.res_skip = res_inc, res_skip
+
+	def check(self, fn):
+		if any(rx.search(fn) for rx in self.res_inc): return True
+		if any(rx.search(fn) for rx in self.res_skip): return False
+		return True
+
 
 class FileTreeTagger:
 
-	def __init__(self, tag_func, tag_map, res_inc, res_skip, verbose=False):
-		self.tag_func, self.res_inc, self.res_skip, self.verbose = tag_func, res_inc, res_skip, verbose
+	def __init__(self, tag_func, tag_map, p_filter, verbose=False):
+		self.tag_func, self.p_filter, self.verbose = tag_func, p_filter, verbose
 		self.tags = self.tag_map_compile(tag_map)
 
 	@staticmethod
@@ -191,18 +215,13 @@ class FileTreeTagger:
 			fn_root, root = root[p_len:] + '/', pl.Path(root)
 			for n, fn in enumerate(dirs):
 				fn = fn_root + fn + '/'
-				if self.path_filter_check(fn): continue
+				if self.p_filter.check(fn): continue
 				del dirs[n] # will skip going into dir
 			for fn in files:
 				fn, p_file = fn_root + fn, root / fn
-				if not self.path_filter_check(fn): continue
+				if not self.p_filter.check(fn): continue
 				tagset = self.tag_file(p_file)
 				if self.verbose: print(f'{time.monotonic()-ts0:.3f} {len(tagset)} {fn.lstrip("/")}')
-
-	def path_filter_check(self, fn):
-		if any(rx.search(fn) for rx in self.res_inc): return True
-		if any(rx.search(fn) for rx in self.res_skip): return False
-		return True
 
 	def tag_file(self, p):
 		p_str, tagset = str(p), set()
@@ -272,6 +291,8 @@ def main(args=None):
 		help='Only print paths that are currently accessible for stat().')
 	group.add_argument('-0', '-z', '--print0', action='store_true',
 		help='Output NUL-separated (\\x00 byte) paths instead of newline-separated.')
+	group.add_argument('-p', '--path',
+		action='store_true', help='Print db tags for specified path(s).')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -285,12 +306,13 @@ def main(args=None):
 	conf_list, conf_value = lambda v: re.split(r'\n+', v), lambda v: conf_list(v)[-1]
 	p_db = pl.Path(conf_value(conf_paths['db'])).expanduser()
 
+	p_scan_list = (pl.Path(p).expanduser() for p in conf_list(conf_paths['scan']))
+	path_filter = PathFilter(*(
+		(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
+		for k in ['include', 'skip'] ))
+
 	if opts.update:
-		p_scan_list = (pl.Path(p).expanduser() for p in conf_list(conf_paths['scan']))
 		if not p_scan_list: parser.error('No paths to scan found in config file')
-		res_inc, res_skip = (
-			(list(map(re.compile, conf_list(conf_filter[k]))) if k in conf_filter else [])
-			for k in ['include', 'skip'] )
 		try:
 			with cl.ExitStack() as ctx:
 				p_db_tmp = ctx.enter_context(
@@ -298,8 +320,7 @@ def main(args=None):
 				p_db_tmp = pl.Path(p_db_tmp.name)
 				db = ctx.enter_context(TagDB(p_db_tmp))
 				tag_func = ctx.enter_context(db.tagger_context())
-				tagger = FileTreeTagger(
-					tag_func, tag_map, res_inc, res_skip, verbose=opts.verbose )
+				tagger = FileTreeTagger(tag_func, tag_map, path_filter, verbose=opts.verbose)
 				for p in p_scan_list: tagger.process_path(p)
 		except:
 			p_db_tmp.unlink(missing_ok=True)
@@ -307,12 +328,44 @@ def main(args=None):
 		else: p_db_tmp.rename(p_db)
 
 	if opts.tags:
-		tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tags).split())
-		print_func = lambda line: print(line, end='\n' if not opts.print0 else '\0')
-		with TagDB(p_db) as db:
-			for p_str in db.lookup_paths(tagsets):
-				if opts.existing and not os.path.exists(p_str): continue
-				try: print_func(p_str)
-				except BrokenPipeError: break
+		print_func = lambda *line: print(*line, end='\n' if not opts.print0 else '\0')
+		try:
+			with TagDB(p_db) as db:
+
+				if not opts.path:
+					tagsets = list(set(ts.split('+')) for ts in ' '.join(opts.tags).split())
+					for p_str in db.lookup_tags(tagsets):
+						if opts.existing and not os.path.exists(p_str): continue
+						print_func(p_str)
+
+				else:
+					paths = set()
+					for p_str in opts.tags:
+						p = pl.Path(p_str).resolve()
+						if opts.existing and not p.exists(): continue
+						paths.add(str(p))
+					for p_str, tags in db.lookup_paths(paths):
+						print_func(p_str, '::', ' '.join(tags))
+						paths.remove(p_str)
+					if paths: # check if tags are missing due to filtering lists
+						for p_str in paths:
+							for p_scan in p_scan_list:
+								p = str(p_scan.resolve())
+								if not p_str.startswith(f'{p}/'): continue
+								p_str = p_str[len(p):]
+								break
+							else: continue # can still be a symlink, but whatever
+							p_chunks = p_str.split('/')
+							for n in range(1, len(p_chunks)):
+								p_dir = '/'.join(p_chunks[:n]) + '/'
+								if not path_filter.check(p_dir):
+									p_err( f'{p_str}: parent dir {p_dir!r}'
+										f' is ignored due to filtering (scan root: {p_scan})' )
+									break
+							else:
+								if not path_filter.check(p_str):
+									p_err('{p_str}: path ignored due to filtering (scan root: {p_scan})')
+
+		except BrokenPipeError: return
 
 if __name__ == '__main__': sys.exit(main())
