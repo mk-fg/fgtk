@@ -34,6 +34,8 @@ def main(args=None):
 		action='store_true', help='Use only letters/numbers.')
 	parser.add_argument('-d', '--digits',
 		action='store_true', help='Use only numbers (digits).')
+	parser.add_argument('-x', '--hex-digits',
+		action='store_true', help='Use numbers + a-f lowecase hex digits.')
 	parser.add_argument('-1', '--one',
 		action='store_true', help='Output just one generated password.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -42,6 +44,7 @@ def main(args=None):
 		parser.error('Multiple output modes specified at the same time')
 
 	if opts.digits: chr_range = string.digits.encode()
+	elif opts.hex_digits: chr_range = (string.digits + 'abcdef').encode()
 	elif opts.simple: chr_range = (string.ascii_letters + string.digits).encode()
 	else:
 		chr_range = (string.ascii_letters + string.digits).encode()

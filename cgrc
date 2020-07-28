@@ -1,4 +1,5 @@
 #!/bin/dash
+# --ft-embed: py
 ### Note: top part of the script is dash, bottom is python, latter should be run from dash
 
 ':' ''# \
