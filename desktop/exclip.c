@@ -6,6 +6,7 @@
 // More info on X11 selections:
 //   https://www.uninformativ.de/blog/postings/2017-04-02/0/POSTING-en.html
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -338,8 +339,26 @@ void str_subchar(char* s, unsigned long len, char c0, char c1) {
 		if (*(s + n) == c0) *(s + n) = c1;
 }
 
+void str_replace(
+		char **s, unsigned long *len,
+		char *src, size_t len_src, char *dst, size_t len_dst ) {
+	unsigned long n = 0, len_s = *len, len_diff = 0;
+	char *m, *res = malloc(
+		len_s * (float) strlen(dst) / (float) strlen(src) + 1 );
+	while ((m = memmem(*s, len_s, src, len_src))) {
+		memcpy(res + n, *s, m - *s);
+		n += m - *s;
+		len_s -= (m - *s) + len_src;
+		*s = m + len_src;
+		len_diff += len_dst - len_src;
+		memcpy(res + n, dst, len_dst);
+		n += len_dst; }
+	strcpy(res + n, *s);
+	*s = realloc(res, *len += len_diff);
+}
+
 void parse_opts( int argc, char *argv[],
-		int *opt_verbatim, int *opt_slashes_to_dots ) {
+		int *opt_verbatim, int *opt_slashes_to_dots, int *opt_tabs_to_spaces ) {
 	extern char *optarg;
 	extern int optind, opterr, optopt;
 
@@ -352,20 +371,25 @@ void parse_opts( int argc, char *argv[],
 " back to primary and clipboard, stripping start/end spaces,\n"
 " removing newlines and replacing tabs with spaces by default\n"
 " (unless -x/--verbatim is specified).\n\n"
-"-d/--slashes-to-dots flag replaces all forward slashes [/] with dots [.],\n"
-" and can be used with or without -x/--verbatim to strip/keep other stuff.\n\n"
-			, argv[0] );
+"Extra flags (can be used with(-out)"
+	" -x/--verbatim to strip/keep other stuff):\n"
+" -d/--slashes-to-dots - replaces all forward slashes [/] with dots [.].\n"
+" -t/--tabs-to-spaces N - replaces each tab char with N spaces.\n"
+"   (default without -x/--verbatim"
+			" is one space for each tab, overrides that)\n\n", argv[0] );
 		exit(err); }
 
 	int ch;
 	static struct option opt_list[] = {
 		{"help", no_argument, NULL, 1},
 		{"verbatim", no_argument, NULL, 2},
-		{"slashes-to-dots", no_argument, NULL, 3} };
-	while ((ch = getopt_long(argc, argv, ":hxd", opt_list, NULL)) != -1)
+		{"slashes-to-dots", no_argument, NULL, 3},
+		{"tabs-to-spaces", required_argument, NULL, 4} };
+	while ((ch = getopt_long(argc, argv, ":hxdt:", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
 			case 'd': case 3: *opt_slashes_to_dots = 1; break;
+			case 't': case 4: *opt_tabs_to_spaces = atoi(optarg); break;
 			case 'h': case 1: usage(0);
 			case '?':
 				P(0, "unrecognized option - %s\n", argv[optind-1]);
@@ -381,8 +405,9 @@ void parse_opts( int argc, char *argv[],
 }
 
 int main(int argc, char *argv[]) {
-	int opt_verbatim = 0, opt_slashes_to_dots = 0;
-	parse_opts(argc, argv, &opt_verbatim, &opt_slashes_to_dots);
+	int opt_verbatim = 0, opt_slashes_to_dots = 0, opt_tabs_to_spaces = -1;
+	parse_opts( argc, argv, &opt_verbatim,
+		&opt_slashes_to_dots, &opt_tabs_to_spaces );
 
 	char *buff;
 	unsigned long buff_len;
@@ -390,6 +415,9 @@ int main(int argc, char *argv[]) {
 	if (chdir("/") == -1) P(1, "chdir(/) failed"); // for leftover child pids
 	if (read_primary(&buff, &buff_len)) P(1, "failed to read primary selection");
 
+	if (opt_tabs_to_spaces >= 0) {
+		char *sub = memset(malloc(opt_tabs_to_spaces), ' ', opt_tabs_to_spaces);
+		str_replace(&buff, &buff_len, "\t", 1, sub, opt_tabs_to_spaces); }
 	if (!opt_verbatim) {
 		str_rmchar(buff, &buff_len, '\n');
 		str_subchar(buff, buff_len, '\t', ' ');
