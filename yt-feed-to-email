@@ -1,0 +1,348 @@
+#!/usr/bin/env python
+
+import pathlib as pl, datetime as dt, urllib.parse as up, hashlib as hl, subprocess as sp
+import xml.etree.ElementTree as etree
+import os, sys, logging, time, calendar, base64, json, textwrap
+
+import feedparser as fp # pip install --user feedparser
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None): super().__init__(logger, extra or dict())
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(f'ytf2e.{name}'))
+
+
+str_hash = lambda p: base64.urlsafe_b64encode(
+	hl.blake2s(str(p).encode(), person=b'ytf2e.s1').digest() ).decode()[:12]
+
+def tuple_hash(*data):
+	if len(data) == 1 and isinstance(data[0], (tuple, list)): data = data[0]
+	src = list()
+	for v in data:
+		if v is None: src.append('\ue003')
+		elif isinstance(v, (int, str, dt.tzinfo)): src.append(str(v))
+		elif isinstance(v, (tuple, list)): src.append(tuple_hash(v))
+		elif isinstance(v, dt.datetime):
+			src.append(conv_ts_utc(v).strftime('%Y-%m-%dT%H:%M:%S'))
+		elif isinstance(v, dt.timedelta): src.append('\ue002{v.total_seconds()}')
+		elif isinstance(v, set): src.append(tuple_hash(sorted(v)))
+		else: raise ValueError(type(v), v)
+	return str_hash('\ue000'.join(
+		'\ue001{}\ue001'.format(v.replace('\ue001', '\ue001'*2)) for v in src ))
+
+def str_repr(s, max_len=160, len_bytes=False, ext=' ...[{s_len}]'):
+	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
+	if not isinstance(s, str): s = str(s)
+	s_len, s_repr, ext_tpl = f'{len(s):,d}', repr(s)[1:-1], ext.format(s_len='12/345')
+	s_repr = s_repr.replace("\\'", "'").replace('\\"', '"')
+	if max_len > 0 and len(s_repr) > max_len:
+		s_len = f'{max_len}/{s_len}'
+		if not len_bytes: s_repr = s_repr[:max_len - len(ext_tpl)] + ext.format(s_len=s_len)
+		else:
+			n = max_len - len(ext_tpl.encode())
+			s_repr = s_repr.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
+	return s_repr
+
+dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
+	s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
+
+
+class YTFeed:
+
+	ts_last_check = 0
+	delay_ewma = 24 * 3600
+	delay_ewma_max = 30 * 24 * 3600
+	delay_ewma_a = 0.3
+	etag = None
+	last_entry_id = None
+
+	def __init__(self, url, title=None, chan=None):
+		if not chan: chan, = up.parse_qs(up.urlparse(url).query)['channel_id']
+		if not title: title = f'chan.{chan}'
+		title = ' '.join(title.replace('\n', ' ').split())
+		if len(title) > 40: title = f'{title[:38]}--'
+		self.title, self.chan, self.url = title, chan, url
+	__repr__ = lambda s: f'YTFeed({s.title} [{s.chan}])'
+
+	@classmethod
+	def from_xml(cls, attrs):
+		return cls(attrs['xmlUrl'], attrs.get('title'))
+
+	@classmethod
+	def from_line(cls, line):
+		line = line.strip().split(None, 1)
+		url, title = line if len(line) > 1 else (line[0], None)
+		return cls(url, title)
+
+	def ts_check_next(self):
+		# /2 to run 2x fetches per (average-ish) interval between entries
+		return self.ts_last_check + self.delay_ewma / 2
+
+	def entry_id(self, e):
+		e_id = None
+		for k in 'id', 'yt_videoid', 'title', 'link', 'published', 'modified', 'created':
+			if e_id := e.get(k): break
+		if e_id: e_id = tuple_hash('id.1', e_id)
+		return e_id
+
+
+class YTFeedIndex:
+
+	def __init__(self, *feed_idxs):
+		self.idx = dict()
+		if feed_idxs:
+			for idx in feed_idxs: self.add(idx)
+
+	def add(self, feeds):
+		if isinstance(feeds, YTFeed): self.idx[feeds.chan] = feeds
+		elif isinstance(feeds, YTFeedIndex): self.idx.update(feeds.idx)
+		else:
+			for feed in feeds: self.idx[feed.chan] = feed
+
+	def get(self, chan, fallback=None):
+		return self.idx.get(chan, fallback)
+
+	__bool__ = lambda s: bool(s.idx)
+	__contains__ = lambda s,f: f.chan in s.idx
+	__len__ = lambda s: len(s.idx)
+	__iter__ = lambda s: iter(s.idx.values())
+
+
+class FeedFetchError(Exception): pass
+
+feed_user_agent = f'yt-feed-to-email/0.1 feedparser/{fp.__version__}'
+feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
+	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
+
+def feed_fetch(log, url, etag):
+	feed = fp.parse( url, agent=feed_user_agent,
+		etag=etag, request_headers=dict(Accept=feed_accept_header) )
+	status, bozo, bozo_err = (
+		feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
+	if (not status and bozo) or (status or 1000) >= 400:
+		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
+	if status == 304: return
+	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
+	return feed.get('etag'), feed.entries
+
+
+# Line format: {ts} :: {chan-id} {chan-name!r} :: {update-json}
+state_log_name = 'updates.log'
+state_log_max_size = 3 * 2**20
+
+def state_process(state_dir, feeds):
+	if not state_dir: return
+	state_dir, log = pl.Path(state_dir), get_logger('state')
+	if not state_dir.exists():
+		state_dir.mkdir(mode=0o700, parents=True, exists_ok=True)
+
+	state_last, state_log = dict(), state_dir / state_log_name
+	with state_log.open('a+') as src:
+		src.seek(0)
+		for line in src:
+			try: update = json.loads(line.split(' :: ', 2)[-1])
+			except Exception as err:
+				log.error('Failed to process feed-state entry: {} -- {!r}', err_fmt(err), line)
+				continue
+			feed = feeds.get(update['chan'])
+			if not feed:
+				log.debug('Dropping update(s) for nx feed: {}', str_repr(line))
+				continue
+			state_last[feed.chan] = line, feed, update
+
+	state_log_new = None
+	if state_log.stat().st_size > state_log_max_size:
+		state_log.rename(state_dir / f'{state_log_name}.old')
+		state_log_new = state_log.open('a')
+	try:
+		for line, feed, update in state_last.values():
+			for k in 'ts_last_check etag last_entry_id delay_ewma'.split():
+				setattr(feed, k, update[k])
+			if state_log_new: state_log_new.write(line)
+	finally:
+		if state_log_new: state_log_new.close()
+
+	return state_log
+
+def state_update(state_log, ts, feed, update):
+	ts = time.strftime('%Y-%m-%d %H:%M', time.localtime(ts))
+	update = json.dumps(update)
+	with state_log.open('a') as dst:
+		dst.write(f'{ts} :: {feed.chan} {feed.title!r} :: {update}\n')
+
+
+def process_summary(text, w=120, pre='  '):
+	line_last, text = None, text.strip().split('\n')
+	for n, line in enumerate(text):
+		line = line.rstrip()
+		if line == line_last:
+			text[n] = ''
+			continue
+		line_last = line
+		text[n] = fill(text[n], w) + '\n'
+	return ''.join(f'{pre}{line}' for line in filter(None, text))
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Script to generate email notifications for YouTube OPML/RSS feed updates.')
+	parser.add_argument('-o', '--opml', metavar='file',
+		help='YT OPML export from https://www.youtube.com/subscription_manager?action_takeout=1 link.')
+	parser.add_argument('-r', '--rss-list', metavar='file',
+		help='File with YT RSS/Atom feed URLs, one per line, with optional comments after URLs.')
+	parser.add_argument('-e', '--email', metavar='addr', required=True,
+		help='Email address to send video notifications to via local "mail" command.')
+
+	parser.add_argument('-c', '--opml-convert', action='store_true',
+		help='Append all new feeds from specified -o/--opml file to -r/--rss-list and exit.')
+	parser.add_argument('-t', '--new-feed-time',
+		type=float, metavar='posix-ts',
+		help='Timestamp to fetch entries after for new/unknown feeds.'
+			' Default is to use current time, i.e. not issue notifications on current entries there.'
+			' Use 0 to generate notifications for all entries in new feeds.')
+	parser.add_argument('-s', '--state-dir', default='state', metavar='path',
+		help='Directory to use for storing per-feed "last check" timestamps. Default: %(default)s')
+
+	parser.add_argument('-m', '--max-checks', type=int, metavar='n',
+		help='Limit on number of feeds to check in one run. Default or 0 - no limit.')
+
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Run same stuff, but do not send emails or update state.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	feeds_rss = feeds_opml = list()
+
+	if opts.opml:
+		def _get_outlines(e, feeds=None):
+			if feeds is None: feeds = list()
+			for o in e:
+				if o.attrib.get('xmlUrl'): feeds.append(YTFeed.from_xml(o.attrib))
+				else: _get_outlines(o, feeds)
+			return feeds
+		opml = etree.fromstring(pl.Path(opts.opml).read_text())
+		feeds_opml = _get_outlines(opml.find('body'))
+		log.debug('Parsed OPML: feeds={}', len(feeds_opml))
+	feeds_opml = YTFeedIndex(feeds_opml)
+
+	if opts.rss_list:
+		rss_list = pl.Path(opts.rss_list)
+		if rss_list.exists():
+			with rss_list.open() as src:
+				feeds_rss = list(YTFeed.from_line(line) for line in src)
+			log.debug('Parsed RSS-list: feeds={}', len(feeds_rss))
+	feeds_rss = YTFeedIndex(feeds_rss)
+
+	if opts.opml_convert:
+		if not opts.rss_list: parser.error('-c/--opml-convert requires -r/--rss-list option')
+		n = 0
+		with rss_list.open('a') as dst:
+			for feed in feeds_opml:
+				if feed in feeds_rss: continue
+				dst.write(f'{feed.url} {feed.title}\n')
+				print(f'Added feed: {feed}')
+				n += 1
+		print(f'-- added feeds: {n}')
+		return
+
+	feeds = YTFeedIndex(feeds_opml, feeds_rss)
+	state_log = state_process(opts.state_dir, feeds)
+	log.debug('Feed Index: feeds={} state-log={}', len(feeds_rss), state_log)
+
+	ts = time.time()
+	ts_new_feed = opts.new_feed_time
+	if ts_new_feed is None: ts_new_feed = ts
+
+	check_limit = opts.max_checks or 0
+	if check_limit: check_limit += 1
+
+	for feed in feeds:
+		if ts < feed.ts_check_next(): continue
+		ts_since = feed.ts_last_check or ts_new_feed
+
+		feed_log = get_logger(f'feed.{feed.chan}')
+		feed_log.debug('Fetching feed: {} [ {} ]', feed.title, feed.url)
+		try: etag, entries = feed_fetch(feed_log, feed.url, feed.etag)
+		except FeedFetchError as err:
+			feed_log.error('Failed to fetch feed: {}', err)
+			etag = entries = None
+
+		if check_limit:
+			check_limit -= 1
+			if check_limit <= 0:
+				log.debug('Stopping due to -m/--max-checks limit')
+				break
+		if entries is None: continue
+
+		feed_log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
+		feed_last_id = e_ts_prev = None
+		ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
+		emails = list()
+
+		for e in entries:
+			e_ts = calendar.timegm(e.published_parsed)
+
+			if not feed_last_id:
+				e_id = feed.entry_id(e)
+				if not e_id: feed_log.warning('Failed to get id for last feed entry: {}', str_repr(e))
+				feed_last_id = [e_id]
+
+			if e_ts_prev:
+				ewma_delay = ewma_a * (e_ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
+			e_ts_prev = e_ts
+
+			if e_ts <= ts_since:
+				feed_log.debug( 'Stopped at (old) entry [{}]:'
+					' ts={} author={} title={!r}', e_ts, e.published, e.author, e.title )
+				if feed.last_entry_id and feed.last_entry_id != feed.entry_id(e):
+					# Likely means that there's some bug in filtering/state or timestamps shift
+					feed_log.warning( 'Sanity check fail - recorded last feed'
+						' entry id does not match first old one in the feed: {}', str_repr(e) )
+				break
+
+			feed_log.debug( 'Generating notification for entry [{}]:'
+				' ts={} author={!r} title={!r}', e_ts, e.published, e.author, e.title )
+			body = dd(f'''
+				Link: {e.link}
+				Title: {e.title}
+				Author: {e.author}
+				Published: {e.published}''')
+			if summary := e.get('summary'):
+				body += '\nSummary:\n' + process_summary(summary)
+			emails.append((f'YT [{e.author}]: {e.title}', body))
+
+		if not opts.dry_run:
+			feed_log.debug('Sending notification emails: count={}', len(emails))
+			for subject, body in reversed(emails):
+				sp.run(
+					['mail', '-s', subject, opts.email],
+					input=body.encode(), timeout=4*60, check=True )
+
+		if e_ts_prev:
+			ewma_delay = ewma_a * (ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
+			ewma_delay = min(feed.delay_ewma_max, ewma_delay)
+		else: feed_log.warning('Empty feed - check/remove it from list') # can be a bug too
+
+		update = dict(
+			chan=feed.chan, delay_ewma=ewma_delay,
+			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id[0] )
+		if not opts.dry_run: state_update(state_log, ts, feed, update)
+
+	log.debug('Finished')
+
+if __name__ == '__main__': sys.exit(main())

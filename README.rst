@@ -1974,6 +1974,26 @@ Helps to avoid writing those annoyingly-common ``while :; do some-check ||
 break; sleep 60; done; run-other-stuff`` when something heavy/long is already
 running and you just don't have the heart to break and reschedule it properly.
 
+yt-feed-to-email
+''''''''''''''''
+
+Python3 + feedparser_ RSS-to-email notification script for YouTube RSS feeds.
+
+Can process OPML of current YT subscriptions
+(from https://www.youtube.com/subscription_manager?action_takeout=1 )
+or work with one-per-line list of channel/video RSS feed links.
+
+Remembers last feed state(s) via auto-rotating log, uses EWMA_ to calculate
+delay between checks based on feed update interval.
+
+Useful to keep track of YT channel updates via read/unread status in some
+dedicated mailbox folder, and click-open video links from there in mpv,
+like one could before Aug 2020 when google decided to stop sending all update
+notification emails on that platform.
+
+.. _feedparser: https://pythonhosted.org/feedparser/
+.. _EWMA: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
+
 
 
 [dev] Dev tools
