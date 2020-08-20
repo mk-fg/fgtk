@@ -210,8 +210,7 @@ def main(args=None):
 	parser.add_argument('-t', '--new-feed-time',
 		type=float, metavar='posix-ts',
 		help='Timestamp to fetch entries after for new/unknown feeds.'
-			' Default is to use current time, i.e. not issue notifications on current entries there.'
-			' Use 0 to generate notifications for all entries in new feeds.')
+			' Default or 0 is to generate notifications for all entries in new feeds.')
 	parser.add_argument('-s', '--state-dir', default='state', metavar='path',
 		help='Directory to use for storing per-feed "last check" timestamps. Default: %(default)s')
 
@@ -264,10 +263,7 @@ def main(args=None):
 	state_log = state_process(opts.state_dir, feeds)
 	log.debug('Feed Index: feeds={} state-log={}', len(feeds_rss), state_log)
 
-	ts = time.time()
-	ts_new_feed = opts.new_feed_time
-	if ts_new_feed is None: ts_new_feed = ts
-
+	ts, ts_new_feed = time.time(), opts.new_feed_time or 0
 	check_limit = opts.max_checks or 0
 	if check_limit: check_limit += 1
 
