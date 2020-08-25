@@ -286,7 +286,7 @@ def main(args=None):
 		if entries is None: continue
 
 		feed_log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
-		feed_last_id = e_ts_prev = None
+		feed_last_id = e_prev = e_ts_prev = None
 		ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
 		emails = list()
 
@@ -305,7 +305,10 @@ def main(args=None):
 			if e_ts <= ts_since:
 				feed_log.debug( 'Stopped at (old) entry [{}]:'
 					' ts={} author={} title={!r}', e_ts, e.published, e.author, e.title )
-				if feed.last_entry_id and feed.last_entry_id != feed.entry_id(e):
+				if feed.last_entry_id and (
+						feed.last_entry_id != feed.entry_id(e)
+						# Sometimes people hide and re-schedule last video, check for that
+						and (not e_prev or feed.last_entry_id != feed.entry_id(e_prev)) ):
 					# Likely means that there's some bug in filtering/state or timestamps shift
 					feed_log.warning( 'Sanity check fail - recorded last feed'
 						' entry id does not match first old one in the feed: {}', str_repr(e) )
@@ -334,7 +337,7 @@ def main(args=None):
 			ewma_delay = min(feed.delay_ewma_max, ewma_delay)
 		else: feed_log.warning('Empty feed - check/remove it from list') # can be a bug too
 
-		update = dict(
+		e_prev, update = e, dict(
 			chan=feed.chan, delay_ewma=ewma_delay,
 			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id[0] )
 		if not opts.dry_run: state_update(state_log, ts, feed, update)
