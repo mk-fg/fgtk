@@ -219,7 +219,8 @@ def feed_process(log, feed, entries, ts, ts_since):
 			Title: {e.title}
 			Author: {e.author}
 			Published: {e.published}
-			\nLink: {e.link}''')
+
+			Link: {e.link}''')
 		if summary := e.get('summary'):
 			body += '\nSummary:\n' + process_summary(summary)
 		emails.append((e_ts, f'YT [{e.author}]: {e.title}', body))
