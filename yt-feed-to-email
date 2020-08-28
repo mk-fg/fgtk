@@ -224,7 +224,8 @@ def feed_process(log, feed, entries, ts, ts_since):
 			body += '\nSummary:\n' + process_summary(summary)
 		emails.append((e_ts, f'YT [{e.author}]: {e.title}', body))
 
-	if e_ts_prev:
+	if e_ts_prev and not emails and (ts - e_ts_prev) > ewma_delay:
+		# This makes empty checks bump delay up
 		ewma_delay = ewma_a * (ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
 		ewma_delay = min(feed.delay_ewma_max, ewma_delay)
 	else: log.warning('Empty feed - check/remove it from list') # can be a bug too
@@ -247,30 +248,40 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Script to generate email notifications for YouTube OPML/RSS feed updates.')
-	parser.add_argument('-o', '--opml', metavar='file',
-		help='YT OPML export from https://www.youtube.com/subscription_manager?action_takeout=1 link.')
-	parser.add_argument('-r', '--rss-list', metavar='file',
-		help='File with YT RSS/Atom feed URLs, one per line, with optional comments after URLs.')
-	parser.add_argument('-e', '--email', metavar='addr', required=True,
-		help='Email address to send video notifications to via local "mail" command.')
-	parser.add_argument('-n', '--feed-name', metavar='name',
-		help='Name (part) of a specific feed to check regardless of timestamps.')
 
-	parser.add_argument('-c', '--opml-convert', action='store_true',
+	group = parser.add_argument_group('Feed sources')
+	group.add_argument('-o', '--opml', metavar='file',
+		help='YT OPML export from https://www.youtube.com/subscription_manager?action_takeout=1 link.')
+	group.add_argument('-r', '--rss-list', metavar='file',
+		help='File with YT RSS/Atom feed URLs, one per line, with optional comments after URLs.')
+	group.add_argument('-c', '--opml-convert', action='store_true',
 		help='Append all new feeds from specified -o/--opml file to -r/--rss-list and exit.')
-	parser.add_argument('-t', '--new-feed-time',
+
+	group = parser.add_argument_group('Notification options')
+	group.add_argument('-e', '--email', metavar='addr', required=True,
+		help='Email address to send video notifications to via local "mail" command.')
+
+	group = parser.add_argument_group('State storage/init')
+	group.add_argument('-s', '--state-dir', default='state', metavar='path',
+		help='Directory to use for storing per-feed "last check" timestamps. Default: %(default)s')
+	group.add_argument('-t', '--new-feed-time',
 		type=float, metavar='posix-ts',
 		help='Timestamp to fetch entries after for new/unknown feeds.'
 			' Default or 0 is to generate notifications for all entries in new feeds.')
-	parser.add_argument('-s', '--state-dir', default='state', metavar='path',
-		help='Directory to use for storing per-feed "last check" timestamps. Default: %(default)s')
 
-	parser.add_argument('-m', '--max-checks', type=int, metavar='n',
+	group = parser.add_argument_group('Check filtering and rate-limiting')
+	group.add_argument('-n', '--feed-name', metavar='name',
+		help='Name (part) of a specific feed to check regardless of timestamps.')
+	group.add_argument('-m', '--max-checks', type=int, metavar='n',
 		help='Limit on number of feeds to check in one run. Default or 0 - no limit.')
+	group.add_argument('-f', '--force', action='store_true',
+		help='Force-check feeds regardless of timestamps.')
 
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('--dry-run', action='store_true',
+	group = parser.add_argument_group('Debug options')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('--dry-run', action='store_true',
 		help='Run same stuff, but do not send emails or update state.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -320,8 +331,9 @@ def main(args=None):
 
 	feed_lookup = opts.feed_name and str_norm(opts.feed_name)
 	for feed in feeds:
-		if not (feed_lookup and feed_lookup in str_norm(feed.title)):
-			if ts < feed.ts_check_next(): continue
+		if feed_lookup:
+			if feed_lookup not in str_norm(feed.title): continue
+		elif not opts.force and ts < feed.ts_check_next(): continue
 		ts_since = feed.ts_last_check or ts_new_feed
 
 		feed_log = get_logger(f'feed.{feed.chan}')
@@ -330,12 +342,6 @@ def main(args=None):
 		except FeedFetchError as err:
 			feed_log.error('Failed to fetch feed: {}', err)
 			etag = entries = None
-
-		if check_limit:
-			check_limit -= 1
-			if check_limit <= 0:
-				log.debug('Stopping due to -m/--max-checks limit')
-				break
 		if entries is None: continue
 
 		log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
@@ -351,6 +357,12 @@ def main(args=None):
 			chan=feed.chan, delay_ewma=ewma_delay,
 			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id )
 		if not opts.dry_run: state_update(state_log, ts, feed, update)
+
+		if check_limit:
+			check_limit -= 1
+			if check_limit <= 0:
+				log.debug('Stopping due to -m/--max-checks limit')
+				break
 
 	log.debug('Finished')
 
