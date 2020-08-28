@@ -2,7 +2,7 @@
 
 import pathlib as pl, datetime as dt, urllib.parse as up, hashlib as hl, subprocess as sp
 import xml.etree.ElementTree as etree
-import os, sys, logging, time, calendar, base64, json, textwrap
+import os, sys, logging, time, calendar, base64, json, textwrap, unicodedata
 
 import feedparser as fp # pip install --user feedparser
 
@@ -22,6 +22,8 @@ class LogStyleAdapter(logging.LoggerAdapter):
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(f'ytf2e.{name}'))
 
+
+str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 str_hash = lambda p: base64.urlsafe_b64encode(
 	hl.blake2s(str(p).encode(), person=b'ytf2e.s1').digest() ).decode()[:12]
@@ -61,6 +63,7 @@ fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
 
 class YTFeed:
 
+	title = chan = url = None
 	ts_last_check = 0
 	delay_ewma = 24 * 3600
 	delay_ewma_max = 30 * 24 * 3600
@@ -120,24 +123,6 @@ class YTFeedIndex:
 	__iter__ = lambda s: iter(s.idx.values())
 
 
-class FeedFetchError(Exception): pass
-
-feed_user_agent = f'yt-feed-to-email/0.1 feedparser/{fp.__version__}'
-feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
-	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
-
-def feed_fetch(log, url, etag):
-	feed = fp.parse( url, agent=feed_user_agent,
-		etag=etag, request_headers=dict(Accept=feed_accept_header) )
-	status, bozo, bozo_err = (
-		feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
-	if (not status and bozo) or (status or 1000) >= 400:
-		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
-	if status == 304: return
-	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
-	return feed.get('etag'), feed.entries
-
-
 # Line format: {ts} :: {chan-id} {chan-name!r} :: {update-json}
 state_log_name = 'updates.log'
 state_log_max_size = 3 * 2**20
@@ -183,6 +168,70 @@ def state_update(state_log, ts, feed, update):
 		dst.write(f'{ts} :: {feed.chan} {feed.title!r} :: {update}\n')
 
 
+class FeedFetchError(Exception): pass
+
+feed_user_agent = f'yt-feed-to-email/0.1 feedparser/{fp.__version__}'
+feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
+	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
+
+def feed_fetch(log, url, etag):
+	feed = fp.parse( url, agent=feed_user_agent,
+		etag=etag, request_headers=dict(Accept=feed_accept_header) )
+	status, bozo, bozo_err = (
+		feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
+	if (not status and bozo) or (status or 1000) >= 400:
+		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
+	if status == 304: return
+	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
+	return feed.get('etag'), feed.entries
+
+def feed_process(log, feed, entries, ts, ts_since):
+	feed_last_id = e_prev = e_ts_prev = None
+	ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
+	emails = list()
+
+	for e in entries:
+		e_id, e_ts = feed.entry_id(e), calendar.timegm(e.published_parsed)
+
+		if not feed_last_id:
+			if not e_id: log.warning('Failed to get id for last feed entry: {}', str_repr(e))
+			feed_last_id = [e_id]
+
+		if e_ts_prev: ewma_delay = ewma_a * (e_ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
+		e_ts_prev = e_ts
+
+		if e_ts <= ts_since:
+			log.debug( 'Stopped at (old) entry [id={} ts={}]: pub={}'
+				' author={} title={!r}', e_id, e_ts, e.published, e.author, e.title )
+			if feed.last_entry_id and (
+					feed.last_entry_id != e_id
+					# Sometimes people hide and re-schedule last video, check for that
+					and (not e_prev or feed.last_entry_id != feed.entry_id(e_prev)) ):
+				# Likely means that there's some bug in filtering/state or timestamps shift
+				log.warning( 'Sanity check fail - recorded last feed'
+					' entry id does not match first old one in the feed: {}', str_repr(e) )
+			break
+		e_prev = e
+
+		log.debug( 'Generating notification for entry [{}]:'
+			' ts={} author={!r} title={!r}', e_ts, e.published, e.author, e.title )
+		body = dd(f'''
+			Title: {e.title}
+			Author: {e.author}
+			Published: {e.published}
+			\nLink: {e.link}''')
+		if summary := e.get('summary'):
+			body += '\nSummary:\n' + process_summary(summary)
+		emails.append((e_ts, f'YT [{e.author}]: {e.title}', body))
+
+	if e_ts_prev:
+		ewma_delay = ewma_a * (ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
+		ewma_delay = min(feed.delay_ewma_max, ewma_delay)
+	else: log.warning('Empty feed - check/remove it from list') # can be a bug too
+
+	return emails, ewma_delay, feed_last_id[0]
+
+
 def process_summary(text, w=120, pre='  '):
 	line_last, text = None, text.strip().split('\n')
 	for n, line in enumerate(text):
@@ -204,6 +253,8 @@ def main(args=None):
 		help='File with YT RSS/Atom feed URLs, one per line, with optional comments after URLs.')
 	parser.add_argument('-e', '--email', metavar='addr', required=True,
 		help='Email address to send video notifications to via local "mail" command.')
+	parser.add_argument('-n', '--feed-name', metavar='name',
+		help='Name (part) of a specific feed to check regardless of timestamps.')
 
 	parser.add_argument('-c', '--opml-convert', action='store_true',
 		help='Append all new feeds from specified -o/--opml file to -r/--rss-list and exit.')
@@ -218,7 +269,7 @@ def main(args=None):
 		help='Limit on number of feeds to check in one run. Default or 0 - no limit.')
 
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('-n', '--dry-run', action='store_true',
+	parser.add_argument('--dry-run', action='store_true',
 		help='Run same stuff, but do not send emails or update state.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -267,8 +318,10 @@ def main(args=None):
 	check_limit = opts.max_checks or 0
 	if check_limit: check_limit += 1
 
+	feed_lookup = opts.feed_name and str_norm(opts.feed_name)
 	for feed in feeds:
-		if ts < feed.ts_check_next(): continue
+		if not (feed_lookup and feed_lookup in str_norm(feed.title)):
+			if ts < feed.ts_check_next(): continue
 		ts_since = feed.ts_last_check or ts_new_feed
 
 		feed_log = get_logger(f'feed.{feed.chan}')
@@ -285,61 +338,18 @@ def main(args=None):
 				break
 		if entries is None: continue
 
-		feed_log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
-		feed_last_id = e_prev = e_ts_prev = None
-		ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
-		emails = list()
-
-		for e in entries:
-			e_ts = calendar.timegm(e.published_parsed)
-
-			if not feed_last_id:
-				e_id = feed.entry_id(e)
-				if not e_id: feed_log.warning('Failed to get id for last feed entry: {}', str_repr(e))
-				feed_last_id = [e_id]
-
-			if e_ts_prev:
-				ewma_delay = ewma_a * (e_ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
-			e_ts_prev = e_ts
-
-			if e_ts <= ts_since:
-				feed_log.debug( 'Stopped at (old) entry [{}]:'
-					' ts={} author={} title={!r}', e_ts, e.published, e.author, e.title )
-				if feed.last_entry_id and (
-						feed.last_entry_id != feed.entry_id(e)
-						# Sometimes people hide and re-schedule last video, check for that
-						and (not e_prev or feed.last_entry_id != feed.entry_id(e_prev)) ):
-					# Likely means that there's some bug in filtering/state or timestamps shift
-					feed_log.warning( 'Sanity check fail - recorded last feed'
-						' entry id does not match first old one in the feed: {}', str_repr(e) )
-				break
-
-			feed_log.debug( 'Generating notification for entry [{}]:'
-				' ts={} author={!r} title={!r}', e_ts, e.published, e.author, e.title )
-			body = dd(f'''
-				Link: {e.link}
-				Title: {e.title}
-				Author: {e.author}
-				Published: {e.published}''')
-			if summary := e.get('summary'):
-				body += '\nSummary:\n' + process_summary(summary)
-			emails.append((f'YT [{e.author}]: {e.title}', body))
-
+		log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
+		emails, ewma_delay, feed_last_id = \
+			feed_process(feed_log, feed, entries, ts, ts_since)
 		if not opts.dry_run:
-			feed_log.debug('Sending notification emails: count={}', len(emails))
-			for subject, body in reversed(emails):
+			log.debug('Sending notification emails: count={}', len(emails))
+			for e_ts, subject, body in sorted(emails):
 				sp.run(
 					['mail', '-s', subject, opts.email],
 					input=body.encode(), timeout=4*60, check=True )
-
-		if e_ts_prev:
-			ewma_delay = ewma_a * (ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
-			ewma_delay = min(feed.delay_ewma_max, ewma_delay)
-		else: feed_log.warning('Empty feed - check/remove it from list') # can be a bug too
-
-		e_prev, update = e, dict(
+		update = dict(
 			chan=feed.chan, delay_ewma=ewma_delay,
-			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id[0] )
+			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id )
 		if not opts.dry_run: state_update(state_log, ts, feed, update)
 
 	log.debug('Finished')
