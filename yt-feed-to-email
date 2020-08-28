@@ -229,7 +229,7 @@ def feed_process(log, feed, entries, ts, ts_since):
 		# This makes empty checks bump delay up
 		ewma_delay = ewma_a * (ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
 		ewma_delay = min(feed.delay_ewma_max, ewma_delay)
-	else: log.warning('Empty feed - check/remove it from list') # can be a bug too
+	elif not e_ts_prev: log.warning('Empty feed - check/remove it from list') # can be a bug too
 
 	return emails, ewma_delay, feed_last_id[0]
 
@@ -261,6 +261,11 @@ def main(args=None):
 	group = parser.add_argument_group('Notification options')
 	group.add_argument('-e', '--email', metavar='addr', required=True,
 		help='Email address to send video notifications to via local "mail" command.')
+	group.add_argument('-d', '--email-delay',
+		type=float, metavar='float', default=1.1,
+		help='Delay between running notification-command in seconds.'
+			' Useful to make sure emails sort by date/time correctly within same channel,'
+				' and don\'t all have same exact timestamp. Default is %(default)ss (0 - disable).')
 
 	group = parser.add_argument_group('State storage/init')
 	group.add_argument('-s', '--state-dir', default='state', metavar='path',
@@ -326,7 +331,7 @@ def main(args=None):
 	state_log = state_process(opts.state_dir, feeds)
 	log.debug('Feed Index: feeds={} state-log={}', len(feeds_rss), state_log)
 
-	ts, ts_new_feed = time.time(), opts.new_feed_time or 0
+	ts, ts_email, ts_new_feed = time.time(), 0, opts.new_feed_time or 0
 	check_limit = opts.max_checks or 0
 	if check_limit: check_limit += 1
 
@@ -349,11 +354,14 @@ def main(args=None):
 		emails, ewma_delay, feed_last_id = \
 			feed_process(feed_log, feed, entries, ts, ts_since)
 		if not opts.dry_run:
-			log.debug('Sending notification emails: count={}', len(emails))
+			log.debug( 'Sending notification emails:'
+				' count={} delay={:.1f}', len(emails), opts.email_delay )
 			for e_ts, subject, body in sorted(emails):
+				time.sleep(max(0, opts.email_delay - (time.time() - ts_email)))
 				sp.run(
 					['mail', '-s', subject, opts.email],
 					input=body.encode(), timeout=4*60, check=True )
+				ts_email = time.time()
 		update = dict(
 			chan=feed.chan, delay_ewma=ewma_delay,
 			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id )
