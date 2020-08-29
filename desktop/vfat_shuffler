@@ -2,7 +2,7 @@
 
 from construct import (
 	Struct, Byte, Bytes, Int8ul, Int16ul, Int32ul, Enum, Array,
-	Padding, Embedded, Pass, BitStruct, Flag, Const, ExprAdapter )
+	Padding, Pass, BitStruct, Flag, Const, ExprAdapter )
 from construct.core import StreamError
 
 import itertools as it, operator as op, functools as ft
@@ -42,8 +42,7 @@ Fat32Header = Struct(
 	'physicalDriveNumber_old' / Byte,
 	'bootSectorSignature' / Const(b'\x55\xaa') )
 
-BootSector = Struct(
-	Embedded(Fat32Header),
+BootSector = ( Fat32Header +
 	Padding(lambda ctx: ctx.sectorSize - Fat32Header.sizeof()) )
 
 FatEntry = Enum(
@@ -112,20 +111,20 @@ LFNEntry = Struct(
 
 
 def PreDataRegion(fsinfo=False, fats=True):
-	entries = [Embedded(BootSector)]
+	entries = BootSector
 	reserved_padding = Padding(lambda ctx: (ctx.reservedSectorCount - 1) * ctx.sectorSize)
 	if fsinfo:
-		entries.append(Padding(lambda ctx: (ctx.fsInfoSectorNo - 1) * ctx.sectorSize))
+		entries += Padding(lambda ctx: (ctx.fsInfoSectorNo - 1) * ctx.sectorSize)
 		# https://en.wikipedia.org/wiki/File_Allocation_Table#FS_Information_Sector
-		# entries.append(Embedded(FSInfoSector('fsInfoSector')))
+		# entries += FSInfoSector('fsInfoSector')
 		reserved_padding = Padding(
 			lambda ctx: (ctx.reservedSectorCount - ctx.fsInfoSectorNo - 1) * ctx.sectorSize )
 		raise NotImplementedError
 	if fats:
-		entries.append(reserved_padding)
-		entries.append('fats' / Array( lambda ctx: ctx.fatCount,
-			Array(lambda ctx: ctx.sectorsPerFat_large * ctx.sectorSize // FatEntry.sizeof(), FatEntry) ))
-	return Struct(*entries)
+		entries += reserved_padding
+		entries += 'fats' / Array( lambda ctx: ctx.fatCount,
+			Array(lambda ctx: ctx.sectorsPerFat_large * ctx.sectorSize // FatEntry.sizeof(), FatEntry) )
+	return entries
 
 
 class File:
