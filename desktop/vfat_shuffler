@@ -640,6 +640,7 @@ def main(args=None):
 		elif not path.startswith(os.sep):
 			parser.error( 'Path argument must begin with'
 				' slash (for typo-safety reasons): {!r}'.format(path) )
+		if path == '.': path = '/'
 
 		src_mode = 'rb' if not opts.dry_run and opts.list else 'rb+'
 		with open(dev, src_mode) as src:
