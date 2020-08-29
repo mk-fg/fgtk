@@ -417,7 +417,8 @@ int main(int argc, char *argv[]) {
 
 	if (opt_tabs_to_spaces >= 0) {
 		char *sub = memset(malloc(opt_tabs_to_spaces), ' ', opt_tabs_to_spaces);
-		str_replace(&buff, &buff_len, "\t", 1, sub, opt_tabs_to_spaces); }
+		str_replace(&buff, &buff_len, "\t", 1, sub, opt_tabs_to_spaces);
+		free(sub); }
 	if (!opt_verbatim) {
 		str_rmchar(buff, &buff_len, '\n');
 		str_subchar(buff, buff_len, '\t', ' ');
