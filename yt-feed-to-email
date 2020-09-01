@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import itertools as it, functools as ft, operator as op
 import pathlib as pl, datetime as dt, urllib.parse as up, hashlib as hl, subprocess as sp
 import xml.etree.ElementTree as etree
 import os, sys, logging, time, calendar, base64, json, textwrap, unicodedata
@@ -68,8 +69,7 @@ class YTFeed:
 	delay_ewma = 24 * 3600
 	delay_ewma_max = 30 * 24 * 3600
 	delay_ewma_a = 0.3
-	etag = None
-	last_entry_id = None
+	etag = seen_entries = None
 
 	def __init__(self, url, title=None, chan=None):
 		if not chan: chan, = up.parse_qs(up.urlparse(url).query)['channel_id']
@@ -153,8 +153,10 @@ def state_process(state_dir, feeds):
 		state_log_new = state_log.open('a')
 	try:
 		for line, feed, update in state_last.values():
-			for k in 'ts_last_check etag last_entry_id delay_ewma'.split():
-				setattr(feed, k, update[k])
+			for k in 'ts_last_check etag seen_entries delay_ewma'.split():
+				try: setattr(feed, k, update[k])
+				except KeyError:
+					if k != 'seen_entries': raise
 			if state_log_new: state_log_new.write(line)
 	finally:
 		if state_log_new: state_log_new.close()
@@ -185,33 +187,30 @@ def feed_fetch(log, url, etag):
 	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
 	return feed.get('etag'), feed.entries
 
-def feed_process(log, feed, entries, ts, ts_since):
-	feed_last_id = e_prev = e_ts_prev = None
+def feed_process(log, feed, entries, ts, ts_since=None):
+	first_old_id = e_ts_prev = None
 	ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
-	emails = list()
+	emails, feed_ids, seen_ids = list(), dict(), feed.seen_entries or dict()
 
 	for e in entries:
 		e_id, e_ts = feed.entry_id(e), calendar.timegm(e.published_parsed)
+		if not e_id: raise ValueError(f'Failed to get id for feed entry: {str_repr(e)}')
+		feed_ids[e_id] = e_ts
 
-		if not feed_last_id:
-			if not e_id: log.warning('Failed to get id for last feed entry: {}', str_repr(e))
-			feed_last_id = [e_id]
+		if not first_old_id: # skips all older entries in ewma calculation
+			if e_ts_prev: ewma_delay = ewma_a * (e_ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
+			e_ts_prev = e_ts
 
-		if e_ts_prev: ewma_delay = ewma_a * (e_ts - e_ts_prev) + (1 - ewma_a) * ewma_delay
-		e_ts_prev = e_ts
-
-		if e_ts <= ts_since:
-			log.debug( 'Stopped at (old) entry [id={} ts={}]: pub={}'
+		if ts_since is not None and e_ts <= ts_since:
+			log.debug( 'Skipping old entry [id={} ts={}]: pub={}'
 				' author={} title={!r}', e_id, e_ts, e.published, e.author, e.title )
-			if feed.last_entry_id and (
-					feed.last_entry_id != e_id
-					# Sometimes people hide and re-schedule last video, check for that
-					and (not e_prev or feed.last_entry_id != feed.entry_id(e_prev)) ):
-				# Likely means that there's some bug in filtering/state or timestamps shift
-				log.warning( 'Sanity check fail - recorded last feed'
-					' entry id does not match first old one in the feed: {}', str_repr(e) )
-			break
-		e_prev = e
+			if not first_old_id: first_old_id = e_id
+			continue
+		if e_id in seen_ids:
+			log.debug( 'Skipping already-seen entry [id={} ts={}]: pub={}'
+				' author={} title={!r}', e_id, e_ts, e.published, e.author, e.title )
+			if not first_old_id: first_old_id = e_id
+			continue
 
 		log.debug( 'Generating notification for entry [{}]:'
 			' ts={} author={!r} title={!r}', e_ts, e.published, e.author, e.title )
@@ -231,7 +230,17 @@ def feed_process(log, feed, entries, ts, ts_since):
 		ewma_delay = min(feed.delay_ewma_max, ewma_delay)
 	elif not e_ts_prev: log.warning('Empty feed - check/remove it from list') # can be a bug too
 
-	return emails, ewma_delay, feed_last_id[0]
+	# Find oldest common e_id and merge all newer seen_ids into feed_ids
+	# This is done to avoid notifications for flapping visible/hidden entries
+	n = 0
+	for n, e_id in enumerate(reversed(list(seen_ids))):
+		if e_id in feed_ids: break
+	if n > 0: seen_ids = dict((e_id, seen_ids[e_id]) for e_id in list(seen_ids)[:-n])
+	feed_ids = dict(sorted( # (e_id, ts) with later ts taking prio for same id
+		it.chain(seen_ids.items(), feed_ids.items()), key=op.itemgetter(1) ))
+	feed_ids = dict(sorted(feed_ids.items(), key=op.itemgetter(1), reverse=True))
+
+	return emails, ewma_delay, feed_ids
 
 
 def process_summary(text, w=120, pre='  '):
@@ -340,7 +349,6 @@ def main(args=None):
 		if feed_lookup:
 			if feed_lookup not in str_norm(feed.title): continue
 		elif not opts.force and ts < feed.ts_check_next(): continue
-		ts_since = feed.ts_last_check or ts_new_feed
 
 		feed_log = get_logger(f'feed.{feed.chan}')
 		feed_log.debug('Fetching feed: {} [ {} ]', feed.title, feed.url)
@@ -350,10 +358,14 @@ def main(args=None):
 			etag = entries = None
 		if entries is None: continue
 
-		log.debug('Processing feed: entries={} etag={!r}', len(entries), etag)
-		emails, ewma_delay, feed_last_id = \
+		ts_since = None
+		if not feed.seen_entries:
+			ts_since = feed.ts_last_check or ts_new_feed
+		log.debug( 'Processing feed:'
+			' entries={} etag={!r} new-since={}', len(entries), etag, ts_since )
+		emails, ewma_delay, seen_ids = \
 			feed_process(feed_log, feed, entries, ts, ts_since)
-		if not opts.dry_run:
+		if emails and not opts.dry_run:
 			log.debug( 'Sending notification emails:'
 				' count={} delay={:.1f}', len(emails), opts.email_delay )
 			for e_ts, subject, body in sorted(emails):
@@ -364,7 +376,7 @@ def main(args=None):
 				ts_email = time.time()
 		update = dict(
 			chan=feed.chan, delay_ewma=ewma_delay,
-			ts_last_check=ts, etag=etag, last_entry_id=feed_last_id )
+			ts_last_check=ts, etag=etag, seen_entries=seen_ids )
 		if not opts.dry_run: state_update(state_log, ts, feed, update)
 
 		if check_limit:
