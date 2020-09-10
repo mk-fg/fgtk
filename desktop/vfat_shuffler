@@ -290,7 +290,8 @@ class FatFs(Directory):
 		log.error('  assuming %s', res)
 		return res
 
-	def get_chain(self, clidx):
+	def get_chain(self, clidx=None):
+		if clidx is None: clidx = self.firstCluster
 		res, clidx_start = [], clidx
 		while clidx < 0xffffff8: # last cluster is 0xffffff8-0xfffffff
 			assert isinstance(clidx, int), clidx
@@ -561,7 +562,7 @@ def main(args=None):
 			Default action, if no other options are specified.''')
 	group.add_argument('-s', '--shuffle', action='store_true',
 		help='''
-			Shuffle entries in specified directory.'
+			Shuffle entries in specified directory.
 			This reads all direntries there and writes them back in randomized order.
 			Intended for stupid devices (e.g. mp3 players) which rely on that.''')
 	group.add_argument('-o', '--order', action='store_true',
