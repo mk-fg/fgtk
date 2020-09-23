@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys
+import os, sys, signal
 
 
 def main(args=None):
@@ -67,6 +67,9 @@ def main(args=None):
 		line_end_hide = ('\n' if not opts.binary else b'\n') if opts.hide_newlines else None
 		newline='' if not opts.hide_newlines else None
 		enc = dict(encoding='utf-8-sig', errors='replace') if opts.error_replace else dict()
+
+	for sig in 'SIGINT', 'SIGTERM':
+		signal.signal(getattr(signal, sig), lambda sig,frm: sys.exit(os.EX_OK))
 
 	for p in file_list:
 		p_file = p != '-'
