@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, signal
+import os, sys, io, signal
 
 
 def main(args=None):
@@ -42,6 +42,7 @@ def main(args=None):
 				+r - output windows \\r\\n newlines,
 				+i - overwrite file in-place, same as sed -i would do
 				+t - trim whitespace from line endings, and ensure final newline
+				+j - json-decode and pretty-print lines, or print as -b/--binary on fail
 			Examples: -c utf-8-sig+ri, -c +t, -c cp1251:utf-8+it
 			Allows to use stuff like utf-8-sig or any other codec supported by python.''')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -49,46 +50,55 @@ def main(args=None):
 	file_list, file_nl = opts.file, None
 	if not file_list: file_list = ['-']
 
+	dst_stdout = open(sys.stdout.fileno(), 'wb')
+	dec_errors = 'strict' if not opts.error_replace else 'replace'
 	if opts.convert:
-		file_mode = 'rb'
 		enc_src, enc_dst, enc_opts = 'utf-8-sig', opts.convert, ''
 		if ':' in enc_dst: enc_src, enc_dst = enc_dst.split(':', 1)
 		if '+' in enc_dst: enc_dst, enc_opts = enc_dst.split('+', 1)
 		if not enc_src: enc_src = 'utf-8-sig'
 		if not enc_dst: enc_dst = 'utf-8'
-		assert not set(enc_opts).difference('rit'),\
+		assert not set(enc_opts).difference('ritj'),\
 			f'Not all encoding options recognized: {enc_opts}'
-		dst_stdout = open(sys.stdout.fileno(), 'wb')
-		enc, dec_errors = dict(), 'strict' if not opts.error_replace else 'replace'
-	else:
-		file_mode = 'r' if not opts.binary else 'rb'
-		repr_start = 1 if not opts.binary else 2 # b'' vs ''
-		file_nl = ('' if not opts.hide_newlines else None) if not opts.binary else None
-		line_end_hide = ('\n' if not opts.binary else b'\n') if opts.hide_newlines else None
-		newline='' if not opts.hide_newlines else None
-		enc = dict(encoding='utf-8-sig', errors='replace') if opts.error_replace else dict()
+		if 'j' in enc_opts: import json, pprint
 
 	for sig in 'SIGINT', 'SIGTERM':
 		signal.signal(getattr(signal, sig), lambda sig,frm: sys.exit(os.EX_OK))
 
 	for p in file_list:
-		p_file = p != '-'
-		with open(
-				p if p_file else sys.stdin.fileno(),
-				mode=file_mode, newline=file_nl, **enc) as src:
+		p_file, line_end_final = p != '-', None
+		dst_buff = io.BytesIO() if opts.convert and 'i' in enc_opts and p_file else None
+		with open(p if p_file else sys.stdin.fileno(), mode='rb') as src:
+			for line in src:
+
+				if opts.convert:
+					line = line.decode(enc_src, dec_errors).encode(enc_dst)
+					while b'\r\n' in line: line = line.replace(b'\r\n', b'\n')
+					if 't' in enc_opts:
+						line_end_final = line.endswith(b'\n')
+						line = b'\n'.join(it.chain(
+							(line.rstrip() for line in line.rstrip().split(b'\n')) ))
+					if 'r' in enc_opts: line = line.replace(b'\n', b'\r\n')
+					if 'j' in enc_opts:
+						try:
+							line = (pprint.pformat( json.loads(line),
+								indent=1, width=120, compact=True ) + '\n').encode()
+						except: line = (repr(line)[2:-1] + '\n').encode()
+					dst = dst_buff or dst_stdout
+					dst.write(line)
+					dst.flush()
+
+				else:
+					if opts.hide_newlines: line = line.rstrip(b'\r\n')
+					if opts.binary: line = repr(line)[2:-1] + '\n'
+					else: line = repr(line.decode('utf-8-sig', dec_errors))[1:-1] + '\n'
+					dst_stdout.write(line.encode())
+					dst_stdout.flush()
+
 			if opts.convert:
-				text = src.read().decode(enc_src, dec_errors).encode(enc_dst)
-				while b'\r\n' in text: text = text.replace(b'\r\n', b'\n')
-				if 't' in enc_opts:
-					text = b'\n'.join(it.chain(
-						(line.rstrip() for line in text.rstrip().split(b'\n')), [b''] ))
-				if 'r' in enc_opts: text = text.replace(b'\n', b'\r\n')
-				if 'i' in enc_opts and p_file:
-					with open(p, 'wb') as dst: dst.write(text)
-				else: dst_stdout.write(text)
-			else:
-				for line in src:
-					if line_end_hide and line.endswith(line_end_hide): line = line[:-1]
-					print(repr(line)[repr_start:-1])
+				if 't' in enc_opts and line_end_final is False:
+					(dst_buff or dst_stdout).write(b'\n')
+				if dst_buff:
+					with open(p, 'wb') as dst: dst.write(dst_buff.getvalue())
 
 if __name__ == '__main__': sys.exit(main())
