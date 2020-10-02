@@ -79,7 +79,7 @@ setcg() {
 	[ -z "$cg" ] || return 0
 	[ -z "$slice" ] || {
 		u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"
-		[ -z "$start" ] || systemctl start "$u"; }
+		[ -z "$start" ] || systemctl "$t" start "$u"; }
 	[ -z "$unit" ] || { u=$unit; [ "${u%.$mode}" != "$u" ] || u="${u}.$mode"; }
 	cg=$(systemctl -q "$t" show -p ControlGroup --value -- "$u")
 }
@@ -159,7 +159,7 @@ else
 	cg= unit=; setcg # finds slice path
 	[ -n "$cg" ] || {
 		u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"
-		systemctl start "$u" || exit 1; setcg; }
+		systemctl "$t" start "$u" || exit 1; setcg; }
 	[ -n "$cg" ] || { echo >&2 "ERROR - no slice for -s option"; exit 1; }
 	exec python3 "$0" "$cg" $wrapper "$@"
 fi
