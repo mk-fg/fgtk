@@ -175,13 +175,19 @@ fast-disk-wipe
 Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
 device in a hurry.
 
-Idea is not to erase every trace of data or to hide it, but just to make it
-probabilistically unusable due to such junk blocks, although with low-enough
-interval it should corrupt filesystem pretty badly too, making files/data hard
-to access.
+Idea is not to erase every trace of data or to hide it, but just to make files
+probabilistically unusable due to such junk blocks all over the place.
+
+With low-enough intervals it should also corrupt filesystem pretty badly,
+making metadata hard to access.
 
 Fast loop of 512B writes to a device directly will likely hang that binary until
 it's done, as that's how such direct I/O seem to work on linux.
+
+Writes only stop when write() or lseek() starts returning errors, so using this
+on some extendable file will result in it eating up all space available to it.
+
+See head of the file for build and usage info.
 
 
 
