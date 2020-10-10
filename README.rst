@@ -169,6 +169,20 @@ user acc in a main namespace.
 For long-term access (e.g. for some daemon), there probably are better options
 than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
 
+fast-disk-wipe
+''''''''''''''
+
+Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
+device in a hurry.
+
+Idea is not to erase every trace of data or to hide it, but just to make it
+probabilistically unusable due to such junk blocks, although with low-enough
+interval it should corrupt filesystem pretty badly too, making files/data hard
+to access.
+
+Fast loop of 512B writes to a device directly will likely hang that binary until
+it's done, as that's how such direct I/O seem to work on linux.
+
 
 
 Generic file contents manglers
