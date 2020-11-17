@@ -448,6 +448,21 @@ editable by hand than the usual compact one-liner serialization.
 Due to yaml itself being json superset, can be used to convert json to
 pretty-json as well.
 
+yaml-flatten
+''''''''''''
+
+Converts yaml/json files to a flat "key: value" lines.
+
+Nested keys are flattened to a dot-separated "key1.key2.key3" keys, replacing
+dots, spaces and colons there, to avoid confusing nesting separators with the
+keys themselves.
+
+Values are also processed to always be one-liners, handling empty lists/dicts
+and such in a readable manner too.
+
+Output is intended for human reader, to easily see value nesting and such,
+and is definitely can't be converted back to yaml or any kind of data safely.
+
 hz
 ''
 
