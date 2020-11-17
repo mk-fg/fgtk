@@ -453,15 +453,15 @@ yaml-flatten
 
 Converts yaml/json files to a flat "key: value" lines.
 
-Nested keys are flattened to a dot-separated "key1.key2.key3" keys, replacing
-dots, spaces and colons there, to avoid confusing nesting separators with the
-keys themselves.
+Nested keys are flattened to a dot-separated "level1.level2.level3" keys,
+replacing dots, spaces and colons there, to avoid confusing level separators
+with the keys themselves.
 
-Values are also processed to always be one-liners, handling empty lists/dicts
-and such in a readable manner too.
+Values are also processed to always be one-liners, handling long values
+and empty lists/dicts and such in a readable manner too.
 
-Output is intended for human reader, to easily see value nesting and such,
-and is definitely can't be converted back to yaml or any kind of data safely.
+Output is intended for a human reader, to easily see value paths and such,
+and definitely can't be converted back to yaml or any kind of data safely.
 
 hz
 ''
