@@ -3422,8 +3422,8 @@ this repo, doesn't have any external links, can be easily used as a local file.
 More info can be found in the `d3-chart-for-common-temperaturerh-time-series-data`_
 blog post.
 
-.. _d3-temp-rh-sensor-tsv-series-chart.html: https://mk-fg.github.io/fgtk/scraps/d3-temp-rh-sensor-tsv-series-chart.html
-.. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/scraps/d3-temp-rh-sensor-tsv-series-chart.sample.zip
+.. _d3-temp-rh-sensor-tsv-series-chart.html: https://mk-fg.github.io/fgtk/metrics/d3-temp-rh-sensor-tsv-series-chart.html
+.. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/metrics/d3-temp-rh-sensor-tsv-series-chart.sample.zip
 .. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
 
 d3-du-disk-space-usage-layout
@@ -3440,7 +3440,7 @@ Allows uploading multiple files to display in the same hierarchy, if paths in
 them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
 
 .. _xdiskusage: http://xdiskusage.sourceforge.net/
-.. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/scraps/d3-du-disk-space-usage-layout.html
+.. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/metrics/d3-du-disk-space-usage-layout.html
 
 prometheus-snmp-iface-counters-exporter
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -3763,6 +3763,23 @@ Usage::
 Run binary without args to get more usage info and/or see .c file header for that.
 
 .. _librelp: https://github.com/rsyslog/librelp
+
+ccc-dl
+^^^^^^
+
+Script to download Chaos Communication Congress (ccc/c3) videos as simple .mp4
+files from a given fahrplan or media.ccc.de link (at least rc3 2020 ones).
+
+Kinda surprised how needlessly complicated it is otherwise, as there are
+separate URLs for re-live streams, hd/sd videos, etc, none of which are easy to find.
+
+Frontend URLs there just tend to show useless crappy player and not allow to download
+anything, and you have to either grab the URL from browser request debugger or
+navigate http file listings of their archives and find/match the talk in one of these.
+
+This script simplifies it to one command, querying their JSON APIs under the hood,
+using all proper IDs and such, which is still like 3-4 complicated json-parsing requests,
+hence the need for a proper script to do it.
 
 
 

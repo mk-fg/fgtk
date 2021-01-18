@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+
+import urllib.request as ul, urllib.error as ule, urllib.parse as ulp
+import os, sys, re, json, unicodedata
+
+
+class FetchError(Exception): pass
+
+def fetch(url, query=None, head=False):
+	if query:
+		if '?' in url: raise ValueError(f'URL already has a query part: {url}')
+		url = f'{url}?{ulp.urlencode(query)}'
+	try:
+		body, req = '', ul.Request(url, method='GET' if not head else 'HEAD')
+		with ul.urlopen(req) as req:
+			status, err = req.getcode(), req.reason
+			if not head: body = req.read()
+	except ule.URLError as err_ex:
+		status, err = 1000, str(err_ex)
+		if isinstance(err_ex, ule.HTTPError): status, body = err_ex.code, err_ex.read()
+	if status >= 300:
+		if body and len(body) < 400: err = repr(body.decode('utf-8', 'backslashreplace'))
+		raise FetchError(f'API request failed (status={status}): {url!r} - {err}')
+	if not head: return json.loads(body)
+
+
+str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
+
+def get_talk_slug_from_fahrplan(c3, c3_year, tid):
+	data = fetch(f'https://fahrplan.events.ccc.de/{c3}/{c3_year}/Fahrplan/schedule.json')
+	for c3_day in data['schedule']['conference']['days']:
+		for c3_room, talks in c3_day['rooms'].items():
+			for talk in talks:
+				if int(talk['id']) == int(tid): return talk['slug']
+	raise LookupError(f'Failed to find talk for tid: {tid} [{c3}/{c3_year}]')
+
+def main(args=None):
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Download CCC video from media.ccc.de or fahrplan link.')
+	parser.add_argument('url', help='Fahrplan or media.ccc.de URL of a talk.')
+	parser.add_argument('-c', '--c3',
+		metavar='slug', default='rc3', help='CCC conference name. Default: %(default)s')
+	parser.add_argument('-y', '--year',
+		metavar='year', default='2020', help='CCC conference year. Default: %(default)s')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if m := re.search(
+			r'https?://fahrplan\.events\.ccc\.de/'
+				f'{opts.c3}/{opts.year}' r'/Fahrplan/events/(\d+)\.html', opts.url ):
+		tid = m.group(1)
+		slug = get_talk_slug_from_fahrplan(opts.c3, opts.year, tid)
+	elif m := re.search(
+			r'https?://media\.ccc\.de/v/([^-]+-([0-9]+)-[^?]+)', opts.url ):
+		slug, tid = m.groups()
+	else: parser.error(f'Failed to match URL: {opts.url}')
+
+	c3_data = fetch('https://media.ccc.de/public/conferences/{opts.c3}')
+	ev = rec_sd = rec_hd = None
+	for ev in c3_data['events']:
+		if str_norm(ev['slug']) == str_norm(slug): break
+	else: ev = None
+	if ev:
+		ev_data = fetch(ev['url'])
+		for rec in ev_data['recordings']:
+			if rec['folder'] == 'h264-sd': rec_sd = rec['recording_url']
+			if not rec_sd and rec['folder'] == 'webm-sd': rec_sd = rec['recording_url']
+			if rec['folder'] == 'h264-hd': rec_hd = rec['recording_url']
+			if not rec_hd and rec['folder'] == 'webm-hd': rec_hd = rec['recording_url']
+	if not (rec_sd or rec_hd):
+		rec_sd = f'https://relive.c3voc.de/relive/{opts.c3}/{tid}/muxed.mp4'
+	rec_url = rec_hd or rec_sd
+	print(f'Downloading {opts.c3}/{opts.year} video {tid}: {slug}')
+	print(f'  URL: {rec_url}')
+	fetch(rec_url, head=True) # to catch 404 instead of downloading empty htmls
+	os.execlp('curl', 'curl', '-Lo', f'{slug}.mp4', rec_url)
+
+if __name__ == '__main__': sys.exit(main())
