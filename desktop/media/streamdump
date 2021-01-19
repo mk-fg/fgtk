@@ -5,8 +5,8 @@ usage() {
 	echo >&2 "Usage: $bin <streamlink-opts> dump.mp4"
 	echo >&2 "Example:"
 	echo >&2 "  $bin --retry-streams 60 --retry-open 99999 \\"
-	echo >&2 "    --twitch-disable-hosting --twitch-oauth-token ... \\"
-	echo >&2 "    twitch.tv/user 720p -fo dump.mp4"
+	echo >&2 "    --twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns \\"
+	echo >&2 "    twitch.tv/user 720p -fo dump"
 	echo >&2
 	echo >&2 "Wrapper for 'streamlink ... -fo dump.mp4' to restart it endlessly"
 	echo >&2 "  with new (indexed) filename when it quits for whatever reason."
@@ -23,7 +23,9 @@ done
 [[ -n "$arg_next" ]] || usage
 
 fn=$arg_next
-fn_base=${fn%.*} fn_ext=${fn##*.}
+[[ "$fn" =~ ^(.*)\.([^.]+)$ ]] \
+	&& { fn_base=${BASH_REMATCH[1]}; fn_ext=${BASH_REMATCH[2]}; } \
+	|| { fn_base=$fn; fn_ext=mp4; }
 
 n=0
 while :; do

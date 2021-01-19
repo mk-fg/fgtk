@@ -2586,14 +2586,14 @@ streamdump
 ''''''''''
 
 Bash wrapper for streamlink_ to make dumping stream to a file more reliable,
-auto-restarting the process with new filename after any "stream ended" events or
-streamlink app exits.
+auto-restarting the process with new filename after any "stream ended" events
+or streamlink app exits.
 
 Example use::
 
   % streamdump --retry-streams 60 --retry-open 99999 \
-    --twitch-disable-hosting --twitch-oauth-token ... \
-    twitch.tv/user 720p -fo dump.mp4
+    --twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns \
+    twitch.tv/user 720p -fo dump
 
 Will create "dump.000.mp4", "dump.001.mp4" and so on for each stream restart.
 
