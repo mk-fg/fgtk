@@ -1,11 +1,11 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 mem=4G nets=1 help_ext= root_opts_file=()
+ins=1 smp=2 mem=4G nets=1 help_ext= root_opts_file=()
 img= dev_ro=() dev=() vfs= efi= iso=
 
 read -r -d '' script_usage <<EOF
-Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-m|--mem} $mem ]
+Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-t|--smp} $smp ] [ {-m|--mem} $mem ]
 	[ {-o|--opts} file.opts ] [ {-q|--img} file.qcow2 ]
 	[ {-s|--dev-ro} disk.img +] [ {-d|--dev} /dev/xyz +] [ {-v|--vfs} dir ]
 	[ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
@@ -69,6 +69,7 @@ video=( -vga std )
 	echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
 
 [[ "$1" = -i || "$1" = --instance ]] && { ins=$2; shift; shift; }
+[[ "$1" = -t || "$1" = --smp ]] && { smp=$2; shift; shift; }
 [[ "$1" = -m || "$1" = --mem ]] && { mem=$2; shift; shift; }
 [[ "$1" = -o || "$1" = --opts ]] && {
 	declare -a root_opts_file="($(<"$2"))"; shift; shift; }
