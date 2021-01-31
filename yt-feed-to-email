@@ -3,7 +3,7 @@
 import itertools as it, functools as ft, operator as op
 import pathlib as pl, datetime as dt, urllib.parse as up, hashlib as hl, subprocess as sp
 import xml.etree.ElementTree as etree
-import os, sys, logging, time, calendar, base64, json, textwrap, unicodedata
+import os, sys, re, logging, time, calendar, base64, json, textwrap, unicodedata
 
 import feedparser as fp # pip install --user feedparser
 
@@ -64,20 +64,24 @@ fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
 
 class YTFeed:
 
-	title = chan = url = None
+	title = chan = url = title_filter = None
 	ts_last_check = 0
 	delay_ewma = 24 * 3600
 	delay_ewma_max = 30 * 24 * 3600
 	delay_ewma_a = 0.3
 	etag = seen_entries = None
 
-	def __init__(self, url, title=None, chan=None):
+	def __init__(self, url, title=None, title_filter=None, chan=None):
 		if not chan: chan, = up.parse_qs(up.urlparse(url).query)['channel_id']
 		if not title: title = f'chan.{chan}'
 		title = ' '.join(title.replace('\n', ' ').split())
 		if len(title) > 40: title = f'{title[:38]}--'
-		self.title, self.chan, self.url = title, chan, url
-	__repr__ = lambda s: f'YTFeed({s.title} [{s.chan}])'
+		self.title, self.chan, self.url, self.title_filter = title, chan, url, title_filter
+
+	def __repr__(self):
+		chan = self.chan
+		if self.title_filter: chan = f'{chan} || {self.title_filter}'
+		f'YTFeed({self.title} [{chan}])'
 
 	@classmethod
 	def from_xml(cls, attrs):
@@ -85,9 +89,12 @@ class YTFeed:
 
 	@classmethod
 	def from_line(cls, line):
-		line = line.strip().split(None, 1)
+		title_filter, line = None, line.strip().split(None, 1)
 		url, title = line if len(line) > 1 else (line[0], None)
-		return cls(url, title)
+		if '||' in title:
+			title, title_filter = map(str.strip, title.split('||', 1))
+			title_filter = re.compile(title_filter)
+		return cls(url, title, title_filter)
 
 	def ts_check_next(self):
 		# /2 to run 2x fetches per (average-ish) interval between entries
@@ -99,6 +106,10 @@ class YTFeed:
 			if e_id := e.get(k): break
 		if e_id: e_id = tuple_hash('id.1', e_id)
 		return e_id
+
+	def filter_check(self, title):
+		if not self.title_filter: return True
+		return bool(self.title_filter.search(title))
 
 
 class YTFeedIndex:
@@ -193,6 +204,8 @@ def feed_process(log, feed, entries, ts, ts_since=None):
 	emails, feed_ids, seen_ids = list(), dict(), feed.seen_entries or dict()
 
 	for e in entries:
+		if not feed.filter_check(e.title): continue
+
 		e_id, e_ts = feed.entry_id(e), calendar.timegm(e.published_parsed)
 		if not e_id: raise ValueError(f'Failed to get id for feed entry: {str_repr(e)}')
 		feed_ids[e_id] = e_ts
