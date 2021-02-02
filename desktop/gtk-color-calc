@@ -4,7 +4,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import os, sys, colorsys, collections as cs, functools as ft
+import os, sys, re, colorsys, collections as cs, functools as ft
 
 
 class adict(dict):
@@ -86,15 +86,23 @@ def color_calc(ctx, app):
 
 
 def main(args=None):
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
 		description='Translate specified color via GTK3 CSS system to #RRGGBB[AA] value.')
 	parser.add_argument('color_spec',
-		help='GTK3 css color specification. Can include any color expressions or theme color refs.')
+		help=dd('''
+			GTK3 css color specification. Can include any color expressions or theme color refs.
+			Some extra non-GTK color formats recognized and auto-converted:
+				- "R G B [A]" - decimal channel values.'''))
+
 	parser.add_argument('-d', '--lab-diffusor', default='E', metavar='illuminant',
-		help='XYZ (Tristimulus) reference values of a perfect reflecting diffuser.'
-			' Default: %(default)s. Specify "l" or "list" to print table of illuminant values.')
+		help=dd('''
+			XYZ (Tristimulus) reference values of a perfect reflecting diffuser.
+			Default: %(default)s. Specify "l" or "list" to print table of illuminant values.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+	cs = opts.color_spec
 
 	if opts.lab_diffusor in ['l', 'list']:
 		header = dict((k, len(k)) for k in xyz_ref.E._fields)
@@ -106,7 +114,14 @@ def main(args=None):
 		for row in xyz_ref.values(): print(tpl.format(*map(str, row)))
 		return 0
 
-	ctx = adict(spec=opts.color_spec, lab_diff=opts.lab_diffusor)
+	if m := re.search(r'\d+\s+\d+\s+\d+(\s+\d+)?', cs):
+		m = list(int(c) for c in cs.split())
+		if not all((0 <= c <= 255) for c in m):
+			parser.error(f'"R G B [A]" channel values out of range: {cs}')
+		ct, c = ('rgb' if len(m) == 3 else 'rgba'), ','.join(str(c) for c in m)
+		cs = f'{ct}({c})'
+
+	ctx = adict(spec=cs, lab_diff=opts.lab_diffusor)
 	app = Gtk.Application.new('css-color-mixer.CeMhmO', 0)
 	app.connect('activate', ft.partial(color_calc, ctx))
 	app.run()
