@@ -112,8 +112,8 @@ class PowerMonitor:
 	# 	' -u critical -t0 -i nwn -n power -s' ).split()
 	udev = udev_mon = poller = notify_func = None
 
-	def __init__(self, debounce_delay=1.0):
-		self.debounce_delay = debounce_delay
+	def __init__(self, debounce_delay=1.0, unplugged_repeat=0):
+		self.debounce_delay, self.unplugged_repeat = debounce_delay, unplugged_repeat
 
 	def __enter__(self):
 		self.open()
@@ -148,14 +148,20 @@ class PowerMonitor:
 			ts = time.monotonic()
 			if self.ts_notify:
 				poll_time = max(0, self.ts_notify - ts)
-				if poll_time <= 0: self.notify()
-			else: poll_time = -1
-			for fd, ev in self.poller.poll(poll_time):
-				if ev & err_mask != 0: return
-				self.poller_hooks[fd]()
+				if poll_time <= 0:
+					self.notify()
+					continue
+			else: poll_time = 2**30
+			if self.unplugged_repeat > 0:
+				poll_time = min(self.unplugged_repeat, poll_time)
+			ev_list = self.poller.poll(poll_time)
+			if ev_list:
+				for fd, ev in ev_list:
+					if ev & err_mask != 0: return
+					self.poller_hooks[fd]()
+			elif not self.ts_notify: self.force_unplugged_check()
 
-	def udev_event(self):
-		ev, dev = self.udev_mon.receive_device()
+	def udev_handle(self, dev):
 		plugged = None
 		# dev_info = dict( (k, getattr(dev, k)) for k in
 		# 	'sys_name device_path driver device_type device_node'.split() )
@@ -163,26 +169,38 @@ class PowerMonitor:
 		# for k, v in dev.items(): print(f'  {k} {v!r}')
 		if dev.sys_name.startswith('ADP'):
 			status = dev.get('POWER_SUPPLY_ONLINE')
-			if not status: return
-			plugged = bool(int(status))
-		if dev.sys_name.startswith('BAT'):
+			if status: plugged = bool(int(status))
+		elif dev.sys_name.startswith('BAT'):
 			pw = dev.get('POWER_SUPPLY_CAPACITY')
 			if pw: self.power_percent = float(pw)
 			# status = dev.get('POWER_SUPPLY_STATUS')
 			# if not status: return
 			# plugged = status.lower() in ['charging', 'full']
-		if plugged is None or plugged == self.plugged: return
+		return plugged
 
+	def udev_event(self):
+		ev, dev = self.udev_mon.receive_device()
+		plugged = self.udev_handle(dev)
+		if plugged is None or plugged == self.plugged: return
 		if not self.ts_notify: self.plugged_init = self.plugged
 		self.ts_notify = time.monotonic() + self.debounce_delay
 		self.plugged = plugged
 
-	def notify(self):
-		if self.plugged_init != self.plugged:
+	def force_unplugged_check(self):
+		for dev in self.udev.list_devices(subsystem='power_supply'):
+			plugged = self.udev_handle(dev)
+			if plugged is not False: continue
+			self.plugged_init = self.plugged = plugged
+			self.notify(force=True)
+
+	def notify(self, force=False):
+		if force or self.plugged_init != self.plugged:
 			state_head = ( 'online' if self.plugged else
 				'<span color="red">UNPLUGGED</span>' )
 			state_head = f'Charger state: {state_head}'
-			state_body = f'Battery state: <b>{self.power_percent:.0f}%</b>'
+			state_body = ( f'{self.power_percent:.0f}%'
+				if self.power_percent is not None else 'unknown' )
+			state_body = f'Battery state: <b>{state_body}</b>'
 			if self.notify_cmd:
 				cmd = self.notify_cmd.copy()
 				cmd.append(state_head)
@@ -201,6 +219,10 @@ def main(args=None):
 	parser.add_argument('-t', '--debounce-delay',
 		type=float, metavar='seconds', default=2.0,
 		help='Time to wait for any follow-up changes before issuing notification.')
+	parser.add_argument('-r', '--unplugged-repeat',
+		type=float, metavar='seconds', default=113.0,
+		help='Check/repeat "unplugged" warnings with specified interval.'
+			' Use values <=0 to disable. Default: %(default)s')
 	parser.add_argument('--print-systemd-unit', action='store_true',
 		help='Print example systemd unit file to stdout and exit.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -216,7 +238,7 @@ def main(args=None):
 					continue
 				elif echo and not line.strip(): return
 
-	with PowerMonitor(opts.debounce_delay) as app: app.run()
+	with PowerMonitor(opts.debounce_delay, opts.unplugged_repeat) as app: app.run()
 
 if __name__ == '__main__':
 	signal.signal(signal.SIGINT, signal.SIG_DFL)
