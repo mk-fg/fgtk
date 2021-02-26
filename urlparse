@@ -1,24 +1,14 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals, print_function
+#!/usr/bin/env python3
 
-import itertools as it, operator as op, functools as ft
-from collections import OrderedDict
-import os, sys, urlparse, pyaml
-
+import os, sys, pyaml, urllib.parse as up
 
 def dissect_url(url):
-	url = dict(it.izip(
-		[ 'scheme', 'netloc', 'path', 'params', 'query',
-			'fragment', 'username', 'password', 'hostname', 'port' ],
-		urlparse.urlparse(url) ))
-	if url.get('query'):
-		url['query'] = sorted(urlparse.parse_qsl(url['query']))
-	url = OrderedDict(sorted(url.viewitems()))
-	# Make "query" always a last element
-	url['query'] = url.pop('query')
+	url = up.urlparse(url)._asdict()
+	q = url.pop('query', None)
+	if q: q = sorted(up.parse_qsl(q))
+	url = dict(sorted((k,v) for k,v in url.items() if v))
+	if q: url['query'] = q # should always be last
 	return url
-
 
 def main():
 	import argparse
@@ -27,33 +17,26 @@ def main():
 		description='Process and dump URLs in a human-readable format.')
 	parser.add_argument('url', help='URL to process.')
 	parser.add_argument('url2', nargs='?', help='URL to show diff against.')
-	parser.add_argument('--debug', action='store_true', help='Verbose output.')
 
-	argv, diff_optz = sys.argv[1:], list()
+	argv, diff_opts = sys.argv[1:], list()
 	try: idx = argv.index('--')
 	except ValueError: pass
-	else: argv, diff_optz = argv[:idx], argv[idx+1:]
-	optz = parser.parse_args(argv)
+	else: argv, diff_opts = argv[:idx], argv[idx+1:]
+	opts = parser.parse_args(argv)
 
-	import logging
-	logging.basicConfig(level='DEBUG' if optz.debug else 'WARNING')
-	log = logging.getLogger()
-
-	url = dissect_url(optz.url)
-
-	if not optz.url2: pyaml.dump(url, sys.stdout)
+	url = dissect_url(opts.url)
+	if not opts.url2: pyaml.dump(url, sys.stdout)
 	else:
-		from tempfile import NamedTemporaryFile
-		from subprocess import Popen
-
-		with NamedTemporaryFile() as tmp1, NamedTemporaryFile() as tmp2:
+		import tempfile, subprocess as sp
+		with \
+				tempfile.NamedTemporaryFile(prefix='url1.') as tmp1,\
+				tempfile.NamedTemporaryFile(prefix='url2.') as tmp2:
 			pyaml.dump(url, tmp1)
-			url2 = dissect_url(optz.url2)
+			url2 = dissect_url(opts.url2)
 			pyaml.dump(url2, tmp2)
 			tmp1.flush(), tmp2.flush()
-			diff_cmd = ['colordiff', '-uw'] + diff_optz + [tmp1.name, tmp2.name]
-			log.debug('Diff command: {}'.format(' '.join(diff_cmd)))
-			sys.exit(Popen(diff_cmd).wait())
+			diff_cmd = 'colordiff' if os.path.exists('/usr/bin/colordiff') else 'diff'
+			diff_cmd = [diff_cmd, '-uw'] + diff_opts + [tmp1.name, tmp2.name]
+			return sp.run(diff_cmd).returncode
 
-
-if __name__ == '__main__': main()
+if __name__ == '__main__': sys.exit(main())
