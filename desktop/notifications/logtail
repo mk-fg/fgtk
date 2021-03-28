@@ -152,8 +152,6 @@ class INotify:
 				else: raise OSError(err, os.strerror(err))
 			return res
 
-	_fd = _poller = _lib = None
-
 	def __init__(self):
 		self._lib = self._get_lib()
 		self.wd_paths = OrderedDict()
@@ -170,7 +168,6 @@ class INotify:
 		if self._poller:
 			self._poller.close()
 			self._poller = None
-		if self._lib: self._lib = None
 
 	def __enter__(self):
 		self.open()
