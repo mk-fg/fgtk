@@ -1,76 +1,91 @@
-#!/usr/bin/env python2
-from __future__ import print_function
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
-from subprocess import Popen, PIPE
-from select import epoll, EPOLLOUT
-import os, sys, fcntl, errno, traceback
+import os, sys, traceback, subprocess as sp
 
 
-_notify_init = False
-def try_notification(title, body, critical=False, timeout=None, icon=None, fork=False):
-	# TODO: fallback to other means of notification (mail, stderr, configurable, ...)
-	global _notify_init
-	if fork and os.fork(): return
-	try:
-		import gi
-		gi.require_version('Notify', '0.7')
-		from gi.repository import Notify
-		if not _notify_init:
-			Notify.init('notify_exec')
-			_notify_init = True
-		note = Notify.Notification.new(summary=title, body=body, icon=icon)
-		if critical: note.set_urgency(Notify.Urgency.CRITICAL)
-		if timeout is not None: note.set_timeout(timeout)
-		note.show()
-	except: pass
-	if fork: os._exit(0)
+def get_dbus_notify_func(**defaults):
+	import ctypes as ct
+	class sd_bus(ct.Structure): pass
+	class sd_bus_error(ct.Structure):
+		_fields_ = [('name', ct.c_char_p), ('message', ct.c_char_p), ('need_free', ct.c_int)]
+	class sd_bus_msg(ct.Structure): pass
+	lib = ct.CDLL('libsystemd.so')
+	def run(call, *args, sig=None, check=True):
+		func = getattr(lib, call)
+		if sig: func.argtypes = sig
+		res = func(*args)
+		if check and res < 0: raise OSError(-res, os.strerror(-res))
+		return res
+	bus, error, reply = (
+		ct.POINTER(sd_bus)(), sd_bus_error(), ct.POINTER(sd_bus_msg)() )
 
+	kws, defaults = defaults, dict(
+		app='', replaces_id=0, icon='',
+		summary='', body='', actions=None, hints=None, timeout=-1 )
+	for k in defaults:
+		if k in kws: defaults[k] = kws.pop(k)
+	assert not kws, kws
+	bb = lambda v: v.encode() if isinstance(v, str) else v
 
-class NotificationTimeout(Exception): pass
+	def encode_array(k, v):
+		if not v: sig, args = [ct.c_void_p], [None]
+		elif k == 'actions':
+			sig, args = [ct.c_int, [ct.c_char_p] * len(v)], [len(v), *map(bb, v)]
+		elif k == 'hints':
+			sig, args = [ct.c_int], [len(v)]
+			for ak, av in v.items():
+				sig.extend([ct.c_char_p, ct.c_char_p]) # key, type
+				args.append(bb(ak))
+				if isinstance(av, (str, bytes)):
+					av_sig, av_args = [ct.c_char_p], [b's', bb(av)]
+				elif isinstance(av, int): av_sig, av_args = [ct.c_int32], [b'i', av]
+				else: av_sig, av_args = av
+				args.extend(av_args)
+				sig.extend(av_sig)
+		else: raise ValueError(k)
+		return sig, args
 
-def proc_pipe(cmd, timeout=10):
-	env = os.environ.copy()
-	env['NOTIFICATION_EXEC_CHECK'] = 't' # to block recursion
-	proc = Popen(cmd, stdout=PIPE, stderr=PIPE, env=env)
-	poller = epoll()
+	def notify_func(
+			summary=None, body=None, app=None, icon=None,
+			replaces_id=None, actions=None, hints=None, timeout=None ):
+		args, kws, sig_arrays = list(), locals(), list()
+		for k, default in defaults.items():
+			v = kws.get(k)
+			if v is None: v = default
+			if k in ['actions', 'hints']:
+				arr_sig, arr_args = encode_array(k, v)
+				sig_arrays.extend(arr_sig)
+				args.extend(arr_args)
+			else: args.append(bb(v))
+		run( 'sd_bus_open_user', ct.byref(bus),
+			sig=[ct.POINTER(ct.POINTER(sd_bus))] )
+		try:
+			run( 'sd_bus_call_method',
+				bus,
+				b'org.freedesktop.Notifications', # dst
+				b'/org/freedesktop/Notifications', # path
+				b'org.freedesktop.Notifications', # iface
+				b'Notify', # method
+				ct.byref(error),
+				ct.byref(reply),
+				b'susssasa{sv}i', *args,
+				sig=[
+					ct.POINTER(sd_bus),
+					ct.c_char_p, ct.c_char_p, ct.c_char_p, ct.c_char_p,
+					ct.POINTER(sd_bus_error),
+					ct.POINTER(ct.POINTER(sd_bus_msg)),
+					ct.c_char_p,
+					ct.c_char_p, ct.c_uint32,
+					ct.c_char_p, ct.c_char_p, ct.c_char_p,
+					*sig_arrays, ct.c_int32 ] )
+			note_id = ct.c_uint32()
+			n = run( 'sd_bus_message_read', reply, b'u', ct.byref(note_id),
+				sig=[ct.POINTER(sd_bus_msg), ct.c_char_p, ct.POINTER(ct.c_uint32)] )
+			assert n > 0, n
+		finally: run('sd_bus_flush_close_unref', bus, check=False)
+		return note_id.value
 
-	pipes = dict()
-	for stream in 'stdout', 'stderr':
-		fd = getattr(proc, stream).fileno()
-		flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-		fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-		poller.register(fd, EPOLLOUT)
-		pipes[fd] = stream, getattr(proc, stream), getattr(sys, stream)
-
-	def pipe_read(fd):
-		stream, src, dst = pipes[fd]
-		try: buff = src.read()
-		except IOError as err:
-			if err.errno != errno.EAGAIN: raise
-			buff = None
-		if buff: dst.write(buff)
-		return buff
-
-	output = dict((fd, list()) for fd in pipes)
-	while True:
-		ev = poller.poll(timeout, 1)
-		if not ev: raise NotificationTimeout(timeout)
-		(fd, ev), = ev
-		buff = pipe_read(fd)
-
-		# Check if process has finished, if there's no output
-		err = proc.poll()
-		if not buff and err is not None:
-			# Check other pipes
-			for fd_chk in pipes:
-				if fd == fd_chk: continue
-				buff = pipe_read(fd_chk)
-				if buff: output[fd_chk].append(buff)
-			return err, dict(
-				(pipes[fd][0], ''.join(reads))
-				for fd, reads in output.viewitems() )
-		else: output[fd].append(buff)
+	return notify_func
 
 
 def main():
@@ -78,10 +93,10 @@ def main():
 		print('Detected recursive call in notification.exec, aborting', file=sys.stderr)
 		sys.exit(1)
 
-	optz, cmd = list(), sys.argv[1:]
+	opts, cmd = list(), sys.argv[1:]
 	if '--' in sys.argv:
 		pos = sys.argv.index('--')
-		optz, cmd = sys.argv[1:pos], sys.argv[pos+1:]
+		opts, cmd = sys.argv[1:pos], sys.argv[pos+1:]
 
 	# In case this binary is symlinked to something like "notify_X.wrapper" - just run notify_X
 	# Only use that if names are in "notify.*" form to avoid accidental recursion
@@ -100,34 +115,44 @@ def main():
 		help='Issue notification upon successful execution as well.')
 	parser.add_argument('-d', '--dump', action='store_true',
 		help='Include stdou/stderr for all notifications.')
-	parser.add_argument('-i', '--notify-icon', metavar='icon_name',
+	parser.add_argument('-i', '--notify-icon', metavar='icon-name',
 		help='Icon name to pass to notification daemon.')
-	optz = parser.parse_args(optz)
+	parser.add_argument('-t', '--timeout',
+		type=float, metavar='seconds', default=10,
+		help='Timeout for specified command to finish'
+			' (default=%(default)ss). It does not get killed afterwards!')
+	parser.add_argument('--err-note-timeout',
+		type=float, metavar='seconds', default=0,
+		help='Notification timeout setting for any kind of errors. Default: %(default)ss')
+	opts = parser.parse_args(opts)
 
-	notify = ft.partial(try_notification, icon=optz.notify_icon)
+	notify = lambda *a,**kw: get_dbus_notify_func(icon=opts.notify_icon)(*a, **kw)
 
 	proc_name = cmd[0] if cmd else '(generic error)'
-	try: err, output = proc_pipe(cmd)
-	except Exception as err:
-		notify( '{}: failed to run command'.format(proc_name),
-			'Error: {}\n\n{}'.format(err, traceback.format_exc().strip()), critical=True )
+	try:
+		env = os.environ.copy()
+		env['NOTIFICATION_EXEC_CHECK'] = 't' # to block recursion
+		proc = sp.run(cmd, env=env, timeout=opts.timeout, capture_output=True)
+		code, cmd = proc.returncode, ' '.join(cmd)
+		stdout, stderr = ( # indented and compressed for notification boxes
+			'\n  '.join(s.decode(errors='replace').splitlines())
+			for s in [proc.stdout, proc.stderr] )
+	except Exception as err: # likely OSError or TimeoutExpired
+		notify( f'{proc_name}: failed to run command',
+				f'Error: {err}\n\n{traceback.format_exc().strip()}',
+			timeout=opts.err_note_timeout, hints=dict(urgency=2) )
 		raise
 
-	if err != 0 or (not optz.exit_code_only and output['stderr']):
-		notify(
-			'{}: command finished with errors'.format(proc_name, err),
-			'Cmdline: {}\nExit code: {}\nStdout:\n  {}\nStderr:\n  {}'.format( cmd, err,
-				*('\n  '.join(output[stream].splitlines()) for stream in ['stdout', 'stderr']) ),
-			critical=True )
-		sys.exit(err)
+	if code != 0 or (not opts.exit_code_only and proc.stderr):
+		notify( f'{proc_name}: command finished with errors',
+			f'Command (err={code}): {cmd}\n'
+				f'\nStdout:\n  {stdout}\nStderr:\n  {stderr}',
+			timeout=opts.err_note_timeout, hints=dict(urgency=2) )
+		return code
 
-	elif optz.notify_on_success:
-		notify(
-			'{}: command was executed successfully'.format(proc_name),
-			'Cmdline: {}{}'.format( ' '.join(cmd),
-				'\nStdout:\n  {}\nStderr:\n  {}'.format(*(
-						'\n  '.join(output[stream].splitlines()) for stream in ['stdout', 'stderr'] ))
-					if optz.dump else '' ))
+	elif opts.notify_on_success:
+		notify( f'{proc_name}: command was executed successfully',
+			'Cmdline: {}{}'.format( cmd,
+				f'\nStdout:\n  {stdout}\nStderr:\n  {stderr}' if opts.dump else '' ))
 
-
-if __name__ == '__main__': main()
+if __name__ == '__main__': sys.exit(main())

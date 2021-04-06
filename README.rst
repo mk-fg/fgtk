@@ -2616,8 +2616,8 @@ atm) if it fails (including "no such binary" errors) or produces any stderr.
 
 Optionally produces notification in any case.
 
-Useful mainly for wrapping hooks in desktop apps like firefox, to know if click
-on some "magnet:..." link was successfully processed or discarded.
+Useful mainly for wrapping hooks in desktop apps like browsers, to know if click
+on some "magnet:..." link was successfully processed or discarded with some error.
 
 ::
 
@@ -2633,6 +2633,7 @@ on some "magnet:..." link was successfully processed or discarded.
     -v, --notify-on-success
                           Issue notification upon successful execution as well.
     -d, --dump            Include stdou/stderr for all notifications.
+    ...
 
 .. _desktop-notifications: http://developer.gnome.org/notification-spec/
 
