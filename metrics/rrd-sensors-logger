@@ -1,24 +1,23 @@
-#!/usr/bin/env python2
-#-*- coding: utf-8 -*-
-from __future__ import print_function
-
+#!/usr/bin/env python
 
 import os, sys
 
 def Adafruit_DHT_read_func(st, pin):
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 	import Adafruit_DHT.common as c
 	driver = c.get_platform().driver
-	dht_err_names = dict((v,k[4:]) for k,v in vars(c).viewitems() if k.startswith('DHT_'))
+	dht_err_names = dict((v,k[4:]) for k,v in vars(c).items() if k.startswith('DHT_'))
 	def read_func():
 		res, rh, t = driver.read(st, pin)
 		if res == c.DHT_SUCCESS: read_err = None
 		else:
-			read_err = dht_err_names.get(res) or 'Unknown [{}]'.format(res)
+			read_err = dht_err_names.get(res) or f'Unknown [{res}]'
 			rh = t = None
 		return read_err, rh, t
 	return read_func
 
 def Adafruit_DHT_read_proc(args):
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 	import Adafruit_DHT, json, select
 	poller_timeout, = args
 	poller_timeout = float(poller_timeout)
@@ -34,9 +33,9 @@ def Adafruit_DHT_read_proc(args):
 			else:
 				msg = sys.stdin.read(3)
 				if msg: msg = json.loads(sys.stdin.read(int(msg)))
-				if not msg: raise IOError()
+				if not msg: raise IOError
 		except KeyboardInterrupt: continue
-		except (OSError, IOError): return
+		except OSError: return
 		res = None
 		if msg['cmd'] == 'read':
 			st, pin = k = msg['st'], msg['pin']
@@ -46,7 +45,7 @@ def Adafruit_DHT_read_proc(args):
 			res = read_funcs[k]()
 		else: raise ValueError(msg)
 		msg = json.dumps(res)
-		sys.stdout.write('{:03d}{}'.format(len(msg), msg))
+		sys.stdout.write(f'{len(msg):03d}{msg}')
 		sys.stdout.flush()
 
 # Special case for Adafruit_DHT module,
@@ -55,24 +54,34 @@ if __name__ == '__main__' and sys.argv[1] == '--dht-read-subproc':
 	sys.exit(Adafruit_DHT_read_proc(sys.argv[2:]))
 
 
-import itertools as it, operator as op, functools as ft
-from collections import deque, namedtuple, defaultdict, OrderedDict
-from os.path import join, exists, realpath, abspath, expanduser
-from datetime import datetime, timedelta
-import io, re, types, string, base64, time, math, json
-import stat, errno, tempfile, glob, subprocess, signal
-import struct, contextlib, hashlib, logging
+import collections as cs, pathlib as pl, datetime as dt, operator as op, functools as ft
+import io, re, string, base64, time, math, json, stat, errno, tempfile
+import glob, subprocess, signal, struct, contextlib, hashlib, logging
 
-import yaml, lya, rrdtool
+import rrdtool # should be installed with rrdtool binary/package
 
 
-p = lambda fmt,*a,**k: print(fmt.format(*a, **k), file=sys.stderr)
-types_str = types.StringTypes
+import yaml # https://pyyaml.org/
+
+class LayeredAttrDict(cs.ChainMap):
+	def __init__(self, *maps, **map0):
+		super().__init__(*filter(None, [map0] + list(maps)))
+	def __getitem__(self, k, _err=KeyError):
+		k_maps = list()
+		for m in self.maps:
+			if k in m: k_maps.append(m[k])
+		if not k_maps: raise _err(k)
+		if not isinstance(k_maps[0], dict): return k_maps[0]
+		return LayeredAttrDict(*(m for m in k_maps if isinstance(m, dict)))
+	def __getattr__(self, k): return self.__getitem__(k, _err=AttributeError)
+	def __setattr__(self, k, v):
+		if k in ['maps']: return super().__setattr__(k, v)
+		self[k] = v
 
 yaml_load = yaml.safe_load
 yaml_dump = lambda data, dst:\
 	yaml.safe_dump(data, dst, allow_unicode=True, default_flow_style=False)
-yaml.SafeDumper.add_representer(lya.AttrDict, yaml.SafeDumper.represent_dict)
+yaml.SafeDumper.add_representer(LayeredAttrDict, yaml.SafeDumper.represent_dict)
 
 
 ### systemd unit file:
@@ -179,131 +188,110 @@ graph:
 		left-axis-format: '%0.1lf'
 
 '''.replace('\t', '  ')
-conf_base = lya.AttrDict(yaml_load(conf_base_str))
+conf_base = yaml_load(conf_base_str)
 
 
-### For bencode bits below
-# Derived from a thing under BitTorrent Open Source License, written by Petru Paler
-
-# Different from vanilla bencode in:
-#  * Handling "leading zeroes" in keys (doesn't error - for cjdns compat)
-#  * encode_none method (to "n")
-#  * encode_string encodes unicode as utf-8 bytes
+### For bencode-like bits below
+# Based on old python2 module by Petru Paler, it's not an actual bencode format
+# Different from vanilla bencode - encodes none/bool types
+# Used only for data_hash below, which itself is only used to generate rrd names from schema
 
 def _ns_class(cls_name, cls_parents, cls_attrs):
-	for k, v in cls_attrs.viewitems():
-		if isinstance(v, types.FunctionType):
-			cls_attrs[k] = classmethod(v)
+	func_type = type(lambda: None)
+	for k, v in cls_attrs.items():
+		if isinstance(v, func_type): cls_attrs[k] = classmethod(v)
 	return type(cls_name, cls_parents, cls_attrs)
 
 class BTEError(Exception): pass
 
-class Bencached(object):
+class Bencached:
 	__slots__ = 'bencoded',
 	def __init__(self, s): self.bencoded = s
 
-class BTE(object):
-	__metaclass__ = _ns_class
-
-	unicode_enc = 'utf-8'
-	enable_none = True
-	enable_bool = True
-	cjdns_compat = False
+class BTE(metaclass=_ns_class):
 
 	def decode_int(cls, x, f):
 		f += 1
-		newf = x.index('e', f)
+		newf = x.index(b'e', f)
 		n = int(x[f:newf])
-		if x[f] == '-':
-			if x[f + 1] == '0': raise ValueError
-		elif x[f] == '0' and newf != f+1: raise ValueError
+		if x[f] == b'-':
+			if x[f + 1] == b'0': raise ValueError
+		elif x[f] == b'0' and newf != f+1: raise ValueError
 		return n, newf+1
-	def decode_string(cls, x, f):
-		colon = x.index(':', f)
+	def decode_str(cls, x, f):
+		colon = x.index(b':', f)
 		n = int(x[f:colon])
-		if not cls.cjdns_compat\
-			and x[f] == '0' and colon != f+1: raise ValueError
+		if x[f] == b'0' and colon != f+1: raise ValueError
 		colon += 1
 		return (x[colon:colon+n], colon+n)
 	def decode_list(cls, x, f):
 		r, f = [], f+1
-		while x[f] != 'e':
+		while x[f] != b'e':
 			v, f = cls.decode_func[x[f]](cls, x, f)
 			r.append(v)
 		return r, f + 1
 	def decode_dict(cls, x, f):
 		r, f = {}, f+1
-		while x[f] != 'e':
-			k, f = cls.decode_string(x, f)
+		while x[f] != b'e':
+			k, f = cls.decode_str(x, f)
 			r[k], f = cls.decode_func[x[f]](cls, x, f)
 		return r, f + 1
-	def decode_none(cls, x, f):
-		if not cls.enable_none: raise ValueError(x[f])
-		return None, f+1
+	def decode_none(cls, x, f): return None, f+1
 	decode_func = dict(l=decode_list, d=decode_dict, i=decode_int, n=decode_none)
-	for n in xrange(10): decode_func[bytes(n)] = decode_string
+	for n in range(10): decode_func[str(n)] = decode_str
+	decode_func = dict((k.encode(), v) for k,v in decode_func.items())
 
 	def encode_bencached(cls, x, r): r.append(x.bencoded)
-	def encode_int(cls, x, r): r.extend(('i', str(x), 'e'))
-	def encode_float(cls, x, r): r.extend(('f', struct.pack('!d', x), 'e'))
+	def encode_int(cls, x, r): r.extend((b'i', str(x), b'e'))
+	def encode_float(cls, x, r): r.extend((b'f', struct.pack('!d', x), b'e'))
 	def encode_bool(cls, x, r):
-		if not cls.enable_bool: raise ValueError(x)
 		if x: cls.encode_int(1, r)
 		else: cls.encode_int(0, r)
-	def encode_string(cls, x, r):
-		if isinstance(x, unicode):
-			if not cls.unicode_enc: raise ValueError(x)
-			x = x.encode(cls.unicode_enc)
-		r.extend((str(len(x)), ':', x))
+	def encode_str(cls, x, r):
+		if isinstance(x, str): x = x.encode()
+		r.extend((str(len(x)), b':', x))
 	def encode_list(cls, x, r):
-		r.append('l')
+		r.append(b'l')
 		for i in x: cls.encode_func[type(i)](cls, i, r)
-		r.append('e')
+		r.append(b'e')
 	def encode_dict(cls, x, r):
-		r.append('d')
-		ilist = x.items()
-		ilist.sort()
-		for k, v in ilist:
-			r.extend((str(len(k)), ':', k))
+		r.append(b'd')
+		for k, v in sorted(x.items()):
+			r.extend((str(len(k)), b':', k))
 			cls.encode_func[type(v)](cls, v, r)
-		r.append('e')
-	def encode_none(cls, x, r):
-		if not cls.enable_none: raise ValueError(x)
-		r.append('n')
+		r.append(b'e')
+	def encode_none(cls, x, r): r.append(b'n')
 	encode_func = {
 		Bencached: encode_bencached,
-		unicode: encode_string,
-		str: encode_string,
-		types.IntType: encode_int,
-		types.LongType: encode_int,
-		types.FloatType: encode_float,
-		types.ListType: encode_list,
-		types.TupleType: encode_list,
-		types.DictType: encode_dict,
-		types.BooleanType: encode_bool,
-		types.NoneType: encode_none,
-	}
+		str: encode_str,
+		bytes: encode_str,
+		int: encode_int,
+		float: encode_float,
+		list: encode_list,
+		tuple: encode_list,
+		dict: encode_dict,
+		bool: encode_bool,
+		type(None): encode_none }
 
 	def bdecode(cls, x):
 		try: r, l = cls.decode_func[x[0]](cls, x, 0)
 		except (IndexError, KeyError, ValueError) as err:
-			raise BTEError('Not a valid bencoded string: {}'.format(err))
+			raise BTEError(f'Not a valid bencoded string: {err}')
 		if l != len(x):
 			raise BTEError('Invalid bencoded value (data after valid prefix)')
 		return r
 
 	def bencode(cls, x):
-		r = []
+		r = list()
 		cls.encode_func[type(x)](cls, x, r)
-		return ''.join(r)
-
+		return b''.join((v.encode() if isinstance(v, str) else v) for v in r)
 
 def b64(data):
-	return base64.urlsafe_b64encode(data).rstrip('=')
+	return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
 
 def get_uid_token(chars=4):
 	assert chars * 6 % 8 == 0, chars
-	return b64(os.urandom(chars * 6 / 8))
+	return b64(os.urandom(chars * 6 // 8))
 
 def data_hash(data, n=20, **kws):
 	data = _data_hash(data, **kws)
@@ -326,8 +314,8 @@ _short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
 
 def _short_ts_regexp():
 	rex = list('^-?')
-	for k in it.chain(_short_ts_days, _short_ts_s):
-		rex.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
+	for k in [*_short_ts_days, *_short_ts_s]:
+		rex.append(fr'(?P<{k}>\d+{k}\s*)?')
 	return re.compile(''.join(rex), re.I | re.U)
 _short_ts_regexp = _short_ts_regexp()
 
@@ -336,14 +324,14 @@ def ts_diff_parse(spec, t=float, as_td_obj=False):
 	except ValueError: pass
 	else: return t(spec)
 	spec = spec.strip()
-	if re.search(r'^[\d.]+$', spec): spec = '{}s'.format(spec)
+	if re.search(r'^[\d.]+$', spec): spec = f'{spec}s'
 	m = _short_ts_regexp.search(spec)
 	if not m: raise ValueError(spec)
 	delta, delta_any = list(), False
 	parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
 	for units in [_short_ts_days, _short_ts_s]:
 		val = 0
-		for k, v in units.iteritems():
+		for k, v in units.items():
 			try:
 				if not m.group(k): continue
 				n = parse_int(m.group(k))
@@ -351,26 +339,26 @@ def ts_diff_parse(spec, t=float, as_td_obj=False):
 			delta_any, val = True, val + n * v
 		delta.append(val)
 	if not delta_any:
-		raise ValueError('Invalid time delta specification: {!r}'.format(spec))
-	td = timedelta(*delta)
+		raise ValueError(f'Invalid time delta specification: {spec!r}')
+	td = dt.timedelta(*delta)
 	return td if as_td_obj else t(td.total_seconds())
 
 def ts_diff_repr( ts_or_delta, ts0=None, ext=None, absolute_diff=False,
 		_units=dict( h=3600, m=60, s=1,
 			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
-	if isinstance(ts0, (int, float, long)): ts0 = datetime.fromtimestamp(ts_or_delta)
-	assert ts0 is None or isinstance(ts0, (int, float, long, datetime)), ts0
-	if isinstance(ts_or_delta, (int, float, long)):
-		ts_or_delta = timedelta(seconds=ts_or_delta)\
-			if not ts0 else datetime.fromtimestamp(ts_or_delta)
-	delta = (ts_or_delta - (ts0 or datetime.now()))\
-		if not isinstance(ts_or_delta, timedelta) else ts_or_delta
+	if isinstance(ts0, (int, float)): ts0 = dt.datetime.fromtimestamp(ts_or_delta)
+	assert ts0 is None or isinstance(ts0, (int, float, dt.datetime)), ts0
+	if isinstance(ts_or_delta, (int, float)):
+		ts_or_delta = dt.timedelta(seconds=ts_or_delta)\
+			if not ts0 else dt.datetime.fromtimestamp(ts_or_delta)
+	delta = (ts_or_delta - (ts0 or dt.datetime.now()))\
+		if not isinstance(ts_or_delta, dt.timedelta) else ts_or_delta
 	if absolute_diff: delta = abs(delta)
 	res, s = list(), delta.total_seconds()
-	for unit, unit_s in sorted(_units.viewitems(), key=op.itemgetter(1), reverse=True):
-		val = math.floor(s / float(unit_s))
+	for unit, unit_s in sorted(_units.items(), key=op.itemgetter(1), reverse=True):
+		val = math.floor(s / unit_s)
 		if not val: continue
-		res.append('{:.0f}{}'.format(val, unit))
+		res.append(f'{val:.0f}{unit}')
 		if len(res) >= 2: break
 		s -= val * unit_s
 	if not res: return 'now'
@@ -384,7 +372,6 @@ def get_uptime():
 
 @contextlib.contextmanager
 def safe_replacement(path):
-	if not isinstance(path, types_str): path = path.path # twisted.python.filepath.FilePath
 	kws = dict( delete=False,
 		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
 	with tempfile.NamedTemporaryFile(**kws) as tmp:
@@ -405,7 +392,7 @@ safe_replacement.cancel = CancelFileReplacement
 
 
 
-class RRD(object):
+class RRD:
 
 	# DS:ds-name:GAUGE | COUNTER | DERIVE | ABSOLUTE:heartbeat:min:max
 	# RRA:AVERAGE | MIN | MAX | LAST:xff:steps:rows
@@ -414,20 +401,20 @@ class RRD(object):
 	rra_cfs = 'average', 'min', 'max', 'last'
 
 	def __init__(self, storage_dir, name, timesync=None, log=None):
-		self.storage_dir, self.name = storage_dir, name
+		self.storage_dir, self.name = pl.Path(storage_dir), name
 		self._path = self._dss = None
-		self.log = log or logging.getLogger('rrd.{:x}'.format(id(self)))
+		self.log = log or logging.getLogger(f'rrd.{id(self):x}')
 
 		self.timesync = timesync
 		if timesync:
-			timesync.path = join(self.storage_dir, timesync.path)
+			timesync.path = self.storage_dir / timesync.path
 			if timesync.offset: timesync.offset = ts_diff_parse(timesync.offset)
 			self.timesync_file_check()
 
 
 	def ds_for_sensor_metric(self, sensor_name, metric):
 		assert '__' not in sensor_name + metric, [sensor_name, metric]
-		return '{}__{}'.format(sensor_name, metric)
+		return f'{sensor_name}__{metric}'
 	def sensor_metric_for_ds(self, ds): return tuple(ds.split('__'))
 
 	def timesync_file_write(self):
@@ -435,7 +422,7 @@ class RRD(object):
 		uptime, ts = get_uptime(), time.time()
 		if self.timesync.offset: ts += self.timesync.offset
 		with safe_replacement(self.timesync.path) as dst:
-			dst.write('{!r} {!r}\n'.format(uptime, ts))
+			dst.write(f'{uptime!r} {ts!r}\n'.encode())
 
 	def timesync_file_check(self):
 		if not self.timesync or not self.timesync.check: return
@@ -450,9 +437,8 @@ class RRD(object):
 		else:
 			uptime, ts = get_uptime(), time.time()
 			if src_uptime > uptime and src_ts > ts:
-				err_msg = ( 'Detected uptime roll-over ({:.1f} -> {:.1f})'
-					' with backwards time (delta: {:.1f}), this will'
-					' cause a lot of issues' ).format(src_uptime, uptime, abs(src_ts - ts))
+				err_msg = ( f'Detected uptime roll-over ({src_uptime:.1f} -> {uptime:.1f}) with'
+					f' backwards time (delta: {abs(src_ts - ts):.1f}), this will cause a lot of issues' )
 				if self.timesync.check_fatal: raise RuntimeError(err_msg)
 				else: log.error(err_msg)
 
@@ -465,7 +451,7 @@ class RRD(object):
 
 	@staticmethod
 	def _path_meta(path):
-		return '{}.meta'.format(path)
+		return f'{path}.meta'
 	@property
 	def path_meta(self):
 		return self._path_meta(self.path)
@@ -473,27 +459,25 @@ class RRD(object):
 	def ensure_schema(self, step, dss, rras, symlink_to=None, cleanup_td=None):
 		assert dss and rras, [dss, rras]
 		for ds in dss:
-			if 'name' not in ds:
-				ds['name'] = self.ds_for_sensor_metric(*ds['src'])
+			if 'name' not in ds: ds['name'] = self.ds_for_sensor_metric(*ds['src'])
 			assert ds['t'] in self.ds_types, ds['t']
 
 		schema = dict(step=step, dss=dss, rras=rras)
-		self._path = join( self.storage_dir,
-			'{}.{}.rrd'.format(self.name, data_hash(schema, n=10)) )
-		self._dss = map(op.itemgetter('name'), dss)
+		self._path = self.storage_dir / f'{self.name}.{data_hash(schema, n=10)}.rrd'
+		self._dss = list(ds['name'] for ds in dss)
 		assert len(set(self._dss)) == len(self._dss), dss
 
-		if not exists(self.path):
+		if not self.path.exists():
 			self.log.debug('Creating new rrd database: %r', self.path)
-			if not exists(self.storage_dir): os.makedirs(self.storage_dir)
-			rrd_clause = lambda t, *a: opts.append(':'.join(map(bytes, [t.upper()] + list(a))))
-			opts = [self.path, '--step', bytes(step)]
+			self.storage_dir.mkdir(parents=True, exist_ok=True)
+			rrd_clause = lambda t, *a: opts.append(':'.join(map(str, [t.upper()] + list(a))))
+			opts = [self.path, '--step', str(step)]
 			for ds in dss:
 				rrd_clause( 'ds', ds['name'], ds['t'].upper(),
 					int(ds['hb']), ds.get('min') or 'U', ds.get('max') or 'U' )
 			for rra in rras:
 				rrd_clause( 'rra', rra['cf'].upper(),
-					'{:.2f}'.format(rra['xff']), rra['steps'], rra['rows'] )
+					f'{rra["xff"]:.2f}', rra['steps'], rra['rows'] )
 			rrdtool.create(opts)
 			with open(self.path_meta, 'wb') as dst:
 				dst.write('### Auto-generated on database creation\n'
@@ -501,17 +485,17 @@ class RRD(object):
 				yaml_dump(dict(schema=schema, ts=dict(created=time.time())), dst)
 
 		if symlink_to:
-			symlink_to = join(self.storage_dir, symlink_to)
-			try: dst = os.readlink(symlink_to)
+			symlink_to = self.storage_dir / symlink_to
+			try: dst = pl.Path(os.readlink(symlink_to))
 			except OSError: dst = None
-			if not dst or realpath(self.path) != realpath(dst):
-				if exists(symlink_to): os.unlink(symlink_to)
-				os.symlink(abspath(self.path), symlink_to)
+			if not dst or self.path.resolve() != dst.resolve():
+				if symlink_to.exists(): os.unlink(symlink_to)
+				os.symlink(self.path.resolve(), symlink_to)
 
 		if cleanup_td is not None:
 			ts = time.time()
-			for p in glob.glob(join(self.storage_dir, '{}.*.rrd'.format(self.name))):
-				if realpath(p) == realpath(self.path): continue
+			for p in self.storage_dir.glob(f'{self.name}.*.rrd'):
+				if p.resolve() == self.path.resolve(): continue
 				p_meta = self._path_meta(p)
 				try:
 					ts_p = os.stat(p).st_mtime
@@ -525,28 +509,27 @@ class RRD(object):
 						except (OSError, IOError): pass
 
 	def load_schema(self, path):
-		self._path = realpath(join(self.storage_dir, path))
+		self._path = (self.storage_dir / path).resolve()
 		paths = self.path, self.path_meta
-		assert all(map(exists, paths)), paths
-		# meta = lya.AttrDict.from_yaml(self.path_meta)
+		assert all(p.exists() for p in paths), paths
 
 
 	def update(self, vals_dict, ts=None):
 		'vals_dict should be {(sensor_name, metric): value, ...}.'
 		if not vals_dict: return
 		if ts is None: ts = time.time()
-		entry = dict((self.ds_for_sensor_metric(*k), v) for k, v in vals_dict.viewitems())
-		entry_str = ':'.join(it.chain([bytes(ts)], (bytes(entry.pop(k, 'U')) for k in self._dss)))
+		entry = dict((self.ds_for_sensor_metric(*k), v) for k, v in vals_dict.items())
+		entry_str = ':'.join([str(ts), *(str(entry.pop(k, 'U')) for k in self._dss)])
 		assert not entry, entry # some unknown keys left-over
 		self.timesync_file_write()
-		rrdtool.update(self.path , entry_str)
+		rrdtool.update(str(self.path), entry_str)
 
 	def fetch_last_update(self):
 		'Returns ts and dict with values stored on last db update.'
 		# There is no way to do it through API atm, sadly
 		lines = subprocess.check_output(
 			['rrdtool', 'lastupdate', self.path], close_fds=True ).splitlines()
-		ts, keys = None, map(self.sensor_metric_for_ds, lines[0].split())
+		ts, keys = None, list(self.sensor_metric_for_ds(k) for k in lines[0].split())
 		vals = dict.fromkeys(keys)
 		for line in lines[1:]:
 			if not line.strip(): continue
@@ -566,22 +549,21 @@ class RRD(object):
 		assert cf in self.rra_cfs, cf
 		td = int(round(ts_diff_parse(time_delta)))
 		(rra_ts0, rra_ts1, rra_step), keys, vals = rrdtool.fetch(
-			self.path, cf.upper(), '--resolution', bytes(td), '--start', '-{}'.format(td) )
+			self.path, cf.upper(), '--resolution', str(td), '--start', f'-{td}' )
 		vals = dict(( self.sensor_metric_for_ds(k),
 			list(v[n] for v in vals if v[n] is not None) ) for n,k in enumerate(keys))
-		for k, vs in vals.viewitems(): # average what's left there
-			vals[k] = (float(sum(vs)) / len(vs)) if vs else None
+		for k, vs in vals.items(): # average what's left there
+			vals[k] = (sum(vs) / len(vs)) if vs else None
 		return vals
 
 	def get_meta(self):
-		with open(self.path_meta) as src:
-			return lya.AttrDict.from_yaml(src)
+		return LayeredAttrDict(yaml_load(self.path_meta))
 
 	def get_info(self):
-		info_tree = lya.AttrDict()
-		for k, v in rrdtool.info(self.path).viewitems():
+		info_tree = LayeredAttrDict()
+		for k, v in rrdtool.info(self.path).items():
 			# Parse stuff like "rra[1].cdp_prep[0].value" and "ds[speed].minimal_heartbeat"
-			br, keys = info_tree, deque(k.split('.'))
+			br, keys = info_tree, cs.deque(k.split('.'))
 			while keys:
 				kk = keys.popleft()
 				m = re.search(r'^(?P<n>[\w\d_]+)(?:\[(?P<k>[\w\d_]+)\])?', kk)
@@ -601,8 +583,7 @@ class RRD(object):
 	def graph( self, metrics, sensors, image_path=None,
 			legend_style='stats-table',
 			hrules=None, colors=None, units=None, alt_axis=None,
-			perc=None, perc_direction='+-', defs_table_len=100,
-			**cli_opts ):
+			perc=None, perc_direction='+-', defs_table_len=100, **cli_opts ):
 		# http://oss.oetiker.ch/rrdtool/gallery/index.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html#IOPTIONS
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_graph.en.html
@@ -610,24 +591,23 @@ class RRD(object):
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_rpn.en.html
 		# http://oss.oetiker.ch/rrdtool/doc/rrdgraph_examples.en.html
 
-		if isinstance(metrics, types_str): metrics = [metrics]
+		if isinstance(metrics, str): metrics = [metrics]
 		if image_path is None:
 			image_path = tempfile.NamedTemporaryFile(
 				prefix='rrd.chart.', suffix='.png', delete=False ).name
 		assert legend_style == 'stats-table', legend_style
 
-		opts = OrderedDict( # sane-ish defaults
+		opts = dict( # sane-ish defaults
 			width=1000, height=500,
 			start='-24h', end=None, imgformat='PNG',
-			pango_markup=True, font='LEGEND:7:monospace',
-		)
+			pango_markup=True, font='LEGEND:7:monospace' )
 		if alt_axis:
 			m = alt_axis['metric']
 			opts.update(
-				right_axis_label='{}, {}'.format(m, sensors[m][0]),
+				right_axis_label=f'{m}, {sensors[m][0]}',
 				right_axis_format=alt_axis.get('format'),
 				right_axis_formatter=alt_axis.get('formatter'),
-				right_axis='{}:{}'.format(alt_axis.get('scale', 1), alt_axis.get('shift', 0)) )
+				right_axis=f'{alt_axis.get("scale", 1)}:{alt_axis.get("shift", 0)}' )
 		opts.update(cli_opts or dict())
 
 		colors = iter(colors or self.color_scale_c10)
@@ -635,19 +615,19 @@ class RRD(object):
 
 		defs = ['TEXTALIGN:left']
 		def def_label(sn, cf=None, length=3, _src=list()):
-			if not _src: _src.extend([iter(xrange(2**30)), string.ascii_lowercase])
+			if not _src: _src.extend([iter(range(2**30)), string.ascii_lowercase])
 			u, un, us, ul = '', next(_src[0]), _src[1], len(_src[1])
-			for n in xrange(length): u, un = us[un % ul] + u, un / ul
-			return '{}_{}_{}'.format(sn, cf or '', u)
+			for n in range(length): u, un = us[un % ul] + u, un // ul
+			return f'{sn}_{cf or ""}_{u}'
 		def defs_add(sn, cfs, fmt=None, def_t=None):
-			if isinstance(cfs, types_str): cfs = [cfs]
+			if isinstance(cfs, str): cfs = [cfs]
 			if not def_t: def_t = 'cdef' if len(cfs) > 1 else 'vdef'
 			gprint, sn_base = None, sn
 			for cf in cfs:
-				if isinstance(cf, types_str): cf = [def_t, cf]
+				if isinstance(cf, str): cf = [def_t, cf]
 				(cf_t, cf), k = cf, def_label(sn_base)
 				if '{sn}' not in cf: cf = '{{sn}},{}'.format(cf.replace('{', '{{').replace('}', '}}'))
-				defs.append('{t}:{k}={cf}'.format(t=cf_t.upper(), k=k, cf=cf).format(sn=sn))
+				defs.append(f'{cf_t.upper()}:{k}={cf}'.format(sn=sn))
 				if fmt: gprint = 'GPRINT:{k}:{fmt}'.format(k=k, fmt=fmt.replace(':', r'\:'))
 				sn, k = k, None
 			if gprint: defs.append(gprint)
@@ -657,70 +637,69 @@ class RRD(object):
 		msusn = list()
 		for m in metrics:
 			units, ss = sensors[m]
-			if 'vertical_label' not in opts:
-				opts['vertical_label'] = '{}, {}'.format(m, units)
-			sns = list('{}_{}'.format(s, m) for s in ss)
-			for s, sn in it.izip(ss, sns): msusn.append((m, s, units, sn))
+			if 'vertical_label' not in opts: opts['vertical_label'] = f'{m}, {units}'
+			sns = list(f'{s}_{m}' for s in ss)
+			for s, sn in zip(ss, sns): msusn.append((m, s, units, sn))
 		sn_len, u_len = (max(len(v[n]) for v in msusn) for n in [3, 2])
 
 		for m, s, units, sn in msusn:
 			# Line
-			defs.append('DEF:{sn}={p}:{s}__{m}:AVERAGE'.format(sn=sn, s=s, m=m, p=self.path))
-			defs.append('LINE1:{sn}{c}:{sn}'.format(sn=sn, c=next(colors)))
+			defs.append(f'DEF:{sn}={self.path}:{s}__{m}:AVERAGE')
+			defs.append(f'LINE1:{sn}{next(colors)}:{sn}')
 
 			# Legend
-			sn_pad, u_pad = sn_len - len(sn), u_len - len(units.decode('utf-8', 'replace'))
+			sn_pad, u_pad = sn_len - len(sn), u_len - len(units)
 			defs.append('COMMENT:{}{}{}'.format(' '*sn_pad, units, ' '*u_pad))
 
 			for label, cf in [
 					('last', 'LAST'), ('avg', 'AVERAGE'),
 					('min', 'MINIMUM'), ('max', 'MAXIMUM') ]:
-				vdef = '{sn}_{label}'.format(sn=sn, label=label)
-				defs_add(sn, cf, '<small>{label}:</small> %4.1lf'.format(label=label.title()))
+				vdef = f'{sn}_{label}'
+				defs_add(sn, cf, f'<small>{label.title()}:</small> %4.1lf')
 			for p in perc or list():
 				if p.endswith('σ'): pn, p = p, {'1σ': 68.2, '2σ': 95.4, '3σ': 99.7}[p]
-				else: pn = '{}%'.format(p)
+				else: pn = f'{p}%'
 				if len(perc_direction) == 1:
 					pd = perc_direction[0]
 					pn += pd
 					if pd == '+':
 						defs_add( sn,
-							'{},PERCENTNAN'.format(p),
-							'<small>{}:</small> %4.1lf'.format(pn) )
+							f'{p},PERCENTNAN',
+							f'<small>{pn}:</small> %4.1lf' )
 					else:
 						defs_add( sn,
-							['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
-							'<small>{}:</small> %5.1lf'.format(pn) )
+							['-1,*', ['vdef', f'{p},PERCENTNAN']],
+							f'<small>{pn}:</small> %5.1lf' )
 				else:
 					defs_add( sn,
-						['-1,*', ['vdef', '{},PERCENTNAN'.format(p)]],
-						'<small>{}:</small> %5.1lf'.format(pn) )
-					defs_add(sn, '{},PERCENTNAN'.format(p), '%4.1lf')
+						['-1,*', ['vdef', f'{p},PERCENTNAN']],
+						f'<small>{pn}:</small> %5.1lf' )
+					defs_add(sn, f'{p},PERCENTNAN', '%4.1lf')
 			defs.append(r'COMMENT:\n')
 
 		defs.append(r'COMMENT:{}\n'.format('-'*defs_table_len))
 
 		for hrule in hrules or list():
 			if not isinstance(hrule, dict): hrule = dict(v=hrule)
-			hrule = lya.AttrDict(hrule)
+			hrule = LayeredAttrDict(hrule)
 			if not hrule.get('c'): hrule['c'] = next(colors)
-			d = 'HRULE:{}{}'.format(hrule['v'], hrule['c'])
-			if hrule.get('legend'): d += ':{}'.format(hrule['legend'])
+			d = f'HRULE:{hrule["v"]}{hrule["c"]}'
+			if hrule.get('legend'): d += f':{hrule["legend"]}'
 			if hrule.get('dashes'):
-				d += ':dashes{}'.format('' if hrule['dashes'] is True else '={}'.format(hrule['dashes']))
-				if hrule.get('dash_offset'): d += ':dash-offset={}'.format(hrule['dash_offset'])
+				d += ':dashes{}'.format(
+					'' if hrule['dashes'] is True else f'={hrule["dashes"]}' )
+				if hrule.get('dash_offset'): d += f':dash-offset={hrule["dash_offset"]}'
 			defs.append(d)
 
-		args = [bytes(image_path)]
-		for k, v in opts.viewitems():
+		args = [str(image_path)]
+		for k, v in opts.items():
 			if v in [None, False]: continue
 			if len(k) != 1:
-				args.append(''.join([
-					'--', k.replace('_', '-'), '' if v is True else '={}'.format(v) ]))
+				args.append(''.join(['--', k.replace('_', '-'), '' if v is True else f'={v}']))
 			else:
-				args.append('-{}'.format(k))
-				if v is not True: args.append(bytes(v))
-		rrdtool.graph(*map(bytes, args + defs))
+				args.append(f'-{k}')
+				if v is not True: args.append(str(v))
+		rrdtool.graph(*map(str, args + defs))
 
 		return image_path
 
@@ -733,14 +712,13 @@ def init_rrd(sensors_interval, sensors, conf):
 
 	if ds_hb < sensors_interval * 1.2:
 		raise AssertionError(
-			'rrd.heartbeat ({:.2f}s) must be at least 20%'
-				' greater than interval between measurements ({:.2f}s)'\
-			.format(conf.heartbeat, sensors_interval) )
+			f'rrd.heartbeat ({conf.heartbeat:.2f}s) must be at least 20%'
+			f' greater than interval between measurements ({sensors_interval:.2f}s)' )
 
 	dss = list()
-	for k,s in sensors.viewitems():
+	for k,s in sensors.items():
 		assert re.search(r'^[a-zA-Z0-9_]+$', k), k
-		for sk,sv in s.values.viewitems():
+		for sk,sv in s.values.items():
 			dss.append(dict(
 				min=sv.get('min'), max=sv.get('max'),
 				src=(k, sk), t=sv.t, hb=ts_diff_parse(conf.heartbeat, t=int) ))
@@ -748,8 +726,8 @@ def init_rrd(sensors_interval, sensors, conf):
 	rra_step = ts_diff_parse(conf.aggregate.step, t=int)
 	if rra_step % ds_step != 0:
 		raise AssertionError(
-			'Aggregation (RRA) step ({!r}) must be a multiple of data source (DS) step ({!r})'\
-			.format(conf.aggregate.step, conf.step) )
+			f'Aggregation (RRA) step ({conf.aggregate.step!r})'
+			f' must be a multiple of data source (DS) step ({conf.step!r})' )
 	rras =[dict(
 		xff=conf.aggregate.xff, cf='average',
 		steps=int(round(rra_step / ds_step)),
@@ -764,34 +742,35 @@ def init_rrd(sensors_interval, sensors, conf):
 def rrd_conf_graph( conf, rrdb,
 		metrics=None, ss=None, opts=None, threshold=None, path=None ):
 	if not metrics: metrics = sensors.metric_default
-	if isinstance(metrics, types_str): metrics = [metrics]
+	if isinstance(metrics, str): metrics = [metrics]
 	ss = dict( (m, (sensors.units[m], ss)) for m, ss in
-		sensors.filter_by_metrics(metrics, ss or conf.meas.sensors).viewitems() )
+		sensors.filter_by_metrics(metrics, ss or conf.meas.sensors).items() )
 	alt_axis = dict(metric=metrics[1], scale=1, shift=1)\
 		if len(metrics) > 1 and metrics[1] in ss else None
 
 	graph_opts = conf.graph.opts.copy()
-	graph_opts.update(
-		perc=['1σ', '2σ'],
+	graph_opts.update( perc=['1σ', '2σ'],
 		title='{} history'.format(' / '.join(sensors.metrics[m].title() for m in metrics)) )
 	for d in opts or list():
-		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
-		graph_opts.update_dict(yaml_load(d))
+		if not d.strip().startswith('{'): d = f'{{{d}}}'
+		graph_opts.update(yaml_load(d))
 
 	hrules = list()
 	for spec in threshold or list():
 		desc, v = spec.split(':', 1)
 		v = float(v)
 		hrules.append(dict( v=v, dashes=True,
-			legend='{} threshold ({})'.format(desc, sensors.value_repr(v, metrics[0])) ))
+			legend=f'{desc} threshold ({sensors.value_repr(v, metrics[0])})' ))
 
 	image_path = rrdb.graph( metrics, ss,
 		image_path=path, hrules=hrules, alt_axis=alt_axis, **graph_opts )
 	return image_path
 
 
+class HTTPPollExit(Exception): pass
+
 def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
-	import BaseHTTPServer, select, mimetypes, urllib, base64
+	import http.server, urllib.parse, socketserver, select, mimetypes, base64
 
 	httpd_log = log or logging.getLogger('httpd')
 
@@ -803,22 +782,22 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 			try: os.unlink(image_path)
 			except (OSError, IOError): pass
 
-	class HTTPReqHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+	class HTTPReqHandler(http.server.BaseHTTPRequestHandler):
 
 		req_id = None
 
 		def setup(self):
-			self.req_id = os.urandom(3)
-			BaseHTTPServer.BaseHTTPRequestHandler.setup(self)
+			self.req_id = get_uid_token(4)
+			super().setup()
 
 		def log_message(self, fmt, *args):
-			req_id = base64.urlsafe_b64encode(self.req_id)
-			httpd_log.debug( 'http-req[%s] :: %s - - [%s] %s', req_id,
+			httpd_log.debug( 'http-req[%s] :: %s - - [%s] %s', self.req_id,
 				self.client_address[0], self.log_date_time_string(), fmt % args )
 
 		def do_GET(self):
 			params = self.path.split('/', 3)[1:3]
-			try: metrics, opts_ext = map(urllib.unquote_plus, params)
+			if self.path == '/favicon.ico': return ''
+			try: metrics, opts_ext = list(urllib.parse.unquote_plus(p) for p in params)
 			except ValueError:
 				try: (metrics,), opts_ext = params, None
 				except ValueError: metrics = opts_ext = None
@@ -827,7 +806,7 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 			if metrics:
 				if not re.search(r'^[-a-zA-Z0-9_ ]+$', metrics):
 					return self.send_error( 400,
-						'Bad request - invalid metric name spec: {!r}'.format(metrics) )
+						f'Bad request - invalid metric name spec: {metrics!r}' )
 				metrics = metrics.replace('-', ' ').split(' ')
 
 			with rrd_graph(metrics=metrics, opts=opts) as image_path:
@@ -840,10 +819,10 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 					self.send_header('Content-Length', src.tell())
 					self.end_headers()
 					src.seek(0)
-					for chunk in iter(ft.partial(src.read, 2**20), ''): self.wfile.write(chunk)
+					for chunk in iter(ft.partial(src.read, 2**20), b''): self.wfile.write(chunk)
 
-	httpd = BaseHTTPServer.HTTPServer(bind, HTTPReqHandler)
-	poller = select.epoll()
+	class ReusePortTCPServer(socketserver.TCPServer): allow_reuse_address = True
+	httpd, poller = ReusePortTCPServer(bind, HTTPReqHandler), select.epoll()
 	poller.register(httpd.fileno(), select.EPOLLIN)
 
 	def httpd_poller(delay):
@@ -852,7 +831,8 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 		while True:
 			delay = ts1 - ts
 			if delay <= 0: break
-			events = poller.poll(delay)
+			try: events = poller.poll(delay)
+			except KeyboardInterrupt: raise HTTPPollExit
 			for fd, ev in events:
 				req, addr = httpd.get_request()
 				httpd.verify_request(req, addr)
@@ -866,7 +846,8 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 	return httpd_poller
 
 
-class RawMemSlice(object):
+class RawMemSlice:
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 
 	# Read/write always normalize-to/expect LE bytes
 	# All units are bytes too, not words or pages
@@ -880,7 +861,7 @@ class RawMemSlice(object):
 		self.addr_base = addr & ~(mmap.PAGESIZE - 1)
 		self.addr_offset = addr - self.addr_base
 		self.mem_len = mmap.PAGESIZE * int(math.ceil(
-			float(n + self.addr_offset) / mmap.PAGESIZE ))
+			(n + self.addr_offset) / mmap.PAGESIZE ))
 		self.fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
 		self.mem = mmap.mmap( self.fd, self.mem_len,
 			mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=self.addr_base )
@@ -895,7 +876,7 @@ class RawMemSlice(object):
 		offset += self.addr_offset - seek
 		self.mem.seek(seek)
 		buff = list()
-		for i in xrange(int(math.ceil(float(offset + n) / self.w))):
+		for i in range(int(math.ceil((offset + n) / self.w))):
 			word, = struct.unpack(self.wf, self.mem.read(self.w))
 			buff.append(struct.pack('<I', word))
 		buff = ''.join(buff)[offset:offset+n+1]
@@ -905,7 +886,7 @@ class RawMemSlice(object):
 		return buff
 
 	def write(self, buff, offset=0):
-		if isinstance(buff, (int, long)): buff = struct.pack(self.wf, buff)
+		if isinstance(buff, int): buff = struct.pack(self.wf, buff)
 		self.mem.seek(self.addr_offset + offset)
 		self.mem.write(buff)
 
@@ -933,8 +914,8 @@ def rpi_set_internal_resistor_state(bcm_gpio_n, state, platform=False):
 	addr_bcm_peri_base = dict(rpi1=0x20000000, rpi2=0x3f000000)
 	if not platform: platform = detect_rpi()
 	if not platform or platform not in addr_bcm_peri_base:
-		raise InvalidPlatform( 'Internal pull-up control for anything'
-			' but RPi/RPi2 is not supported, platform: {!r}'.format(platform) )
+		raise InvalidPlatform( 'Internal pull-up control for'
+			f' anything but RPi/RPi2 is not supported, platform: {platform!r}' )
 	addr_gpio_base = addr_bcm_peri_base[platform] + 0x200000
 	addr_gpio_pull = addr_gpio_base + 37 * RawMemSlice.w
 	# addr_gpio_pull_clk = addr_gpio_pull + 1 * RawMemSlice.w
@@ -955,24 +936,24 @@ def rpi_set_internal_resistor_state(bcm_gpio_n, state, platform=False):
 	mem.write(0)
 	mem.write(0, RawMemSlice.w)
 
-def gpio_init(sysfs_gpio_n, state, path_gpio='/sys/class/gpio'):
+def gpio_init(sysfs_gpio_n, state, path_gpio=pl.Path('/sys/class/gpio')):
 	if not state: return
-	pin_str = bytes(int(sysfs_gpio_n))
+	pin_str = str(int(sysfs_gpio_n))
 	m = re.search(r'^(in|high|low)(?:-(up|down|off))?$', state)
 	assert m, state
 	d, pull = m.groups()
 	log.debug('Initializing gpio pin %s into state: %s (pull: %s)', pin_str, d, pull)
-	d_path = join(path_gpio, 'gpio{}/direction'.format(pin_str))
-	if not exists(d_path):
-		with open(join(path_gpio, 'export'), 'wb') as dst: dst.write(pin_str)
-	with open(d_path, 'wb') as dst: dst.write(d)
+	d_path = path_gpio / f'gpio{pin_str}/direction'
+	if not d_path.exists():
+		with (path_gpio / 'export').open('wb') as dst: dst.write(pin_str.encode())
+	with d_path.open('wb') as dst: dst.write(d.encode())
 	if pull: rpi_set_internal_resistor_state(sysfs_gpio_n, pull)
 
 class SensorDisabled(Exception): pass
 
-class Sensor(object):
+class Sensor:
 
-	values = lya.AttrDict() # must be overidden
+	values = LayeredAttrDict() # must be overidden
 	disabled = True
 
 	def __init__(self, conf, log=None):
@@ -980,7 +961,7 @@ class Sensor(object):
 		if not self.log:
 			log = self.__class__.__name__
 			if log.startswith('Sensor'): log = log[6:]
-			self.log = logging.getLogger('sensor.{}.{:x}'.format(log, id(self)))
+			self.log = logging.getLogger(f'sensor.{log}.{id(self):x}')
 		disabled = self.conf.get('disabled')
 		if disabled is not None: self.disabled = bool(disabled)
 
@@ -997,7 +978,7 @@ class Sensor(object):
 		# self.log.debug('Raw data: %r', data)
 		for k, v in data.items():
 			ka = self.values[k]
-			if not isinstance(v, (int, float, long)):
+			if not isinstance(v, (int, float)):
 				del data[k]
 				continue
 			v_min, v_max = (ka.get(k) for k in ['min', 'max'])
@@ -1010,9 +991,10 @@ class Sensor(object):
 		raise NotImplementedError
 
 class SensorRPiSoC(Sensor):
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 
 	disabled = False
-	values = lya.AttrDict(t=dict(min=0, max=100, t='gauge'))
+	values = LayeredAttrDict(t=dict(min=0, max=100, t='gauge'))
 	path = '/sys/class/thermal/thermal_zone0/temp'
 
 	def __init__(self, conf, log=None):
@@ -1024,32 +1006,38 @@ class SensorRPiSoC(Sensor):
 			with open(self.path, 'rb') as src: src = src.read().strip().split()[0]
 		except Exception as err:
 			self.log.error('Failed to get SoC temperature value: %s %s', type(err), err)
-		else: return dict(t=int(src[:3]) / 10.0)
+		else: return dict(t=int(src[:3]) / 10)
 
 class SensorLM(Sensor):
 
 	disabled = False
-	values = lya.AttrDict(t=dict(min=0, max=200, t='gauge'))
-	types = 'v', 'rpm', 't'
+	values = LayeredAttrDict(t=dict(min=0, max=200, t='gauge'))
+	types = {'in': 'v', 'fan': 'rpm', 'temp': 't'} # see FEATURE_* constants for more keys
 	lib = lib_err = lib_ss = None
 
 	def lib_init(self):
 		if not self.lib:
-			import atexit, sensors # pysensors
-			sensors.init()
+			import atexit, sensors # https://bastienleonard.github.io/pysensors/
+			type_map = dict((getattr(sensors, f'feature_{k}'.upper()), v) for k,v in self.types.items())
 			atexit.register(sensors.cleanup)
 			cls = self.__class__
-			cls.lib, cls.lib_err = sensors, sensors.SensorsError
+			cls.lib, cls.lib_err = sensors, sensors.SensorsException
 			cls.lib_ss = dict()
-			for chip in sensors.iter_detected_chips():
-				chip_name = bytes(chip)
-				chip_ss, chip_st = cls.lib_ss[chip_name] = dict(), defaultdict(list)
-				for s in chip:
-					try: st = self.types[s.type]
-					except IndexError:
-						self.log.debug('Skipping sensor of unknown type (%s): %s', s.type, s.name)
-					chip_ss[s.name] = s, st
-					chip_st[st].append(s.name)
+			for chip in sensors.get_detected_chips():
+				chip_name = str(chip)
+				chip_ss, chip_st = cls.lib_ss[chip_name] = dict(), cs.defaultdict(list)
+				for feat in chip.get_features():
+					try:
+						st = type_map[feat.type]
+						for sf in chip.get_all_subfeatures(feat):
+							if sf.name.endswith('_input'): break
+						else: raise KeyError
+					except KeyError:
+						self.log.debug( 'Skipping sensor with unknown'
+							' type or subfeature types (chip=%s): %s', chip, feat )
+						continue
+					chip_ss[feat.name] = chip, sf.number, st
+					chip_st[st].append(feat.name)
 
 	def __init__(self, conf, log=None):
 		super(SensorLM, self).__init__(conf, log=log)
@@ -1057,7 +1045,7 @@ class SensorLM(Sensor):
 		chip_ss, chip_st = self.lib_ss[conf.chip]
 		feat, ft = conf.get('feature'), conf.get('feature_type')
 		if feat:
-			try: self.s, self.st = chip_ss[feat]
+			try: self.s, self.sfn, self.st = chip_ss[feat]
 			except KeyError:
 				feats = chip_ss.keys()
 				self.log.error( 'Failed to find feature: %r'
@@ -1066,21 +1054,22 @@ class SensorLM(Sensor):
 			if ft: assert self.st == ft, [self.s.name, self.st, ft, chip_st[ft]]
 		else:
 			if ft: ss = chip_st[ft]
-			else: ss = chip_ss.values()
+			else: ss = list(chip_ss.values())
 			assert len(ss) == 1, ss
-			self.s, self.st = ss[0]
+			self.s, self.sfn, self.st = ss[0]
 
 	def read_raw(self):
-		try: val = self.s.get_value()
+		try: val = self.s.get_value(self.sfn)
 		except Exception as err:
 			self.log.error( 'Failed to get value (type: %s, chip: %s,'
 				' sensor: %s): %s %s', self.st, self.conf.chip, self.s.name, type(err), err )
 		else: return {self.st: val}
 
 class SensorAdafruitDHT(Sensor):
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 
 	disabled = False
-	values = lya.AttrDict(
+	values = LayeredAttrDict(
 		t=dict(min=-40, max=80, t='gauge'),
 		rh=dict(min=0, max=100, t='gauge') )
 
@@ -1091,7 +1080,7 @@ class SensorAdafruitDHT(Sensor):
 		if not cls.dht_log:
 			log = cls.__name__
 			if log.startswith('Sensor'): log = log[6:]
-			cls.dht_log = logging.getLogger('sensor.{}.dht_log'.format(log))
+			cls.dht_log = logging.getLogger(f'sensor.{log}.dht_log')
 		if cls.dht_proc:
 			if cls.dht_proc.poll() is None:
 				if not restart: return
@@ -1106,7 +1095,7 @@ class SensorAdafruitDHT(Sensor):
 	def _read_proc(self, restart=False):
 		self._read_proc_start(self.read_timeout, restart=restart)
 		msg = json.dumps(dict(cmd='read', st=self.st, pin=self.pin))
-		self.dht_proc.stdin.write('{:03d}{}'.format(len(msg), msg))
+		self.dht_proc.stdin.write(f'{len(msg):03d}{msg}')
 		self.dht_proc.stdin.flush()
 		msg = self.dht_proc.stdout.read(3)
 		if not msg.isdigit(): msg = ''
@@ -1133,7 +1122,7 @@ class SensorAdafruitDHT(Sensor):
 
 	def read_raw(self):
 		delay = self.read_delay
-		for n in xrange(1, self.read_n + 1):
+		for n in range(1, self.read_n + 1):
 			read_err, rh, t = self.read_func()
 			if rh is None or t is None or rh > 100:
 				self.log.debug( 'Sensor (pin: %s, type: %s) read retry (n: %s)'
@@ -1144,9 +1133,10 @@ class SensorAdafruitDHT(Sensor):
 			return dict(t=t, rh=rh)
 
 class SensorSHT(Sensor):
+	# XXX: untested leftover code from old python2 version, likely needs to be updated
 
 	disabled = False
-	values = lya.AttrDict(
+	values = LayeredAttrDict(
 		t=dict(min=-40, max=100, t='gauge'),
 		rh=dict(min=0, max=100, t='gauge') )
 
@@ -1164,7 +1154,7 @@ class SensorSHT(Sensor):
 		return dict(t=t, rh=rh)
 
 
-class SensorMeta(object):
+class SensorMeta:
 
 	units = dict(t='°C', rh='%RH', v='V', rpm='rpm')
 	metrics = dict(t='temperature', rh='humidity', v='voltage', rpm='rpm')
@@ -1174,11 +1164,10 @@ class SensorMeta(object):
 		adafruit_dht=SensorAdafruitDHT, sht=SensorSHT )
 	metric_default = 't'
 
-	def value_repr(self, n, metric, units=True, decode=False):
-		if isinstance(n, (int, long)): n = bytes(n)
+	def value_repr(self, n, metric, units=True):
+		if isinstance(n, int): n = str(n)
 		else: n = format(n, self.formats[metric])
-		if units: n = '{} {}'.format(n, cls.units[metric])
-		if decode: n = n.decode('utf-8')
+		if units: n = f'{n} {cls.units[metric]}'
 		return n
 
 	def get_sensor(self, t, conf, log=None, **kws):
@@ -1187,7 +1176,7 @@ class SensorMeta(object):
 	def filter_by_metrics(self, metrics, sensors):
 		ss = dict()
 		for m in metrics:
-			for sn, sd in sensors.viewitems():
+			for sn, sd in sensors.items():
 				if m in self.types[sd.type].values:
 					if m not in ss: ss[m] = list()
 					ss[m].append(sn)
@@ -1319,7 +1308,7 @@ def main(args=None):
 	global log
 	import logging
 	log = '%(levelname)s :: %(message)s'
-	if not opts.systemd: log = '%(asctime)s :: {}'.format(log)
+	if not opts.systemd: log = f'%(asctime)s :: {log}'
 	logging.basicConfig(
 		format=log, datefmt='%Y-%m-%d %H:%M:%S',
 		level=logging.DEBUG if opts.debug else logging.WARNING )
@@ -1330,7 +1319,7 @@ def main(args=None):
 		def sd_cycle(ts=None):
 			if not sd_cycle.ready:
 				daemon.notify('READY=1')
-				daemon.notify('STATUS=Running in {} mode...'.format(opts.cmd))
+				daemon.notify(f'STATUS=Running in {opts.cmd} mode...')
 				sd_cycle.ready = True
 			if sd_cycle.delay:
 				if ts is None: ts = time.time()
@@ -1353,16 +1342,19 @@ def main(args=None):
 	else: sd_cycle = None
 	signal.signal(signal.SIGTERM, lambda sig,frm: sys.exit(0))
 
-	conf = conf_base.clone()
+	conf_list = list()
 	if not opts.conf:
-		opts.conf = [expanduser('~/.rrd-sensors-logger.yaml')]
-		if not exists(opts.conf[0]): opts.conf = list()
-	for k in filter(None, opts.conf): conf.update_yaml(k)
+		opts.conf = [os.path.expanduser('~/.rrd-sensors-logger.yaml')]
+		if not os.path.exists(opts.conf[0]): opts.conf = list()
+	for p in filter(None, opts.conf):
+		with open(p) as src: conf_list.append(yaml_load(src))
 	for d in opts.conf_data:
-		if not d.strip().startswith('{'): d = '{{{}}}'.format(d)
-		conf.update_dict(yaml_load(d))
-	ss_interval, ss = ts_diff_parse(conf.meas.interval), lya.AttrDict()
-	for k, spec in (conf.meas.sensors or dict()).viewitems():
+		if not d.strip().startswith('{'): d = f'{{{d}}}'
+		with open(d) as src: conf_list.append(yaml_load(src))
+	conf = LayeredAttrDict(*conf_list, conf_base)
+
+	ss_interval, ss = ts_diff_parse(conf.meas.interval), LayeredAttrDict()
+	for k, spec in (conf.meas.sensors or dict()).items():
 		if not spec.get('type'): continue
 		spec.interval = ss_interval
 		ss[k] = sensors.get_sensor(spec.type, spec)
@@ -1388,11 +1380,13 @@ def main(args=None):
 				if ts_next == sd_cycle.ts_next: sd_cycle()
 				else: break
 			delay = ts_read - time.time()
-			if delay > 0: delay_func(delay)
+			if delay > 0:
+				try: delay_func(delay)
+				except HTTPPollExit: return
 			ts_read += ss_interval
 
 			vals = dict()
-			for k, s in ss.viewitems():
+			for k, s in ss.items():
 				try:
 					data = s.read()
 					if not data: raise ValueError('No data returned')
@@ -1403,7 +1397,7 @@ def main(args=None):
 					log.debug('Failed to read data from sensor %r: %s', k, err)
 					continue
 				log.debug('Sensor %r data: %s', k, data)
-				for m, v in data.viewitems(): vals[k, m] = v
+				for m, v in data.items(): vals[k, m] = v
 			try: rrdb.update(vals)
 			except Exception as err: log.exception('rrd db update failed: %s', err)
 		raise RuntimeError # should never get here
@@ -1413,8 +1407,8 @@ def main(args=None):
 		vals = dict()
 		if opts.last_update: ts, vals_raw = rrdb.fetch_last_update()
 		else: vals_raw = rrdb.fetch_last_values(opts.time_delta, cf=opts.cf)
-		for (s, k), v in vals_raw.viewitems(): vals['{}.{}'.format(s, k)] = v
-		yaml.safe_dump(vals, sys.stdout, allow_unicode=True, default_flow_style=False)
+		for (s, k), v in vals_raw.items(): vals[f'{s}.{k}'] = v
+		yaml_dump(vals, sys.stdout)
 
 
 	elif opts.cmd == 'graph':
@@ -1423,6 +1417,6 @@ def main(args=None):
 		print(image_path)
 
 
-	else: parser.error('Unrecognized command: {}'.format(opts.cmd))
+	else: parser.error(f'Unrecognized command: {opts.cmd}')
 
 if __name__ == '__main__': sys.exit(main())

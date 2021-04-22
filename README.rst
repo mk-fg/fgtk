@@ -3335,7 +3335,16 @@ Command-line usage::
 See top of the script for yaml config (also available via "print-conf-example")
 and systemd unit file example ("print-systemd-unit" command).
 
-Uses: layered-yaml-attrdict-config (lya), rrdtool.
+Uses yaml_ and rrdtool_ (python bindings that come with the binary), plus
+whatever sensor-related bindings - lm_sensors, Adafruit_DHT (also has internal
+driver for DHT22), sht_sensor, etc.
+
+Didn't test sensor bindings after py2 -> py3 conversion, might need some small
+fixups to read stuff or use newer modules there.
+
+.. _yaml: https://pyyaml.org/
+.. _rrdtool: http://oss.oetiker.ch/rrdtool/
+
 
 graphite-scratchpad
 ^^^^^^^^^^^^^^^^^^^
