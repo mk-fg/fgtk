@@ -1454,6 +1454,9 @@ resulting address to the interface, if missing:
 
 ``ipv6-dns`` tool generates \*.ip.arpa and djbdns records for specified IPv6.
 
+``ipv6-name`` encodes or hashes name into IPv6 address suffix to produce an
+easy-to-remember static ones.
+
 ``ip-check`` subcommand allows to check if address (ipv4/ipv6) is assigned to
 any of the interfaces and/or run "ip add" (with specified parameters) to assign
 it, if not.

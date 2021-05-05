@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-import os, sys, socket, logging, contextlib, ipaddress, re, subprocess
+import hashlib as hl, ipaddress as ip, subprocess as sp
+import os, sys, socket, logging, re
+
 
 
 class LogMessage:
@@ -20,7 +22,7 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
 def ipv6_dns(opts):
-	addr = ipaddress.IPv6Address(opts.ipv6_address).exploded
+	addr = ip.IPv6Address(opts.ipv6_address).exploded
 	log.debug('Exploded address: {}', addr)
 	addr = addr.replace(':', '')
 	if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
@@ -45,7 +47,7 @@ def ipv6_lladdr(opts):
 		for addr in addrs.get(netifaces.AF_INET6, list()):
 			addr = addr.get('addr', '')
 			if '%' not in addr: continue
-			addr = netaddr.IPAddress(addr.split('%', 1)[0])
+			addr = ip.IPAddress(addr.split('%', 1)[0])
 			if addr == ipv6_lladdr:
 				log.debug('ipv6_lladdr (%s) already'
 					' assigned to interface, skipping: %s', ipv6_lladdr, opts.iface)
@@ -57,13 +59,45 @@ def ipv6_lladdr(opts):
 					' address ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
 			log.debug('Assigned ipv6_lladdr (%s) to interface: %s', ipv6_lladdr, opts.iface)
 
+def ipv6_name(opts):
+	pre = ip.IPv6Network(opts.prefix or '::/0', strict=False)
+	if pre.prefixlen == 128:
+		pre_addr = pre.network_address.packed
+		for n in range(129):
+			if pre_addr & 1 << n: break
+		pre = ip.IPv6Network(pre.network_address.compressed + f'/{128 - n}')
+		log.debug('Auto-detected prefix-length for address: {}', pre)
+	suffix, suffix_bits = opts.name.encode('utf-8'), 128 - pre.prefixlen
+
+	b2_params, opt = [0, '', ''], opts.blake2_params.split('::', 2)
+	b2_params[:len(opt)] = opt
+	b2_len, b2_person, b2_key = b2_params
+	b2_len = suffix_bits if b2_len == '+' else int(b2_len) * 8
+	if b2_len > suffix_bits:
+		opts.parser.error('Suffix length in --blake2-params is too long for specified -p/--prefix')
+	b2_person, b2_key = b2_person.encode(), b2_key.encode()
+	if opts.blake2:
+		suffix = int.from_bytes(hl.blake2s( suffix,
+			digest_size=16, key=b2_key, person=b2_person ).digest(), 'big')
+		suffix &= (2**b2_len - 1)
+	else:
+		if len(suffix) * 8 > suffix_bits:
+			opts.parser.error('Encoded name length is too long for specified -p/--prefix')
+		suffix = int.from_bytes(suffix, 'big')
+	addr = ip.IPv6Address(int.from_bytes(pre.network_address.packed, 'big') | suffix)
+	log.debug('Generated address: {} [suffix-bits={}]', addr, suffix_bits)
+
+	addr = addr.compressed if not opts.exploded else addr.exploded
+	if opts.mask: addr += f'/{pre.prefixlen}'
+	print(addr)
+
 
 def ip_check(opts):
 	opts.parser.error('This option is not ported from py2 legacy code yet')
 	if opts.assign and not opts.iface:
 		parser.error('--assign requires --iface option to be specified.')
 
-	addr_seek = netaddr.IPAddress(opts.addr)
+	addr_seek = ip.IPAddress(opts.addr)
 	af = {4: netifaces.AF_INET, 6: netifaces.AF_INET6}[addr_seek.version]
 	found, ifaces = False, [opts.iface] if opts.iface else netifaces.interfaces()
 
@@ -71,7 +105,7 @@ def ip_check(opts):
 		addrs = netifaces.ifaddresses(iface)
 		for addr in addrs.get(af, list()):
 			if 'addr' not in addr: continue
-			addr = netaddr.IPAddress(addr['addr'].split('%', 1)[0])
+			addr = ip.IPAddress(addr['addr'].split('%', 1)[0])
 			if addr == addr_seek:
 				found = iface
 				break
@@ -101,8 +135,8 @@ def ip_check(opts):
 
 def iptables_flush(opts):
 	for ipt in 'iptables', 'ip6tables':
-		tables = subprocess.check_output(f'{ipt}-save')
-		tables_restore = subprocess.Popen(f'{ipt}-restore', stdin=subprocess.PIPE)
+		tables = sp.check_output(f'{ipt}-save')
+		tables_restore = sp.Popen(f'{ipt}-restore', stdin=sp.PIPE)
 		tables_restore_line = ( lambda line_new=None:
 			tables_restore.stdin.write((line_new or line).encode() + b'\n') )
 		for line in tables.decode().splitlines():
@@ -149,6 +183,25 @@ def main(args=None):
 	cmd.add_argument('-d', '--djbdns',
 		action='store_true', help='Convert to canonical djbdns record format instead.')
 
+	cmd = cmds.add_parser('ipv6-name',
+		help='Convert non-secret name to a consistent IPv6 address in a number ways.')
+	cmd.add_argument('name', help='Name to convert.')
+	cmd.add_argument('-p', '--prefix', metavar='prefix',
+		help='IPv6 prefix (or network) to combine generated suffix with.'
+			' Exits with error if generated suffix does not fit into address with prefix.')
+	cmd.add_argument('-e', '--exploded', action='store_true',
+		help='Print resulting address in an exploded/padded format.')
+	cmd.add_argument('-m', '--mask', action='store_true',
+		help='Print netmask from prefix in the resulting address.')
+	cmd.add_argument('-u', '--utf8', action='store_true',
+		help='Encode to utf8 and use that as suffix. Default mode.')
+	cmd.add_argument('-b', '--blake2', action='store_true',
+		help='Use blake2s hash after utf8-encoding with specified parameters.')
+	cmd.add_argument('--blake2-params',
+		metavar='bvyte-len(::person(::key))', default='+::ip-ext',
+		help='Byte-length/person/key parameters for blake2s hash with -b/--blake2 option.'
+			' Special "+" value for length will use all bytes outside of specified prefix - up to 16.')
+
 	cmd = cmds.add_parser('iptables-flush',
 		help='Flush all iptables rules (all chains/tables) using CLI save/restore tools.')
 
@@ -160,8 +213,9 @@ def main(args=None):
 	log = get_logger('main')
 
 	try:
-		func = dict( ipv6_dns=ipv6_dns, iptables_flush=iptables_flush,
-			ip_check=ip_check, ipv6_lladdr=ipv6_lladdr )[opts.call.replace('-', '_')]
+		func = dict(
+			ipv6_dns=ipv6_dns, ipv6_lladdr=ipv6_lladdr, ipv6_name=ipv6_name,
+			iptables_flush=iptables_flush, ip_check=ip_check )[opts.call.replace('-', '_')]
 	except KeyError:
 		parser.error('Action {!r} is not implemented.'.format(opts.call))
 	return func(opts)
