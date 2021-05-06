@@ -138,7 +138,12 @@ class SDProps(cs.UserDict):
 def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/', **parse_kws):
 	state = dict()
 	for name, state_str in state_map_str.items():
-		machine_state = ssd_parse_machine(state_str, **parse_kws)
+		try: machine_state = ssd_parse_machine(state_str, **parse_kws)
+		except Exception as err:
+			print(
+				f'ERROR: Failed to parse state-dump ({len(state_str):,d} B)'
+				f' for machine {name!r}]: [{err.__class__.__name__}] {err}', file=sys.stderr )
+			raise
 		prefix = prefix_fmt.format(name=name)
 		for unit, props in machine_state.items():
 			unit_key = prefix + unit
@@ -156,6 +161,7 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	for line in it.chain(state_lines, ['-> Unit END:']):
 		line = re.sub(r'^Limit\t(\S+)', r'\tLimit\1', line) # issue-9846 in systemd-239
 		line = re.sub(r'^(\tOnTimeZoneChange) ', r'\1: ', line) # issue-14151 in systemd-243
+		line = re.sub(r'^(ReadWritePaths)\t:', r'\t\1:', line) # systemd-248
 
 		if prop_sub is not None:
 			k, indent, v = prop_sub
