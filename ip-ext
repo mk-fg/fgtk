@@ -4,7 +4,6 @@ import hashlib as hl, ipaddress as ip, subprocess as sp
 import os, sys, socket, logging, re
 
 
-
 class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
 	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
@@ -59,11 +58,12 @@ def ipv6_lladdr(opts):
 					' address ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
 			log.debug('Assigned ipv6_lladdr (%s) to interface: %s', ipv6_lladdr, opts.iface)
 
+
 ipv6_name_b2_person = 'ipx'
 def ipv6_name(opts):
 	pre = ip.IPv6Network(opts.prefix or '::/0', strict=False)
 	if pre.prefixlen == 128:
-		pre_addr = pre.network_address.packed
+		pre_addr = int.from_bytes(pre.network_address.packed, 'big')
 		for n in range(129):
 			if pre_addr & 1 << n: break
 		pre = ip.IPv6Network(pre.network_address.compressed + f'/{128 - n}')
@@ -149,7 +149,6 @@ def iptables_flush(opts):
 		tables_restore.stdin.close()
 		if tables_restore.wait() != 0:
 			raise RuntimeError(f'{ipt}-restore exited with error status')
-
 
 
 def main(args=None):
