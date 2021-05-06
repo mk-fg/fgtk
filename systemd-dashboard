@@ -161,7 +161,7 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	for line in it.chain(state_lines, ['-> Unit END:']):
 		line = re.sub(r'^Limit\t(\S+)', r'\tLimit\1', line) # issue-9846 in systemd-239
 		line = re.sub(r'^(\tOnTimeZoneChange) ', r'\1: ', line) # issue-14151 in systemd-243
-		line = re.sub(r'^(ReadWritePaths)\t:', r'\t\1:', line) # systemd-248
+		line = re.sub(r'^(\S+)\t:', r'\t\1:', line) # issue-19524 in systemd-248
 
 		if prop_sub is not None:
 			k, indent, v = prop_sub
