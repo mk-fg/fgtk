@@ -3794,6 +3794,14 @@ This script simplifies it to one command, querying their JSON APIs under the hoo
 using all proper IDs and such, which is still like 3-4 complicated json-parsing requests,
 hence the need for a proper script to do it.
 
+exec.c
+^^^^^^
+
+5-liner C binary to execvp() whatever was passed to it as arguments.
+
+Can be used to act as an unique wrapper for AppArmor profiles bound to
+executable path, or whatever trivial suid-root hacks.
+
 
 
 License (WTFPL)
