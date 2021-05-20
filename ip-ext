@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import hashlib as hl, ipaddress as ip, subprocess as sp
-import os, sys, socket, logging, re
+import hashlib as hl, ipaddress as ip, subprocess as sp, itertools as it
+import os, sys, socket, logging, re, json, unicodedata
 
 
 class LogMessage:
@@ -29,34 +29,78 @@ def ipv6_dns(opts):
 
 
 def ipv6_lladdr(opts):
-	opts.parser.error('This option is not ported from py2 legacy code yet')
 	if opts.assign and not opts.iface:
 		parser.error('--assign requires --iface option to be specified.')
-	if not opts.lladdr and opts.iface:
-		addrs = netifaces.ifaddresses(opts.iface)
-		lladdr, = addrs[netifaces.AF_PACKET]
-		opts.lladdr = lladdr['addr']
-		log.debug('Got lladdr from interface (%s): %s', opts.iface, opts.lladdr)
 
-	ipv6_lladdr = netaddr.EUI(opts.lladdr).ipv6_link_local() # XXX: no EUI in ipaddress
+	ipv6_norm = lambda a: ( '' if not a else
+		ip.IPv6Address(a).compressed.lower() )
+	def mac_norm(a):
+		if not a: return ''
+		a = ''.join(('00' + v)[-2:] for v in a.split(':'))
+		return ':'.join(a[n:n+2] for n in range(0, 6*2, 2)).lower()
 
-	if not opts.assign: print(ipv6_lladdr)
-	else:
-		addrs = netifaces.ifaddresses(opts.iface)
-		for addr in addrs.get(netifaces.AF_INET6, list()):
-			addr = addr.get('addr', '')
-			if '%' not in addr: continue
-			addr = ip.IPAddress(addr.split('%', 1)[0])
-			if addr == ipv6_lladdr:
-				log.debug('ipv6_lladdr (%s) already'
-					' assigned to interface, skipping: %s', ipv6_lladdr, opts.iface)
-				break
+	if_mac = if_lladdr = None
+	if opts.iface:
+		iface_info = json.loads(sp.run(
+			'ip --json addr'.split(), check=True, stdout=sp.PIPE ).stdout)
+		for iface in iface_info:
+			if iface['ifname'] != opts.iface: continue
+			if_mac = iface.get('address')
+			for a in iface.get('addr_info') or list():
+				if not (a.get('family') == 'inet6' and a.get('scope') == 'link'): continue
+				if_lladdr = a.get('local')
+			break
 		else:
-			if Popen([ 'ip', 'addr', 'add',
-					'{}/64'.format(ipv6_lladdr), 'dev', opts.iface, 'scope', 'link' ]).wait():
-				raise RuntimeError( 'Failed to assign link-local'
-					' address ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
-			log.debug('Assigned ipv6_lladdr (%s) to interface: %s', ipv6_lladdr, opts.iface)
+			opts.parser.error( 'Specified --iface name not found:'
+				' {} [{}]'.format(opts.iface, ', '.join(v['ifname'] for v in iface_info)) )
+	if_mac, if_lladdr = mac_norm(if_mac), ipv6_norm(if_lladdr)
+
+	mac = lladdr = None
+	if opts.lladdr and opts.mac:
+		opts.parser.error('Only one of --lladdr/--mac can be specified, not both')
+	elif opts.mac: mac = mac_norm(opts.mac)
+	elif opts.lladdr: lladdr = ipv6_norm(opts.lladdr)
+	else:
+		mac, lladdr = if_mac, if_lladdr
+		if lladdr and opts.assign: opts.assign = False # just run sanity-checks
+
+	if mac:
+		lladdr_chk = lladdr
+		parts = mac.split(':')
+		parts.insert(3, 'ff')
+		parts.insert(4, 'fe')
+		parts[0] = f'{int(parts[0], 16) ^ 2:x}'
+		lladdr = ipv6_norm('fe80::' + ':'.join(
+			''.join(parts[n:n+2]) for n in range(0, len(parts), 2) ))
+		if lladdr_chk and lladdr != lladdr_chk:
+			log.error('mac/lladdr mismatch: {} -> {} [not {}]', mac, lladdr, lladdr_chk)
+			return 1
+
+	if lladdr:
+		mac_chk = mac
+		parts = list(it.chain.from_iterable( (p[:2], p[-2:])
+			for p in (('0000' + p)[-4:] for p in lladdr.split(':')[-4:]) ))
+		parts[0] = f'{int(parts[0], 16) ^ 2:02x}'
+		parts[3:5] = []
+		mac = mac_norm(':'.join(parts))
+		if mac_chk and mac != mac_chk:
+			log.error('mac/lladdr mismatch: {} -> {} [not {}]', lladdr, mac, mac_chk)
+			return 1
+
+	if not opts.assign:
+		if opts.iface: print('iface: ', opts.iface)
+		print('mac:   ', mac)
+		print('lladdr:', lladdr)
+	else:
+		if if_lladdr == lladdr:
+			log.debug( 'Specified link-local address'
+				' already assigned to iface [{}]: {}', opts.iface, lladdr )
+		if sp.Popen([ 'ip', 'addr', 'add',
+				f'{lladdr}/64', 'dev', opts.iface, 'scope', 'link' ]).wait():
+			log.error( 'Failed to assign link-local'
+				' address ({}) to interface: {}', lladdr, opts.iface)
+			return 1
+		log.debug('Assigned lladdr to interface [{}]: {}', opts.iface, lladdr)
 
 
 ipv6_name_b2_person = 'ipx'
@@ -173,12 +217,16 @@ def main(args=None):
 	cmd = cmds.add_parser('ipv6-lladdr',
 		help='Generate and/or assign link-local IPv6 address to the interface.')
 	cmd.add_argument('-i', '--iface', metavar='dev',
-		help='Interface name to generate address for.')
-	cmd.add_argument('-l', '--lladdr', metavar='mac',
-		help='MAC address to convert to link-local address.')
+		help='Interface name to print mac/ipv6-lladdr for.')
 	cmd.add_argument('-x', '--assign', action='store_true',
-		help='Assign address to interface,'
-			' unless already there. Requires --iface option to be used.')
+		help='Assign address to the interface,'
+			' unless already there. Requires -i/--iface option to be used.')
+	cmd.add_argument('-l', '--lladdr', metavar='mac',
+		help='Link-local address to convert to mac address.'
+			' Can be used with -x/--assign to set this arbitrary lladdr after a sanity-check.')
+	cmd.add_argument('-m', '--mac', metavar='mac',
+		help='MAC address to convert to link-local address.'
+			' Can be used with -x/--assign to set lladdr from arbitrary mac.')
 
 	cmd = cmds.add_parser('ipv6-dns',
 		help='Convert IPv6 address to "*.ip6.arpa" (or other) domain name format.')
