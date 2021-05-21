@@ -31,6 +31,7 @@ def ipv6_dns(opts):
 def ipv6_lladdr(opts):
 	if opts.assign and not opts.iface:
 		parser.error('--assign requires --iface option to be specified.')
+	addr_print = not opts.assign
 
 	ipv6_norm = lambda a: ( '' if not a else
 		ip.IPv6Address(a).compressed.lower() )
@@ -87,11 +88,11 @@ def ipv6_lladdr(opts):
 			log.error('mac/lladdr mismatch: {} -> {} [not {}]', lladdr, mac, mac_chk)
 			return 1
 
-	if not opts.assign:
+	if addr_print:
 		if opts.iface: print('iface: ', opts.iface)
 		print('mac:   ', mac)
 		print('lladdr:', lladdr)
-	else:
+	if opts.assign:
 		if if_lladdr == lladdr:
 			log.debug( 'Specified link-local address'
 				' already assigned to iface [{}]: {}', opts.iface, lladdr )
@@ -221,8 +222,8 @@ def main(args=None):
 	cmd.add_argument('-x', '--assign', action='store_true',
 		help='Assign address to the interface,'
 			' unless already there. Requires -i/--iface option to be used.')
-	cmd.add_argument('-l', '--lladdr', metavar='mac',
-		help='Link-local address to convert to mac address.'
+	cmd.add_argument('-l', '--lladdr', metavar='ipv6',
+		help='Link-local IPv6 address to convert to mac address.'
 			' Can be used with -x/--assign to set this arbitrary lladdr after a sanity-check.')
 	cmd.add_argument('-m', '--mac', metavar='mac',
 		help='MAC address to convert to link-local address.'
