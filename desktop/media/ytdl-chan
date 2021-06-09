@@ -4,7 +4,7 @@ usage() {
 	bin=$(basename $0)
 	echo >&2 "Usage:"
 	echo >&2
-	echo >&2 "  $bin n_first [ n_last ]"
+	echo >&2 "  $bin n_first [ n_last [ delay_sec ] ]"
 	echo >&2 "    Download videos for youtube channel to the current dir"
 	echo >&2 "     (from n_first to n_last) in same order to how they're"
 	echo >&2 "     listed in the metadata cache file (e.g. oldest-to-latest)."
@@ -70,14 +70,14 @@ chan_cache=_meta.json
 }
 
 
-sed_exp=
+sed_exp= delay=
 if [[ "$1" = -n || "$1" = --pick ]] ; then
-	[[ "$#" -lt 2 ]] && usage 1
+	[[ "$#" -ge 2 ]] || usage 1
 	shift
 	for n in "$@"; do sed_exp="${sed_exp}${n}p;"; done
 else
-	[[ "$#" -gt 2 ]] && usage 1
-	sed_exp="${1},${2:-9999} p"
+	[[ "$#" -le 3 ]] || usage 1
+	sed_exp="${1},${2:-9999} p" delay=${3:-0}
 fi
 
 while read n u; do
@@ -86,6 +86,7 @@ while read n u; do
 			--no-overwrites --restrict-filenames\
 			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u"\
 		|| err="ERROR (last one only): n=$n code=$?"
+	[[ ! "$delay" -gt 0 ]] || { echo " --- delay: ${delay}s"; sleep "$delay"; }
 done < <(jq -r '.webpage_url' "$chan_cache" | cat -n | sed -n "$sed_exp")
 
 err=${err:-done}
