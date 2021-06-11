@@ -415,10 +415,13 @@ def op_resolve_mp(vfs_path, error_func):
 		dev = lsblk.popleft()
 		lsblk.extend(dev.get('children') or list())
 		mp = dev.get('mountpoint')
+		if mp: mp = [mp]
+		else: mp = list(filter(None, dev.get('mountpoints', list())))
 		if not mp: continue
-		try: p = path.relative_to(mp)
-		except ValueError: pass
-		else: mp_list.append((dev['name'], str(p), str(mp)))
+		for mp in mp:
+			try: p = path.relative_to(mp)
+			except ValueError: pass
+			else: mp_list.append((dev['name'], str(p), str(mp)))
 	dev, path, mp = sorted(mp_list, key=lambda dev: len(dev[2]))[-1]
 	if mp == '/': error_func(f'Failed to resolve path to non-root mountpoint: {path}')
 	return dev, path, mp
