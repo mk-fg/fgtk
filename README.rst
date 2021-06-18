@@ -541,6 +541,26 @@ such tools on an isolated systems that don't run anything else crypto-related.
 Shouldn't compromise deterministic stuff though, e.g. dm-crypt operation (except
 new key generation in cryptsetup or such).
 
+crypt
+'''''
+
+Trivial file/stream encryption tool using `PyNaCl's`_
+crypto_secretstream_xchacha20poly1305 authenticated encryption API.
+
+Key can be either specified on the command line for simplicity or read from a
+file, and is always processed via scrypt, as it's likely some short string.
+
+Usage examples::
+
+  % crypt -ek my-secret-key secret.tar secret.tar.enc
+  % crypt -dk my-secret-key secret.tar.enc secret.tar.test
+  % crypt -ek @~/.secret.key <secret.tar >secret.tar.enc
+
+Intended for an ad-hoc temporary encryption when transferring stuff via a usb
+stick, making a temporary backup to a random untrusted disk or whatever.
+
+.. _PyNaCl's: https://pynacl.readthedocs.io/
+
 
 
 Kernel sources/build/version management
