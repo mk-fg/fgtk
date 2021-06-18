@@ -59,12 +59,6 @@ operation boils down to two (optional) steps:
   patterns (``.scim_links_exclude``).
 
 
-pyacl
-'''''
-
-Tool to restore POSIX ACLs on paths, broken by chmod or similar stuff without
-actually changing them.
-
 fs
 ''
 
@@ -195,25 +189,6 @@ Generic file contents manglers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Things that manipulate arbitrary file contents.
-
-pysed
-'''''
-
-This one is for simple pcre-based text replacement, basically a sed's
-"s/from/to/" command with lookahead/lookbehind assertions.
-
-Example, to replace all two-space indents with tabs and drop space-based inline
-alignment::
-
-  % pysed '(?<=\w)\s+(?=\w)' ' ' '^\s*  ' '\t' -i10 -b somecode.py
-
-pysort
-''''''
-
-Unlike tool from coreutils, can overwrite files with sorted results
-(e.g. ``pysort -b file_a file_b && diff file_a file_b``) and has some options
-for splitting fields and sorting by one of these (example: ``pysort -d: -f2 -n
-/etc/passwd``).
 
 repr
 ''''
