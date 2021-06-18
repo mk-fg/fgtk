@@ -559,6 +559,10 @@ Usage examples::
 Intended for an ad-hoc temporary encryption when transferring stuff via a usb
 stick, making a temporary backup to a random untrusted disk or whatever.
 
+Does not support any kind of appending/resuming or partial operation, which can
+be bad if there's a flipped bit anywhere in the encrypted data - decryption will
+stop and throw error at that point.
+
 .. _PyNaCl's: https://pynacl.readthedocs.io/
 
 

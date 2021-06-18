@@ -61,7 +61,8 @@ def main(args=None, conf=None):
 		usage='%(prog)s [options] path',
 		description=dd('''
 			Simple streaming encryption tool.
-			Uses PyNaCl's crypto_secretstream_xchacha20poly1305 API.
+			Uses PyNaCl's crypto_secretstream_xchacha20poly1305 API
+				in an all-or-nothing fashion (no support for partial encryption/decryption).
 			Example use: crypt -ek mykey secret.tar secret.tar.enc'''))
 
 	parser.add_argument('src', nargs='?',
