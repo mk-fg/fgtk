@@ -104,9 +104,9 @@ def main(args=None, conf=None):
 
 	with cl.ExitStack() as ctx:
 		src = ctx.enter_context(open(
-			sys.stdin.fileno() if opts.src == '-' else opts.src, 'rb', conf.bs ))
+			sys.stdin.fileno() if (opts.src or '-') == '-' else opts.src, 'rb', conf.bs ))
 		dst = ctx.enter_context(open(
-			sys.stdout.fileno() if opts.dst == '-' else opts.dst, 'wb', conf.bs ))
+			sys.stdout.fileno() if (opts.dst or '-') == '-' else opts.dst, 'wb', conf.bs ))
 		if enc: encrypt_stream(src, dst, enc_key)
 		else: decrypt_stream(src, dst, enc_key)
 
