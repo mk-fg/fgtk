@@ -3,25 +3,30 @@ set -e
 
 usage() {
 	bin=${0##*/}
-	echo >&2 "Usage: XferCommand = $bin %o %u [cache-url-prefix...]"
+	echo >&2 "Usage: XferCommand = $bin [-q] %o %u [cache-url-prefix...]"
 	echo >&2
 	echo >&2 "XferCommand for pacman.conf to use local http caches."
 	echo >&2 "Tries to download package file from each"
 	echo >&2 "  cache-url-prefix and falls back to a mirror URL."
 	echo >&2 "cache-url-prefix must not have trailing slashes."
+	echo >&2 "-q option disables printing message when file is missing in cache."
 	exit ${1:-0}
 }
-[ -n "$1" -a "$1" != -h -a "$1" != --help ] || usage
+[ -n "$1" -a -n "$2" -a "$1" != -h -a "$1" != --help -a "$2" != -h -a "$2" != --help ] || usage
 
+[ "$1" != -q ] && quiet= || { quiet=t; shift; }
 dst="$1" url="$2"; shift; shift
 url_file=${url##*/}
 
 for pre in "$@"; do
-	err_http=$(curl \
-		-s --fail --write-out '%{http_code}' \
-		--location --continue-at - -o "$dst" "$pre/$url_file")
-	err_code=$?
-	[ "$err_code" -ne 0 ] || exit 0 # success
-	[ "$err_http" -ne 416 ] || { curl -sfL -o "$dst" "$pre/$url_file" && exit 0; } # no range
+	url_cache="$pre/$url_file"
+	err_http=$(curl -s --fail --write-out '%{http_code}' \
+		--location --continue-at - -o "$dst" "$url_cache" ||:)
+	[ "$err_http" -ne 200 -a "$err_http" -ne 206 ] || exit 0 # success
+	[ "$err_http" -ne 416 ] || { # range req fail
+		err_http=$(curl -sfL --write-out '%{http_code}' -o "$dst" "$pre/$url_file" ||:)
+		[ "$err_http" -ne 200 ] || exit 0; }
+	[ "$err_http" -ne 404 -a -z "$quiet" ] || echo "curl-fetch - cache 404: $url_cache"
+	[ "$err_http" -eq 404 ] || echo >&2 "curl-fetch - http error $err_http: $url_cache"
 done
-exec curl -s --fail --location --continue-at - -o "$dst" "$url"
+exec curl -sfLC- -o "$dst" "$url"

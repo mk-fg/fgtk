@@ -3298,7 +3298,8 @@ Before pacman-6.0, this was easy to use by simply putting all these
 cache-mirrors at the top of the mirrorlist file, but since 6.0 pacman
 auto-disables these after hardcoded 3 errors (incl. 404), so that no longer works.
 
-See related `FS#71084`_ and `FS#23407`_ tickets for upstream status on this.
+See related `FS#71084`_ and `FS#23407`_ tickets for upstream status on this,
+and -h/--help output from script for more options.
 
 .. _FS#71084: https://bugs.archlinux.org/task/71084
 .. _FS#23407: https://bugs.archlinux.org/task/23407
