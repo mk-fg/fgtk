@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+usage() {
+	bin=${0##*/}
+	echo >&2 "Usage: XferCommand = $bin %o %u [cache-url-prefix...]"
+	echo >&2
+	echo >&2 "XferCommand for pacman.conf to use local http caches."
+	echo >&2 "Tries to download package file from each"
+	echo >&2 "  cache-url-prefix and falls back to a mirror URL."
+	echo >&2 "cache-url-prefix must not have trailing slashes."
+	exit ${1:-0}
+}
+[ -n "$1" -a "$1" != -h -a "$1" != --help ] || usage
+
+dst="$1" url="$2"; shift; shift
+url_file=${url##*/}
+
+for pre in "$@"; do
+	err_http=$(curl \
+		-s --fail --write-out '%{http_code}' \
+		--location --continue-at - -o "$dst" "$pre/$url_file")
+	err_code=$?
+	[ "$err_code" -ne 0 ] || exit 0 # success
+	[ "$err_http" -ne 416 ] || { curl -sfL -o "$dst" "$pre/$url_file" && exit 0; } # no range
+done
+exec curl -s --fail --location --continue-at - -o "$dst" "$url"

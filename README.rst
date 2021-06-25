@@ -3282,6 +3282,27 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 .. _archlinux-pkgbuilds: https://github.com/mk-fg/archlinux-pkgbuilds
 .. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
 
+curl-cache
+^^^^^^^^^^
+
+XferCommand script to use in pacman.conf for trying package downloads from
+cache-servers (partial mirrors) first, using passed mirror URL as a fallback.
+
+Example usage in pacman.conf::
+
+  XferCommand = curl-cache %o %u https://cache-mirror.local/archlinux/x86_64
+
+Can include any number of cache URL prefixes as the trailing args.
+
+Before pacman-6.0, this was easy to use by simply putting all these
+cache-mirrors at the top of the mirrorlist file, but since 6.0 pacman
+auto-disables these after hardcoded 3 errors (incl. 404), so that no longer works.
+
+See related `FS#71084`_ and `FS#23407`_ tickets for upstream status on this.
+
+.. _FS#71084: https://bugs.archlinux.org/task/71084
+.. _FS#23407: https://bugs.archlinux.org/task/23407
+
 
 
 [metrics] Charts and metrics
