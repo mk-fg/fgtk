@@ -18,15 +18,21 @@ usage() {
 dst="$1" url="$2"; shift; shift
 url_file=${url##*/}
 
+cache_success_exit() {
+	[ -n "$quiet" ] || echo "curl-fetch - cache hit: $url_file"
+	exit 0; }
+
 for pre in "$@"; do
 	url_cache="$pre/$url_file"
 	err_http=$(curl -s --fail --write-out '%{http_code}' \
 		--location --continue-at - -o "$dst" "$url_cache" ||:)
-	[ "$err_http" -ne 200 -a "$err_http" -ne 206 ] || exit 0 # success
+	[ "$err_http" -ne 200 -a "$err_http" -ne 206 ] || cache_success_exit
 	[ "$err_http" -ne 416 ] || { # range req fail
 		err_http=$(curl -sfL --write-out '%{http_code}' -o "$dst" "$pre/$url_file" ||:)
-		[ "$err_http" -ne 200 ] || exit 0; }
+		[ "$err_http" -ne 200 ] || cache_success_exit; }
 	[ "$err_http" -ne 404 -a -z "$quiet" ] || echo "curl-fetch - cache 404: $url_cache"
 	[ "$err_http" -eq 404 ] || echo >&2 "curl-fetch - http error $err_http: $url_cache"
 done
-exec curl -sfLC- -o "$dst" "$url"
+
+[ -z "$quiet" ] && verbosity=--progress-bar || verbosity=--silent
+exec curl $verbosity -fLC- -o "$dst" "$url"
