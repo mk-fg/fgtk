@@ -16,6 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>. *
  **************************************************************************/
 
+// Build with: gcc -O2 -o f2fs-label f2fs-label.c
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +27,7 @@
 #include <linux/fs.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 
 #define F2FS_LABEL_VERSION "0.1"
 
