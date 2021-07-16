@@ -76,6 +76,7 @@ def color_calc(ctx, app):
 	ctx.rgb_hex = f'#{r:02x}{g:02x}{b:02x}'
 	ctx.rgba_dec = f'rgb({r},{g},{b},{a})'
 	ctx.rgba_hex = ctx.rgb_hex + f'{a:02x}'
+	ctx.rgba_floats = dict(zip('rgba', color[1]))
 
 	xyz = cc_rgb_xyz(r,g,b)
 	ctx.lab = adict(zip('lab', cc_xyz_lab(xyz, diff=ctx.lab_diff)))
@@ -131,6 +132,7 @@ def main(args=None):
 	print(f'Dec RGB / RGBA:\n  {ctx.rgb_dec}\n  {ctx.rgba_dec}\n')
 
 	print(f'Alpha dec/float: {ctx.alpha_dec} {ctx.alpha_float}')
+	print('RGB floats:', ' '.join(f'{ctx.rgba_floats[k]:.3f}' for k in 'rgb'))
 	print('HSV: {c.r} {c.g} {c.b}'.format(c=ctx.hsv))
 	print('CIE L*a*b*: {c.l} {c.a} {c.b}'.format(c=ctx.lab))
 
