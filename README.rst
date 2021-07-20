@@ -2014,7 +2014,7 @@ running and you just don't have the heart to break and reschedule it properly.
 yt-feed-to-email
 ''''''''''''''''
 
-Python3 + feedparser_ RSS-to-email notification script for YouTube RSS feeds.
+Python + feedparser_ RSS-to-email notification script for YouTube RSS feeds.
 
 Can process OPML of current YT subscriptions
 (from https://www.youtube.com/subscription_manager?action_takeout=1 )
@@ -2031,6 +2031,29 @@ notification emails on that platform.
 .. _feedparser: https://pythonhosted.org/feedparser/
 .. _EWMA: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
 
+zfs-snapper
+'''''''''''
+
+Simple py script to create ZFS snapshot and keep a number of older snapshots
+according to a `retention policy, similar to how btrbk tool does it`_
+(specified via -p/--ret-policy option)::
+
+  [<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
+
+Such policy defines max number of most recent -ly snapshots to preserve.
+I.e. "3 weekly" means to make sure one snapshot from this week,
+one from last week, and one from the week before that will be preserved.
+
+Script only matches exact snapshots that it created (renaming these will
+make it ignore them), and removes all oldest ones that fall outside of
+retention policy string.
+
+See built-in -h/--help output for more info and all the options.
+
+Similar to sanoid_, but much simplier and in python instead of perl.
+
+.. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
+.. _sanoid: https://github.com/jimsalterjrs/sanoid
 
 
 [dev] Dev tools

@@ -1,0 +1,130 @@
+#!/usr/bin/env python
+
+import itertools as it, operator as op, functools as ft
+import os, sys, re, datetime as dt, subprocess as sp
+
+
+def bak_ret_parse(s):
+	ret_map = dict((k, rf'(\d+|\*){k}') for k in 'hdwmy')
+	ret_map.update(n=r'\d+')
+	for k, pat in ret_map.items():
+		m = re.search(rf'\b{pat}\b', s)
+		if not m:
+			ret_map[k] = 0
+			continue
+		a, b = m.span()
+		m, s = s[a:b], s[:a] + s[b:]
+		if m.endswith(k): m = m[:-1]
+		ret_map[k] = int(m) if m != '*' else 2**30
+	return ret_map
+
+def bak_ret_keys(bak_dt_map, ret_str):
+	'''Returns list of preserved backups from key-datetime
+		bak_dt_map, according to specified retention string.'''
+	ret_map = bak_ret_parse(ret_str)
+	bak_dt_list = sorted(bak_dt_map.items(), key=op.itemgetter(1), reverse=True)
+
+	dt_tpl_map = dict( y='%Y', w='%Y%W',
+		m='%Y%m', d='%Y%m%d', h='%Y%m%d%H' )
+	dt_buckets = dict((k, dict()) for k in dt_tpl_map)
+	for bak, bak_dt in bak_dt_list:
+		for k, bb_map in dt_buckets.items():
+			bn = ret_map[k]
+			if bn <= 0: continue
+			bk = bak_dt.strftime(dt_tpl_map[k])
+			if bk in bb_map: continue
+			bb_map[bk] = bak
+			while len(bb_map) > bn: del bb_map[next(iter(bb_map))]
+	bak_ret_set = set(it.chain.from_iterable(
+		bb_map.values() for bb_map in dt_buckets.values() ))
+
+	bn = max(0, ret_map['n'] - len(bak_ret_set))
+	for bak, bak_dt in bak_dt_list:
+		if bn <= 0: break
+		if bak in bak_ret_set: continue
+		bak_ret_set.add(bak)
+		bn -= 1
+	return bak_ret_set
+
+def sp_cmd_run(cmd, *run_args, **run_kws):
+	'subprocess.run() wrapper to log stdout/stderr debug info on failure'
+	check = run_kws.pop('check', True)
+	if not (run_kws.get('stdout') or run_kws.get('stderr')):
+		run_kws.setdefault('capture_output', True)
+	proc = sp.run(cmd, *run_args, **run_kws)
+	if not (check and proc.returncode):
+		if proc.stdout is not None: return proc.stdout.decode()
+		return proc
+	print( 'Subprocess failed: ' +
+		' '.join((repr(s) if ' ' in str(s) else s) for s in cmd), file=sys.stderr )
+	for k in 'stdout', 'stderr':
+		out = getattr(proc, k, b'').rstrip().decode()
+		if not out: continue
+		for line in out.splitlines(): print(f'  {k}: {line.rstrip()}', file=sys.stderr)
+	raise RuntimeError(f'Command returned non-zero status [{proc.returncode}]: {cmd}')
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Script to create zfs snapshot and rotate/keep a number of earlier ones.')
+
+	parser.add_argument('target',
+		help=dd('''
+			Target volume/filesystem to create a snapshot of,
+				same as you'd specify for "zfs snapshot" command.'''))
+
+	parser.add_argument('--prefix', default='zsm.',
+		help=dd('''
+			Prefix for all snapshots to create/match/handle in the tool. Default: "%(default)s".
+			All other snapshots not matching "prefix || datetime" exactly will be ignored.'''))
+	parser.add_argument('-r', '--recursive', action='store_true',
+		help='Make recurisve snapshot of specified target with all its descendant datasets.')
+
+	parser.add_argument('-p', '--ret-policy',
+		default='5 5d 5w 10m *y', metavar='retention',
+		help=dd('''
+			Retention settings for how many and which snapshots to keep.
+			Should be a line using following format:
+				[<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
+			Default value: %(default)s
+			Values are integers, or "*" (asterisk) for "all", "n" value is for total min.
+			See more in-depth description of these values in btrbk.conf(5):
+				https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy'''))
+	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Print all actions instead of executing'
+			' them and exit without doing anything. Implies --verbose.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	src, pre, rn = opts.target, opts.prefix, opts.dry_run
+	rv = rn or opts.verbose
+	dt_fmt, dt_re = '%Y%m%d_%H%M%S', r'(\d{8}_\d{6})'
+	zfs_run = lambda cmd, **kws: sp_cmd_run(['zfs'] + cmd, **kws)
+
+	snaps, snap_re = dict(), re.compile(
+		r'^' + re.escape(src) + '@(' + re.escape(opts.prefix) + dt_re + ')$' )
+	for s in sorted(map(str.strip, zfs_run('list -Ho name -t snap'.split()).splitlines())):
+		if not (m := snap_re.search(s)): continue
+		snaps[m.group(1)] = dt.datetime.strptime(m.group(2), dt_fmt)
+
+	snap_new_dt = dt.datetime.now()
+	snap_new = f'{pre}{snap_new_dt.strftime(dt_fmt)}'
+	snap_new_opts = [] if not opts.recursive else ['-r']
+	if not rn: zfs_run(['snapshot', *snap_new_opts, f'{src}@{snap_new}'])
+	if rv: print(f'Creating new zfs snapshot: {snap_new}')
+	snaps[snap_new] = snap_new_dt
+
+	snaps_keep = bak_ret_keys(snaps, opts.ret_policy)
+	if rv: print('Managed snapshot list/status:')
+	for snap in snaps:
+		rm = snap not in snaps_keep
+		if rv:
+			if snap == snap_new: print('  ' + '[new] ' + snap)
+			else: print('  ' + (' [rm] ' if rm else ' '*6) + snap)
+		if rm and not rn: zfs_run(['destroy', f'{src}@{snap}'])
+
+if __name__ == '__main__': sys.exit(main())
