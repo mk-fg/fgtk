@@ -55,7 +55,7 @@ def sp_cmd_run(cmd, *run_args, **run_kws):
 	if not (check and proc.returncode):
 		if proc.stdout is not None: return proc.stdout.decode()
 		return proc
-	print( 'Subprocess failed: ' +
+	print( 'Subprocess failed:',
 		' '.join((repr(s) if ' ' in str(s) else s) for s in cmd), file=sys.stderr )
 	for k in 'stdout', 'stderr':
 		out = getattr(proc, k, b'').rstrip().decode()

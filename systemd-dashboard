@@ -153,7 +153,8 @@ def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/', **parse_kws):
 
 def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	state_lines = iter(state_str.splitlines())
-	state_lines = it.dropwhile(lambda line: line.startswith('Timestamp '), state_lines)
+	state_lines = it.dropwhile(lambda line: re.search(
+		r'^(Manager:|Features:|Timestamp) ', line ), state_lines)
 	if not filter_prop: filter_prop = lambda k: True
 	if not filter_unit: filter_unit = lambda u: True
 
