@@ -17,7 +17,8 @@ usage() {
 [ "$1" != -q ] && quiet= || { quiet=t; shift; }
 dst="$1" url="$2"; shift; shift
 dst_local="${dst%.part}" url_file=${url##*/}
-[ ! -r "$dst_local" ] || { mv "$dst_local" "$dst"; exit 0; } # use local file cache
+[ "${dst_local##*.}" = db -o ! -r "$dst_local" ] \
+	|| { mv "$dst_local" "$dst"; exit 0; } # use local file cache
 
 cache_success_exit() {
 	[ -n "$quiet" ] || echo "curl-fetch - cache hit: $url_file"
