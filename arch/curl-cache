@@ -3,13 +3,13 @@ set -e
 
 usage() {
 	bin=${0##*/}
-	echo >&2 "Usage: XferCommand = $bin [-q] %o %u [cache-url-prefix...]"
+	echo >&2 "Usage: XferCommand = $bin [-q|-v] %o %u [cache-url-prefix...]"
 	echo >&2
 	echo >&2 "XferCommand for pacman.conf to use local http caches."
 	echo >&2 "Tries to download package file from each"
 	echo >&2 "  cache-url-prefix and falls back to a mirror URL."
 	echo >&2 "cache-url-prefix must not have trailing slashes."
-	echo >&2 "-q option disables printing message when file is missing in cache."
+	echo >&2 "-q disables printing message when file is missing in cache and progress bars."
 	exit ${1:-0}
 }
 [ -n "$1" -a -n "$2" -a "$1" != -h -a "$1" != --help -a "$2" != -h -a "$2" != --help ] || usage
@@ -26,8 +26,7 @@ cache_success_exit() {
 
 for pre in "$@"; do
 	url_cache="$pre/$url_file"
-	err_http=$(curl -s --fail --write-out '%{http_code}' \
-		--location --continue-at - -o "$dst" "$url_cache" ||:)
+	err_http=$(curl -sfL --write-out '%{http_code}' --continue-at - -o "$dst" "$url_cache" ||:)
 	[ "$err_http" -ne 200 -a "$err_http" -ne 206 ] || cache_success_exit
 	[ "$err_http" -ne 416 ] || { # range req fail
 		err_http=$(curl -sfL --write-out '%{http_code}' -o "$dst" "$pre/$url_file" ||:)
@@ -37,4 +36,5 @@ for pre in "$@"; do
 done
 
 [ -z "$quiet" ] && verbosity=--progress-bar || verbosity=--silent
-exec curl $verbosity -fLC- -o "$dst" "$url"
+curl $verbosity -fLC- -o "$dst" "$url" \
+	|| { echo "curl-fetch - mirror URL failed: $url"; exit 1; }
