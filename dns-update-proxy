@@ -136,8 +136,8 @@ class DUPServerProtocol:
 
 	transport = None
 
-	def __init__(self, loop):
-		self.updates = asyncio.Queue(loop=loop)
+	def __init__(self):
+		self.updates = asyncio.Queue()
 		self.log = get_logger('dup.udp')
 
 	def connection_made(self, transport):
@@ -164,12 +164,12 @@ def parse_update_blob(box_key, pk_whitelist, req, req_addr):
 	except libnacl.CryptError: return
 	return update.decode().split(':', 1)
 
-async def dup_listen( loop, box_key,
-		pk_whitelist, sock_af, sock_p, host, port, api_conf ):
-	update_ts = dict()
+async def dup_listen(box_key, pk_whitelist, sock_af, sock_p, host, port, api_conf):
+	update_ts, loop, dup = dict(), asyncio.get_running_loop(), asyncio.current_task()
+	for sig in 'INT TERM'.split(): loop.add_signal_handler(getattr(signal, f'SIG{sig}'), dup.cancel)
 	async with contextlib.AsyncExitStack() as ctx:
 		transport, proto = await loop.create_datagram_endpoint(
-			lambda: DUPServerProtocol(loop), local_addr=(host, port), family=sock_af, proto=sock_p )
+			lambda: DUPServerProtocol(), local_addr=(host, port), family=sock_af, proto=sock_p )
 		ctx.callback(transport.close)
 		tasks = await ctx.enter_async_context(StacklessContext(log))
 
@@ -193,19 +193,21 @@ async def dup_listen( loop, box_key,
 			ts, ts_chk = loop.time(), update_ts.get(domain)
 			if ts_chk and ts_chk + api_conf.update_timeout > ts: continue
 			update_ts[domain] = ts
-			tasks.add(dns_update(loop, api_conf, domain, addr))
+			tasks.add(dns_update(api_conf, domain, addr))
 
-async def dns_update(loop, api_conf, domain, addr):
+async def dns_update(api_conf, domain, addr):
 	if api_conf.check:
-		try: dns_addr_list = await loop.getaddrinfo(domain, None, family=socket.AF_INET)
+		try:
+			dns_addr_list = await asyncio.get_running_loop()\
+				.getaddrinfo(domain, None, family=socket.AF_INET)
 		except (socket.gaierror, socket.error) as err: dns_addr_list = None
 		for gai_tuple in dns_addr_list or list():
 			if gai_tuple[4][0] == addr: return
-	if api_conf.get('zone_file'): await dns_update_local(loop, api_conf, domain, addr)
-	if api_conf.get('gandi'): await dns_update_gandi(loop, api_conf, domain, addr)
+	if api_conf.get('zone_file'): await dns_update_local(api_conf, domain, addr)
+	if api_conf.get('gandi'): await dns_update_gandi(api_conf, domain, addr)
 
-async def dns_update_gandi(loop, api_conf, domain, addr):
-	suffix = f'.{api_conf.gandi_zone}'
+async def dns_update_gandi(api_conf, domain, addr):
+	suffix, loop = f'.{api_conf.gandi_zone}', asyncio.get_running_loop()
 	if not domain.endswith(suffix): return
 	rec, rec_t = domain[:-len(suffix)], 'AAAA' if ':' in addr else 'A'
 	rec_url = ( 'https://dns.api.gandi.net/api/'
@@ -226,7 +228,7 @@ async def dns_update_gandi(loop, api_conf, domain, addr):
 				rec, rec, rec_t, addr, n, res.status, res.reason, res_body )
 		if delay: await asyncio.sleep(max(0, deadline - loop.time()))
 
-async def dns_update_local(loop, api_conf, domain, addr):
+async def dns_update_local(api_conf, domain, addr):
 	suffix = f'.{api_conf.zone_name}'
 	if not domain.endswith(suffix): return
 	rec, rec_t = domain[:-len(suffix)], 'AAAA' if ':' in addr else 'A'
@@ -358,12 +360,7 @@ def main(args=None):
 			('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p) ]) )
 	host, port = sock_addr[:2]
 
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		dup = loop.create_task(dup_listen( loop,
-			box_key, pk_whitelist, sock_af, sock_p, host, port, api_conf ))
-		for sig in 'INT TERM'.split():
-			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), dup.cancel)
-		try: return loop.run_until_complete(dup)
-		except asyncio.CancelledError: return
+	asyncio.run(dup_listen( box_key,
+		pk_whitelist, sock_af, sock_p, host, port, api_conf ))
 
 if __name__ == '__main__': sys.exit(main())
