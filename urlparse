@@ -10,13 +10,23 @@ def dissect_url(url):
 	if q: url['query'] = q # should always be last
 	return url
 
+def decode_url(url):
+	for k, v in url.items():
+		if isinstance(v, str): url[k] = up.unquote_plus(v)
+	for k, v in url.get('query') or dict():
+		if isinstance(v, str): url['query'][k] = up.unquote_plus(v)
+
 def main():
 	import argparse
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [options] URL1 [URL2] [ -- <diff options> ]',
 		description='Process and dump URLs in a human-readable format.')
-	parser.add_argument('url', help='URL to process.')
+	parser.add_argument('url', help='URL or string to process.')
 	parser.add_argument('url2', nargs='?', help='URL to show diff against.')
+	parser.add_argument('-d', '--decode', action='store_true',
+		help='Decode (aka "unquote") URL-encoded (aka "percent-encoded") URL components.')
+	parser.add_argument('--decode-string', action='store_true',
+		help='Decode and print passed URL as one string, without breaking it down into components.')
 
 	argv, diff_opts = sys.argv[1:], list()
 	try: idx = argv.index('--')
@@ -24,19 +34,24 @@ def main():
 	else: argv, diff_opts = argv[:idx], argv[idx+1:]
 	opts = parser.parse_args(argv)
 
+	if opts.decode_string:
+		return print(up.unquote_plus(opts.url))
+
 	url = dissect_url(opts.url)
-	if not opts.url2: pyaml.dump(url, sys.stdout)
-	else:
-		import tempfile, subprocess as sp
-		with \
-				tempfile.NamedTemporaryFile(prefix='url1.') as tmp1,\
-				tempfile.NamedTemporaryFile(prefix='url2.') as tmp2:
-			pyaml.dump(url, tmp1)
-			url2 = dissect_url(opts.url2)
-			pyaml.dump(url2, tmp2)
-			tmp1.flush(), tmp2.flush()
-			diff_cmd = 'colordiff' if os.path.exists('/usr/bin/colordiff') else 'diff'
-			diff_cmd = [diff_cmd, '-uw'] + diff_opts + [tmp1.name, tmp2.name]
-			return sp.run(diff_cmd).returncode
+	if opts.decode: decode_url(url)
+	if not opts.url2: return pyaml.dump(url, sys.stdout)
+
+	import tempfile, subprocess as sp
+	with \
+			tempfile.NamedTemporaryFile(prefix='url1.') as tmp1,\
+			tempfile.NamedTemporaryFile(prefix='url2.') as tmp2:
+		pyaml.dump(url, tmp1)
+		url2 = dissect_url(opts.url2)
+		if opts.decode: decode_url(url2)
+		pyaml.dump(url2, tmp2)
+		tmp1.flush(), tmp2.flush()
+		diff_cmd = 'colordiff' if os.path.exists('/usr/bin/colordiff') else 'diff'
+		diff_cmd = [diff_cmd, '-uw'] + diff_opts + [tmp1.name, tmp2.name]
+		return sp.run(diff_cmd).returncode
 
 if __name__ == '__main__': sys.exit(main())
