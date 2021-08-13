@@ -36,8 +36,10 @@ v0=$( awk '$1=="VERSION" {v1=$3}
 }
 [[ "$v0" != "$v1" ]] || exit 0
 
-patch0="$dir_distfiles"/patch-$v0.xz
-patch1="$dir_distfiles"/patch-$v1.xz
+patch0="$dir_distfiles"/patch-$v0.zst
+[[ -e "$patch0" ]] || patch0="${patch0%.zst}".xz
+patch1="$dir_distfiles"/patch-$v1.zst
+[[ -e "$patch1" ]] || patch1="${patch1%.zst}".xz
 
 [[ -e "$patch1" ]] \
 	|| curl -SsL -o  "$patch1" \
@@ -45,15 +47,15 @@ patch1="$dir_distfiles"/patch-$v1.xz
 	|| { echo >&2 "ERROR: Failed to download patch: $v1"; exit 1; }
 
 [[ "${v0##*.}" == 0 ]] || {
-	xzcat "$patch0" | patch --batch --follow-symlinks -p1 -R --dry-run
+	bsdcat "$patch0" | patch --batch --follow-symlinks -p1 -R --dry-run
 	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
-	xzcat "$patch0" | patch --batch --follow-symlinks -p1 -R
+	bsdcat "$patch0" | patch --batch --follow-symlinks -p1 -R
 	[[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
 }
 
-xzcat "$patch1" | patch --batch --follow-symlinks -p1 --dry-run
+bsdcat "$patch1" | patch --batch --follow-symlinks -p1 -N --dry-run
 [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
-xzcat "$patch1" | patch --batch --follow-symlinks -p1
+bsdcat "$patch1" | patch --batch --follow-symlinks -p1 -N
 [[ ${PIPESTATUS[0]} -ne 0 || ${PIPESTATUS[1]} -ne 0 ]] && exit 1
 
 [[ -e .config ]] && make oldconfig
