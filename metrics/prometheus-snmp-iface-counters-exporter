@@ -109,7 +109,7 @@ class SNMP:
 				bs_in = self._query(self.oid_iface_ingress[n], int)
 				bs_out = self._query(self.oid_iface_egress[n], int)
 			except SNMPNX: continue # iface is gone
-			except SNMPError: return self.log.debug('Counter query error: {}', err_fmt(err))
+			except SNMPError as err: return self.log.debug('Counter query error: {}', err_fmt(err))
 			iface_stats[iface_name] = bs_in, bs_out
 
 		query_time = time.monotonic() - ts0
