@@ -3459,7 +3459,22 @@ Useful when for a quick chart to figure out some data or function output,
 or make it into a useful non-static link to someone,
 and don't want to deal with d3-v3/coding-style/JS diffs from bl.ocks.org.
 
+Direct gh-pages link: `d3-line-chart-boilerplate.html`_
+
+.. _d3-line-chart-boilerplate.html: https://mk-fg.github.io/fgtk/metrics/d3-line-chart-boilerplate.html
 .. _d3.js: http://d3js.org/
+
+d3-histogram-boilerplate
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Similar d3 boilerplate-chart as d3-line-chart-boilerplate,
+but for plotting some kind of value distribution with vertical bars.
+E.g. to quickly load ``find -type f -printf '%s\n'`` output of file sizes to see
+which filesystem/parameters to pick depending on that at a glance.
+
+Direct gh-pages link: `d3-histogram-boilerplate.html`_
+
+.. _d3-histogram-boilerplate.html: https://mk-fg.github.io/fgtk/metrics/d3-histogram-boilerplate.html
 
 d3-temp-rh-sensor-tsv-series-chart
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

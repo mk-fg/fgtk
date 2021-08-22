@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<meta charset='utf-8'>
+<style>
+
+body {
+	margin: 0 auto;
+	padding: 1rem;
+	max-width: 1000px;
+	background: #eee; }
+svg text { font: 15px 'Liberation Sans', 'Luxi Sans', sans-serif; }
+.bars rect { fill: #69b3a2; }
+.bars rect.hover { fill: #ac5c4f; }
+.focus tspan { paint-order: stroke; stroke: #eeed; stroke-width: 1em; }
+
+</style>
+
+<!-- Always use local d3 copy -->
+<!-- <script src='https://d3js.org/d3.v6.min.js'></script> -->
+<script src='d3.v6.min.js'></script>
+
+<script>
+window.onload = async () => {
+'use strict'
+let d3js_src = document.querySelector('script').getAttribute('src'),
+	d3js_url = `https://d3js.org/${d3js_src}`,
+	d3js_load = async (url) => {
+		if (!window.d3) {
+			console.log(`WARNING: loading d3 from ${url}`)
+			let res = await fetch(url)
+			if (!res.ok) throw `${url} :: ${res.status} - ${res.statusText}`
+			eval(await res.text()) } // fetched d3.js script
+		return window.d3 }
+let d3, d3_err_html = ''
+try { d3 = await d3js_load(d3js_url) }
+catch (err) { if (err.toString()) d3_err_html = `<p>[${err}]</p>` }
+if (!d3) return document.body.innerHTML = `
+	<h2>ERROR: failed to load d3.js library</h2>
+	${d3_err_html}
+	<p>Check uBlock/uMatrix/NoScript/adblocker setttings or download
+		<a href='${d3js_url}'>${d3js_src}</a> into same dir as this html.</p>`
+
+
+// Data - simple 1d-data value-count-within-bins chart
+
+let y_symlog_const = 1000,
+	x_bins, x_bin_ticks = 70, // x_bins will be used, if set
+	data = (f => Array(1000).fill().map(() => f()))(d3.randomLogNormal(0.5, 0.4)),
+	data_domain_limit // can be set to limit x0-x1 range
+
+// data = await d3.text('data.csv')
+// data = d3.csvParseRows(data, d => Number.parseInt(d[0]))
+// data_domain_limit = [0, 128 * 2**10]
+
+
+// Basic d3 boilerplate
+
+let margin = {top: 50, right: 100, bottom: 50, left: 100},
+	width = 960 - margin.left - margin.right,
+	height = 700 - margin.top - margin.bottom
+
+let vis = d3.select('body')
+	.append('svg')
+		.attr('width', width + margin.left + margin.right)
+		.attr('height', height + margin.top + margin.bottom)
+	.append('g')
+		.attr('transform', `translate(${margin.left},${margin.top})`)
+
+// Axes and chart
+
+let x = d3.scaleLinear(data_domain_limit || d3.extent(data), [0, width]),
+	bins = d3.bin().value(d => d)
+		.domain(x.domain()).thresholds(x_bins || x.ticks(x_bin_ticks))(data),
+	y = d3.scaleSymlog([0, d3.max(bins, d => d.length)], [height, 0]).constant(y_symlog_const)
+vis.append('g').attr('transform', `translate(0, ${height})`).call(d3.axisBottom(x))
+vis.append('g').call(d3.axisLeft(y))
+
+let
+	bars = vis.append('g').attr('class', 'bars'),
+	focus = vis.append('g').attr('class', 'focus').style('display', 'none'),
+	focus_fmt = d3.format(',.1f'),
+	focus_side = 1, // 1 or -1
+	focus_label = focus.append('text')
+		.attr('x', 10).attr('dy', '.3em')
+		.attr('text-anchor', focus_side > 0 ? 'start' : 'end')
+
+bars.selectAll('rect')
+	.data(bins)
+	.join('rect').attr('x', 1)
+		.attr('transform', d => `translate(${x(d.x0)} , ${y(d.length)})`)
+		.attr('width', d => x(d.x1) - x(d.x0) - 1)
+		.attr('height', d => height - y(d.length))
+
+	// Focus data on mouseover
+	.on('mouseover', ev => {
+		focus.style('display', null)
+		ev.currentTarget.classList.add('hover') })
+	.on('mouseout', ev => {
+		focus.style('display', 'none')
+		ev.currentTarget.classList.remove('hover') })
+	.on('mousemove', (ev, d) => {
+		focus.attr( 'transform',
+			`translate(${x(focus_side > 0 ? d.x1 : d.x0)},${y(d.length)})` )
+		focus_label.selectAll('tspan').call( s => s
+			.data([`span: ${focus_fmt(d.x0)} - ${focus_fmt(d.x1)}`, `count: ${focus_fmt(d.length)}`])
+			.join('tspan').attr('dy', '1.2em').attr('x', `${focus_side}em`).text(d => d) ) })
+
+}
+</script>
