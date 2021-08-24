@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import namedtuple
-import os, sys, logging
-import asyncio, signal, contextlib
-import subprocess, re
+import collections as cs, contextlib as cl
+import os, sys, logging, signal, subprocess, re, asyncio
 
 import evdev, yaml
 from evdev import ecodes
@@ -59,7 +57,7 @@ p_err = lambda *a,**k: p(*a, file=sys.stderr, **k) or 1
 class AttrDict(dict):
 	def __init__(self, *args, **kwargs):
 		super(AttrDict, self).__init__(*args, **kwargs)
-		for k, v in self.items():
+		for k, v in list(self.items()):
 			assert not getattr(self, k, None)
 			if '-' in k: self[k.replace('-', '_')] = self.pop(k)
 		self.__dict__ = self
@@ -80,36 +78,38 @@ class LogStyleAdapter(logging.LoggerAdapter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
-Action = namedtuple('Act', 'key_codes opts')
+Action = cs.namedtuple('Act', 'key_codes opts')
 
-async def event_loop(loop, conf, evdev_list):
-	exit_code, readers, queue = 0, list(), asyncio.Queue(loop=loop)
-	with contextlib.ExitStack() as stack:
+async def run_event_loop(conf, evdev_list):
+	exit_code, readers, queue = 0, list(), asyncio.Queue()
+	with cl.ExitStack() as stack:
 		for p in evdev_list:
 			dev = stack.enter_context(
-				contextlib.closing(evdev.InputDevice(p)) )
-			readers.append(loop.create_task(evdev_reader(dev, queue)))
+				cl.closing(evdev.InputDevice(p)) )
+			readers.append(asyncio.create_task(evdev_reader(dev, queue)))
 		ui = stack.enter_context(uinput.UInput())
-		xev_emu = loop.create_task(run_xev_emu(loop, conf, queue, ui))
+		xev_emu = asyncio.create_task(run_xev_emu(conf, queue, ui))
 		def sig_handler(code):
 			nonlocal exit_code
 			exit_code = code
 			xev_emu.cancel()
 		for sig, code in ('SIGINT', 1), ('SIGTERM', 0):
-			loop.add_signal_handler(getattr(signal, sig), ft.partial(sig_handler, code))
-		with contextlib.suppress(asyncio.CancelledError): await xev_emu
+			asyncio.get_running_loop().add_signal_handler(
+				getattr(signal, sig), ft.partial(sig_handler, code) )
+		with cl.suppress(asyncio.CancelledError): await xev_emu
 		for reader in readers: reader.cancel()
 	return exit_code
 
 
-Event = namedtuple('Ev', 'ev dev')
+Event = cs.namedtuple('Ev', 'ev dev')
 
 async def evdev_reader(dev, queue):
 	while True:
 		ev_list = await dev.async_read()
 		for ev in ev_list: queue.put_nowait(Event(ev, dev))
 
-async def run_xev_emu(loop, conf, queue, ui):
+async def run_xev_emu(conf, queue, ui):
+	loop = asyncio.get_running_loop()
 	acts, act_ts = dict(conf.acts.items()), dict()
 
 	while True:
@@ -237,8 +237,7 @@ def main(args=None):
 			break
 		else: raise OSError('Failed to parse keyboard repeat rate from xset output')
 		log.debug('Remembering xset rate as: {} {}', *xset_rate)
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		exit_code = loop.run_until_complete(event_loop(loop, conf, opts.evdev))
+	exit_code = asyncio.run(run_event_loop(conf, opts.evdev))
 	if xset_rate:
 		delay, repeat = map(str, xset_rate)
 		log.debug('Restoring xset rate back to: {} {}', delay, repeat)
