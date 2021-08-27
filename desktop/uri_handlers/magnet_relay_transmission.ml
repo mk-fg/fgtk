@@ -46,7 +46,7 @@ let debug_print line =
 	if !cli_debug then print_endline line; flush stdout
 
 
-(* Simple inotify bindings from magnet_relay_transmission_glue.c *)
+(* Simple inotify bindings from magnet_relay_transmission.ml.c *)
 
 external in_watch_path : string -> Unix.file_descr = "mlin_watch_path"
 external in_hdr_len : unit -> int = "mlin_hdr_len"
