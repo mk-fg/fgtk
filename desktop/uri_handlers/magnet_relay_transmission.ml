@@ -22,7 +22,6 @@ let cli_link_len_max = ref (20 * int_of_float (2. ** 10.))
 
 (* Command-line args processing *)
 let () =
-	let debug_desc = "-- Verbose operation mode." in
 	Arg.parse
 		[ ("-c", Arg.Set_string cli_cmd,
 				"-- Command to run with magnet link as a last argument.\n" ^
@@ -32,8 +31,8 @@ let () =
 				"-- Suffix for files to be processed." ^
 					" Can be empty to process all.\n" ^
 				"        Case-sensitive. Default: " ^ !cli_path_suffix);
-			("-d", Arg.Set cli_debug, "     " ^ debug_desc);
-			("--debug", Arg.Set cli_debug, debug_desc) ]
+			("-d", Arg.Set cli_debug, " ");
+			("--debug", Arg.Set cli_debug, "-- Verbose operation mode.") ]
 		(fun arg ->
 			if !cli_path_specified
 				then raise (Arg.Bad ("Bogus extra arg : " ^ arg))
@@ -41,9 +40,6 @@ let () =
 		("Usage: " ^ Sys.argv.(0) ^ " [-d|--debug] [opts] [path]\
 			\n\nWatch path for new .magnet files and run transmission-remote with link from each one.\
 			\nUses current directory if path is not specified.\n")
-
-let debug_print line =
-	if !cli_debug then print_endline line; flush stdout
 
 
 (* Simple inotify bindings from magnet_relay_transmission.ml.c *)
@@ -71,6 +67,8 @@ let in_read_paths =
 let watch_path () =
 	let try_finally f x finally y =
 		let res = try f x with e -> finally y; raise e in finally y; res in
+	let debug_print line =
+		if !cli_debug then print_endline line; flush stdout in
 
 	let re_link = Str.regexp "[^ \000\012\n\r\t]+" in
 	let re_path = Str.regexp ((Str.quote !cli_path_suffix) ^ "$") in
@@ -91,7 +89,7 @@ let watch_path () =
 				let buff_len = Unix.read !fd read_buff 0 buff_len in
 				Bytes.sub_string read_buff 0 buff_len
 			with Unix.Unix_error _ -> "" in
-		if !fd = Unix.stdin then () else Unix.close !fd;
+		if !fd != Unix.stdin then Unix.close !fd;
 		if Str.string_match re_link link 0
 			then Str.matched_string link else "" in
 
@@ -104,12 +102,12 @@ let watch_path () =
 	let cmd_pipe = Unix.openfile "/dev/null" [Unix.O_RDWR;Unix.O_CLOEXEC] 0o666 in
 
 	let cmd_spawn () =
-		if (List.length !cmd_pids) >= !cli_cmd_max || List.length !path_queue = 0 then () else
+		if (List.length !cmd_pids) <= !cli_cmd_max && List.length !path_queue != 0 then
 		let path = List.hd !path_queue in path_queue := List.tl !path_queue;
 		let path = Filename.concat !cli_path path in
 		let path_link = read_link path in
 		debug_print (Printf.sprintf "--- link: %s" path_link);
-		if (String.length path_link) = 0 then () else
+		if (String.length path_link) != 0 then
 			let cmd = cmd @ [path_link] in
 			let cmd_func = Unix.create_process (List.hd cmd) (Array.of_list cmd) in
 			cmd_pids := (if !cli_debug
@@ -134,7 +132,7 @@ let watch_path () =
 		cmd_spawn ();
 		if !cmd_check_needed then cmd_check () else
 			if (List.length !path_queue) = 0 && (List.length !cmd_pids) = 0
-				then debug_print (Printf.sprintf "--- idle") else () in
+				then debug_print (Printf.sprintf "--- idle") in
 
 	(* Signal handlers are run synchronously from same loop below *)
 	Sys.set_signal Sys.sigchld
@@ -145,7 +143,7 @@ let watch_path () =
 		let rec select () =
 			try Unix.select [fd] [] [fd] (-1.)
 			with Unix.Unix_error (Unix.EINTR, _, _) ->
-				if !cmd_check_needed then cmd_check () else ();
+				if !cmd_check_needed then cmd_check ();
 				select () in
 		let rec ev_process () =
 			let r, w, x = select () in
