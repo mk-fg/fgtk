@@ -8,7 +8,7 @@
 set -e
 
 check= list= unit= slice= stats= mode=scope
-queue= queue_delay=7 queue_timeout= value= path=
+queue= queue_delay=7 queue_timeout= value= path= props=
 
 usage() {
 	bin=${0##*/}
@@ -27,6 +27,7 @@ usage() {
 	echo >&2 "-u name - scope unit name, derived from command basename by default."
 	echo >&2 "   Starting scope with same unit name as already running one will fail."
 	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
+	echo >&2 "-o - same as -p/--property in systemd-run, to pass any unit parameters."
 	echo >&2 "-q - wait for all pids in slice/scope to exit before start (if any)."
 	echo >&2 "   -i - delay between checks in seconds, default=${queue_delay}s."
 	echo >&2 "   -t - timeout for -q wait (default=none), exiting with code 36 afterwards."
@@ -43,18 +44,19 @@ usage() {
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	echo >&2 "Examples:"
-	echo >&2 "  cgrc -ru ff apps-browser -- firefox --profile myprofile"
+	echo >&2 "  cgrc -ru ff app-browser -- firefox --profile myprofile"
 	echo >&2 "  cgrc -rcu ff && echo 'ff process exited'"
-	echo >&2 "  cgrc -q apps-leech -- curl -OL http://site.com/file-to-queue.bin"
-	echo >&2 "  cgrc -l apps | xargs ps u"
-	echo >&2 "  cgrc -v cpu.max apps-pacman"
-	echo >&2 "  cgrc -v cpu.max='1500000 500000' apps-pacman"
+	echo >&2 "  cgrc -o CPUWeight=200 -o MemoryMax=6G app-browser -- chromium"
+	echo >&2 "  cgrc -q app-leech -- curl -OL http://site.com/file-to-queue.bin"
+	echo >&2 "  cgrc -l app | xargs ps u"
+	echo >&2 "  cgrc -v cpu.max app-pacman"
+	echo >&2 "  cgrc -v cpu.max='1500000 500000' app-pacman"
 	echo >&2 "  cgrc -sru pulseaudio"
 	echo >&2
 	exit ${1:-1}
 }
 
-while getopts xhclqsrpi:t:u:v: a; do case $a in
+while getopts xhclqsrpi:t:u:o:v: a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
@@ -65,6 +67,7 @@ while getopts xhclqsrpi:t:u:v: a; do case $a in
 	i) queue_delay=$OPTARG ;;
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
+	o) props="$props -p $OPTARG" ;;
 	v) value=$OPTARG ;;
 	x) set -x ;;
 	\?) usage ;;
@@ -156,7 +159,7 @@ else [ -n "$stats" ] || usage 0; fi
 [ -n "$unit" ] && u="--unit $unit" || { u=${1##*/}; u="--unit ${u%% *}"; }
 [ "$mode" = scope ] && tu=--scope \
 	|| tu='--service-type=exec --same-dir --wait --pty --collect'
-wrapper="systemd-run -q $t $tu $u --slice $slice --"
+wrapper="systemd-run -q $t $tu $u --slice $slice$props --"
 
 if [ -z "$stats" ]
 then exec $wrapper "$@"
