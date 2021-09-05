@@ -3258,6 +3258,19 @@ Bash script, requires git and perl (as "git-add--interactive" is a perl script).
 Shorter and simplier than most scripts for same purpose, as git does most of the
 work in this case, less wheels re-invented, less interfaces to learn/remember.
 
+pacman-fsck
+^^^^^^^^^^^
+
+Python script to validate checksums of fs files against ones recoded in mtree
+files stored by pacman on each package install under /var/lib/pacman/local/<pkg>.
+
+Can be used with arbitrary root and pacman-db dirs, or with any non-pacman mtree
+files, like manifests made manually via bsdtar. Has options to skip various
+types of errors or path prefixes (to avoid checking /etc files for example).
+
+Does not need pacman itself, only its mtree files (decompressing them via bsdcat),
+uses posix_fadvise to avoid needlessly trashing fs cache during operation.
+
 tar-strap
 ^^^^^^^^^
 
