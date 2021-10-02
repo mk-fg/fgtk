@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
+import contextlib as cl, collections as cs, pathlib as pl
 import os, sys, argparse, logging, secrets, re, json, shutil
-import contextlib, inspect, tempfile, pathlib, collections, enum
-import asyncio, asyncio.subprocess, socket, signal, heapq, struct
+import inspect, tempfile, enum, socket, signal, heapq, struct
+import asyncio, asyncio.subprocess as sp
 
 import aiohttp
 
@@ -72,20 +73,20 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		msg, kws = self.process(msg, kws)
 		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
 
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 def add_stack_wrappers(cls):
 	def _make_wrapper(func):
 		async def _wrapper(self, *args, **kws):
-			async with contextlib.AsyncExitStack() as ctx:
+			async with cl.AsyncExitStack() as ctx:
 				return await func(self, ctx, *args, **kws)
 		return ft.wraps(func)(_wrapper)
 	for name, func in inspect.getmembers(cls, inspect.isroutine):
 		if name.startswith('__'): continue
 		sig = inspect.signature(func)
 		if ( len(sig.parameters) <= 1 or
-			list(sig.parameters.values())[1].annotation
-				is not contextlib.AsyncExitStack ): continue
+			list(sig.parameters.values())[1].annotation is not cl.AsyncExitStack ): continue
 		setattr(cls, name, _make_wrapper(func))
 	return cls
 
@@ -144,28 +145,33 @@ async def maybe_coro(res):
 class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
 class TVFReqError(TVFError): pass
+class TVFReqSocketError(TVFReqError): pass
 
 
-async def vod_fetch(loop, conf, vod_queue, list_formats_only=False):
-	exit_code, log = 1, get_logger('tvf.fetcher')
-	task = asyncio.current_task(loop)
+async def vod_fetch(conf, vod_queue, list_formats_only=False):
+	exit_code, exit_sig, log = 1, None, get_logger('tvf.fetcher')
+	loop, task = asyncio.get_running_loop(), asyncio.current_task()
 	def sig_handler(sig, code):
 		log.info('Exiting on {} signal with code: {}', sig, code)
-		nonlocal exit_code
-		exit_code = code
+		nonlocal exit_code, exit_sig
+		exit_code, exit_sig = code, sig
 		task.cancel()
 	if not conf.compat_windows:
 		for sig, code in ('INT', 1), ('TERM', 0):
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ft.partial(sig_handler, sig, code))
-	async with TVF(loop, conf, log) as fetcher:
+	async with TVF(conf, log) as fetcher:
 		fetch = fetcher.get if not list_formats_only else fetcher.ytdl_probe_formats
 		for n, (url, prefix) in enumerate(vod_queue, 1):
 			info_suffix = None if len(vod_queue) == 1 else f' [{n} / {len(vod_queue)}]'
 			try: await fetch(url, prefix, info_suffix=info_suffix)
 			except asyncio.CancelledError as err: break
 			except TVFError as err:
-				if err.args: log.exception('BUG: {}', err)
-				log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
+				if exit_sig and isinstance(err, TVFReqSocketError):
+					# aria2c can be killed during requests and such, causing socket errors
+					log.debug('Expected connection error on signal-exit: {}', err_fmt(err))
+				else:
+					if err.args: log.exception('BUG: {}', err)
+					log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
 				break
 		else: exit_code = 0
 	return exit_code
@@ -199,8 +205,8 @@ class TVFFileCache:
 
 class TVFAria2Proc:
 
-	def __init__(self, loop, conf, http, cmd_conf, key, port, path_func):
-		self.loop, self.conf, self.proc, self.http = loop, conf, None, http
+	def __init__(self, conf, http, cmd_conf, key, port, path_func):
+		self.conf, self.proc, self.http = conf, None, http
 		self.ws = self.ws_ctx = self.ws_poll_task = self.ws_handlers = self.chunks = None
 		self.ws_closed = asyncio.Event()
 		self.cmd_conf, self.ws_key, self.ws_url, self.path_func = (
@@ -211,7 +217,7 @@ class TVFAria2Proc:
 		cmd = [self.conf.aria2_cmd, '--conf-path', self.cmd_conf]
 		self.log.debug('Starting aria2c daemon: {}', ' '.join(cmd))
 		self.proc = await asyncio.create_subprocess_exec(*cmd)
-		self.ws_ctx = contextlib.AsyncExitStack()
+		self.ws_ctx = cl.AsyncExitStack()
 		return self
 
 	async def __aexit__(self, *err):
@@ -243,10 +249,11 @@ class TVFAria2Proc:
 			self.proc = None
 
 	async def connect(self):
-		ts, delays = self.loop.time(), retries_within_timeout(*self.conf.aria2_startup_checks)
+		loop = asyncio.get_running_loop()
+		ts, delays = loop.time(), retries_within_timeout(*self.conf.aria2_startup_checks)
 		ts_next, ts_max, delay_iter = ts, ts + sum(delays), iter(delays)
 		while True:
-			ts = self.loop.time()
+			ts = loop.time()
 			if ts >= ts_max: break
 			timeout = ts_max - ts
 			self.log.debug('Connecting to aria2c ws url (timeout={:.2f}s): {}', timeout, self.ws_url)
@@ -257,10 +264,10 @@ class TVFAria2Proc:
 			else:
 				self.log.debug('Connected to aria2c json-rpc ws')
 				break
-			ts = self.loop.time()
+			ts = loop.time()
 			if ts_next > ts:
 				await asyncio.sleep(ts_next - ts)
-				ts = self.loop.time()
+				ts = loop.time()
 			while ts_next < ts:
 				try: ts_next += next(delay_iter)
 				except StopIteration: break
@@ -270,9 +277,9 @@ class TVFAria2Proc:
 				' (max_tries={}, timeout={})'.format(*self.conf.aria2_startup_checks) )
 		jrpc_uid_ns = secrets.token_urlsafe(3)
 		self.ws_jrpc_uid_iter = (f'{jrpc_uid_ns}.{n}' for n in range(1, 2**30))
-		self.ws_handlers, self.ws_poll_task = dict(), self.loop.create_task(self._ws_poller())
+		self.ws_handlers, self.ws_poll_task = dict(), loop.create_task(self._ws_poller())
 
-	@contextlib.contextmanager
+	@cl.contextmanager
 	def ws_close_wrap(self):
 		'Raises TVFWSClosed in current task on ws_closed event.'
 		async def _ev_wait():
@@ -280,8 +287,8 @@ class TVFAria2Proc:
 			await self.ws_closed.wait()
 			triggered = True
 			task.cancel()
-		triggered, task = False, asyncio.current_task(self.loop)
-		ev_wait_task = self.loop.create_task(_ev_wait())
+		triggered, task = False, asyncio.current_task()
+		ev_wait_task = asyncio.create_task(_ev_wait())
 		try: yield
 		except asyncio.CancelledError:
 			if not triggered: raise
@@ -352,7 +359,9 @@ class TVFAria2Proc:
 		if self.conf.aria2_ws_debug:
 			self.log.debug( 'rpc-req{} [{}]: {}',
 				'-sync' if sync else '', req_uid, json.dumps(data_req) )
-		await self.ws.send_str(json.dumps(data_req))
+		try: await self.ws.send_str(json.dumps(data_req))
+		except ConnectionError as err:
+			raise TVFReqSocketError(f'Request conn error (method={method}, params={params}): {err}')
 		if sync:
 			with self.ws_close_wrap(): res = await self.expect(req_uid)
 			if self.conf.aria2_ws_debug:
@@ -432,7 +441,7 @@ class TVFChunkIter:
 		# aria2c requires 16-char gid, format used here fits number in
 		#  first 6 chars because it looks nice in (tuncated) aria2c output
 		gid_iter = iter(map('{:06d}0000000000'.format, range(1, 999999)))
-		chunks = collections.OrderedDict()
+		chunks = cs.OrderedDict()
 		for line in pls_text.splitlines():
 			m = re.search(r'^#EXTINF:([\d.]+),', line)
 			if m:
@@ -461,9 +470,8 @@ class TVFChunkIter:
 @add_stack_wrappers
 class TVF:
 
-	def __init__(self, loop, conf, log):
-		self.loop, self.conf = loop, conf
-		self.log = log or get_logget('tvf.fetcher')
+	def __init__(self, conf, log):
+		self.conf, self.log = conf, log or get_logget('tvf.fetcher')
 
 	async def __aenter__(self): return self
 	async def __aexit__(self, *err): pass
@@ -487,8 +495,8 @@ class TVF:
 		return await self.ytdl_run('--list-formats', url, check=False)
 
 
-	async def get(self, ctx: contextlib.AsyncExitStack, url, file_prefix, info_suffix=None):
-		file_prefix = pathlib.Path(file_prefix)
+	async def get(self, ctx: cl.AsyncExitStack, url, file_prefix, info_suffix=None):
+		file_prefix = pl.Path(file_prefix)
 		file_dst_path = file_prefix.with_suffix('.mp4')
 		file_dst_done = file_dst_path
 
@@ -549,7 +557,7 @@ class TVF:
 		# Config is always updated between aria2c runs, to account for any cli opts changes
 		with vod_cache('aria2c_conf') as vc:
 			key = secrets.token_urlsafe(18)
-			with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('localhost', 0))
 				addr, port = s.getsockname()
 			vc.update(self.conf.aria2_conf_func(adict(
@@ -579,7 +587,7 @@ class TVF:
 
 		# seq - gid converted to a sequential int, to sort appended chunks by
 		seq_heap, seq_chunks = list(), list()
-		seq_chunk = collections.namedtuple('seq_chunk', 'seq path')
+		seq_chunk = cs.namedtuple('seq_chunk', 'seq path')
 		gid_to_seq = lambda gid: int(gid[:6])
 		seq_to_gid = lambda seq: f'{seq:06d}0000000000'
 		gid_pretty = lambda gid: gid[:6]
@@ -589,7 +597,7 @@ class TVF:
 			if gid_to_seq(gid) > file_dst_seq: break
 			chunks.mark_done(gid)
 
-		async with TVFAria2Proc( self.loop,
+		async with TVFAria2Proc(
 				self.conf, http, aria2c_conf_path, key, port,
 				lambda gid: file_prefix.with_suffix(f'.{gid}.mp4.chunk') ) as aria2c:
 			await aria2c.connect()
@@ -614,7 +622,7 @@ class TVF:
 			# - stop on chunks.finished (all chunks marked as "done")
 
 			ev_t = enum.Enum('ev_type', 'complete stop pause error')
-			evq, ev_tuple = asyncio.Queue(), collections.namedtuple('ev', 't data')
+			evq, ev_tuple = asyncio.Queue(), cs.namedtuple('ev', 't data')
 			for t in ev_t:
 				aria2c.expect( f'onDownload{t.name.title()}',
 					lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
@@ -630,7 +638,7 @@ class TVF:
 								raise TVFError( 'Completed aria2 download'
 									f' should produce single chunk-file, instead has: {files}' )
 							heapq.heappush( seq_heap,
-								seq_chunk(gid_to_seq(e['gid']), pathlib.Path(files[0])) )
+								seq_chunk(gid_to_seq(e['gid']), pl.Path(files[0])) )
 							await aria2c.req('removeDownloadResult', e['gid'], sync=False)
 							chunks.mark_done(e['gid'])
 						else: # stop/pause/error - retry immediately
@@ -826,9 +834,8 @@ def main(args=None, conf=None):
 		asyncio.set_event_loop(loop)
 
 	log.debug('Starting vod_fetch loop...')
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		exit_code = loop.run_until_complete(vod_fetch(
-			loop, conf, vod_queue, list_formats_only=opts.ytdl_list_formats ))
+	exit_code = asyncio.run(vod_fetch(
+		conf, vod_queue, list_formats_only=opts.ytdl_list_formats ))
 	log.debug('Finished')
 	return exit_code
 
