@@ -26,7 +26,9 @@ def main(args=None):
 	parser.add_argument('-b', '--binary', action='store_true',
 		help='Process file lines in binary mode, instead of decoding it with utf-8.'
 			' Should allow to see BOM and random'
-				' binary goop escaped as individual bytes, not codepoints.')
+				' binary goop escaped as individual bytes, not codepoints.'
+			' Anything outside of printable ascii will be encoded'
+				' either as a special escape sequence like \\n or C-style \\xCC.')
 	parser.add_argument('-n', '--hide-newlines', action='store_true',
 		help='Enables "universal newlines" translation and strips last \\n from each line.'
 			' Whether this is sufficient for mismatched line endings'
