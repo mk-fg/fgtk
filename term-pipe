@@ -170,6 +170,29 @@ def main(args=None):
 			Useful to avoid notification-storm when buffer gets redrawn entirely or such.
 			Set to <=0 value to disable this rate-limiting entirely.'''))
 
+	cmd = cmds.add_parser('s-run',
+		formatter_class=argparse.RawTextHelpFormatter,
+		help=dd('''
+			Run command within a specific/matched GNU Screen session window.
+			Intended to match shell prompt via -s/--shell-re option and send -c/--command line to it.
+			Only matches stuff in all attached unnamed pts-N screen sessions by default.'''))
+	cmd.add_argument('-S', '--session', metavar='spec',
+		help='Instead of default session-matching, pass this session spec to "screen -S".')
+	cmd.add_argument('-n', '--win-max', type=int, metavar='n', default=5, help=dd('''
+		Max window number to check within each matched session.
+		All of these numbers are queried/checked from first to last until match,
+			repeatedly checking last window within session if they don't exist. Default: %(default)s'''))
+	cmd.add_argument('-s', '--shell-re', metavar='regexp', help=dd('''
+		Regexp (python re syntax) to match shell on the last nonempty line.
+		First matching session/window will be used for sending command.'''))
+	cmd.add_argument('-c', '--command', metavar='line', help=dd('''
+		Command line to pass into matched shell.
+		Will be stripped of spaces, prepended a space (to skip shell history)
+			and appended terminating newline to run command in the shell.
+		Remember to quote any shell command parameters.'''))
+	cmd.add_argument('-v', '--verbose', action='store_true',
+		help='Print screen session/window info to stdout after sending command there.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 
@@ -215,6 +238,38 @@ def main(args=None):
 					for t, v in body_data )
 				if opts.plain: header, body_str = map(strip_tags, [header, body_str])
 				notify_func(header, body_str)
+
+
+	elif opts.call == 's-run':
+		import re, tempfile, time, itertools as it, subprocess as sp
+		re_sh = re.compile(opts.shell_re or '')
+		if opts.session: sessions = [opts.session]
+		else:
+			sessions, re_s = list(), re.compile(r'^\s+(\d+\.pts-\d+\.\S+)\s+\(Attached\)\s*$')
+			lines = sp.run( ['screen', '-ls'], check=True,
+				stdout=sp.PIPE ).stdout.decode().strip().split('\n')
+			for line in lines:
+				if m := re_s.search(line): sessions.append(m.group(1))
+		with tempfile.NamedTemporaryFile(prefix='.term-pipe.', buffering=0) as tmp:
+			tmp_ts = os.fstat(tmp.fileno()).st_mtime
+			for s, n in it.product(sessions, range(opts.win_max)):
+				sp.run(['screen', '-S', s, '-X', 'at', f'{n}#', 'hardcopy', tmp.name])
+				tmp.seek(0)
+				# File update comes some time after command, with delay on missing windows
+				for d in [0.03, 0.05, 0.1, 0.1, 0.2, 0.2, 0.3, 0.3]:
+					tmp_ts_chk = os.fstat(tmp.fileno()).st_mtime
+					time.sleep(d)
+					if tmp_ts != tmp_ts_chk: break
+				tmp_ts = tmp_ts_chk
+				line = tmp.read().strip().rsplit(b'\n', 1)[-1].decode(errors='replace')
+				if m := re_sh.search(line): break
+			else:
+				print('ERROR: Failed to match screen session/shell', file=sys.stderr)
+				return 1
+		if not opts.command: print(f"Found shell prefix: screen -S {s} -X at '{n}#'")
+		else:
+			sp.run(['screen', '-S', s, '-X', 'at', f'{n}#', 'stuff', f' {opts.command.strip()}\n'])
+			if opts.verbose: print(f'{s} {n}#')
 
 
 	else: raise NotImplementedError(f'Command not implemented: {opts.call}')
