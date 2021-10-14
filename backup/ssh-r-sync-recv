@@ -298,16 +298,17 @@ def main(args=None):
 	cmd = ssh.recv.readline().rstrip(b'\n')
 	if cmd != b'start': raise SSHRsyncError('Invalid/missing backup command: {!r}', cmd)
 
+	su_fake = rsync_info.opts.get('fake_super')
+	su_mode = not su_fake and rsync_info.su
 	rsync_opts = [ '--delete', '--delete-excluded']
 	if rsync_info.opts.get('one_file_system'): rsync_opts.append('-x')
-	if rsync_info.su: rsync_opts.extend(['-HaAXS', '--super', '--numeric-ids'])
-	else:
-		rsync_opts.append('-rltHE')
-		if rsync_info.opts.get('fake_super'): rsync_opts.append('--fake-super')
+	if su_mode: rsync_opts.extend(['-HaAXS', '--super', '--numeric-ids'])
+	else: rsync_opts.append('-rltHE')
+	if su_fake: rsync_opts.append('--fake-super')
 
 	hook = bak_hooks.run( 'rsync.pre',
 		bak_root, bak_path, bak_name,
-		int(bool(rsync_info.su)), stdout=subprocess.PIPE )
+		int(bool(su_mode)), stdout=subprocess.PIPE )
 	if hook and hook.stdout.strip():
 		if b'\0' not in hook.stdout:
 			raise SSHRsyncError( 'rsync.pre hook'
