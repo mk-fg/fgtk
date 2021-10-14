@@ -91,19 +91,19 @@ def run_sv_backup(p_snap, bak_fmt, sv, ret_policy, rn, rv, check_genid):
 		snap_new = (p_snap / bak_fmt.format(
 			sv=sv, dt=snap_new_dt.strftime(dt_fmt) )).resolve()
 		if not rn: sp_cmd_run('btrfs subvolume snapshot -r', sv, snap_new)
-		if rv: print(f'Creating new btrfs snapshot: {snap_new}')
+		if rv: print(f'  Creating new btrfs snapshot: {snap_new}')
 		snaps[snap_new] = snap_new_dt
 	else:
-		if rv: print(f'Skipping making new btrfs snapshot with same btrfs genid')
+		if rv: print(f'  Skipping making new btrfs snapshot with same btrfs genid')
 		snap_new = None
 
 	snaps_keep = bak_ret_keys(snaps, ret_policy)
-	if rv: print('Managed snapshot list/status:')
+	if rv: print('  Managed snapshot list/status:')
 	for snap in snaps:
 		s, rm = snap.name, snap not in snaps_keep
 		if rv:
-			if snap == snap_new: print('  ' + '[new] ' + s)
-			else: print('  ' + (' [rm] ' if rm else ' '*6) + s)
+			if snap == snap_new: print('   ' + '[new] ' + s)
+			else: print('   ' + (' [rm] ' if rm else ' '*6) + s)
 		if rm and not rn: sp_cmd_run('btrfs subvolume delete', snap)
 
 
@@ -155,6 +155,7 @@ def main(args=None):
 	for sv in sv_list:
 		if not sv.is_dir(): parser.error(f'Failed to access subvolume dir [ {sv} ]')
 	for sv in sv_list:
+		if rv: print(f'Subvolume: {sv.name}' + (f' [ {sv} ]' if str(sv).startswith('/') else ''))
 		try: run_sv_backup(p_snap, opts.fmt, sv, opts.ret_policy, rn, rv, opts.check_genid)
 		except Exception:
 			print(f'ERROR: snapshot/cleanup failed for subvolume - {sv}', file=sys.stderr)
