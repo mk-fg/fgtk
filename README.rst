@@ -2055,6 +2055,18 @@ Similar to sanoid_, but much simplier and in python instead of perl.
 .. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
 .. _sanoid: https://github.com/jimsalterjrs/sanoid
 
+btrfs-snapper
+'''''''''''''
+
+Same as zfs-snapper script above, but for making and managing
+read-only snapshots of btrfs subvolumes in a specific directory for those,
+according to same retention policy string.
+
+Similar to btrbk_, but much simplier and more reliable/predictable,
+without a ton of extra features that's been piled-on there over time.
+
+.. _btrbk: https://digint.ch/btrbk/
+
 
 [dev] Dev tools
 ~~~~~~~~~~~~~~~

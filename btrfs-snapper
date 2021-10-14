@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+import itertools as it, operator as op, functools as ft
+import traceback as tb, pathlib as pl, datetime as dt, subprocess as sp
+import os, sys, re
+
+
+def bak_ret_parse(s):
+	ret_map, ret_re = dict(), dict((k, rf'(\d+|\*){k}') for k in 'hdwmy')
+	ret_re.update(n=r'(\d+)')
+	for sv in s.split():
+		for k, pat in ret_re.items():
+			if not (pat and (m := re.search(rf'(?i)^{pat}$', sv))): continue
+			m = m.group(1)
+			ret_re[k], ret_map[k] = None, int(m) if m != '*' else 2**30
+			break
+		else: raise ValueError(f'Unrecognized/extra retention-pattern component: {sv!r} in {s!r}')
+	for k, unused in ret_re.items():
+		if unused: ret_map[k] = 0
+	return ret_map
+
+def bak_ret_keys(bak_dt_map, ret_str):
+	'''Returns list of preserved backups from key-datetime
+		bak_dt_map, according to specified retention string.'''
+	ret_map = bak_ret_parse(ret_str)
+	bak_dt_list = sorted(bak_dt_map.items(), key=op.itemgetter(1))
+
+	dt_tpl_map = dict( y='%Y', w='%Y%W',
+		m='%Y%m', d='%Y%m%d', h='%Y%m%d%H' )
+	dt_buckets = dict((k, dict()) for k in dt_tpl_map)
+	for bak, bak_dt in bak_dt_list:
+		for k, bb_map in dt_buckets.items():
+			bn = ret_map[k]
+			if bn <= 0: continue
+			bk = bak_dt.strftime(dt_tpl_map[k])
+			if bk in bb_map: continue
+			bb_map[bk] = bak
+			while len(bb_map) > bn: del bb_map[next(iter(bb_map))]
+	bak_ret_set = set(it.chain.from_iterable(
+		bb_map.values() for bb_map in dt_buckets.values() ))
+
+	bn = max(0, ret_map['n'] - len(bak_ret_set))
+	for bak, bak_dt in bak_dt_list:
+		if bn <= 0: break
+		if bak in bak_ret_set: continue
+		bak_ret_set.add(bak)
+		bn -= 1
+	return bak_ret_set
+
+def sp_cmd_run(cmd, *cmd_args, **run_kws):
+	'subprocess.run() wrapper to log stdout/stderr debug info on failure'
+	check = run_kws.pop('check', True)
+	if not (run_kws.get('stdout') or run_kws.get('stderr')):
+		run_kws.setdefault('capture_output', True)
+	if isinstance(cmd, str): cmd = cmd.split()
+	cmd = cmd + list(cmd_args)
+	proc = sp.run(cmd, **run_kws)
+	if not (check and proc.returncode):
+		if proc.stdout is not None: return proc.stdout.decode()
+		return proc
+	print( 'Subprocess failed:',
+		' '.join((repr(s) if ' ' in str(s) else s) for s in cmd), file=sys.stderr )
+	for k in 'stdout', 'stderr':
+		out = getattr(proc, k, b'').rstrip().decode()
+		if not out: continue
+		for line in out.splitlines(): print(f'  {k}: {line.rstrip()}', file=sys.stderr)
+	raise RuntimeError(f'Command returned non-zero status [{proc.returncode}]: {cmd}')
+
+
+def parse_genid(sv):
+	# Ideally --format=json will be used here, but not yet supported by subcommand
+	info = sp_cmd_run('btrfs subvolume show', sv)
+	for line in filter(None, (line.strip().split() for line in info.splitlines())):
+		if line[0] == 'Generation:': return int(line[1])
+	else: raise ValueError(f'Failed to parse genid for subvolume [ {sv} ]')
+
+def run_sv_backup(p_snap, bak_fmt, sv, ret_policy, rn, rv, check_genid):
+	dt_fmt, dt_re = '%Y%m%d_%H%M%S', r'(\d{8}_\d{6})'
+	assert '\uf320' not in bak_fmt, bak_fmt
+	snaps, snap_re = dict(), re.compile( r'^' +
+		re.escape(bak_fmt.format(sv=sv, dt='\uf320')).replace('\uf320', dt_re) + '$' )
+
+	for snap in sorted(s.resolve() for s in p_snap.iterdir()):
+		if not (m := snap_re.search(snap.name)): continue
+		snaps[snap] = dt.datetime.strptime(m.group(1), dt_fmt)
+
+	snap_new_skip = ( snaps and check_genid
+		and parse_genid(sv) == parse_genid(list(snaps.keys())[-1]) )
+	if not snap_new_skip:
+		snap_new_dt = dt.datetime.now()
+		snap_new = (p_snap / bak_fmt.format(
+			sv=sv, dt=snap_new_dt.strftime(dt_fmt) )).resolve()
+		if not rn: sp_cmd_run('btrfs subvolume snapshot -r', sv, snap_new)
+		if rv: print(f'Creating new btrfs snapshot: {snap_new}')
+		snaps[snap_new] = snap_new_dt
+	else:
+		if rv: print(f'Skipping making new btrfs snapshot with same btrfs genid')
+		snap_new = None
+
+	snaps_keep = bak_ret_keys(snaps, ret_policy)
+	if rv: print('Managed snapshot list/status:')
+	for snap in snaps:
+		s, rm = snap.name, snap not in snaps_keep
+		if rv:
+			if snap == snap_new: print('  ' + '[new] ' + s)
+			else: print('  ' + (' [rm] ' if rm else ' '*6) + s)
+		if rm and not rn: sp_cmd_run('btrfs subvolume delete', snap)
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Script to create new btrfs'
+			' ro-snapshot(s) and rotate/keep a number of earlier ones.')
+
+	parser.add_argument('snap_dir',
+		help='One directory where all resulting snapshots will be stored and managed.')
+
+	parser.add_argument('subvol', nargs='+', help='Subvolume dir(s) to snapshot.')
+
+	parser.add_argument('-f', '--fmt', metavar='fmt', default='{sv}.{dt}',
+		help=dd('''
+			Format for resulting snapshot dir basename. Default: "%(default)s".
+			Supported formatting (str.format) keywords: sv - subvolume basename,
+				dt - datetime in roughly iso8601 format with tz (e.g. 20210925_081451).
+			All other snapshots/dirs not matching same pattern exactly will be ignored.'''))
+
+	parser.add_argument('-p', '--ret-policy',
+		default='5 5d 5w 10m *y', metavar='retention',
+		help=dd('''
+			Retention settings for how many and which snapshots to keep.
+			Should be a line using following format:
+				[<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
+			Default value: %(default)s
+			Values are integers, or "*" (asterisk) for "all", "n" value is for total min.
+			See more in-depth description of these values in btrbk.conf(5):
+				https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy'''))
+
+	parser.add_argument('-c', '--check-genid', action='store_true',
+		help='Do not create new snapshot if last existing snapshot has same genid as subvolume.')
+	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Print all actions instead of executing'
+			' them and exit without doing anything. Implies --verbose.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	p_snap, rn = pl.Path(opts.snap_dir), opts.dry_run
+	fmt, policy, rv = opts.fmt, opts.ret_policy, rn or opts.verbose
+	if not p_snap.is_dir(): parser.error(f'Failed to find snapshot dir: {p_snap}')
+
+	err, sv_list = None, list(map(pl.Path, opts.subvol))
+	for sv in sv_list:
+		if not sv.is_dir(): parser.error(f'Failed to access subvolume dir [ {sv} ]')
+	for sv in sv_list:
+		try: run_sv_backup(p_snap, opts.fmt, sv, opts.ret_policy, rn, rv, opts.check_genid)
+		except Exception:
+			print(f'ERROR: snapshot/cleanup failed for subvolume - {sv}', file=sys.stderr)
+			tb.print_exc(file=sys.stderr)
+			err = 1
+	return err
+
+if __name__ == '__main__': sys.exit(main())
