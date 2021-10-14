@@ -232,7 +232,7 @@ def main(args=None):
 
 	parser = argparse.ArgumentParser(
 		formatter_class=SmartHelpFormatter,
-		usage='%(prog)s [options] [user@]host[:port]',
+		usage='%(prog)s [options] [user@]host[:port] path',
 		description=dedent('''
 			"ssh -R rsync" script to backup stuff via ssh/rsync.
 			It works by ssh'ing into remote backup server, requesting it to make a backup,
