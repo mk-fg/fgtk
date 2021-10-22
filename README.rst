@@ -1529,24 +1529,6 @@ Misc pubkey/ipv6 representation/conversion helpers.
 .. _cjdns: https://github.com/cjdelisle/cjdns/
 .. _Hyperboria: http://hyperboria.net/
 
-mikrotik-backup
-'''''''''''''''
-
-Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
-DSA-only firmware via specified ("--auth-file" option) user/password and get the
-backup, optionally compressing it.
-
-| Can determine address of the router on its own (using "ip route get").
-| Can be used more generally to get/store output of any command(s) to the router.
-| Python script, uses "twisted.conch" for ssh.
-|
-
-Should not be used with modern firmware, where using e.g. ``ssh admin@router
-/export`` with RSA keys works perfectly well.
-
-"backup/ssh-dump" script from this repo can be used to pass all necessary
-non-interactive mode options and compress/rotate resulting file with these.
-
 blinky
 ''''''
 
@@ -2031,42 +2013,6 @@ notification emails on that platform.
 .. _feedparser: https://pythonhosted.org/feedparser/
 .. _EWMA: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
 
-zfs-snapper
-'''''''''''
-
-Simple py script to create ZFS snapshot and keep a number of older snapshots
-according to a `retention policy, similar to how btrbk tool does it`_
-(specified via -p/--ret-policy option)::
-
-  [<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
-
-Such policy defines max number of most recent -ly snapshots to preserve.
-I.e. "3 weekly" means to make sure one snapshot from this week,
-one from last week, and one from the week before that will be preserved.
-
-Script only matches exact snapshots that it created (renaming these will
-make it ignore them), and removes all oldest ones that fall outside of
-retention policy string.
-
-See built-in -h/--help output for more info and all the options.
-
-Similar to sanoid_, but much simplier and in python instead of perl.
-
-.. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
-.. _sanoid: https://github.com/jimsalterjrs/sanoid
-
-btrfs-snapper
-'''''''''''''
-
-Same as zfs-snapper script above, but for making and managing
-read-only snapshots of btrfs subvolumes in a specific directory for those,
-according to same retention policy string.
-
-Similar to btrbk_, but much simplier and more reliable/predictable,
-without a ton of extra features that's been piled-on there over time.
-
-.. _btrbk: https://digint.ch/btrbk/
-
 
 [dev] Dev tools
 ~~~~~~~~~~~~~~~
@@ -2370,6 +2316,59 @@ contents from remote host for backup purposes.
 
 Passes bunch of common options to use ssh batch mode, disable non-key auth and
 enable keepalive in case of long-running remote commands.
+
+mikrotik-export
+^^^^^^^^^^^^^^^
+
+Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
+DSA-only firmware via specified ("--auth-file" option) user/password and get the
+/export backup, optionally compressing it.
+
+| Can determine address of the router on its own (using "ip route get").
+| Can be used more generally to get/store output of any command(s) to the router.
+| Python script, uses "twisted.conch" for ssh.
+|
+
+Should not be needd for modern firmwares, where just using e.g. ``ssh
+admin@router /export`` with RSA keys works perfectly well.
+"ssh-dump" script above can be used to pass all necessary non-interactive
+mode options and compress/rotate resulting file with these.
+
+zfs-snapper
+^^^^^^^^^^^
+
+Simple py script to create ZFS snapshot and keep a number of older snapshots
+according to a `retention policy, similar to how btrbk tool does it`_
+(specified via -p/--ret-policy option)::
+
+  [<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
+
+Such policy defines max number of most recent -ly snapshots to preserve.
+I.e. "3 weekly" means to make sure one snapshot from this week,
+one from last week, and one from the week before that will be preserved.
+
+Script only matches exact snapshots that it created (renaming these will
+make it ignore them), and removes all oldest ones that fall outside of
+retention policy string.
+
+See built-in -h/--help output for more info and all the options.
+
+Similar to sanoid_, but much simplier and in python instead of perl.
+
+.. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
+.. _sanoid: https://github.com/jimsalterjrs/sanoid
+
+btrfs-snapper
+^^^^^^^^^^^^^
+
+Same as zfs-snapper script above, but for making and managing
+read-only snapshots of btrfs subvolumes in a specific directory for those,
+according to same retention policy string.
+
+Similar to btrbk_, but much simplier and more reliable/predictable,
+without a ton of extra features that's been piled-on there over time.
+
+.. _btrbk: https://digint.ch/btrbk/
 
 
 [desktop] Linux desktop stuff
