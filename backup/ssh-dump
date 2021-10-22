@@ -1,20 +1,23 @@
 #!/bin/bash
 
-set -e -o pipefail
+set -eo pipefail
 export LC_ALL=C
 
+err=0
 ssh_cmd=( /export terse )
 suff_fmt='%Y-%m-%d_%H%M%S'
 n=9
+rm_empty=t
 
 usage() {
 	bin=$(basename $0)
-	echo >&2 "Usage: $bin [-x] [-n N] [-s suffix-fmt] dst-file user@host [command...]"
+	echo >&2 "Usage: $bin [-x] [-e] [-n N] [-s suffix-fmt] dst-file user@host [command...]"
 	echo >&2
 	echo >&2 "Run command on a remote host non-interactively, dumping output to dst-file."
 	echo >&2
 	echo >&2 "dst-file is rotated (N copies preserved) and can have compression-type suffix."
 	echo >&2 "E.g. using backup.gz will use gzip to compress it, same with xz, lz4, zst."
+	echo >&2 "Empty resulting files are silently dropped, unless -e option is specified."
 	echo >&2 "Rotated files will have date/time suffix, use -n 0 to disable rotation entirely."
 	echo >&2
 	echo >&2 "Default command (if not specified): ${ssh_cmd[@]}"
@@ -23,12 +26,13 @@ usage() {
 	exit ${1:-0}
 }
 
-while getopts ":hn:s:x" opt
+while getopts ":hn:s:xe" opt
 do case "$opt" in
 	h) usage 0 ;;
 	n) [[ $OPTARG =~ ^[0-9]+$ ]] && n=$OPTARG \
 		|| { echo >&2 -e "ERROR: Invalid -n value: $OPTARG\n"; usage 1; } ;;
 	s) suff_fmt=$OPTARG ;;
+	e) rm_empty= ;;
 	x) set -x ;;
 	*) { echo >&2 -e "ERROR: Invalid option: -$OPTARG\n"; usage 1; } ;;
 esac; done
@@ -39,17 +43,25 @@ file=$1 host=$2
 shift; shift
 [[ $# -le 0 ]] || ssh_cmd=( "$@" )
 
-declare -A compress_opts=( [gz]=gzip [xz]=xz [lz4]=lz4 [zst]=zstd )
-compress=${compress_opts[${file##*.}]}
-[[ -n "$compress" ]] && cmd_pipe="| $compress" || cmd_pipe=''
-
 ssh_opts=(
 	-nT -oControlPath=none -oControlMaster=no
 	-oConnectTimeout=180 -oServerAliveInterval=6 -oServerAliveCountMax=10
 	-oBatchMode=yes -oPasswordAuthentication=no -oNumberOfPasswordPrompts=0 )
 
-file_dst="$file.$(date +"$suff_fmt")"
-eval "ssh ${ssh_opts[@]} $host -- ${ssh_cmd[@]} $cmd_pipe >$file_dst"
+[[ "${file%.tmp}" = "$file" ]] || { echo >&2 "ERROR: dst filename cannot end with .tmp"; exit 1; }
+file_dst="$file.$(date +"$suff_fmt")" file_tmp="$file_dst".tmp
+ssh "${ssh_opts[@]}" "$host" -- "${ssh_cmd[@]}" >"$file_tmp" \
+	|| { rm -f "$file_tmp"; echo >&2 "ERROR: ssh dump command failed"; exit 1; }
+
+[[ -n "$rm_empty" && ! -s "$file_tmp" ]] || {
+	declare -A compress_opts=( [gz]=gzip [xz]=xz [lz4]=lz4 [zst]=zstd )
+	compress=${compress_opts[${file##*.}]}
+	if [[ -z "$compress" ]]
+	then mv "$file_tmp" "$file_dst"
+	else "$compress" <"$file_tmp" >"$file_dst" || { mv "$file_tmp" "$file_dst"
+		echo >&2 "ERROR: failed to compress resulting dump-file using $compress"; err=1; }
+	fi; }
+rm -f "$file_tmp"
 
 [[ $n -le 0 ]] || {
 	readarray -t files < <(ls -1 "$file".* | sort)
@@ -57,6 +69,7 @@ eval "ssh ${ssh_opts[@]} $host -- ${ssh_cmd[@]} $cmd_pipe >$file_dst"
 	for p in "${files[@]}"; do
 		[[ $n_files -gt $n ]] || break
 		rm -f "$p"
-		(( n_files -= 1 ))
-	done
-}
+		[[ "${p%.tmp}" != "$p" ]] || (( n_files -= 1 ))
+	done; }
+
+exit $err
