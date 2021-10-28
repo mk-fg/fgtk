@@ -109,6 +109,7 @@ class SDProps(cs.UserDict):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self.fix_camelcase()
+		self.split_qualifiers()
 
 	def fix_camelcase(self):
 		for k in list(self.keys()):
@@ -126,8 +127,26 @@ class SDProps(cs.UserDict):
 			if len(v) == 1 and isinstance(v[0], dict):
 				SDProps.fix_camelcase(v[0])
 
+	def split_qualifiers(self):
+		# Some values have "(origin-X destination-Y ...)" qualifiers at the end
+		# Split those into separate _origin/_destination sub-props
+		for k, v_list in list(self.items()):
+			sks = cs.defaultdict(list)
+			for n, v in enumerate(v_list):
+				try:
+					u, q = v.split(None, 1)
+					if not (q[0] == '(' and q[-1] == ')'): continue
+				except: continue
+				for sk, v in (q.split('-', 1) for q in q[1:-1].split()):
+					sks[f'{k}_{sk.lower()}'].append(v.lower())
+				v_list[n] = u
+			if len(v_list) > 1: continue # just strip q for multi-value props
+			for sk, v_list in sks.items():
+				if sk in self: raise RuntimeError(f'Conflicting qualifier subkey {sk!r} in: {self}')
+				self[sk] = v_list
+
 	def __getattr__(self, k):
-		if k.endswith('_N'):
+		if k.endswith('_N'): # same attr with fallback to string
 			k = k[:-2]
 			if k not in self: return ''
 		v_list = self[k]
