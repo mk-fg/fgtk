@@ -496,13 +496,16 @@ class TVF:
 
 
 	async def get(self, ctx: cl.AsyncExitStack, url, file_prefix, info_suffix=None):
+		if file_prefix.lower().endswith('.mp4'): file_prefix = file_prefix[:-4]
 		file_prefix = pl.Path(file_prefix)
-		file_dst_path = file_prefix.with_suffix('.mp4')
+		file_prefix_ext = lambda ext: file_prefix.parent / (file_prefix.name + f'.{ext}')
+
+		file_dst_path = file_prefix_ext('mp4')
 		file_dst_done = file_dst_path
 
 		if self.conf.use_temp_dirs:
 			name = file_prefix.name
-			file_prefix_dir = file_prefix.with_suffix('.tmp')
+			file_prefix_dir = file_prefix.parent / (name + '.tmp')
 			file_prefix = file_prefix_dir / name
 
 		vod_cache = ft.partial(TVFFileCache, file_prefix)
@@ -521,12 +524,13 @@ class TVF:
 					is True else self.conf.ytdl_output_format, ytdl_filename )
 			file_dst_done = file_dst_path.parent / ytdl_filename
 		elif self.conf.file_part_suffix:
-			file_dst_done, file_dst_path = file_dst_path, file_dst_path.with_suffix('.part.mp4')
+			file_dst_done = file_dst_path
+			file_dst_path = file_dst_path.parent / (file_dst_path.name[:-4] + '.part.mp4')
 
 		# Assuming file_dst is fully downloaded if there's no playlist tempfile around
 		# It's not a problem even with --keep-tempfiles, as file_dst_mark will be kept there too
 		if file_dst_done.exists() and (
-				file_dst_path != file_dst_done or not file_prefix.with_suffix('.m3u8').exists() ):
+				file_dst_path != file_dst_done or not file_prefix_ext('m3u8').exists() ):
 			self.log.info( '--- Skipping download'
 				' for existing file: {} (rename/remove it to force)', file_dst_done )
 			return
@@ -570,7 +574,7 @@ class TVF:
 		file_dst_pos = file_dst_seq = 0 # position in dst file, sequential gid int
 
 		file_dst_mark_fmt = '>QI'
-		file_dst_mark = ctx.enter_context(file_prefix.with_suffix('.pos').open('a+b'))
+		file_dst_mark = ctx.enter_context(file_prefix_ext('pos').open('a+b'))
 		if file_dst_mark.tell() != 0:
 			file_dst_mark.seek(-struct.calcsize(file_dst_mark_fmt), os.SEEK_END)
 			file_dst_pos, file_dst_seq = struct.unpack(file_dst_mark_fmt, file_dst_mark.read())
@@ -599,7 +603,7 @@ class TVF:
 
 		async with TVFAria2Proc(
 				self.conf, http, aria2c_conf_path, key, port,
-				lambda gid: file_prefix.with_suffix(f'.{gid}.mp4.chunk') ) as aria2c:
+				lambda gid: file_prefix_ext(f'{gid}.mp4.chunk') ) as aria2c:
 			await aria2c.connect()
 
 			# All chunks from iter(chunks) get queued for download here
