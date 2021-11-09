@@ -250,6 +250,7 @@ def main(args=None):
 				stdout=sp.PIPE ).stdout.decode().strip().split('\n')
 			for line in lines:
 				if m := re_s.search(line): sessions.append(m.group(1))
+			sessions = sorted(sessions, key=lambda s: int(re.findall(r'^\d+', s)[0] or 0))
 		with tempfile.NamedTemporaryFile(prefix='.term-pipe.', buffering=0) as tmp:
 			tmp_ts = os.fstat(tmp.fileno()).st_mtime
 			for s, n in it.product(sessions, range(opts.win_max)):
