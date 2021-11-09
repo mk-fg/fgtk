@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import os, sys, socket, re, unicodedata, pathlib as pl
-import math, time, datetime as dt, subprocess as sp
 import urllib.request as ul, urllib.error as ule, urllib.parse as ulp
+import pathlib as pl, datetime as dt, subprocess as sp
+import os, sys, socket, re, unicodedata, math, time
 
 import feedparser as fp
 
@@ -20,6 +20,10 @@ conf = adict( version='1.0', socket_timeout=20.0,
 		'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2',
 	feed_user_agent='rss-get/{ver} (github.com/mk-fg/fgtk#rss-get) feedparser/{ver_fp}' )
 conf.feed_user_agent = conf.feed_user_agent.format(ver=conf.version, ver_fp=fp.__version__)
+conf.aria2c_cmd = [ 'aria2c',
+	'-s8', '-x8', '-k', '2M', '--console-log-level=warn', '--file-allocation=none',
+	'--check-certificate=false', # workaround for aria2c or its tls lib, not important here
+	'--user-agent', conf.feed_user_agent ]
 
 
 class FeedError(Exception): pass
@@ -135,8 +139,8 @@ def main(args=None):
 	parser = argparse.ArgumentParser(
 		description='Parse feed at the URL and print/download enclosure links from it.'
 			' Prints item info by default, unless -n/--num and/or -p/--print-urls opts are specified.'
-			' Downloads to current dir, by passing'
-				' filelist to aria2c with some parallelization options.')
+			' Downloads to temp dir by default, passing filelist to aria2c'
+				' with some parallelization options, then moves all files to the current dir.')
 	parser.add_argument('url', help='URL or file path to grab the feed from.')
 	parser.add_argument('--file', action='store_true',
 		help='Do not try to append https:// prefix to non-URL and non-existent paths.')
@@ -169,6 +173,8 @@ def main(args=None):
 			' Python str formatting is used, with "e" being feed entry object from feedparser module.'
 			' See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.'
 			' Default: %(default)s')
+	parser.add_argument('-i', '--inplace', action='store_true',
+		help='Download files in-place, instead of using tmpdir and then moving them all on success.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.max_filename_len < 16:
@@ -244,10 +250,18 @@ def main(args=None):
 		file_list.append(f'  out={name}.{ext}\n')
 	file_list = ''.join(file_list)
 
-	sp.run(
-		[ 'aria2c', '-s8', '-x8', '-k', '2M', '--console-log-level=warn',
-			'--check-certificate=false', # workaround for aria2c or its tls lib, not important here
-			'--file-allocation=none', '--input-file', '-', '--user-agent', conf.feed_user_agent ],
-		input=file_list.encode(), check=True )
+	if opts.inplace:
+		return sp.run(
+			[*conf.aria2c_cmd, '--input-file', '-'],
+			input=file_list.encode(), check=True ) and None
+
+	import shutil, tempfile
+	p_dst = pl.Path.cwd()
+	with tempfile.TemporaryDirectory(prefix=f'.rss-get.{os.getpid()}.') as p:
+		p_tmpdir = pl.Path(p)
+		sp.run(
+			[*conf.aria2c_cmd, '--input-file', '-'],
+			cwd=p_tmpdir, input=file_list.encode(), check=True )
+		for p in sorted(p_tmpdir.iterdir(), key=lambda p: p.name): shutil.move(p, p_dst)
 
 if __name__ == '__main__': sys.exit(main())
