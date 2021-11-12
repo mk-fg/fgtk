@@ -179,14 +179,9 @@ def create_rsync_conf( ctx, path, rsync_info,
 	rsync_secrets = ctx.enter_context(
 		temp_file('.ssh-r-sync.passwd.', f'{rsync_info.user}:{rsync_info.key}\n') )
 	rsync_lock = ctx.enter_context(temp_file('.ssh-r-sync.lock.'))
-	skip_compress_line = (
-		r'gz/bz2/t[gb]z/tbz2/xz/lzma/7z/zip/rar/rpm/deb/iso'
-		r'/jpg/gif/png/mov/avi/og[gv]/mkv/webm/mp[34g]/flv/flac/ape/pdf/djvu' )
-	skip_compress_line = ' '.join(f'*.{ext}' for ext in skip_compress_line.split('/'))
 	rsync_conf = [
 		'hosts allow = localhost', 'read only = true', 'numeric ids = true',
-		'max connections = 1', f'lock file = {rsync_lock.name}',
-		'timeout = 600', f'dont compress = {skip_compress_line}',
+		'max connections = 1', f'lock file = {rsync_lock.name}', 'timeout = 600',
 		f'secrets file = {rsync_secrets.name}', f'auth users = {rsync_info.user}' ]
 	if rsync_info.su: rsync_conf.extend(['uid = root', 'gid = *'])
 	else: rsync_conf.append('use chroot = no')
