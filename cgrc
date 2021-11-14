@@ -120,7 +120,9 @@ slice=$1
 	setcg
 	while :; do
 		setprocs
-		[ -n "$procs" ] || break
+		[ -n "$procs" ] || {
+			# If there's a follow-up command, wait until cg unit is gone too
+			[ -n "$1" -a -n "$cg" ] || break; }
 		[ -z "$queue_timeout" ] || {
 			queue_timeout=$(($queue_timeout - $queue_delay))
 			[ "$queue_timeout" -gt 0 ] || exit 36
