@@ -5,7 +5,7 @@ usage() {
 	echo >&2 "Usage:"
 	echo >&2
 	echo >&2 "  $bin n_first [ n_last [ delay_sec ] ]"
-	echo >&2 "    Download videos for youtube channel to the current dir"
+	echo >&2 "    Download video(s) for youtube channel to the current dir"
 	echo >&2 "     (from n_first to n_last) in same order to how they're"
 	echo >&2 "     listed in the metadata cache file (e.g. oldest-to-latest)."
 	echo >&2 "    Run in an empty dir with any numbers to get more info on how to"
@@ -70,14 +70,15 @@ chan_cache=_meta.json
 }
 
 
-sed_exp= delay=
+sed_exp= delay=0
 if [[ "$1" = -n || "$1" = --pick ]] ; then
 	[[ "$#" -ge 2 ]] || usage 1
 	shift
 	for n in "$@"; do sed_exp="${sed_exp}${n}p;"; done
 else
 	[[ "$#" -le 3 ]] || usage 1
-	sed_exp="${1},${2:-9999} p" delay=${3:-0}
+	[[ -z "$2" ]] && sed_exp="$1 p" || sed_exp="$1,$2 p"
+	delay=${3:-0}
 fi
 
 while read n u; do
