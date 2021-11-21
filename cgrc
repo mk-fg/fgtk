@@ -120,13 +120,10 @@ slice=$1
 	setcg
 	while :; do
 		setprocs
-		[ -n "$procs" ] || {
-			# If there's a follow-up command, wait until cg unit is gone too
-			[ -n "$1" -a -n "$cg" ] || break; }
+		[ -n "$procs" ] || break
 		[ -z "$queue_timeout" ] || {
 			queue_timeout=$(($queue_timeout - $queue_delay))
-			[ "$queue_timeout" -gt 0 ] || exit 36
-		}
+			[ "$queue_timeout" -gt 0 ] || exit 36; }
 		sleep "$queue_delay"
 	done
 	[ -n "$1" ] || exit 0 # wait without command
@@ -157,8 +154,20 @@ if [ -n "$1" ]; then
 	shift; [ -n "$1" ] || { echo >&2 "ERROR - no command specified"; usage; }
 else [ -n "$stats" ] || usage 0; fi
 
-# Unit names should have no spaces, so command can be expanded from string
-[ -n "$unit" ] && u="--unit $unit" || { u=${1##*/}; u="--unit ${u%% *}"; }
+uname=$unit
+[ -n "$uname" ] && u="--unit $uname" || {
+	uname=${1##*/}; uname=${uname%% *}; u="--unit $uname"; }
+
+[ -z "$queue" -o "$mode" != scope ] || {
+	# Also check/wait for pre-exising .scope unit, if any - systemd-run will fail otheriwse
+	while [ -n "$(systemctl -q "$t" show -p ControlGroup --value -- "$uname".scope)" ]; do
+		[ -z "$queue_timeout" ] || {
+			queue_timeout=$(($queue_timeout - $queue_delay))
+			[ "$queue_timeout" -gt 0 ] || exit 36; }
+		sleep "$queue_delay"
+	done
+}
+
 [ "$mode" = scope ] && tu=--scope \
 	|| tu='--service-type=exec --same-dir --wait --pty --collect'
 wrapper="systemd-run -q $t $tu $u --slice $slice$props --"
