@@ -231,11 +231,12 @@ class AudioConv:
 	async def run_async(cls, *args, **kws):
 		async with cls(*args, **kws) as self: return await self.run()
 
-	def __init__(self, loop, src_list, dst_name_tpl=None,
+	def __init__(self, src_list, dst_name_tpl=None,
 			start=None, length=None, chunks=None, chunks_beep=False,
 			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
-		self.loop, self.src_list, self.dst_name_tpl = loop, src_list, dst_name_tpl
+		self.loop = asyncio.get_running_loop()
+		self.src_list, self.dst_name_tpl = src_list, dst_name_tpl
 		self.max_parallel = max_parallel or os.cpu_count()
 		self.start, self.length, self.probe = start, length, probe
 		self.chunks, self.chunks_beep = chunks, chunks_beep
@@ -793,16 +794,12 @@ def main(args=None):
 			log.warning( 'Failed to conclusively check ffmpeg (detected version: {})'
 				' for libebur128 support, script can fail at volume normalization steps', ffmpeg_ver )
 
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		success = loop.run_until_complete(
-			AudioConv.run_async(
-				loop, src_list, dst_name_tpl=opts.name,
-				start=start, length=length,
-				chunks=chunks, chunks_beep=bool(chunks and opts.chunks_beep),
-				max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
-				remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
-				loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ) )
-
+	success = asyncio.run(AudioConv.run_async(
+		src_list, dst_name_tpl=opts.name, start=start, length=length,
+		chunks=chunks, chunks_beep=bool(chunks and opts.chunks_beep),
+		max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
+		remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
+		loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ))
 	return int(not success)
 
 if __name__ == '__main__': sys.exit(main())
