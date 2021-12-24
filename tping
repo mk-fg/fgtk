@@ -25,9 +25,9 @@ async def conn_discard(conn):
 	conn.cancel()
 	with contextlib.suppress(asyncio.CancelledError, socket.error): await conn
 
-async def run_tping(loop, timeout, *args, **kws):
-	conns, exit_code = OrderedDict(), 0
-	pinger = loop.create_task(_run_tping(loop, conns, *args, **kws))
+async def run_tping(timeout, *args, **kws):
+	conns, exit_code, loop = OrderedDict(), 0, asyncio.get_running_loop()
+	pinger = asyncio.create_task(_run_tping(loop, conns, *args, **kws))
 	def sig_handler(code):
 		nonlocal exit_code
 		exit_code = code
@@ -180,9 +180,8 @@ def main(args=None):
 	log.debug( 'Resolved host:port {!r}:{!r} to endpoint: {} (family: {}, type: {})',
 		host, port, sock_addr, sockopt_resolve('af_', sock_af), sockopt_resolve('sock_', sock_t) )
 
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		err = loop.run_until_complete(run_tping(
-			loop, opts.timeout, sock_addr, sock_af, opts.retry_delay, opts.conn_timeout ))
+	err = asyncio.run(run_tping( opts.timeout,
+		sock_addr, sock_af, opts.retry_delay, opts.conn_timeout ))
 	if err: return err
 
 	if opts.ssh:
