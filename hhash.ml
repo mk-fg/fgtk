@@ -1,12 +1,14 @@
 (* Command-line tool to hash strings/data to words from cached aspell dictionary.
  *
  * Build with:
- *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa -cclib -lsodium hhash.ml hhash.ml.c
+ *   % ocamlopt -o hhash -O2 unix.cmxa str.cmxa \
+ *      -cclib -lsodium -ccopt -Wl,--no-as-needed hhash.ml hhash.ml.c
  *   % strip hhash
  *
  * Usage:
  *   % ./hhash some-fingerprint other-fp-string
  *   % ./hhash -e <<< file-contents
+ * Debug: OCAMLRUNPARAM=b ./hhash ...
  *)
 
 let cli_dict_cmd = ref "/usr/bin/aspell -d en dump master"
