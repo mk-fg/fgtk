@@ -146,10 +146,15 @@ def mail_find(maildir, msgid, msgpath, ts, ts_diff_max=5*60):
 			mail = join(path, mail)
 			if abs(ts - os.stat(mail).st_mtime) > ts_diff_max: break # newest mails should be first
 			with open(mail) as src:
+				msg_id_line = False
 				for line in src:
 					line = line.strip()
 					if not line: break # end of headers
-					match = re.search(r'^message-id:\s*(<[^>]+>)\s*$'.format(re.escape(msgid)), line, re.I)
+					if msg_id_line: match = re.search(r'^\s*(<[^>]+>)(\s|$)', line)
+					else:
+						match = re.search(r'^message-id:\s*(?:(<[^>]+>)\s*)?$', line, re.I)
+						if match and not match.group(1): msg_id_line = True; continue
+					msg_id_line = False
 					if not match or match.group(1) != msgid: continue
 					src.seek(0)
 					return email.message_from_file(src)
