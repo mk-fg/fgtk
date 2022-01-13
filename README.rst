@@ -3065,6 +3065,24 @@ various ways - see -h/--help output for more info.
 
 .. _xclip: https://github.com/astrand/xclip
 
+xdpms
+'''''
+
+Tiny 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
+many seconds are left until dpms will turn off display(s) (dpms as in ``xset q``),
+or "0" if it already happened.
+
+Purpose is to check whether some "display is disabled" action should be taken,
+or otherwise get the countdown until the next check.
+
+Build with: ``gcc -O2 -lX11 -lXss -lXext xdpms.c -o xdpms && strip xdpms``
+
+Should work on Xorg systems, but under wayland same thing should probably be
+queried from compositor somehow, or ideally it might even emit on/off events
+somewhere, instead of needing this kind of polling.
+
+.. _xprintidle: https://github.com/g0hl1n/xprintidle
+
 rss-get
 '''''''
 
