@@ -1,0 +1,27 @@
+#!/bin/bash
+
+usage() {
+	bin=$(basename $0)
+	echo >&2 "Usage: $bin service [link-name]"
+	echo >&2
+	echo >&2 "Wrapper around docker/docker-compose to symlink uppermost"
+	echo >&2 "  merged overlayfs layer of a running service/container in a compose setup."
+	echo >&2 "Such symlink allows to copy/edit stuff to/from running container easily."
+	echo >&2 "Default symlink name will be underscore + service-name, e.g. _mysvc"
+	echo >&2 "Such paths are likely to change on restarts, re-run the tool to fix them."
+	exit ${1:-0}
+}
+[[ "$#" -lt 1 || "$#" -gt 2 || "$1" = -h || "$1" = --help ]] && usage
+svc=$1 link=$2
+
+set -eo pipefail
+cid=$(docker-compose ps -q "$svc")
+[[ -n "$cid" ]] || { echo >&2 "ERROR: not dc-ps id for service `$svc`"; exit 1; }
+dst=$(docker inspect -f '{{.GraphDriver.Data.MergedDir}}' "$cid")
+[[ -n "$dst" ]] || { echo >&2 "ERROR: not d-inspect dir for container `$svc` [ $cid ]"; exit 1; }
+
+[[ -n "$link" ]] || link="_$svc"
+[[ ! -e "$link" ]] || {
+	[[ -L "$link" ]] || { echo >&2 "ERROR: link-path exists and is not symlink - `$link`"; exit 1; }
+	rm -f "$link"; }
+ln -s "$dst" "$link"

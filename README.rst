@@ -163,6 +163,20 @@ user acc in a main namespace.
 For long-term access (e.g. for some daemon), there probably are better options
 than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
 
+docker-ln
+'''''''''
+
+Simple bash script to symlink uppermost "merged" overlayfs layer of a running
+docker-compose setup container, to allow easy access to temporary files there.
+
+Useful for testing stuff without the need to rebuild and restart whole container
+or a bunch of compose stuff after every one-liner tweak to some script that's
+supposed to be running in there, or to experiment-with and debug things.
+
+These paths are very likely to change between container and docker-compose
+restarts for many reasons, so such symlinks are generally only valid during
+container runtime, and script needs a re-run to update these too.
+
 fast-disk-wipe
 ''''''''''''''
 
