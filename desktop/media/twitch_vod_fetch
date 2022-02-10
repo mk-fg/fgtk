@@ -780,6 +780,7 @@ def main(args=None, conf=None):
 		format='%(asctime)s :: {}%(levelname)s :: %(message)s'\
 			.format('%(name)s ' if opts.debug else ''),
 		level=logging.DEBUG if opts.debug else logging.INFO )
+	logging.getLogger('charset_normalizer').setLevel(logging.WARNING) # noisy aiohttp dep
 	log = get_logger('tvf.main')
 
 	conf.slice_start, conf.slice_len = opts.start_pos or 0, opts.length
