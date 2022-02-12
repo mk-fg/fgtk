@@ -26,9 +26,7 @@ dst=$(docker inspect -f '{{.GraphDriver.Data.MergedDir}}' "$cid")
 [[ -n "$dst" ]] || { echo >&2 "ERROR: not d-inspect dir for container '$svc' [ $cid ]"; exit 1; }
 
 [[ -n "$link" ]] || link="_$svc"
-[[ ! -e "$link" ]] || {
-	[[ -L "$link" ]] || { echo >&2 "ERROR: link-path exists and is not symlink - '$link'"; exit 1; }
-	rm -f "$link"; }
+[[ ! -L "$link" ]] || rm -f "$link"
 
 ln_opts=()
 [[ -z "$rel" ]] || ln_opts+=( -r )
