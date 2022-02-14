@@ -21,11 +21,12 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
 def ipv6_dns(opts):
-	addr = ip.IPv6Address(opts.ipv6_address).exploded
-	log.debug('Exploded address: {}', addr)
-	addr = addr.replace(':', '')
-	if not opts.djbdns: print('.'.join(reversed(addr)) + '.ip6.arpa')
-	else: print(addr)
+	addr_ex = ip.IPv6Address(opts.ipv6_address).exploded
+	log.debug('Exploded address: {}', addr_ex)
+	addr_digits = addr_ex.replace(':', '')
+	if opts.exploded: print(addr_ex)
+	if opts.djbdns: print(addr_digits)
+	if not (opts.djbdns or opts.exploded): print('.'.join(reversed(addr_digits)) + '.ip6.arpa')
 
 
 def ipv6_lladdr(opts):
@@ -232,6 +233,8 @@ def main(args=None):
 	cmd = cmds.add_parser('ipv6-dns',
 		help='Convert IPv6 address to "*.ip6.arpa" (or other) domain name format.')
 	cmd.add_argument('ipv6_address', help='Address to convert.')
+	cmd.add_argument('-e', '--exploded',
+		action='store_true', help='Convert to exploded IPv6 address for an SPF record.')
 	cmd.add_argument('-d', '--djbdns',
 		action='store_true', help='Convert to canonical djbdns record format instead.')
 
