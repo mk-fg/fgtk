@@ -1471,10 +1471,6 @@ resulting address to the interface, if missing:
 ``ipv6-name`` encodes or hashes name into IPv6 address suffix to produce an
 easy-to-remember static ones.
 
-``ip-check`` subcommand allows to check if address (ipv4/ipv6) is assigned to
-any of the interfaces and/or run "ip add" (with specified parameters) to assign
-it, if not.
-
 ``iptables-flush`` removes all iptables/ip6tables rules from all tables,
 including any custom chains, using iptables-save/restore command-line tools, and
 sets policy for default chains to ACCEPT.

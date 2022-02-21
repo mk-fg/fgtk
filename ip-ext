@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import hashlib as hl, ipaddress as ip, subprocess as sp, itertools as it
-import os, sys, socket, logging, re, json, unicodedata
+import os, sys, logging, re, json
 
 
 class LogMessage:
@@ -142,47 +142,6 @@ def ipv6_name(opts):
 	print(addr)
 
 
-def ip_check(opts):
-	opts.parser.error('This option is not ported from py2 legacy code yet')
-	if opts.assign and not opts.iface:
-		parser.error('--assign requires --iface option to be specified.')
-
-	addr_seek = ip.IPAddress(opts.addr)
-	af = {4: netifaces.AF_INET, 6: netifaces.AF_INET6}[addr_seek.version]
-	found, ifaces = False, [opts.iface] if opts.iface else netifaces.interfaces()
-
-	for iface in ifaces:
-		addrs = netifaces.ifaddresses(iface)
-		for addr in addrs.get(af, list()):
-			if 'addr' not in addr: continue
-			addr = ip.IPAddress(addr['addr'].split('%', 1)[0])
-			if addr == addr_seek:
-				found = iface
-				break
-		if found: break
-
-	if found:
-		log.debug('Address (%s) found on interface: %s', addr_seek, iface)
-		return 0
-	elif not opts.assign:
-		log.debug(
-			'Address (%s, family: %s) not found on interfaces: %s',
-			addr_seek, netifaces.address_families[af], ', '.join(ifaces) )
-		return 1
-
-	opts.assign = opts.assign.strip().split()
-	if opts.assign[0].startswith('/'):
-		addr = '{}{}'.format(addr_seek, opts.assign[0])
-		opts.assign = opts.assign[1:]
-	else: addr = addr_seek.format()
-	cmd = ['ip', 'addr', 'add', addr, 'dev', opts.iface] + opts.assign
-	log.debug('Assign command: {}'.format(' '.join(cmd)))
-	if Popen(cmd).wait():
-		raise RuntimeError( 'Failed to assign address'
-			' ({}) to interface: {}'.format(ipv6_lladdr, opts.iface) )
-	log.debug('Assigned address (%s) to interface: %s', addr, opts.iface)
-
-
 def iptables_flush(opts):
 	for ipt in 'iptables', 'ip6tables':
 		tables = sp.check_output(f'{ipt}-save')
@@ -204,17 +163,6 @@ def main(args=None):
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	cmds = parser.add_subparsers(title='Supported actions', dest='call')
-
-	cmd = cmds.add_parser('ip-check',
-		help='Check if os/interface has specified address configured.')
-	cmd.add_argument('addr',
-		help='IP address to look for. Exits with non-zero status if not found.')
-	cmd.add_argument('-i', '--iface', metavar='dev', help='Interface to limit check to.')
-	cmd.add_argument('-x', '--assign', metavar='[/cidr ][ip-add extras]',
-		help='Assign address to interface, if missing. Requires --iface option to be used.'
-			' Option argument must specify CIDR netmask and can also have'
-				' additional command-line parameters to pass to "ip add" line (except for "dev"),'
-				' examples: "/24", "/24 primary label main", "peer 1.2.3.4 scope global".')
 
 	cmd = cmds.add_parser('ipv6-lladdr',
 		help='Generate and/or assign link-local IPv6 address to the interface.')
@@ -269,9 +217,8 @@ def main(args=None):
 	log = get_logger('main')
 
 	try:
-		func = dict(
-			ipv6_dns=ipv6_dns, ipv6_lladdr=ipv6_lladdr, ipv6_name=ipv6_name,
-			iptables_flush=iptables_flush, ip_check=ip_check )[opts.call.replace('-', '_')]
+		func = dict( ipv6_dns=ipv6_dns, ipv6_lladdr=ipv6_lladdr,
+			ipv6_name=ipv6_name, iptables_flush=iptables_flush )[opts.call.replace('-', '_')]
 	except KeyError:
 		parser.error('Action {!r} is not implemented.'.format(opts.call))
 	return func(opts)
