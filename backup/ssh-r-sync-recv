@@ -300,7 +300,7 @@ def main(args=None):
 
 	su_fake = rsync_info.opts.get('fake_super')
 	su_mode = not su_fake and rsync_info.su
-	rsync_opts = [ '--delete', '--delete-excluded']
+	rsync_opts = ['--delete', '--delete-excluded', '--zl=1']
 	if rsync_info.opts.get('one_file_system'): rsync_opts.append('-x')
 	if su_mode: rsync_opts.extend(['-HaAXS', '--super', '--numeric-ids'])
 	else: rsync_opts.append('-rltHE')
@@ -322,7 +322,7 @@ def main(args=None):
 		[ rsync, *rsync_opts, f'rsync://{rsync_info.user}@'
 			f'{conf.recv_port_bind}:{rsync_port}/{rsync_info.mod}/.', str(bak_path / '.') ],
 		stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-		env=dict(RSYNC_PASSWORD=rsync_info.key) )
+		env=dict(RSYNC_PASSWORD=rsync_info.key, RSYNC_COMPRESS_LIST='zstd none') )
 	rsync_code, rsync_ouput = rsync.returncode, rsync.stdout
 
 	hook = bak_hooks.run( 'rsync.done',
