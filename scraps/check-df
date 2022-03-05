@@ -6,8 +6,15 @@ skip_fstypes=( fuse.sshfs squashfs )
 skip_mps=( )
 err=
 
-while read mp perc_space perc_inodes fstype used size; do
-	[[ "$mp" = Mounted ]] && continue
+df_bb= df_cmd=$(readlink -f $(command -pv df))
+[[ "${df_cmd##*/}" = busybox ]] && df_bb=t df_cmd='df -hT' || \
+	df_cmd='df -h --output=target,pcent,ipcent,fstype,used,size'
+
+while read mp perc_space perc_inodes fstype used size tail; do
+	[[ "$mp" = Mounted || "$mp" = Filesystem ]] && continue
+	[[ -z "$df_bb" ]] || {
+		mp=$tail used=$fstype fstype=$perc_space
+		perc_space=$size size=$perc_inodes perc_inodes=0; }
 
 	skip=
 	for fstype_chk in "${skip_fstypes[@]}"
@@ -28,10 +35,8 @@ while read mp perc_space perc_inodes fstype used size; do
 		&& "$perc_inodes" -gt "$max_inodes" ]] && warn=t
 
 	[[ -n "$warn" ]] && {
-		err=t
-		echo >&2 "WARNING: mountpoint is over space/inodes threshold"\
-			"($perc_space/$max_space:$perc_inodes/$max_inodes) - $mp ($fstype, $used/$size)"
-	}
-done < <(LANG=C df -h --output=target,pcent,ipcent,fstype,used,size)
+		err=t; echo >&2 "WARNING: mountpoint is over space/inodes threshold"\
+			"($perc_space/$max_space:$perc_inodes/$max_inodes) - $mp ($fstype, $used/$size)"; }
+done < <(LANG=C $df_cmd)
 
 [[ -n "$err" ]] && exit 1 || exit 0
