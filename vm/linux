@@ -1,7 +1,7 @@
 #!/bin/bash
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
-ins=1 smp=2 mem=4G nets=1 help_ext= root_opts_file=()
+ins=1 smp=2 mem=4G nets=1 root_opts_file=()
 img= dev_ro=() dev=() vfs= efi= iso=
 
 read -r -d '' script_usage <<EOF
@@ -236,7 +236,7 @@ root_opts=()
 [[ "${#dev[@]}" -eq 0 ]] || { for dev in "${dev[@]}"
 	do root_opts+=( -drive file="$dev",if=virtio,format=raw ); done; }
 [[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
-[[ -z "$efi" ]] || root_opts=(
+[[ -z "$efi" ]] || root_opts+=(
 	-drive if=pflash,format=raw,readonly,file=/usr/share/ovmf/x64/OVMF_CODE.fd
 	-drive if=pflash,format=raw,file="$efi" )
 
@@ -281,7 +281,7 @@ qemu_opts=(
 
 	-enable-kvm
 	-cpu host
-	-smp 2
+	-smp "$smp"
 	-m "$mem"
 	"${video[@]}"
 

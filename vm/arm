@@ -1,0 +1,150 @@
+#!/bin/bash
+
+script_info='ARM linux VM for alpine with EFI boot.'
+ins=1 smp=4 mem=4G nets=1 help_ext= root_opts_file=()
+img= dev_ro=() dev=() efi= iso=
+
+read -r -d '' script_usage <<EOF
+Usage: $0 [-r|--root] [ {-i|--instance} $ins ] [ {-t|--smp} $smp ] [ {-m|--mem} $mem ]
+	[ {-o|--opts} file.opts ] [ {-q|--img} file.qcow2 ]
+	[ {-s|--dev-ro} disk.img +] [ {-d|--dev} /dev/xyz +]
+	[ {-e|--efi} [copy of AAVMF32_CODE.fd] ] [ --iso image.iso ] [-nX|--nets=X]
+(note: ordering of options matters)
+EOF
+script_usage=${script_usage//	/  }
+
+read -r -d '' script_info_ext <<EOF
+$script_info
+
+Cheatsheet for qemu-img (to use with -q/--img option):
+	qemu-img create -f qcow2 install.qcow2 10G
+	qemu-img create -b install.qcow2 -f qcow2 install.qcow2.inc
+	qemu-img commit install.qcow2.inc && rm install.qcow2.inc
+
+Alpine install ISO can be grabbed from https://alpinelinux.org/downloads/
+Example: https://dl-cdn.alpinelinux.org/alpine/v3.15/releases/armv7/alpine-virt-3.15.0-armv7.iso
+
+XXX: install/post-install info
+EOF
+script_info_ext=${script_info_ext//	/  }
+
+[[ "$1" = -r || "$1" = --root || "$UID" -ne 0 ]] || {
+	echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
+
+[[ "$1" = -i || "$1" = --instance ]] && { ins=$2; shift; shift; }
+[[ "$1" = -t || "$1" = --smp ]] && { smp=$2; shift; shift; }
+[[ "$1" = -m || "$1" = --mem ]] && { mem=$2; shift; shift; }
+[[ "$1" = -o || "$1" = --opts ]] && {
+	declare -a root_opts_file="($(<"$2"))"; shift; shift; }
+[[ "$1" = -q || "$1" = --img ]] && { img=$(realpath "$2"); shift; shift; }
+while [[ "$1" = -s || "$1" = --dev-ro ]]
+	do dev_ro+=( $(realpath "$2") ); shift; shift; done
+while [[ "$1" = -d || "$1" = --dev ]]
+	do dev+=( $(realpath "$2") ); shift; shift; done
+[[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
+[[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
+[[ "$1" = -n2 || "$1" = --nets=2 ]] && { nets=2; shift; }
+[[ "$1" = -n3 || "$1" = --nets=3 ]] && { nets=3; shift; }
+
+root=$(dirname "$BASH_SOURCE")
+net_mac_tail=54:00:12:34:$(( 60 + $ins )) # missing first (even) octet
+net_pre=vm net_only=
+
+case "$1" in
+	# LAZY: didn't copy management commands here
+	n|net|net-only) net_only=t ;;
+
+	'') ;;
+	-h|--help-ext) echo "$script_usage";echo; echo "$script_info_ext"; exit 0 ;;
+	*)
+		echo >&2 "$script_usage"
+		echo >&2
+		echo >&2 "$script_info"
+		echo >&2 "Use -h/--help-ext option for various qemu/option/setup cheatsheets."
+		exit 1 ;;
+esac
+
+cd "$root"
+
+
+### img/iso options
+
+root_opts=()
+[[ "${#root_opts_file[@]}" -eq 0 ]] || root_opts+=( "${root_opts_file[@]}" )
+[[ -z "$img" ]] || root_opts+=(
+	-drive file="$img",if=virtio,aio=native,cache=writeback,cache.direct=on )
+[[ "${#dev_ro[@]}" -eq 0 ]] || { for dev in "${dev_ro[@]}"
+	do root_opts+=( -drive file="$dev",if=virtio,readonly=on,format=raw ); done; }
+[[ "${#dev[@]}" -eq 0 ]] || { for dev in "${dev[@]}"
+	do root_opts+=( -drive file="$dev",if=virtio,format=raw ); done; }
+[[ -z "$iso" ]] || root_opts+=( -cdrom "$iso" )
+[[ -z "$efi" ]] || root_opts=( -bios "$efi" )
+[[ -n "$efi" ]] || {
+	[[ -e AAVMF32_CODE.fd && -e AAVMF32_VARS.fd ]] \
+		&& root_opts=( -bios AAVMF32_CODE.fd ) \
+		|| { cat >&2 <<'EOF'
+## Need either -e/--efi option or AAVMF32_{CODE,VARS}.fd in the current dir
+# 32-bit ARM bios deb pkg: https://packages.debian.org/sid/qemu-efi-arm
+
+deb=https://ftp.debian.org/debian/pool/main/e/edk2/qemu-efi-arm_2022.02-1_all.deb;
+curl -L "$deb" | bsdtar -xOf - data.tar.xz | bsdtar -xf - ./usr/share/AAVMF/AAVMF32_\*.fd;
+mv usr/share/AAVMF/AAVMF32_* . && rmdir -p usr/share/AAVMF
+
+EOF
+			exit 1; } }
+
+
+### net options
+
+[[ -e /usr/local/bin/qemu-add-tap ]] || {
+	cat >&2 <<'EOF'
+## Missing qemu network tap helper in /usr/local/bin/qemu-add-tap
+## sudoers.d line: makepkg ALL=(root:root) NOPASSWD: /usr/local/bin/qemu-add-tap
+#!/bin/bash
+
+net_user=$1 net_pre=$2 mac_head=$3
+[[ -z "$4" && -n "$net_user" && -n "$net_pre" && -n "$mac_head" ]] \
+	|| { echo >&2 "Invalid arguments: $@"; exit 1; }
+
+ip link add "${net_pre}" type bridge
+ip tuntap add mode tap user "$net_user" "${net_pre}-${mac_head}"
+ip link set "${net_pre}-${mac_head}" master "${net_pre}"
+EOF
+	exit 1; }
+
+mac_head=52 net_opts=()
+while [[ "$nets" -gt 0 ]]; do
+	net_opts+=(
+		-device virtio-net-pci,mac=${mac_head}:${net_mac_tail},netdev=tap_${mac_head}
+		-netdev tap,id=tap_${mac_head},ifname=${net_pre}-${mac_head},br=${net_pre},script=no,downscript=no )
+	sudo -n /usr/local/bin/qemu-add-tap $USER ${net_pre} ${mac_head}
+	(( nets -= 1 )); (( mac_head += 2 ))
+done
+
+[[ -n "$net_only" ]] && exit 0
+
+
+### Run qemu
+
+qemu_opts=(
+	-name "$(basename "$0").$ins"
+	-bios AAVMF32_CODE.fd
+	-rtc base=utc,clock=host
+	-device virtio-rng-pci
+
+	-accel tcg,thread=multi
+	-machine virt
+	# XXX: check -machine help, accel stuff
+	-cpu cortex-a15
+	-smp cores="$smp"
+	-m "$mem"
+	-nographic
+
+	"${net_opts[@]}"
+	"${root_opts[@]}"
+)
+
+ulimit -c 0
+export QEMU_AUDIO_DRV=none
+
+exec qemu-system-arm "${qemu_opts[@]}"
