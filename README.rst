@@ -3109,13 +3109,6 @@ easily, etc.
 Don't really need abstractions libvirt (and stuff using it) provide on top of
 qemu/kvm, as latter already have decent enough interfaces to work with.
 
-Cheatsheet for qemu-img commands::
-
-  % qemu-img create -f qcow2 stuff.qcow2 10G
-  % qemu-img create -b stuff.qcow2 -f qcow2 stuff.qcow2.inc
-  % qemu-img commit stuff.qcow2.inc && rm stuff.qcow2.inc \
-    && qemu-img create -b stuff.qcow2 -f qcow2 stuff.qcow2.inc
-
 
 
 [bpf] Linux eBPF filters
