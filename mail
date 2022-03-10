@@ -33,7 +33,7 @@ while [[ -n "$1" ]]; do
 		-f) shift; from=( -f "$1" ); shift ;;
 		--) opt_chk=; shift ;;
 		-h|--help) usage ;;
-		-*) [[ -z "$opt_chk" ]] || { echo >&2 "Unknown option: $1"; exit 1; } ;;
+		-*) [[ -z "$opt_chk" ]] || { echo >&2 "ERROR: unknown option - $1"; exit 1; } ;;
 		*) rcpt+=( "$1" ); shift ;;
 	esac
 done
@@ -44,5 +44,8 @@ IFS=$ifs_; unset ifs_
 
 [[ ${#rcpt[@]} -gt 0 ]] || usage 1
 
+sendmail=/usr/bin/sendmail
+[[ -e "$sendmail" ]] || sendmail=/usr/sbin/sendmail
+[[ -e "$sendmail" ]] || { echo >&2 "ERROR: sendmail binary not found in /usr/{s,}bin"; exit 1; }
 { for line in "${letter[@]}"; do echo "${line}"; done; echo; cat; } |
-	exec /usr/bin/sendmail "${from[@]}" "${rcpt[@]}"
+	exec "$sendmail" "${from[@]}" "${rcpt[@]}"
