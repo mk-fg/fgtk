@@ -5,7 +5,7 @@ usage() {
 	echo >&2 "Usage: $bin"
 	exit ${1:-0}
 }
-[[ "$1" = -h || "$1" = --help ]] && usage
+[[ "$1" = -h || "$1" = --help || $# -ne 0 ]] && usage
 
 set -e -o pipefail
 export LC_ALL=C

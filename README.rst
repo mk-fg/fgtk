@@ -3310,6 +3310,42 @@ and -h/--help output from script for more options.
 
 
 
+[alpine] Alpine Linux
+~~~~~~~~~~~~~~~~~~~~~
+
+Various helper tools for automating Alpine Linux OS-level tasks.
+
+manifest
+^^^^^^^^
+
+Similar to `pacman-manifest`_ script above, but for alpine - creates text
+manifest files for current Alpine setup in ``/etc/apk/``:
+
+* world.all - all currently installed packages with their versions,
+  cleaned-up and sorted version of ``apk list -I``.
+
+* world.extras - "orphaned" packages - ``apk list -O``.
+
+* world.custom - names of all installed custom-built packages.
+
+* site.rc - all OpenRC_ init scripts and runlevel they're enabled at.
+
+* site.conf-diffs - all ``.apk-new`` files on the system (via mlocate).
+
+* site.local - contents of ``/usr/local``.
+
+Same idea as with pacman-manifest - run this after updates or via cron,
+keep in some git to easily diff stuff for rollbacks, see what changes
+in the system and such routine operational tasks and visibility.
+
+I.e. for when new service got added that you forgot to enable,
+unmerged new config, custom packages replaced by upstream,
+new/unnecessary/forgotten ``/usr/local`` stuff, etc.
+
+.. _OpenRC: https://github.com/OpenRC/openrc
+
+
+
 [metrics] Charts and metrics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
