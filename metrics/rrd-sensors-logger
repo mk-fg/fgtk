@@ -471,7 +471,7 @@ class RRD:
 			self.log.debug('Creating new rrd database: %r', self.path)
 			self.storage_dir.mkdir(parents=True, exist_ok=True)
 			rrd_clause = lambda t, *a: opts.append(':'.join(map(str, [t.upper()] + list(a))))
-			opts = [self.path, '--step', str(step)]
+			opts = [str(self.path), '--step', str(step)]
 			for ds in dss:
 				rrd_clause( 'ds', ds['name'], ds['t'].upper(),
 					int(ds['hb']), ds.get('min') or 'U', ds.get('max') or 'U' )
@@ -479,7 +479,7 @@ class RRD:
 				rrd_clause( 'rra', rra['cf'].upper(),
 					f'{rra["xff"]:.2f}', rra['steps'], rra['rows'] )
 			rrdtool.create(opts)
-			with open(self.path_meta, 'wb') as dst:
+			with open(self.path_meta, 'w') as dst:
 				dst.write('### Auto-generated on database creation\n'
 					'### Only some timestamps are used for dir cleanup purposes\n')
 				yaml_dump(dict(schema=schema, ts=dict(created=time.time())), dst)
