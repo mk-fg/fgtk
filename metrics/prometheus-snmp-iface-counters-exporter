@@ -8,6 +8,7 @@ import prometheus_client as pc
 
 # https://github.com/etingof/pysnmp
 from pysnmp import hlapi as snmp
+import pysnmp.error as snmp_err_core
 import pysnmp.proto.errind as snmp_err
 
 
@@ -76,7 +77,9 @@ class SNMP:
 		snmp_ep = self.snmp_ep_init if init else self.snmp_ep_value
 		cmd = snmp.getCmd( self.snmp_engine,
 			self.snmp_auth, snmp_ep, self.snmp_ctx, oid )
-		err_indication, err_st, err_idx, var_list = next(cmd)
+		try: err_indication, err_st, err_idx, var_list = next(cmd)
+		except snmp_err_core.PySnmpError as err:
+			raise SNMPError('SNMP carrier/conn error') # msg is too long here
 		if err_indication:
 			if isinstance(err_indication, snmp_err.RequestTimedOut):
 				raise SNMPTimeout(f'{snmp_ep.retries=} {snmp_ep.timeout=}')
@@ -95,13 +98,14 @@ class SNMP:
 		ts0 = time.monotonic()
 
 		try: uptime = self._query(self.oid_uptime, int, init=True) / 100
-		except SNMPError as err: return self.log.debug('Uptime query error: {}', err_fmt(err))
+		except SNMPError as err: return self.log.debug('Uptime query error: {}', err)
 
 		iface_stats, iface_names = dict(), dict((str_norm(iface), iface) for iface in iface_set)
 		for n, oid_iface in enumerate(self.oid_iface_names):
 			if iface_set is not None and not iface_names: break # found all ifaces
 			try: iface_name = self._query(oid_iface, str)
 			except SNMPNX: break
+			except SNMPError as err: return self.log.debug('Iface query error: {}', err)
 			if iface_set is not None:
 				iface_name = iface_names.pop(str_norm(iface_name), None)
 			if not iface_name: continue
@@ -109,7 +113,7 @@ class SNMP:
 				bs_in = self._query(self.oid_iface_ingress[n], int)
 				bs_out = self._query(self.oid_iface_egress[n], int)
 			except SNMPNX: continue # iface is gone
-			except SNMPError as err: return self.log.debug('Counter query error: {}', err_fmt(err))
+			except SNMPError as err: return self.log.debug('Counter query error: {}', err)
 			iface_stats[iface_name] = bs_in, bs_out
 
 		query_time = time.monotonic() - ts0
