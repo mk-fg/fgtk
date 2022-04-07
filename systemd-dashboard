@@ -247,6 +247,8 @@ def main(args=None):
 			' Connecting to system bus of these requires root uid.')
 	parser.add_argument('-f', '--file', metavar='file',
 		help='Process specified "systemd-analyze dump" file instead of getting it via dbus.')
+	parser.add_argument('-x', '--exclude-regexp', metavar='regexp',
+		help='Exactly like "grep -v" on the output lines, with python regexp format.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if not opts.unit:
@@ -258,6 +260,7 @@ def main(args=None):
 			filter_prop=lambda k,_set=filter_prop_keys: k in _set,
 			filter_unit=lambda u: not re.search(r'\.(device|slice|scope)$', u) )
 	else: filters = dict()
+	out_filter = opts.exclude_regexp and re.compile(opts.exclude_regexp)
 
 	if not opts.file:
 		state_map_str = systemd_state_dump(machines=opts.machines)
@@ -292,7 +295,9 @@ def main(args=None):
 		if ( re.search(r'(/|^)[^/@]+@[^/]+\.service$', unit)
 			and s.triggered_by_N.endswith('.socket') ): continue
 
-		if ( s.unit_load_state not in ['error', 'not-found']
-			and s.unit_active_state == 'active' ): print(unit)
+		if s.unit_load_state in ['error', 'not-found']: continue
+		if s.unit_active_state != 'active': continue
+		if out_filter and out_filter.search(unit): continue
+		print(unit)
 
 if __name__ == '__main__': sys.exit(main())
