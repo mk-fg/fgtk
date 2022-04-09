@@ -34,6 +34,7 @@ usage() {
 
 
 set -o pipefail
+trap exit INT
 err=
 ytdl_opts=( ) # use ~/.config/youtube-dl/config
 chan_cache=_meta.json
