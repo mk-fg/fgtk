@@ -38,7 +38,7 @@ def bak_ret_keys(bak_dt_map, ret_str):
 	bak_ret_set = set(it.chain.from_iterable(
 		bb_map.values() for bb_map in dt_buckets.values() ))
 
-	bn = max(0, ret_map['n'] - len(bak_ret_set))
+	bn = max(1, ret_map['n'] - len(bak_ret_set))
 	for bak, bak_dt in reversed(bak_dt_list):
 		if bn <= 0: break
 		if bak in bak_ret_set: continue
