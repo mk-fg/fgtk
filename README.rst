@@ -2316,6 +2316,15 @@ without a ton of extra features that's been piled-on there over time.
 
 .. _btrbk: https://digint.ch/btrbk/
 
+dir-snapper
+^^^^^^^^^^^
+
+Same as zfs-snapper and btrfs-snapper scripts above, simply rotating
+directories instead of running any fs-specific snapshotting commands.
+
+Useful for generic "backup to a dir" scripts, where deduplication on
+fs level is handled somewhere else or unnecessary.
+
 
 [desktop] Linux desktop stuff
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
