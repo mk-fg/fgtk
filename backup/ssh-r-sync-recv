@@ -314,6 +314,7 @@ def main(args=None):
 			raise SSHRsyncError( 'rsync.pre hook'
 				' produced non-\\0-terminated stdout: {!r}', hook.stdout )
 		hook = hook.stdout.decode().strip(' \n').split('\0')
+		if not hook[-1]: hook = hook[:-1]
 		if not hook[0]: rsync_opts[:] = hook[1:]
 		else: rsync_opts.extend(hook)
 
