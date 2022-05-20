@@ -22,6 +22,7 @@ usage() {
 	echo >&2 "NOTE: anything running on the system can see all passed command-line options!!!"
 	echo >&2
 	echo >&2 "Examples:"
+	echo >&2 "  Stdin to display: qr <somefile"
 	echo >&2 "  Raw string: qr -r a-raw-line-of-data"
 	echo >&2 "  WiFi AP: qr -v -s myssid -p some-long-passphrase"
 	echo >&2
@@ -37,7 +38,7 @@ while [[ -n "$1" ]]; do
 		-v) shift; verbose=t ;;
 		-x) shift; set -x ;;
 
-		-d|--display) shift; display=t; shift ;;
+		-d|--display) shift; display=t ;;
 		-o|--out-file) shift; out=$1; shift ;;
 		--opts) shift; opts=$1; shift ;;
 
@@ -47,7 +48,7 @@ while [[ -n "$1" ]]; do
 		-p|--pass) shift; wifi=t; wifi_pass=$1; shift ;;
 
 		welp) exit 1 ;;
-		*) echo "Unknown option: $1" && exit 1 ;;
+		*) echo >&2 "ERROR: Unknown option: $1" && exit 1 ;;
 	esac
 done
 
@@ -60,25 +61,20 @@ dst=$out
 	dst="${dst}/qr-$(printf '%(%Y%m%d%H%M%S)T' -1).png"; }
 opts=( $opts )
 
-qr=
-qr_set() {
-	[[ -z "$qr" ]] || { echo >&2 "ERROR: conflicting data-encoding types specified"; exit 1; }
-	qr=$1
-}
+qr=()
+[[ -z "$raw" ]] || qr+=( "$raw" )
+[[ -z "$wifi" ]] || {
+	[[ "${#qr[@]}" -eq 0 ]] || { echo >&2 "ERROR: conflicting output mode opts"; exit 1; }
+	qr+=( "WIFI:T:WPA;S:${wifi_ssid};P:${wifi_pass};;" ); }
+[[ "${#qr[@]}" -gt 0 ]] || qr+=( -r /dev/stdin )
+[[ "${#qr[@]}" -gt 0 ]] || { echo >&2 "ERROR: no parameters to encode specified"; exit 1; }
 
-[[ -z "$raw" ]] || qr_set "$raw"
-[[ -z "$wifi" ]] || qr_set "WIFI:T:WPA;S:${wifi_ssid};P:${wifi_pass};;"
-
-if [[ -n "$qr" ]]
-then
-	[[ -z "$verbose" ]] || echo "$qr"
-	qrencode -o "$dst" "${opts[@]}" "$qr" \
-		|| { err=$?; echo >&2 "ERROR: qrencode operation failed"; exit $err; }
-	if [[ -z "$display" ]]
-	then [[ -n "$out" ]] || echo "$dst"
-	else
-		trap 'rm -f "$dst"' EXIT INT
-		feh --force-aliasing -FZYxs --image-bg white "$dst" ||:
-	fi
-else echo >&2 "ERROR: no parameters to encode specified"; exit 1
+[[ -z "$verbose" ]] || echo "${qr[@]}"
+qrencode -o "$dst" "${opts[@]}" "${qr[@]}" \
+	|| { err=$?; echo >&2 "ERROR: qrencode operation failed"; exit $err; }
+if [[ -z "$display" ]]
+then [[ -n "$out" ]] || echo "$dst"
+else
+	trap 'rm -f "$dst"' EXIT INT
+	feh --force-aliasing -FZYxs --image-bg white "$dst" ||:
 fi
