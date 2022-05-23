@@ -1975,6 +1975,23 @@ Goal is to avoid all inconvenience with handling unfamiliar indent types in
 editor, and just have it setup for strictly one of those, doing translation
 before/after commits manually.
 
+indent-braces
+^^^^^^^^^^^^^
+
+Script to indent lines in a file based on opening/closing braces and nothing else.
+
+Works for files with any custom syntax instead of just code,
+like whatever configs, game save files, serializations, etc.
+
+Has configurable braces and their output format strings to allow producing
+different indent styles, e.g. opening/closing brace on either same or new lines,
+their indents and such.
+
+Doesn't re-encode input, so should work with any file encodings that can't
+include same byte as braces in other characters (like utf-8).
+
+Running on large (multi-MiB) files via pypy3 works much faster than cpython.
+
 golang_filter
 ^^^^^^^^^^^^^
 

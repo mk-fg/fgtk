@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+
+import os, sys, ast
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
+def eval_str(s):
+	s = s.replace('\n', '\\n')
+	return ast.literal_eval(f'"{s}"' if "'" in s else f"'{s}'")
+
+
+def main(args=None):
+	import argparse, textwrap, re
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Tool to parse and reindent curly-braces-indented files consistently.
+			Reads source from stdin and outputs reindented contents to stdout.'''))
+	parser.add_argument('-b', '--braces', metavar='str', default='{}',
+		help='Opening/closing braces to find/use, as a two-char string. Default: %(default)s')
+	parser.add_argument('-i', '--indent', metavar='str', default='  ',
+		help='Indent string for one level. Default: two spaces.')
+	parser.add_argument('-A', '--brace-open',
+		metavar='fmt', default='\n{ind}{b}\n', help=dd('''
+			Format for opening braces and prefix before those in the output.
+			Will be put on the previous non-empty line, if doesn't start with newline.
+			Evaluated as python string, with escapes and all. Default: %(default)r'''))
+	parser.add_argument('-B', '--brace-close',
+		metavar='fmt', default='{nl}{ind}{b}\n', help=dd('''
+			Format for closing brace/suffix in the output.
+			Should end with newline to put before next non-empty line.
+			Evaluated as python string, with escapes and all. Default: %(default)r'''))
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	ast, n = list(), 0
+	src, stack, frame = sys.stdin.buffer.read(), [ast], ast
+	while True:
+		n1, n2 = src.find(b'{', n), src.find(b'}', n)
+		if n1 == n2 == -1: break
+		nb, bo = (n1, True) if n1 != -1 and n1 < n2 else (n2, False)
+		frame.append(src[n:nb])
+		if bo:
+			frame_new = list()
+			frame.append(frame_new)
+			stack.append(frame)
+			frame = frame_new
+		else:
+			frame = stack.pop()
+			if not stack: raise ValueError('Unbalanced braces - too many closing')
+		n = nb + 1
+		assert n > 0
+	frame.append(src[n:])
+	if frame is not ast: raise ValueError('Unbalanced braces - too many opening')
+
+	def print_level(frame, conf, level=0):
+		while frame:
+			assert isinstance(frame, list)
+			frag, frame, pre = frame[0], frame[1:], conf.ind*level
+			line = None
+			if isinstance(frag, bytes):
+				frag = frag.strip()
+				if not frag: continue
+				for n, line in enumerate(map(bytes.strip, frag.splitlines())):
+					if n: conf.out.write(b'\n')
+					if line: conf.out.write(pre + line)
+			else:
+				ind = pre.decode()
+				conf.out.write(conf.o1.format(ind=ind, b=conf.b1).encode())
+				last_line = print_level(frag, conf, level=level+1)
+				conf.out.write(conf.o2.format(
+					ind=ind, b=conf.b2, nl='\n' if last_line else '').encode())
+		return line
+
+	print_level(ast, adict(
+		b1=opts.braces[0], b2=opts.braces[1],
+		o1=eval_str(opts.brace_open), o2=eval_str(opts.brace_close),
+		ind=opts.indent.encode(), out=sys.stdout.buffer ))
+
+if __name__ == '__main__': sys.exit(main())
