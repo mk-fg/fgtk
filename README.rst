@@ -2200,6 +2200,11 @@ Available replacement types, with examples where 0 will be auto-replaced:
 - ``some_version = 2, 3, 0 # git-version: py-tuple``
 - ``self.server_ver = '5.6.0' # git-version: py-str``
 
+Script also has ``-d/--date-ver`` option to generate full three-component
+versions in a <YY>.<mm>.<commits-since-month-start> format, e.g. ``22.05.3``
+(with tuple of 3 ints for py-tuple), which should generally be more meaningful
+than just a monotonic number.
+
 Beauty of this approach is that local file(s) remain unchanged unless checked
 back out from the repo, not triggering any kind of concurrent modification
 alerts from editors, and doesn't make commit process any more complicated either.

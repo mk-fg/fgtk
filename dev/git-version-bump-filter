@@ -1,5 +1,8 @@
 #!/bin/bash
-set -e -o pipefail
+set -eo pipefail
+
+v_date=
+[[ "$1" != -d && "$1" != --date-ver ]] || { v_date=t; shift; }
 
 [[ -n "$1" ]] || {
 	files=( $(awk '$2=="filter=version-bump" {sub(/^\//,"",$1); print $1}' .gitattributes) )
@@ -8,12 +11,19 @@ set -e -o pipefail
 				awk '/^@@/ {p=1; next} p&&/^[-+]/ {print; next} p {p=0}' |
 				grep -vq -e '# git-version: [^ ]\+' \
 			&& { echo "ERROR: uncomitted changes detected, aborting revert/bump"; exit 1; } ||:
-		touch "${files[@]}" && git checkout "${files[@]}"
-	}
-	exit 0
-}
+		touch "${files[@]}" && git checkout "${files[@]}"; }
+	exit 0; }
 
-v=$(git log --pretty=format:x -- "$1" | wc -l)
+# Simple 1.2.<commit> version replacement
+[[ -n "$v_date" ]] || {
+	v=$(git log --pretty=format:x -- "$1" | wc -l)
+	exec sed \
+		-e '/# git-version: py-tuple\(-[0-9]\)*$/ s/\(.* *= *\([0-9]\+, *\)*\)[0-9]\+/\1'"$v"'/' \
+		-e '/# git-version: py-str\(-[0-9]\)*$/ s/\(.* *= *['\''"]\([0-9]\+\.\)*\)[0-9]\+\(['\''"]\)/\1'"$v"'\3/'; }
+
+# Full replacement with <year>.<month>.<commits-since-month-start>
+v=$(printf '%(%y.%m)T' -1).`
+	`$(git log --since=$(printf '%(%Y-%m-01)T' -1) --pretty=format:x -- "$1" | sed '$a\' | wc -l)
 exec sed \
-	-e '/# git-version: py-tuple\(-[0-9]\)*$/ s/\(.* *= *\([0-9]\+, *\)*\)[0-9]\+/\1'"$v"'/' \
-	-e '/# git-version: py-str\(-[0-9]\)*$/ s/\(.* *= *['\''"]\([0-9]\+\.\)*\)[0-9]\+\(['\''"]\)/\1'"$v"'\3/'
+	-e '/# git-version: py-tuple\(-[0-9]\)*$/ s/\(.* *= *\)\([0-9]\+, *\)*[0-9]\+/\1'"${v//./,}"'/' \
+	-e '/# git-version: py-str\(-[0-9]\)*$/ s/\(.* *= *['\''"]\)\([0-9]\+\.\)*[0-9]\+\(['\''"]\)/\1'"$v"'\3/'
