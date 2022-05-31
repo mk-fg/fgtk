@@ -1,0 +1,270 @@
+#!/usr/bin/env python
+
+import itertools as it, functools as ft
+import pathlib as pl, datetime as dt, subprocess as sp, collections as cs
+import os, sys, re, logging, math
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None): super().__init__(logger, extra or dict())
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(f'ht.{name}'))
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
+
+_td_days = dict( y=365.25, yr=365.25,
+	year=365.25, mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+def _td_re():
+	sub_sort = lambda d: sorted(
+		d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+	ts_re = ['^'] + [
+		r'(?P<{0}>\d*{0}s?\s*)?'.format(k)
+		for k, v in it.chain.from_iterable(
+			map(sub_sort, [_td_days, _td_s]) ) ] + ['$']
+	return re.compile(''.join(ts_re), re.I | re.U)
+_td_re = _td_re()
+
+def _td_parse(td_str):
+	if ':' in td_str:
+		t = dt.datetime.strptime(td_str, '%H:%M:%S')
+		return dt.timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
+	try: return dt.timedelta(seconds=float(td_str))
+	except ValueError: pass
+	if not (m := _td_re.search(td_str)) or not any(m.groups()):
+		raise ValueError(td_str) from None
+	delta, parse_int = list(), lambda v: int(''.join(c for c in v if c.isdigit()) or 1)
+	for units in _td_days, _td_s:
+		val = 0
+		for k, v in units.items():
+			try:
+				if not m.group(k): continue
+				n = parse_int(m.group(k))
+			except IndexError: continue
+			val += n * v
+		delta.append(val)
+	return dt.timedelta(*delta)
+
+def td_parse(td_str, to_float=True):
+	delta = _td_parse(td_str)
+	return delta if not to_float else delta.total_seconds()
+
+def td_repr( ts, ts0=None, units_max=2, units_res=None,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	delta = ts if ts0 is None else (ts - ts0)
+	if isinstance(delta, dt.timedelta): delta = ts.total_seconds()
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	return ''.join(res) if res else '<1s'
+
+
+def dt_week(dt1):
+	dt1 -= dt.timedelta(days=dt1.weekday())
+	dt2 = dt1 + dt.timedelta(days=6)
+	return dt1, dt2
+
+log_fn_months = ( 'January February March April May'
+	' June July August September October November' ).split()
+def log_fn_fmt_vars(dt1, dt2):
+	dd1 = dt1.day
+	if dt1.month != dt2.month: dd1 = f'-{dd1:02d}'
+	vs = adict( year=f'{dt2.year:04d}',
+		mo=f'{dt2.month:02d}', dd1=dd1, dd2=f'{dt2.day:02d}' )
+	vs.mo_name = f'{vs.mo}_{log_fn_months[dt2.month-1]}'
+	return vs
+
+log_line = cs.namedtuple('LogLine', 'fn n date ts1 ts2 td desc')
+def log_parse(fn):
+	lines, log = list(), get_logger('reparse')
+	for n, line in enumerate(pl.Path(fn).read_text().splitlines(), 1):
+		if not line.strip(): continue
+		try:
+			dts, tss, td, desc = map(str.strip, line.split('::', 3))
+			dts, td = dt.date.fromisoformat(dts), td_parse(td)
+			ts1, ts2 = (dt.time.fromisoformat(ts.strip()) for ts in tss.split('-', 1))
+			lines.append(log_line(fn, n, dts, ts1, ts2, td, desc))
+		except Exception as err:
+			log.error(f'Unrecognized log-line format [ {fn}:{n} ]: {line!r} - {err_fmt(err)}')
+			continue
+	return lines
+
+
+def main(args=None):
+	log_fmt_vars = list(log_fn_fmt_vars(
+		dt.date.today(), dt.date.today() ).keys())
+
+	import argparse, textwrap, re
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser( usage='%(prog)s [options]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Tool to t̶a̶l̶l̶y̶ ̶t̶h̶e̶ ̶h̶a̶m̶s̶t̶e̶r̶s̶ copy and commit daily time-tracking
+				entries from Hamster app to a weekly logs in a git repository.
+			Uses CLI "hamster export" tool, needs to have dbus access to hamster-service.
+			Intended to be run at the start of a new day from crontab or such.
+			If no earlier logs are found in the repo, tallying will start from current week.
+			Project Hamster time tracking toolkit: https://github.com/projecthamster'''))
+
+	group = parser.add_argument_group('Filename/path options')
+	group.add_argument('-r', '--git-repo', metavar='path',
+		help='Path to git repository to commit updates into. Default: current dir.')
+	group.add_argument('--log-file-fmt', metavar='git-path-fmt',
+		default='{year}/{mo}/week.{dd1}-{dd2}.log', help=dd('''
+			Format for path to generated weekly activity-log files.
+			Should be python str.format template, optionally using
+				following keys: {}.
+			Default: %(default)s'''.format(', '.join(log_fmt_vars))))
+	group.add_argument('--symlink-last-log',
+		metavar='git-path', default='latest.log', help=dd('''
+			Git repo path of a symlink to maintain, pointing to a latest log file.
+			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
+	group.add_argument('--symlink-last-logdir',
+		metavar='git-path', default='latest-month', help=dd('''
+			Git repo path of a symlink to maintain, pointing to a directory with a latest log file.
+			Ignored if --log-file-fmt has no slashes, i.e. when logs are created in repo root.
+			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
+
+	group = parser.add_argument_group('Git parameters')
+	group.add_argument('--git-name',
+		metavar='name', default='hamster-tally', help=dd('''
+			Name to use for GIT_AUTHOR_NAME and
+				GIT_COMMITTER_NAME env vars, if these are not set in
+				neither environment nor in user/author/comitter.name git-config values.
+			Special value "-" can be used to disable setting these. Default: %(default)s.'''))
+	group.add_argument('--git-email',
+		metavar='email', default=f'hamster-tally@{os.uname().nodename}',
+		help='Same as --git-name above, but for GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL.')
+
+	group = parser.add_argument_group('Misc/debug opts')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(
+		level=logging.DEBUG if opts.debug else logging.WARNING,
+		format='{name} {levelname:5} :: {message}', style='{' )
+	log = get_logger('main')
+	dt1, dt2 = dt_week(dt.date.today()) # log current week by default, if there're no logs yet
+
+	# Setup required/missing git-commit env vars
+	git_cmd, git_pre = adict(), dict()
+	if opts.git_repo: os.chdir(opts.git_repo)
+	for k in 'name', 'email': # lookup values in author/comitter env or gitconfig
+		for sk in 'author', 'committer':
+			res = os.environ.get(f'GIT_{sk}_{k}'.upper(), '').strip()
+			if not res:
+				res = sp.run(['git', 'config', '--get', f'{sk}.{k}'], capture_output=True)
+				res = res.stdout.decode().strip() if not res.returncode and res.stdout else None
+			if res: git_cmd[k] = res; break
+	for k in 'name', 'email': # check user.name/user.email
+		if res := git_cmd.get(k): git_pre[k] = res; continue
+		res = sp.run(['git', 'config', '--get', f'user.{k}'], capture_output=True)
+		if not res.returncode and res.stdout:
+			git_pre[k] = git_cmd[k] = res.stdout.decode().strip()
+		elif (res := getattr(opts, 'git_{k}')) != '-': git_cmd[k] = res
+	for k in 'name', 'email':
+		res = git_cmd.pop(k, None)
+		for sk in 'author', 'committer':
+			ek = f'GIT_{sk}_{k}'.upper()
+			if res := os.environ.get(ek, '').strip() or res: git_cmd[ek] = res
+			else: parser.error(f'Missing git config/env {sk}.{k} value, with no default in cli options')
+	if git_pre: log.debug('git presets: {}', ' '.join(f'{k}={v!r}' for k,v in git_pre.items()))
+	git_cmd, git_path = ft.partial(sp.run, env=dict(git_cmd)), pl.Path('.').resolve()
+
+	# Find last logged timestamp to use as start-date in hamster-export, if any
+	log_fmt, log_fmt_vars = opts.log_file_fmt, dict.fromkeys(log_fmt_vars)
+	log_fmt = re.escape(log_fmt.replace('{{', '\ue010').replace('}}', '\ue020'))\
+		.replace(r'\{', '{').replace(r'\}', '}').replace('\ue010', '{{').replace('\ue020', '}}')
+	log_fmt_vars.update( year=r'\d{4}', mo=r'\d{2}',
+		mo_name=r'\d\d_\w+', dd1=r'-?\d\d', dd2=r'\d\d' )
+	if not all(log_fmt_vars.values()): raise AssertionError(log_fmt_vars)
+	log_re = re.compile(f'^{log_fmt.format(**log_fmt_vars)}$')
+	res = git_cmd(['git', 'ls-files', '-z'], stdout=sp.PIPE)
+	if log_last := sorted(filter(log_re.search, res.stdout.decode().split('\0'))):
+		log.debug('Detected previous log-file: {}', log_last := log_last[-1])
+		if (lines := log_parse(log_last)) and (line := lines[-1]):
+			dt1 = dt.datetime.combine(line.date, line.ts2) + dt.timedelta(minutes=1)
+			if line.ts2 <= line.ts1: dt1 += dt.timedelta(days=1)
+			log.debug('Using start-date after last log-file line: {}', dt1)
+		else: log.warning('Empty existing log-file: {}', log_last)
+
+	# Request and parse TSV of events in dt1-dt2 timespan
+	ts1, ts2 = ( dt1.strftime('%Y-%m-%d %H:%M'),
+		(dt2 + dt.timedelta(days=1)).strftime('%Y-%m-%d %H:%M') )
+	log.debug('Hamster tsv-query: {} - {}', ts1, ts2)
+	res = sp.run(['hamster', 'export', 'tsv', ts1, ts2], check=True, stdout=sp.PIPE)
+	tsv = res.stdout.decode().splitlines()
+	# Expected fields: activity, start, end, duration, category, description, tags
+	tsv_line = cs.namedtuple('EvTSV', list(k.split(' ', 1)[0] for k in tsv[0].split('\t')))
+	tsv = list(tsv_line(*map(str.strip, line.split('\t'))) for line in tsv[1:] if line.strip())
+	log.debug('Processed hamster tsv events: {}', len(tsv))
+
+	# Convert TSV entries to new log-events
+	new_evs, new_ev = list(), cs.namedtuple('Ev', 'date ts1 ts2 td desc')
+	for tev in tsv:
+		if not tev.end: continue # activity-span is not running right now, log later when done
+		ts1, ts2 = map(dt.datetime.fromisoformat, [tev.start, tev.end])
+		if ts2 <= dt1: continue # in case export returns old events
+		desc = tev.activity
+		if tev.description.strip(): desc += f' - {tev.description}'
+		evs, desc = None, desc.replace('\n', ' // ')
+		if ts1.date() != ts2.date(): # starts/ends on different days - split if date goes beyond dt2
+			if ts2.date() - ts1.date() != dt.timedelta(days=1): raise AssertionError(ev)
+			if ts2.date() >= dt2: # can still log as one ev otherwise
+				evs = [
+					new_ev( ts1.date(), ts1.time(),
+						dt.time(23, 59), dt.time(23, 59) - ts1.time(), desc ),
+					new_ev(ts2.date(), dt.time(0, 0), ts2.time(), ts2.time() - dt.time(0, 0), desc) ]
+		if not evs:
+			evs = [new_ev( ts1.date(), ts1.time(), ts2.time(),
+				dt.timedelta(minutes=round(float(tev.duration))), desc )]
+		new_evs.extend(evs)
+
+	# Append new log-events to any relevant log files
+	log_paths_upd = set()
+	for ev in new_evs:
+		log_fmt_vars = log_fn_fmt_vars(*dt_week(ev.date))
+		log_path = (git_path / opts.log_file_fmt.format(**log_fmt_vars)).resolve()
+		if not log_path.is_relative_to(git_path):
+			raise AssertionError(opts.log_file_fmt, log_fmt_vars)
+		log.debug( 'New log-event [ {} ]: {}', str(log_path)[len(str(git_path))+1:],
+			' '.join(f'{k}={f"[{vs}]" if " " in (vs:=str(v)) else vs}' for k,v in ev._asdict().items()) )
+		log_path.parent.mkdir(parents=True, exist_ok=True)
+		with log_path.open('a') as dst:
+			dst.write( f'{ev.date} :: {ev.ts1.strftime("%H:%M")} -'
+				f' {ev.ts2.strftime("%H:%M")} :: {td_repr(ev.td)} :: {ev.desc}\n' )
+		log_paths_upd.add(log_path)
+		for log_path in log_paths_upd: git_cmd(['git', 'add', log_path])
+
+	# XXX: configurable git-commit earlier logs on day/week change
+	# XXX: add duration summary line to a weekly log when moving on to the next one
+	# XXX: symlinks
+	# XXX: git push
+
+if __name__ == '__main__': sys.exit(main())

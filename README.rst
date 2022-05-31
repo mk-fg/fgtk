@@ -2615,6 +2615,19 @@ minute or few, or working around streamlink quirks and fatal errors.
 
 .. _streamlink: https://github.com/streamlink/streamlink
 
+hamster-tally
+'''''''''''''
+
+A tool to query activity logs from `Project Hamster`_ time-tracker
+lib/daemon/tools on a daily basis, aggregate it into weekly log files,
+and auto-commit/push it all into git repo.
+
+Basically an advanced export functionality from hamster db into time-rotated
+append-only text files in a git repo, with the goal to tally and track work-time
+easily, using hamster tools to start/stop the timer and annotate timespans.
+
+.. _Project Hamster: https://github.com/projecthamster
+
 
 [desktop/notifications]
 ^^^^^^^^^^^^^^^^^^^^^^^
