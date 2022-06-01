@@ -180,10 +180,8 @@ def main(args=None):
 			If no earlier logs are found in the repo, tallying will start from current week.
 			Project Hamster time tracking toolkit: https://github.com/projecthamster'''))
 
-	group = parser.add_argument_group('Filename/path options')
-	group.add_argument('-r', '--git-repo', metavar='path',
-		help='Path to git repository to commit updates into. Default: current dir.')
-	group.add_argument('--log-file-fmt', metavar='git-path-fmt',
+	group = parser.add_argument_group('Log filename/path options')
+	group.add_argument('-f', '--log-file-fmt', metavar='git-path-fmt',
 		default='{year}/{mo}/week.{dd1}-{dd2}.log', help=dd('''
 			Format for path to generated weekly activity-log files.
 			Should be python str.format template, optionally using
@@ -201,6 +199,8 @@ def main(args=None):
 			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
 
 	group = parser.add_argument_group('Git-related options')
+	group.add_argument('-r', '--git-repo', metavar='path',
+		help='Path to git repository to commit updates into. Default: current dir.')
 	group.add_argument('--git-name',
 		metavar='name', default='hamster-tally', help=dd('''
 			Name to use for GIT_AUTHOR_NAME and
@@ -214,6 +214,7 @@ def main(args=None):
 		metavar='(always|totals|never)', choices='always totals never'.split(), help=dd('''
 			When/whether to commit added files/changes into git repo.
 			One of: always - commit any changes, totals - commit when any logs are done, never.'''))
+	group.add_argument('-p', '--git-push', action='store_true', help='Run "git push" after commit.')
 
 	group = parser.add_argument_group('Misc/debug opts')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -345,8 +346,9 @@ def main(args=None):
 				if totals: upd_metrics.append(f'{totals} finished log(s)')
 				if log_paths_upd: upd_metrics.append(f'{len(log_paths_upd)} updated file(s)')
 				if upd_metrics: upd_msg += '\n\n' + f'Changes: {", ".join(upd_metrics)}'
-			log.debug( 'Creating git commit (type={}) [ {} - {} ]',
-				opts.git_commit_type, dd1.isoformat(), dd2.isoformat() )
+			log.debug( 'Creating git commit (when={} push={}) [ {} - {} ]',
+				opts.git_commit_type, 'ny'[bool(opts.git_push)], dd1.isoformat(), dd2.isoformat() )
 			git_cmd(['git', 'commit', '--no-edit', '-aqm', upd_msg])
+			if opts.git_push: git_cmd(['git', 'push'])
 
 if __name__ == '__main__': sys.exit(main())
