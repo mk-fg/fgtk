@@ -182,18 +182,18 @@ def main(args=None):
 
 	group = parser.add_argument_group('Log filename/path options')
 	group.add_argument('-f', '--log-file-fmt', metavar='git-path-fmt',
-		default='{year}/{mo}/week.{dd1}-{dd2}.log', help=dd('''
+		default='activity/{year}/{mo}/week.{dd1}-{dd2}.log', help=dd('''
 			Format for path to generated weekly activity-log files.
 			Should be python str.format template, optionally using
 				following keys: {}.
 			Default: %(default)s'''.format(', '.join(
 				log_fn_fmt_vars(dt.date.today(), dt.date.today()).keys() ))))
 	group.add_argument('--symlink-last-log',
-		metavar='git-path', default='latest.log', help=dd('''
+		metavar='git-path', default='activity.latest-week.log', help=dd('''
 			Git repo path of a symlink to maintain, pointing to a latest log file.
 			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
 	group.add_argument('--symlink-last-logdir',
-		metavar='git-path', default='latest-month', help=dd('''
+		metavar='git-path', default='activity.latest-month', help=dd('''
 			Git repo path of a symlink to maintain, pointing to a directory with a latest log file.
 			Ignored if --log-file-fmt has no slashes, i.e. when logs are created in repo root.
 			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
