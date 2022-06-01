@@ -215,6 +215,9 @@ def main(args=None):
 			When/whether to commit added files/changes into git repo.
 			One of: always - commit any changes, totals - commit when any logs are done, never.'''))
 	group.add_argument('-p', '--git-push', action='store_true', help='Run "git push" after commit.')
+	group.add_argument('-P', '--git-push-remote', metavar='remote', help=dd('''
+		Run "git push <remote>" after commit(s).
+		Same as -p/--git-push, but to use specific git-remote name.'''))
 
 	group = parser.add_argument_group('Misc/debug opts')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -234,6 +237,7 @@ def main(args=None):
 	git_path = pl.Path('.').resolve(True)
 	git_cmd = ft.partial(sp.run, check=True, env=dict( GIT_EDITOR='/bin/false',
 		**git_env_parse(name=opts.git_name.strip('-'), email=opts.git_email.strip('-')) ))
+	git_push = opts.git_push or opts.git_push_remote
 	def git_path_rel(p, res=True):
 		p_res = git_path / p
 		if res: p_res = p_res.resolve()
@@ -347,8 +351,10 @@ def main(args=None):
 				if log_paths_upd: upd_metrics.append(f'{len(log_paths_upd)} updated file(s)')
 				if upd_metrics: upd_msg += '\n\n' + f'Changes: {", ".join(upd_metrics)}'
 			log.debug( 'Creating git commit (when={} push={}) [ {} - {} ]',
-				opts.git_commit_type, 'ny'[bool(opts.git_push)], dd1.isoformat(), dd2.isoformat() )
+				opts.git_commit_type, 'ny'[bool(git_push)], dd1.isoformat(), dd2.isoformat() )
 			git_cmd(['git', 'commit', '--no-edit', '-aqm', upd_msg])
-			if opts.git_push: git_cmd(['git', 'push'])
+			if git_push:
+				git_push_remote = [] if git_push is True else [git_push]
+				git_cmd(['git', 'push', '-q'] + git_push_remote)
 
 if __name__ == '__main__': sys.exit(main())
