@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import itertools as it, functools as ft
+import itertools as it, operator as op, functools as ft
 import pathlib as pl, datetime as dt, subprocess as sp, collections as cs
 import os, sys, re, logging, math
 
@@ -81,29 +81,56 @@ def td_repr( ts, ts0=None, units_max=2, units_res=None,
 		res.append(f'{val:.0f}{unit}')
 		if n_last is True: break
 		s -= val * unit_s
-	return ''.join(res) if res else '<1s'
+	return ' '.join(res) if res else '<1s'
 
 
-def dt_week(dt1):
-	dt1 -= dt.timedelta(days=dt1.weekday())
-	dt2 = dt1 + dt.timedelta(days=6)
-	return dt1, dt2
+class LogError(Exception): pass
+
+def dd_week(dd1):
+	dd1 -= dt.timedelta(days=dd1.weekday())
+	dd2 = dd1 + dt.timedelta(days=6)
+	return dd1, dd2
 
 log_fn_months = ( 'January February March April May'
 	' June July August September October November' ).split()
-def log_fn_fmt_vars(dt1, dt2):
-	dd1 = dt1.day
-	if dt1.month != dt2.month: dd1 = f'-{dd1:02d}'
-	vs = adict( year=f'{dt2.year:04d}',
-		mo=f'{dt2.month:02d}', dd1=dd1, dd2=f'{dt2.day:02d}' )
-	vs.mo_name = f'{vs.mo}_{log_fn_months[dt2.month-1]}'
+def log_fn_fmt_vars(dd1, dd2):
+	dd, dd1_str = dd1, f'{dd1.day:02d}'
+	if dd1.month != dd2.month: # week split between two months
+		if dd2.day < 4: dd = dd1
+		else: dd, dd1_str = dd2, f'-{dd1_str}'
+	vs = adict( year=f'{dd.year:04d}',
+		mo=f'{dd.month:02d}', dd1=dd1_str, dd2=f'{dd2.day:02d}' )
+	vs.mo_name = f'{vs.mo}_{log_fn_months[dd.month-1]}'
 	return vs
 
+def log_fn_fmt_re(log_fmt):
+	log_fmt_vars = dict.fromkeys(
+		log_fn_fmt_vars(dt.date.today(), dt.date.today() ).keys() )
+	log_fmt = re.escape(log_fmt.replace('{{', '\ue010').replace('}}', '\ue020'))\
+		.replace(r'\{', '{').replace(r'\}', '}').replace('\ue010', '{{').replace('\ue020', '}}')
+	log_fmt_vars.update( year=r'\d{4}', mo=r'\d{2}',
+		mo_name=r'\d\d_\w+', dd1=r'-?\d\d', dd2=r'\d\d' )
+	if not all(log_fmt_vars.values()): raise AssertionError(log_fmt_vars)
+	return re.compile(f'^{log_fmt.format(**log_fmt_vars)}$')
+
+def log_total_td(lines): return sum(map(op.attrgetter('td'), lines))
+def log_total_line(lines):
+	dd1, dd2 = dd_week(lines[-1].date)
+	return f'-- total [ {dd1.isoformat()} - {dd2.isoformat()} ] :: {td_repr(log_total_td(lines))}'
+
+class LogFile(list): td_total = None
 log_line = cs.namedtuple('LogLine', 'fn n date ts1 ts2 td desc')
-def log_parse(fn):
-	lines, log = list(), get_logger('reparse')
+def log_reparse(fn):
+	lines, log = LogFile(), get_logger('reparse')
 	for n, line in enumerate(pl.Path(fn).read_text().splitlines(), 1):
-		if not line.strip(): continue
+		if not line.strip() or line.startswith('-- date -- '): continue
+		if line.startswith('-- total '):
+			lines.td_total = log_total_td(lines)
+			if line != log_total_line(lines):
+				raise LogError(f'Unrecognized totals-line format [ {fn}:{n} ]: {line!r}')
+			continue
+		elif lines.td_total is not None:
+			raise LogError(f'Timespan data after totals-line [ {fn}:{n} ]: {line!r}')
 		try:
 			dts, tss, td, desc = map(str.strip, line.split('::', 3))
 			dts, td = dt.date.fromisoformat(dts), td_parse(td)
@@ -112,13 +139,35 @@ def log_parse(fn):
 		except Exception as err:
 			log.error(f'Unrecognized log-line format [ {fn}:{n} ]: {line!r} - {err_fmt(err)}')
 			continue
+	if not lines: raise LogError(f'Empty existing log-file [ {fn} ]')
 	return lines
+
+def git_env_parse(**env_defaults):
+	git_env, git_pre, log = dict(), dict(), get_logger('git-env')
+	for k in 'name', 'email': # lookup values in author/comitter env or gitconfig
+		for sk in 'author', 'committer':
+			res = os.environ.get(f'GIT_{sk}_{k}'.upper(), '').strip()
+			if not res:
+				res = sp.run(['git', 'config', '--get', f'{sk}.{k}'], capture_output=True)
+				res = res.stdout.decode().strip() if not res.returncode and res.stdout else None
+			if res: git_env[k] = res; break
+	for k in 'name', 'email': # check user.name/user.email
+		if res := git_env.get(k): git_pre[k] = res; continue
+		res = sp.run(['git', 'config', '--get', f'user.{k}'], capture_output=True)
+		if not res.returncode and res.stdout:
+			git_pre[k] = git_env[k] = res.stdout.decode().strip()
+		elif res := env_defaults.get(k): git_env[k] = res
+	for k in 'name', 'email':
+		res = git_env.pop(k, None)
+		for sk in 'author', 'committer':
+			ek = f'GIT_{sk}_{k}'.upper()
+			if res := os.environ.get(ek, '').strip() or res: git_env[ek] = res
+			else: log.error(f'Missing git config/env {sk}.{k} value, with no default in cli options')
+	if git_pre: log.debug('git presets: {}', ' '.join(f'{k}={v!r}' for k,v in git_pre.items()))
+	return git_env
 
 
 def main(args=None):
-	log_fmt_vars = list(log_fn_fmt_vars(
-		dt.date.today(), dt.date.today() ).keys())
-
 	import argparse, textwrap, re
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
@@ -139,7 +188,8 @@ def main(args=None):
 			Format for path to generated weekly activity-log files.
 			Should be python str.format template, optionally using
 				following keys: {}.
-			Default: %(default)s'''.format(', '.join(log_fmt_vars))))
+			Default: %(default)s'''.format(', '.join(
+				log_fn_fmt_vars(dt.date.today(), dt.date.today()).keys() ))))
 	group.add_argument('--symlink-last-log',
 		metavar='git-path', default='latest.log', help=dd('''
 			Git repo path of a symlink to maintain, pointing to a latest log file.
@@ -150,7 +200,7 @@ def main(args=None):
 			Ignored if --log-file-fmt has no slashes, i.e. when logs are created in repo root.
 			Special value "-" disables creating/updating it. Defauilt: %(default)s'''))
 
-	group = parser.add_argument_group('Git parameters')
+	group = parser.add_argument_group('Git-related options')
 	group.add_argument('--git-name',
 		metavar='name', default='hamster-tally', help=dd('''
 			Name to use for GIT_AUTHOR_NAME and
@@ -160,6 +210,10 @@ def main(args=None):
 	group.add_argument('--git-email',
 		metavar='email', default=f'hamster-tally@{os.uname().nodename}',
 		help='Same as --git-name above, but for GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL.')
+	group.add_argument('--git-commit-type', default='always',
+		metavar='(always|totals|never)', choices='always totals never'.split(), help=dd('''
+			When/whether to commit added files/changes into git repo.
+			One of: always - commit any changes, totals - commit when any logs are done, never.'''))
 
 	group = parser.add_argument_group('Misc/debug opts')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -170,49 +224,34 @@ def main(args=None):
 		level=logging.DEBUG if opts.debug else logging.WARNING,
 		format='{name} {levelname:5} :: {message}', style='{' )
 	log = get_logger('main')
-	dt1, dt2 = dt_week(dt.date.today()) # log current week by default, if there're no logs yet
 
-	# Setup required/missing git-commit env vars
-	git_cmd, git_pre = adict(), dict()
+	dd1, dd2 = dd_week(dt.date.today()) # current week date-span
+	dt1 = dt.datetime(dd1.year, dd1.month, dd1.day)
+	dt2 = dt.datetime(dd2.year, dd2.month, dd2.day)
+
 	if opts.git_repo: os.chdir(opts.git_repo)
-	for k in 'name', 'email': # lookup values in author/comitter env or gitconfig
-		for sk in 'author', 'committer':
-			res = os.environ.get(f'GIT_{sk}_{k}'.upper(), '').strip()
-			if not res:
-				res = sp.run(['git', 'config', '--get', f'{sk}.{k}'], capture_output=True)
-				res = res.stdout.decode().strip() if not res.returncode and res.stdout else None
-			if res: git_cmd[k] = res; break
-	for k in 'name', 'email': # check user.name/user.email
-		if res := git_cmd.get(k): git_pre[k] = res; continue
-		res = sp.run(['git', 'config', '--get', f'user.{k}'], capture_output=True)
-		if not res.returncode and res.stdout:
-			git_pre[k] = git_cmd[k] = res.stdout.decode().strip()
-		elif (res := getattr(opts, 'git_{k}')) != '-': git_cmd[k] = res
-	for k in 'name', 'email':
-		res = git_cmd.pop(k, None)
-		for sk in 'author', 'committer':
-			ek = f'GIT_{sk}_{k}'.upper()
-			if res := os.environ.get(ek, '').strip() or res: git_cmd[ek] = res
-			else: parser.error(f'Missing git config/env {sk}.{k} value, with no default in cli options')
-	if git_pre: log.debug('git presets: {}', ' '.join(f'{k}={v!r}' for k,v in git_pre.items()))
-	git_cmd, git_path = ft.partial(sp.run, env=dict(git_cmd)), pl.Path('.').resolve()
+	git_path = pl.Path('.').resolve(True)
+	git_cmd = ft.partial(sp.run, check=True, env=dict( GIT_EDITOR='/bin/false',
+		**git_env_parse(name=opts.git_name.strip('-'), email=opts.git_email.strip('-')) ))
+	def git_path_rel(p, res=True):
+		p_res = git_path / p
+		if res: p_res = p_res.resolve()
+		if not p_res.is_relative_to(git_path):
+			raise AssertionError(f'Specified path outside of git repo: {p}')
+		return pl.Path(str(p_res)[len(str(git_path))+1:])
+	link_last_log = opts.symlink_last_log and git_path_rel(opts.symlink_last_log, False)
+	link_last_log_dir = opts.symlink_last_logdir and git_path_rel(opts.symlink_last_logdir, False)
 
 	# Find last logged timestamp to use as start-date in hamster-export, if any
-	log_fmt, log_fmt_vars = opts.log_file_fmt, dict.fromkeys(log_fmt_vars)
-	log_fmt = re.escape(log_fmt.replace('{{', '\ue010').replace('}}', '\ue020'))\
-		.replace(r'\{', '{').replace(r'\}', '}').replace('\ue010', '{{').replace('\ue020', '}}')
-	log_fmt_vars.update( year=r'\d{4}', mo=r'\d{2}',
-		mo_name=r'\d\d_\w+', dd1=r'-?\d\d', dd2=r'\d\d' )
-	if not all(log_fmt_vars.values()): raise AssertionError(log_fmt_vars)
-	log_re = re.compile(f'^{log_fmt.format(**log_fmt_vars)}$')
+	log_re = log_fn_fmt_re(opts.log_file_fmt)
 	res = git_cmd(['git', 'ls-files', '-z'], stdout=sp.PIPE)
-	if log_last := sorted(filter(log_re.search, res.stdout.decode().split('\0'))):
-		log.debug('Detected previous log-file: {}', log_last := log_last[-1])
-		if (lines := log_parse(log_last)) and (line := lines[-1]):
-			dt1 = dt.datetime.combine(line.date, line.ts2) + dt.timedelta(minutes=1)
-			if line.ts2 <= line.ts1: dt1 += dt.timedelta(days=1)
-			log.debug('Using start-date after last log-file line: {}', dt1)
-		else: log.warning('Empty existing log-file: {}', log_last)
+	if log_list := sorted(map( git_path_rel,
+			filter(log_re.search, res.stdout.decode().split('\0')) )):
+		log.debug('Detected previous log-file: {}', log_last := log_list[-1])
+		line = log_reparse(log_last)[-1]
+		dt1 = dt.datetime.combine(line.date, line.ts2) + dt.timedelta(minutes=1)
+		if line.ts2 <= line.ts1: dt1 += dt.timedelta(days=1)
+		log.debug('Using start-date after last log-file line: {}', dt1)
 
 	# Request and parse TSV of events in dt1-dt2 timespan
 	ts1, ts2 = ( dt1.strftime('%Y-%m-%d %H:%M'),
@@ -234,9 +273,9 @@ def main(args=None):
 		desc = tev.activity
 		if tev.description.strip(): desc += f' - {tev.description}'
 		evs, desc = None, desc.replace('\n', ' // ')
-		if ts1.date() != ts2.date(): # starts/ends on different days - split if date goes beyond dt2
+		if ts1.date() != ts2.date(): # starts/ends on different days - split if date goes beyond dd2
 			if ts2.date() - ts1.date() != dt.timedelta(days=1): raise AssertionError(ev)
-			if ts2.date() >= dt2: # can still log as one ev otherwise
+			if ts2.date() >= dd2: # can still log as one ev otherwise
 				evs = [
 					new_ev( ts1.date(), ts1.time(),
 						dt.time(23, 59), dt.time(23, 59) - ts1.time(), desc ),
@@ -249,22 +288,65 @@ def main(args=None):
 	# Append new log-events to any relevant log files
 	log_paths_upd = set()
 	for ev in new_evs:
-		log_fmt_vars = log_fn_fmt_vars(*dt_week(ev.date))
-		log_path = (git_path / opts.log_file_fmt.format(**log_fmt_vars)).resolve()
-		if not log_path.is_relative_to(git_path):
-			raise AssertionError(opts.log_file_fmt, log_fmt_vars)
-		log.debug( 'New log-event [ {} ]: {}', str(log_path)[len(str(git_path))+1:],
+		log_fmt_vars = log_fn_fmt_vars(*dd_week(ev.date))
+		log_path = git_path_rel(opts.log_file_fmt.format(**log_fmt_vars))
+		log.debug( 'New log-event [ {} ]: {}', log_path,
 			' '.join(f'{k}={f"[{vs}]" if " " in (vs:=str(v)) else vs}' for k,v in ev._asdict().items()) )
 		log_path.parent.mkdir(parents=True, exist_ok=True)
 		with log_path.open('a') as dst:
+			if not dst.tell():
+				dst.write('-- date -- :: - time span - ::  delta  :: activity/description\n\n')
 			dst.write( f'{ev.date} :: {ev.ts1.strftime("%H:%M")} -'
-				f' {ev.ts2.strftime("%H:%M")} :: {td_repr(ev.td)} :: {ev.desc}\n' )
+				f' {ev.ts2.strftime("%H:%M")} :: {td_repr(ev.td):>7} :: {ev.desc}\n' )
 		log_paths_upd.add(log_path)
-		for log_path in log_paths_upd: git_cmd(['git', 'add', log_path])
 
-	# XXX: configurable git-commit earlier logs on day/week change
-	# XXX: add duration summary line to a weekly log when moving on to the next one
-	# XXX: symlinks
-	# XXX: git push
+	# Check last/updated closed-week logs for adding final "totals" line there
+	dd_now, totals = dt.date.today(), 0
+	for log_path in log_paths_upd.union(log_list[-2:]):
+		lines = log_reparse(log_path)
+		if lines.td_total: continue
+		ldd1, ldd2 = dd_week(lines[-1].date)
+		if dd_now <= ldd2: continue
+		log_paths_upd.add(log_path); totals += 1; line = log_total_line(lines)
+		log.debug('Adding log totals-line [ {} ]: {}', log_path, line)
+		with log_path.open('a') as dst: dst.write(f'\n{line}\n')
+	log_list = sorted(log_paths_upd.union(log_list))
+
+	# git-add updated logfiles, update symlinks, if enabled
+	if log_paths_upd: git_cmd(['git', 'add', '--', *log_paths_upd])
+	log_last = log_list[-1]
+	if link_last_log and link_last_log.resolve() != log_last.resolve():
+		if link_last_log.exists() and not link_last_log.is_symlink():
+			raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log}')
+		link_last_log.unlink(missing_ok=True)
+		os.symlink( link_dst :=
+			('../'*str(link_last_log).count('/')) + str(log_last), link_last_log )
+		log.debug('Updated last-log symlink: {} -> {}', link_last_log, link_dst)
+		git_cmd(['git', 'add', '-f', '--', link_last_log])
+	if ( link_last_log_dir and log_last.parent.resolve() != git_path
+			and link_last_log_dir.resolve() != log_last.parent.resolve() ):
+		if link_last_log_dir.exists() and not link_last_log_dir.is_symlink():
+			raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log_dir}')
+		link_last_log_dir.unlink(missing_ok=True)
+		os.symlink( link_dst :=
+			('../'*str(link_last_log_dir).count('/')) + str(log_last.parent), link_last_log_dir )
+		log.debug('Updated last-log-dir symlink: {} -> {}', link_last_log, link_dst)
+		git_cmd(['git', 'add', '-f', '--', link_last_log_dir])
+
+	# git-commit, if enabled
+	if log_paths_upd:
+		git_ct_totals = opts.git_commit_type == 'totals' and totals
+		if opts.git_commit_type == 'always' or git_ct_totals:
+			upd_msg = f'Scripted update-commit [ week {dd1.isoformat()} - {dd2.isoformat()} ]'
+			if git_ct_totals: upd_msg += f': {totals} finished logs'
+			else:
+				upd_metrics = list()
+				if new_evs: upd_metrics.append(f'{len(new_evs)} new timespan(s)')
+				if totals: upd_metrics.append(f'{totals} finished log(s)')
+				if log_paths_upd: upd_metrics.append(f'{len(log_paths_upd)} updated file(s)')
+				if upd_metrics: upd_msg += '\n\n' + f'Changes: {", ".join(upd_metrics)}'
+			log.debug( 'Creating git commit (type={}) [ {} - {} ]',
+				opts.git_commit_type, dd1.isoformat(), dd2.isoformat() )
+			git_cmd(['git', 'commit', '--no-edit', '-aqm', upd_msg])
 
 if __name__ == '__main__': sys.exit(main())
