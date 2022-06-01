@@ -319,24 +319,24 @@ def main(args=None):
 
 	# git-add updated logfiles, update symlinks, if enabled
 	if log_paths_upd: git_cmd(['git', 'add', '--', *log_paths_upd])
-	log_last = log_list[-1]
-	if link_last_log and link_last_log.resolve() != log_last.resolve():
-		if link_last_log.exists() and not link_last_log.is_symlink():
-			raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log}')
-		link_last_log.unlink(missing_ok=True)
-		os.symlink( link_dst :=
-			('../'*str(link_last_log).count('/')) + str(log_last), link_last_log )
-		log.debug('Updated last-log symlink: {} -> {}', link_last_log, link_dst)
-		git_cmd(['git', 'add', '-f', '--', link_last_log])
-	if ( link_last_log_dir and log_last.parent.resolve() != git_path
-			and link_last_log_dir.resolve() != log_last.parent.resolve() ):
-		if link_last_log_dir.exists() and not link_last_log_dir.is_symlink():
-			raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log_dir}')
-		link_last_log_dir.unlink(missing_ok=True)
-		os.symlink( link_dst :=
-			('../'*str(link_last_log_dir).count('/')) + str(log_last.parent), link_last_log_dir )
-		log.debug('Updated last-log-dir symlink: {} -> {}', link_last_log, link_dst)
-		git_cmd(['git', 'add', '-f', '--', link_last_log_dir])
+	if log_last := log_list and log_list[-1]:
+		if link_last_log and link_last_log.resolve() != log_last.resolve():
+			if link_last_log.exists() and not link_last_log.is_symlink():
+				raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log}')
+			link_last_log.unlink(missing_ok=True)
+			os.symlink( link_dst :=
+				('../'*str(link_last_log).count('/')) + str(log_last), link_last_log )
+			log.debug('Updated last-log symlink: {} -> {}', link_last_log, link_dst)
+			git_cmd(['git', 'add', '-f', '--', link_last_log])
+		if ( link_last_log_dir and log_last.parent.resolve() != git_path
+				and link_last_log_dir.resolve() != log_last.parent.resolve() ):
+			if link_last_log_dir.exists() and not link_last_log_dir.is_symlink():
+				raise AssertionError(f'Exising --symlink-* path is not a symlink: {link_last_log_dir}')
+			link_last_log_dir.unlink(missing_ok=True)
+			os.symlink( link_dst :=
+				('../'*str(link_last_log_dir).count('/')) + str(log_last.parent), link_last_log_dir )
+			log.debug('Updated last-log-dir symlink: {} -> {}', link_last_log, link_dst)
+			git_cmd(['git', 'add', '-f', '--', link_last_log_dir])
 
 	# git-commit, if enabled
 	if log_paths_upd:
