@@ -293,7 +293,7 @@ qemu_opts=(
 )
 
 ulimit -c 0
-export QEMU_AUDIO_DRV=none
+export QEMU_AUDIO_DRV=none NO_AT_BRIDGE=1
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
