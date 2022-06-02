@@ -36,13 +36,14 @@ usage() {
 set -o pipefail
 trap exit INT
 err=
-ytdl_opts=( ) # use ~/.config/youtube-dl/config
+ytdl=yt-dlp
+ytdl_opts=( ) # use ~/.config/<ytdl>/config
 chan_cache=_meta.json
 
 
 [[ ! -e "$chan_cache" ]] && {
 	echo >&2 "Create '$chan_cache' file with command like this one:"
-	echo >&2 "  youtube-dl -sj 'ytuser:TheGreatWar' >$chan_cache"
+	echo >&2 "  $ytdl -sj 'ytuser:TheGreatWar' >$chan_cache"
 	exit 1
 }
 
@@ -84,9 +85,9 @@ fi
 
 while read n u; do
 	echo " ------ Fetching video $n"
-	youtube-dl\
-			--no-overwrites --restrict-filenames\
-			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u"\
+	$ytdl \
+			--no-overwrites --restrict-filenames \
+			"${ytdl_opts[@]}" -o "$(printf '%03d' $n)__%(title)s.%(ext)s" "$u" \
 		|| err="ERROR (last one only): n=$n code=$?"
 	[[ ! "$delay" -gt 0 ]] || { echo " --- delay: ${delay}s"; sleep "$delay"; }
 done < <(jq -r '.webpage_url' "$chan_cache" | cat -n | sed -n "$sed_exp")
