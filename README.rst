@@ -2273,8 +2273,8 @@ used, or can potentially be used globally via core.hooksPath git-config setting,
 but that requires some work to also place proxies for all other hooks there,
 as it'd prevent running repo-local hooks by default otherwise.
 
-After using it for couple years now, don't think I found a repo where I don't
-want to have this hook yet, but might be just me, of course.
+After using it for couple years now (as of 2022), don't think I found a repo
+where I don't want to have this hook yet, but might be just me, of course.
 
 
 
@@ -2683,9 +2683,13 @@ A tool to query activity logs from `Project Hamster`_ time-tracker
 lib/daemon/tools on a daily basis, aggregate it into weekly log files,
 and auto-commit/push it all into git repo.
 
-Basically an advanced export functionality from hamster db into time-rotated
-append-only text files in a git repo, with the goal to tally and track work-time
-easily, using hamster tools to start/stop the timer and annotate timespans.
+Basically an advanced export functionality from hamster db into weekly-rotated
+append-only text files in a git repo, with the goal to tally and track project
+hours easily, using hamster tools to start/stop the timer and annotate timespans.
+
+git is a nice tool to use in such tracking, as pushing to remotes with it can
+provide effectively immutable distributed history, yet one where edits are still
+allowed through follow-up commits.
 
 .. _Project Hamster: https://github.com/projecthamster
 

@@ -123,7 +123,7 @@ log_line = cs.namedtuple('LogLine', 'fn n date ts1 ts2 td desc')
 def log_reparse(fn):
 	lines, log = LogFile(), get_logger('reparse')
 	for n, line in enumerate(pl.Path(fn).read_text().splitlines(), 1):
-		if not line.strip() or line.startswith('-- date -- '): continue
+		if not line.strip() or line.startswith('-- day/date -- '): continue
 		if line.startswith('-- total '):
 			lines.td_total = log_total_td(lines)
 			if line != log_total_line(lines):
@@ -133,7 +133,7 @@ def log_reparse(fn):
 			raise LogError(f'Timespan data after totals-line [ {fn}:{n} ]: {line!r}')
 		try:
 			dts, tss, td, desc = map(str.strip, line.split('::', 3))
-			dts, td = dt.date.fromisoformat(dts), td_parse(td)
+			dts, td = dt.date.fromisoformat(dts.split()[-1]), td_parse(td)
 			ts1, ts2 = (dt.time.fromisoformat(ts.strip()) for ts in tss.split('-', 1))
 			lines.append(log_line(fn, n, dts, ts1, ts2, td, desc))
 		except Exception as err:
@@ -291,6 +291,7 @@ def main(args=None):
 		new_evs.extend(evs)
 
 	# Append new log-events to any relevant log files
+	weekday_names = 'mon tue wed thu fri sat sun'.title().split()
 	log_paths_upd = set()
 	for ev in new_evs:
 		log_fmt_vars = log_fn_fmt_vars(*dd_week(ev.date))
@@ -300,9 +301,11 @@ def main(args=None):
 		log_path.parent.mkdir(parents=True, exist_ok=True)
 		with log_path.open('a') as dst:
 			if not dst.tell():
-				dst.write('-- date -- :: - time span - ::  delta  :: activity/description\n\n')
-			dst.write( f'{ev.date} :: {ev.ts1.strftime("%H:%M")} -'
-				f' {ev.ts2.strftime("%H:%M")} :: {td_repr(ev.td):>7} :: {ev.desc}\n' )
+				dst.write('-- day/date -- :: - time span - ::  delta  :: activity/description\n\n')
+			dst.write(
+				f'{weekday_names[ev.date.weekday()]} {ev.date.isoformat()}'
+				f' :: {ev.ts1.strftime("%H:%M")} - {ev.ts2.strftime("%H:%M")}'
+				f' :: {td_repr(ev.td):>7} :: {ev.desc}\n' )
 		log_paths_upd.add(log_path)
 
 	# Check last/updated closed-week logs for adding final "totals" line there
@@ -338,7 +341,7 @@ def main(args=None):
 			log.debug('Updated last-log-dir symlink: {} -> {}', link_last_log, link_dst)
 			git_cmd(['git', 'add', '-f', '--', link_last_log_dir])
 
-	# git-commit, if enabled
+	# git-commit/push, if enabled
 	if log_paths_upd:
 		git_ct_totals = opts.git_commit_type == 'totals' and totals
 		if opts.git_commit_type == 'always' or git_ct_totals:
