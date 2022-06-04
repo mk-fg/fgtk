@@ -1,0 +1,11 @@
+#!/bin/bash
+msg_file=$1 commit_src=$2 hash=$3
+# echo >>/tmp/git-hook-test.log "[$(date -Is)] msg=|$msg_file| src=|$commit_src| hash=|$hash| editor=|$GIT_EDITOR|"
+[[ -z "$msg_file" || "$GIT_EDITOR" = : ]] && exit 0
+[[ -z "$commit_src" ]] || exit 0 # for cherry-picks, merges, etc - should be empty for brand-new msgs
+
+echo >>"$msg_file" '#'
+echo >>"$msg_file" "# Commit dir: ${GIT_PREFIX%/}"
+echo >>"$msg_file" "#   Repo dir: $(realpath "$PWD")"
+echo >>"$msg_file" '#'
+git log -10 --format='# %s' >>"$msg_file"

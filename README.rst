@@ -2215,6 +2215,67 @@ avoid loosing these).
 
 Runs a single git-log and sed command under the hood, nothing fancy.
 
+git-prepare-commit-msg-hook
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Common hook that I use for all git repos to append useful comment-lines to
+generated commit-msg, including which relative dir you're currently in,
+repository dir and a list of previous commit-msgs for reference.
+
+These lines don't make it into the actual commit, but allow to, at a glance:
+
+- Make sure you're the right repository, and not e.g. clone or submodule
+  somewhere else on the fs or sshfs, where you were testing things or something.
+
+- Provide good template for component you were editing there - subdir within the
+  repo where you just ran "git commit" command.
+
+  Unless there's other convention in place, I often use such subdirs as a
+  commit-msg prefix, esp. in monorepos that track separate things, like this one.
+
+- Give examples of commit msgs to maintain consistent style between these.
+
+- Check that you're on the right history, don't make duplicate or redundant
+  commits, don't have anything unexpected left or merged in there.
+
+Example of generated commit-msg comment with this hook::
+
+  # Please enter the commit message for your changes. Lines starting
+  # with '#' will be ignored, and an empty message aborts the commit.
+  #
+  # Author:    Mike Kazantsev <some-email@host.something>
+  #
+  # On branch master
+  # Changes to be committed:
+  # modified:   README.rst
+  # new file:   dev/git-prepare-commit-msg-hook
+  #
+  # Untracked files:
+  # bpf/bpf.cgroup-skb.nonet.o
+  # desktop/exclip
+  # desktop/xdpms
+  #
+  #
+  # Commit dir:
+  #   Repo dir: /home/fraggod/hatch/fgtk
+  #
+  # desktop.media.ytdl-chan: youtube-dl -> yt-dlp
+  # vm.linux: +NO_AT_BRIDGE=1
+  # vm: cleanup old redundant/unused scripts
+  # desktop.hamster-tally: fix symlink updates with no logs
+  ...
+
+Everything that hook adds is at the end, and it detects merges, rebases,
+cherry-picks and such ops to not mess with non-interactive commit msgs.
+
+Should be copied to .git/hooks/prepare-commit-msg in any repo where it should be
+used, or can potentially be used globally via core.hooksPath git-config setting,
+but that requires some work to also place proxies for all other hooks there,
+as it'd prevent running repo-local hooks by default otherwise.
+
+After using it for couple years now, don't think I found a repo where I don't
+want to have this hook yet, but might be just me, of course.
+
 
 
 [backup] Backup helpers
