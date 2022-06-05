@@ -231,7 +231,7 @@ def main(args=None):
 
 	dd1, dd2 = dd_week(dt.date.today()) # current week date-span
 	dt1 = dt.datetime(dd1.year, dd1.month, dd1.day)
-	dt2 = dt.datetime(dd2.year, dd2.month, dd2.day)
+	dt2 = dt.datetime(dd2.year, dd2.month, dd2.day) + dt.timedelta(1) # dd2 is Sun
 
 	if opts.git_repo: os.chdir(opts.git_repo)
 	git_path = pl.Path('.').resolve(True)
@@ -278,13 +278,14 @@ def main(args=None):
 		desc = tev.activity
 		if tev.description.strip(): desc += f' - {tev.description}'
 		evs, desc = None, desc.replace('\n', ' // ')
-		if ts1.date() != ts2.date(): # starts/ends on different days - split if date goes beyond dd2
+		if ts1.date() != ts2.date(): # starts/ends on different days, split if ts2>dt2
 			if ts2.date() - ts1.date() != dt.timedelta(days=1): raise AssertionError(ev)
-			if ts2.date() >= dd2: # can still log as one ev otherwise
+			if ts2 > dt2: # can still log as one ev otherwise
 				evs = [
-					new_ev( ts1.date(), ts1.time(),
-						dt.time(23, 59), dt.time(23, 59) - ts1.time(), desc ),
-					new_ev(ts2.date(), dt.time(0, 0), ts2.time(), ts2.time() - dt.time(0, 0), desc) ]
+					new_ev( ts1.date(), ts1.time(), dt.time(23, 59),
+						dt.timedelta(hours=23 - ts1.hour, minutes=60 - ts1.minute), desc ),
+					new_ev( ts2.date(), dt.time(0, 0),
+						ts2.time(), ts2 - ts2.replace(hour=0, minute=0), desc ) ]
 		if not evs:
 			evs = [new_ev( ts1.date(), ts1.time(), ts2.time(),
 				dt.timedelta(minutes=round(float(tev.duration))), desc )]
