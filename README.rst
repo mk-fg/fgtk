@@ -2676,6 +2676,17 @@ minute or few, or working around streamlink quirks and fatal errors.
 
 .. _streamlink: https://github.com/streamlink/streamlink
 
+image-compact
+'''''''''''''
+
+Wrapper for ImageMagick's convert and jpegoptim tools to process large images
+from multi-Mpx source like a phone camera and make it reasonably-sized instead
+of a giant multi-MiB file.
+
+Can be used as ``image-compact image.jpg`` for default "fit into 1600x square"
+mode, or with optional size argument to scale it differently, but always preserving
+the aspect ratio.
+
 
 [desktop/notifications]
 ^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,34 @@
+#!/bin/bash
+
+sz=1600
+
+usage() {
+	local bin=$(basename $0)
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin /path/to/some/image.jpg [size=$sz]"
+	echo
+	echo "Size arg can be a size for square to fit image into, or WxH spec"
+	echo "  for rectangle with max width/height. Scaling is always proportional."
+	exit ${1:-1}; }
+[[ "$1" = -h || "$1" = --help ]] && usage 0
+
+[[ -n "$1" && "$#" -le 2 ]] || usage 1
+set -eo pipefail
+
+du_hs() {
+	local sz szp
+	read -ra sz szp < <(du -hs "$1" || kill -INT $$)
+	printf '%s' "$sz"; }
+
+p=$1
+[[ -e "$p" ]] || { echo >&2 "ERROR: nx input file - '$p'"; exit 1; }
+[[ ! -e "$p".fix.jpg ]] || {
+	echo >&2 "ERROR: temp-file from earlier bug - $p.fix.jpg"; exit 1; }
+[[ "$sz" == *x* ]] || sz="${sz}x${sz}"
+
+sz1=$(du_hs "$p")
+convert "$p" -resize "${sz}>" "$p".fix.jpg
+jpegoptim -q --strip-all --all-normal "$p".fix.jpg
+mv "$p".fix.jpg "$p"
+sz2=$(du_hs "$p")
+echo "$p :: $sz1 -> $sz2"
