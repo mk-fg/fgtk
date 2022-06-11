@@ -18,6 +18,7 @@ def indent_replace(p_list, to_tabs, n, verbose):
 					.decode().replace('-', '').replace('_', '').replace('=', '') )[:4]
 				p_tmp = p.parent / (p.name + f'.tmp.{suffix}')
 			p_tmp_rm = p_tmp
+			p_tmp.touch(p.stat().st_mode)
 			p_tmp.write_text(src_new)
 			p_tmp.rename(p)
 			p_tmp_rm = None
