@@ -1,0 +1,113 @@
+#!/usr/bin/env python
+
+import collections as cs, pathlib as pl, itertools as it
+import os, sys, base64, random
+
+from colormath.color_objects import sRGBColor, LabColor
+from colormath.color_conversions import convert_color
+from colormath.color_diff import delta_e_cie2000
+
+
+def color_delta(c1, c2):
+	'Returns delta between any type of color specs.'
+	c1, c2 = (( convert_color( c if not isinstance(c, str)
+			else sRGBColor.new_from_rgb_hex(c), LabColor )
+		if not isinstance(c, LabColor) else c ) for c in [c1, c2])
+	return delta_e_cie2000(c1, c2)
+
+
+def main(args=None):
+	import argparse, textwrap, re
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(usage='%(prog)s [options]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Tool to filter, order and compress color palettes.
+			Takes a plaintext any-space-separated list of colors from fancy tools like
+				https://medialab.github.io/iwanthue/ and intended background color,
+				removes colors that are too close to latter, then orders them by
+				"random, but different from last ones" criteria, also discarding close ones.
+			Encodes resulting colors into base64 for more compact representation.'''))
+	parser.add_argument('colors_file', nargs='?', help=dd('''
+		File with many hex-encoded colors separated by any kind of spaces.
+		Default is to read the list from stdin stream, same as if "-" is specified.'''))
+	parser.add_argument('-b', '--bg-color',
+		metavar='hex(:threshold)', default='e7ebf3:30', help=dd('''
+			Background color to make sure all other colors will be distinct from.
+			Can have an optional colon-separated Delta E CIE 2000 threshold value,
+				otherwise threshold from default value will be used. Default: %(default)s'''))
+	parser.add_argument('-s', '--random-seed', metavar='string', help=dd('''
+		Seed for PRNG used when picking colors "at random", for repeatable results.
+		Any string should work. Default is to use --bg-color value (with threshold).'''))
+	parser.add_argument('-t', '--threshold',
+		metavar='delta_e_cie_2000', type=float, default=10, help=dd('''
+			Min threshold for delta between colors in a set, applied when random-picking them.
+			Next picked color is discarded if too similar to any among already-picked ones.'''))
+	parser.add_argument('-k', '--sort-delta-keys',
+		metavar='w1:n1,...', default='0.3:5,0.2:10,0.1:20', help=dd('''
+			Comma/space-separated list of weight:count tuples used for final color ordering.
+			With empty value here, next color is selected by: -min(deltas with all-picked).
+			Adding 0.3:5, will use -0.3*min(deltas of last-5) -0.7*min(deltas) instead,
+				i.e. give last 5 diffs 30%% weight when deciding ordering, so that colors aren't
+				mixed in a way where e.g. 5 similar ones end up close together.
+			This orders colors picked in PRNG-order with --threshold check.
+			Using "-" value here will disable this ordering.'''))
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	c_list = list(map( sRGBColor.new_from_rgb_hex,
+		( sys.stdin.read() if (opts.colors_file or '-').strip() == '-'
+			else pl.Path(opts.colors_file).read_text() ).split() ))
+	c_list_lab = list(convert_color(c, LabColor) for c in c_list)
+	print(f'Colors [input]: {len(c_list)}')
+
+	c_bg, c_bg_diff_min = ( func(v) for func, v in
+		zip([sRGBColor.new_from_rgb_hex, float], [*opts.bg_color.split(':'), 30][:2]) )
+	bg_spec = f'{c_bg.get_rgb_hex().lstrip("#")}:{c_bg_diff_min:.1f}'
+	if c_bg_diff_min > 0:
+		c_list = list(c for c in c_list if color_delta(c, c_bg) > c_bg_diff_min)
+		print(f'Colors [diff-from={bg_spec}]: {len(c_list)}')
+
+	prng_seed = opts.random_seed or f'{bg_spec}'
+	print(f'PRNG seed string: {prng_seed!r}')
+	random.seed(int.from_bytes(prng_seed.encode(), 'big'))
+
+	ns_order = list(range(len(c_list)))
+	ns_diffs = cs.defaultdict(dict)
+	for n1, n2 in it.combinations(ns_order, 2):
+		ns_diffs[n1][n2] = ns_diffs[n2][n1] = \
+			delta_e_cie2000(c_list_lab[n1], c_list_lab[n2])
+
+	c_pick_diff = opts.threshold
+	random.shuffle(ns_order)
+	ns_pick = list()
+	for n in ns_order:
+		if any((ns_diffs[n][np] < c_pick_diff) for np in ns_pick): continue
+		ns_pick.append(n)
+
+	if opts.sort_delta_keys != '-':
+		wcs = opts.sort_delta_keys.replace(',', ' ').split()
+		if wcs: wcs = list((float(w), int(c)) for w, c in (v.split(':', 1) for v in wcs))
+		if (w := 1 - sum(v[0] for v in wcs)) < 0:
+			parser.error(f'Sum of --sort-delta-keys weights must be <=1: {opts.sort_delta_keys!r}')
+		wcs.append((w, 2**32-1))
+		ns_pick, ns_stack = list(), ns_pick
+		while ns_stack:
+			if ns_pick and len(ns_stack) > 1:
+				ns_stack.sort( key=lambda n:
+					sum(w * min(ns_diffs[n][nc] for nc in ns_pick[:c]) for w, c in wcs) )
+			ns_pick.append(ns_stack.pop()) # has max(weighted-delta-mins) value
+
+	c_list_pick = list(c_list[n] for n in ns_pick)
+	print(f'Colors [selected]: {len(c_list_pick)}')
+
+	print(f'\nBase64 RGB color list [{len(c_list_pick)} color(s)]:\n')
+	splits, b64 = list(), base64.urlsafe_b64encode(b''.join(
+		int(c.get_rgb_hex().lstrip('#'), 16).to_bytes(3, 'big')
+		for c in c_list_pick )).decode()
+	for bs in range(65, 80):
+		lines = list(b64[n:n+bs] for n in range(0, len(b64), bs))
+		splits.append((bs - len(lines[-1]), lines))
+	for line in sorted(splits)[0][1]: print(f'  {line}')
+	print()
+
+if __name__ == '__main__': sys.exit(main())

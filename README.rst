@@ -240,6 +240,59 @@ terminal::
 
 Or to get color-escape-magic for your bash script: ``color red bold p``
 
+color-b64sort
+'''''''''''''
+
+Tool to filter, sort and compress list of colors - aka color palette - into
+base64, to then use as a compact blob in visualization scripts easily.
+
+- Input: a list of hex-encoded colors, separated by any spaces/newlines.
+
+- Filtering:
+
+  Removes colors too close to specified background color
+  (using specified Delta E CIE 2000 color-diff threshold).
+
+  Compares colors all-to-all, and removes ones that are too close to each other,
+  with a similar configurable threshold.
+
+- Ordering:
+
+  Picks next color based on min(deltas-with-others) value, to get the most
+  distinct color on every step.
+
+  This is further configured by using higher weights of min(deltas-with-n-last)
+  colors, so that next pick ends up being as distinct as possible from N ones
+  that are right before it first, and then the rest of them.
+
+  Current default for ``-k/--sort-delta-keys`` "weight:count" list is "0.3:5
+  0.2:10 0.1:20", with leftover 0.4 weight used for min(deltas-with-all-picked)
+  value.
+
+- Output:
+
+  Urlsafe-base64 of concatenated 3-byte color values in RGB order,
+  instead of more bulky "lines of hex-encoded colors" or other color-spec types,
+  to hardcode without taking too much space.
+
+Intended use it to have output color list of 50+ values, and then pick them in
+order (for chart lines, tree branches, table row/cell backgrounds, etc), which
+should return most distinctive colors first, without resorting to repetition as
+quickly as with e.g. D3.js fixed 10/20-color palettes.
+
+There are many great tools like `"i want hue"`_ that can be used to generate input
+color list for this script, with features like accounting for color blindness types,
+but it can be just a sequence of points from any nice gradient too - input
+ordering or similarity should not matter.
+
+It's a small python script, which uses colormath_ module for Delta E CIE 2000
+color-diff calculations.
+Can take some time to run with long lists due to how all\*all combinatorics work,
+but using pypy instead of cpython can speed that up a lot.
+
+.. _"i want hue": https://medialab.github.io/iwanthue/
+.. _colormath: https://python-colormath.readthedocs.io/
+
 resolve-hostnames
 '''''''''''''''''
 
