@@ -17,10 +17,12 @@ def color_delta(c1, c2):
 
 
 def main(args=None):
+	c_bg_diff_def = 30
+
 	import argparse, textwrap, re
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
-	parser = argparse.ArgumentParser(usage='%(prog)s [options]',
+	parser = argparse.ArgumentParser(usage='%(prog)s [options] [colors-file]',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			Tool to filter, order and compress color palettes.
 			Takes a plaintext any-space-separated list of colors from fancy tools like
@@ -32,10 +34,16 @@ def main(args=None):
 		File with many hex-encoded colors separated by any kind of spaces.
 		Default is to read the list from stdin stream, same as if "-" is specified.'''))
 	parser.add_argument('-b', '--bg-color',
-		metavar='hex(:threshold)', default='e7ebf3:30', help=dd('''
+		metavar='hex(:threshold)', default=f'e7ebf3:{c_bg_diff_def}', help=dd('''
 			Background color to make sure all other colors will be distinct from.
 			Can have an optional colon-separated Delta E CIE 2000 threshold value,
 				otherwise threshold from default value will be used. Default: %(default)s'''))
+	parser.add_argument('-c', '--avoid-color',
+		action='append', metavar='hex(:threshold)', help=dd(f'''
+			Additional color(s) to avoid similarity with, with same idea
+				and hex[:threshold] specification as in -b/--bg-color option above.
+			Can be used multiple times to avoid similarity with all specified colors.
+			Same default threshold value if omitted as in -b/--bg-color ({c_bg_diff_def}).'''))
 	parser.add_argument('-s', '--random-seed', metavar='string', help=dd('''
 		Seed for PRNG used when picking colors "at random", for repeatable results.
 		Any string should work. Default is to use --bg-color value (with threshold).'''))
@@ -60,12 +68,19 @@ def main(args=None):
 	c_list_lab = list(convert_color(c, LabColor) for c in c_list)
 	print(f'Colors [input]: {len(c_list)}')
 
-	c_bg, c_bg_diff_min = ( func(v) for func, v in
-		zip([sRGBColor.new_from_rgb_hex, float], [*opts.bg_color.split(':'), 30][:2]) )
+	c_parse = lambda c: (func(v) for func, v in zip(
+		[sRGBColor.new_from_rgb_hex, float], [*c.split(':'), c_bg_diff_def][:2] ))
+	c_bg, c_bg_diff_min = c_parse(opts.bg_color)
 	bg_spec = f'{c_bg.get_rgb_hex().lstrip("#")}:{c_bg_diff_min:.1f}'
 	if c_bg_diff_min > 0:
 		c_list = list(c for c in c_list if color_delta(c, c_bg) > c_bg_diff_min)
 		print(f'Colors [diff-from={bg_spec}]: {len(c_list)}')
+	if opts.avoid_color:
+		for c in opts.avoid_color:
+			c, c_diff_min = c_parse(c)
+			if c_diff_min <= 0: continue
+			c_list = list(c for c in c_list if color_delta(c, c_bg) > c_diff_min)
+		print(f'Colors [with-avoid-colors]: {len(c_list)}')
 
 	prng_seed = opts.random_seed or f'{bg_spec}'
 	print(f'PRNG seed string: {prng_seed!r}')
