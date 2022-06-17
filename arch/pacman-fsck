@@ -14,16 +14,20 @@ class adict(dict):
 		self.__dict__ = self
 
 def str_decode_escapes( s,
-	_re_esc=re.compile(r'''
-		( \\U........      # 8-digit hex escapes
-		| \\u....          # 4-digit hex escapes
-		| \\x..            # 2-digit hex escapes
-		| \\[0-7]{1,3}     # Octal escapes
-		| \\N\{[^}]+\}     # Unicode characters by name
-		| \\[\\'"abfnrtv]  # Single-character escapes
-		)''', re.UNICODE | re.VERBOSE),
-	_dec=lambda m: codecs.decode(m.group(0), 'unicode-escape') ):
-	return _re_esc.sub(_dec, s)
+		_re_esc=re.compile(r'''
+			( \\U........      # 8-digit hex escapes
+			| \\u....          # 4-digit hex escapes
+			| \\N\{[^}]+\}     # Unicode characters by name
+			| \\[\\'"abfnrtv]  # Single-character escapes
+			)''', re.VERBOSE),
+		_dec_esc=lambda m: codecs.decode(m.group(0), 'unicode-escape'),
+		_re_oct=re.compile(r'\\[0-7]{1,3}'),
+		_dec_oct=lambda m: rf'\x{int(m.group(0)[1:], 8):x}',
+		_re_hex=re.compile(br'\\x[\da-fA-F]{2}'),
+		_dec_hex=lambda m: int(m.group(0)[2:], 16).to_bytes(1, 'big') ):
+	s = _re_esc.sub(_dec_esc, s) # unicode escapes
+	s = _re_oct.sub(_dec_oct, s) # octal -> hex escapes
+	return _re_hex.sub(_dec_hex, s.encode()).decode() # hex escapes -> utf-8
 
 
 errs = enum.Enum('errs', 'nx access nohash parse')
