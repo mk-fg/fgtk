@@ -33,7 +33,7 @@ def str_decode_escapes( s,
 errs = enum.Enum('errs', 'nx access nohash parse')
 class SkipCheck(Exception): pass
 
-def validate_mtree_files(p_err, p_mtree, root, skip_prefixes, bs=1 * 2**20):
+def validate_mtree_files(p_err, p_mtree, root, skip_res, bs=1 * 2**20):
 	mtree = sp.run( ['bsdcat', p_mtree.resolve()],
 		stdout=sp.PIPE ).stdout.decode(errors='replace')
 	for line in mtree.splitlines():
@@ -41,9 +41,9 @@ def validate_mtree_files(p_err, p_mtree, root, skip_prefixes, bs=1 * 2**20):
 		if line == '#mtree' or line.startswith('./.') or line.startswith('/set '): continue
 		try:
 			p, attrs = line.split(None, 1)
-			p = str_decode_escapes(p).lstrip('./')
-			for pre in skip_prefixes:
-				if p.startswith(pre): raise SkipCheck
+			p = '/' + str_decode_escapes(p).lstrip('./')
+			for rx in skip_res:
+				if rx.search(p): raise SkipCheck
 			p, attrs = root / p, adict(a.split('=', 1) for a in attrs.split())
 		except SkipCheck: continue
 		except Exception as err:
@@ -98,6 +98,10 @@ def main(args=None):
 			' For example, "/etc/" can be specified to skip checking all config files there.'
 			' Option can be specified multiple times, all specified prefixes will be skipped.'
 			' Don\'t forget to include trailing slash to match prefix-dirs only.')
+	parser.add_argument('-X', '--skip-re', action='append', metavar='regexp',
+		help='Filename match regexp (python re syntyax), same to -x, but more powerful.'
+			' Filenames do not include -r/--root path and always start with "/".'
+			' Multiple regexps can be specified via multiple uses of this option.')
 	parser.add_argument('-v', '--verbose', action='store_true',
 		help='Print alpha-sorted list of mtree files as they get processed'
 			' with sequence number to stdout, to get an idea on operation progress.')
@@ -108,8 +112,9 @@ def main(args=None):
 		parser.error(f'Unrecognized error type specified for -s/--skip-err option: {err}')
 	def p_err_filter(t, fmt, *fmt_args, **fmt_kws):
 		if t not in err_skip: p_err(fmt, *fmt_args, **fmt_kws)
-	skip_prefixes = set( pre.lstrip('/')
-		for pre in (' '.join(opts.skip_prefix or list()).split()) )
+	skip_res = set(re.compile(s) for s in ' '.join(opts.skip_re or list()).split())
+	for pre in ' '.join(opts.skip_prefix or list()).split():
+		skip_res.add(re.compile(r'^/' + re.escape(pre.lstrip('/'))))
 
 	root, mtrees = pl.Path(opts.root), pl.Path(opts.pacman_path)
 	if mtrees.is_file(): mtrees = [mtrees]
@@ -120,7 +125,7 @@ def main(args=None):
 		f'[{{:{len(str(len(mtrees)))},d}} / {len(mtrees)}] {{}}' )
 	for n, p_mtree in enumerate(mtrees, 1):
 		if progress_fmt: print(progress_fmt.format(n, p_mtree))
-		try: validate_mtree_files(p_err_filter, p_mtree, root, skip_prefixes)
+		try: validate_mtree_files(p_err_filter, p_mtree, root, skip_res)
 		except Exception as err:
 			p_err_filter( errs.parse,
 				'Failed to read/validate mtree file [ {} ]: {}', p_mtree, err_fmt(err) )
