@@ -104,7 +104,8 @@ def main(args=None):
 		parser.error(f'Unrecognized error type specified for -s/--skip-err option: {err}')
 	def p_err_filter(t, fmt, *fmt_args, **fmt_kws):
 		if t not in err_skip: p_err(fmt, *fmt_args, **fmt_kws)
-	skip_prefixes = set(' '.join(opts.skip_prefix or list()).split())
+	skip_prefixes = set( pre.lstrip('/')
+		for pre in (' '.join(opts.skip_prefix or list()).split()) )
 
 	root, mtrees = pl.Path(opts.root), pl.Path(opts.pacman_path)
 	if mtrees.is_file(): mtrees = [mtrees]
