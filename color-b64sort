@@ -33,25 +33,37 @@ def main(args=None):
 	parser.add_argument('colors_file', nargs='?', help=dd('''
 		File with many hex-encoded colors separated by any kind of spaces.
 		Default is to read the list from stdin stream, same as if "-" is specified.'''))
-	parser.add_argument('-b', '--bg-color',
+
+	group = parser.add_argument_group('Input/output tweaks')
+	group.add_argument('-B', '--b64-input', action='store_true',
+		help=dd('''
+			Read input colors from base64 default-output format,
+				instead of plaintext list of hex-encoded colors.'''))
+	group.add_argument('-H', '--hex-output', action='store_true',
+		help='Output colors in hex format, one per line, instead of default base64.')
+	group.add_argument('-C', '--convert', action='store_true',
+		help='Do not reorder or filter colors in any way, just output same list.')
+
+	group = parser.add_argument_group('Color order/filtering opts')
+	group.add_argument('-b', '--bg-color',
 		metavar='hex(:threshold)', default=f'e7ebf3:{c_bg_diff_def}', help=dd('''
 			Background color to make sure all other colors will be distinct from.
 			Can have an optional colon-separated Delta E CIE 2000 threshold value,
 				otherwise threshold from default value will be used. Default: %(default)s'''))
-	parser.add_argument('-c', '--avoid-color',
+	group.add_argument('-c', '--avoid-color',
 		action='append', metavar='hex(:threshold)', help=dd(f'''
 			Additional color(s) to avoid similarity with, with same idea
 				and hex[:threshold] specification as in -b/--bg-color option above.
 			Can be used multiple times to avoid similarity with all specified colors.
 			Same default threshold value if omitted as in -b/--bg-color ({c_bg_diff_def}).'''))
-	parser.add_argument('-s', '--random-seed', metavar='string', help=dd('''
+	group.add_argument('-s', '--random-seed', metavar='string', help=dd('''
 		Seed for PRNG used when picking colors "at random", for repeatable results.
 		Any string should work. Default is to use --bg-color value (with threshold).'''))
-	parser.add_argument('-t', '--threshold',
+	group.add_argument('-t', '--threshold',
 		metavar='delta_e_cie_2000', type=float, default=10, help=dd('''
 			Min threshold for delta between colors in a set, applied when random-picking them.
 			Next picked color is discarded if too similar to any among already-picked ones.'''))
-	parser.add_argument('-k', '--sort-delta-keys',
+	group.add_argument('-k', '--sort-delta-keys',
 		metavar='w1:n1,...', default='0.3:5,0.2:10,0.1:20', help=dd('''
 			Comma/space-separated list of weight:count tuples used for final color ordering.
 			With empty value here, next color is selected by: -min(deltas with all-picked).
@@ -62,67 +74,77 @@ def main(args=None):
 			Using "-" value here will disable this ordering.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	c_list = list(map( sRGBColor.new_from_rgb_hex,
-		( sys.stdin.read() if (opts.colors_file or '-').strip() == '-'
-			else pl.Path(opts.colors_file).read_text() ).split() ))
+	c_list = ( sys.stdin.read()
+		if (opts.colors_file or '-').strip() == '-' else pl.Path(opts.colors_file).read_text() )
+	if not opts.b64_input: c_list = list(map(sRGBColor.new_from_rgb_hex, c_list.split()))
+	else:
+		c_list = base64.urlsafe_b64decode(c_list)
+		c_list = list(sRGBColor.new_from_rgb_hex(
+			f'{int.from_bytes(c_list[n:n+3], "big"):06x}' ) for n in range(0, len(c_list), 3))
 	c_list_lab = list(convert_color(c, LabColor) for c in c_list)
 	print(f'Colors [input]: {len(c_list)}')
 
-	c_parse = lambda c: (func(v) for func, v in zip(
-		[sRGBColor.new_from_rgb_hex, float], [*c.split(':'), c_bg_diff_def][:2] ))
-	c_bg, c_bg_diff_min = c_parse(opts.bg_color)
-	bg_spec = f'{c_bg.get_rgb_hex().lstrip("#")}:{c_bg_diff_min:.1f}'
-	if c_bg_diff_min > 0:
-		c_list = list(c for c in c_list if color_delta(c, c_bg) > c_bg_diff_min)
-		print(f'Colors [diff-from={bg_spec}]: {len(c_list)}')
-	if opts.avoid_color:
-		for c in opts.avoid_color:
-			c, c_diff_min = c_parse(c)
-			if c_diff_min <= 0: continue
-			c_list = list(c for c in c_list if color_delta(c, c_bg) > c_diff_min)
-		print(f'Colors [with-avoid-colors]: {len(c_list)}')
+	if opts.convert: c_list_pick = c_list
+	else:
+		c_parse = lambda c: (func(v) for func, v in zip(
+			[sRGBColor.new_from_rgb_hex, float], [*c.split(':'), c_bg_diff_def][:2] ))
+		c_bg, c_bg_diff_min = c_parse(opts.bg_color)
+		bg_spec = f'{c_bg.get_rgb_hex().lstrip("#")}:{c_bg_diff_min:.1f}'
+		if c_bg_diff_min > 0:
+			c_list = list(c for c in c_list if color_delta(c, c_bg) > c_bg_diff_min)
+			print(f'Colors [diff-from={bg_spec}]: {len(c_list)}')
+		if opts.avoid_color:
+			for c in opts.avoid_color:
+				c, c_diff_min = c_parse(c)
+				if c_diff_min <= 0: continue
+				c_list = list(c for c in c_list if color_delta(c, c_bg) > c_diff_min)
+			print(f'Colors [with-avoid-colors]: {len(c_list)}')
 
-	prng_seed = opts.random_seed or f'{bg_spec}'
-	print(f'PRNG seed string: {prng_seed!r}')
-	random.seed(int.from_bytes(prng_seed.encode(), 'big'))
+		prng_seed = opts.random_seed or f'{bg_spec}'
+		print(f'PRNG seed string: {prng_seed!r}')
+		random.seed(int.from_bytes(prng_seed.encode(), 'big'))
 
-	ns_order = list(range(len(c_list)))
-	ns_diffs = cs.defaultdict(dict)
-	for n1, n2 in it.combinations(ns_order, 2):
-		ns_diffs[n1][n2] = ns_diffs[n2][n1] = \
-			delta_e_cie2000(c_list_lab[n1], c_list_lab[n2])
+		ns_order = list(range(len(c_list)))
+		ns_diffs = cs.defaultdict(dict)
+		for n1, n2 in it.combinations(ns_order, 2):
+			ns_diffs[n1][n2] = ns_diffs[n2][n1] = \
+				delta_e_cie2000(c_list_lab[n1], c_list_lab[n2])
 
-	c_pick_diff = opts.threshold
-	random.shuffle(ns_order)
-	ns_pick = list()
-	for n in ns_order:
-		if any((ns_diffs[n][np] < c_pick_diff) for np in ns_pick): continue
-		ns_pick.append(n)
+		c_pick_diff = opts.threshold
+		random.shuffle(ns_order)
+		ns_pick = list()
+		for n in ns_order:
+			if any((ns_diffs[n][np] < c_pick_diff) for np in ns_pick): continue
+			ns_pick.append(n)
 
-	if opts.sort_delta_keys != '-':
-		wcs = opts.sort_delta_keys.replace(',', ' ').split()
-		if wcs: wcs = list((float(w), int(c)) for w, c in (v.split(':', 1) for v in wcs))
-		if (w := 1 - sum(v[0] for v in wcs)) < 0:
-			parser.error(f'Sum of --sort-delta-keys weights must be <=1: {opts.sort_delta_keys!r}')
-		wcs.append((w, 2**32-1))
-		ns_pick, ns_stack = list(), ns_pick
-		while ns_stack:
-			if ns_pick and len(ns_stack) > 1:
-				ns_stack.sort( key=lambda n:
-					sum(w * min(ns_diffs[n][nc] for nc in ns_pick[:c]) for w, c in wcs) )
-			ns_pick.append(ns_stack.pop()) # has max(weighted-delta-mins) value
+		if opts.sort_delta_keys != '-':
+			wcs = opts.sort_delta_keys.replace(',', ' ').split()
+			if wcs: wcs = list((float(w), int(c)) for w, c in (v.split(':', 1) for v in wcs))
+			if (w := 1 - sum(v[0] for v in wcs)) < 0:
+				parser.error(f'Sum of --sort-delta-keys weights must be <=1: {opts.sort_delta_keys!r}')
+			wcs.append((w, 2**32-1))
+			ns_pick, ns_stack = list(), ns_pick
+			while ns_stack:
+				if ns_pick and len(ns_stack) > 1:
+					ns_stack.sort( key=lambda n:
+						sum(w * min(ns_diffs[n][nc] for nc in ns_pick[:c]) for w, c in wcs) )
+				ns_pick.append(ns_stack.pop()) # has max(weighted-delta-mins) value
 
-	c_list_pick = list(c_list[n] for n in ns_pick)
-	print(f'Colors [selected]: {len(c_list_pick)}')
+		c_list_pick = list(c_list[n] for n in ns_pick)
+		print(f'Colors [selected]: {len(c_list_pick)}')
 
-	print(f'\nBase64 RGB color list [{len(c_list_pick)} color(s)]:\n')
-	splits, b64 = list(), base64.urlsafe_b64encode(b''.join(
-		int(c.get_rgb_hex().lstrip('#'), 16).to_bytes(3, 'big')
-		for c in c_list_pick )).decode()
-	for bs in range(65, 80):
-		lines = list(b64[n:n+bs] for n in range(0, len(b64), bs))
-		splits.append((bs - len(lines[-1]), lines))
-	for line in sorted(splits)[0][1]: print(f'  {line}')
+	if not opts.hex_output:
+		print(f'\nBase64 RGB color list [{len(c_list_pick)} color(s)]:\n')
+		splits, b64 = list(), base64.urlsafe_b64encode(b''.join(
+			int(c.get_rgb_hex().lstrip('#'), 16).to_bytes(3, 'big')
+			for c in c_list_pick )).decode()
+		for bs in range(65, 80):
+			lines = list(b64[n:n+bs] for n in range(0, len(b64), bs))
+			splits.append((bs - len(lines[-1]), lines))
+		for line in sorted(splits)[0][1]: print(f'  {line}')
+	else:
+		print(f'\nHex-RGB color list [{len(c_list_pick)} color(s)]:\n')
+		for c in c_list_pick: print(f'  {c.get_rgb_hex()}')
 	print()
 
 if __name__ == '__main__': sys.exit(main())
