@@ -1,21 +1,26 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
-import os, sys, base64, pathlib as pl, contextlib as cl
+import os, sys, re, base64, pathlib as pl
 
 
 def indent_replace(p_list, to_tabs, n, verbose):
 	p_tmp_rm, pre_src, pre_dst = None, ' '*n, '\t'
 	if not to_tabs: pre_src, pre_dst = pre_dst, pre_src
+	pre_sub = re.compile(fr'^({pre_src})+')
 	try:
 		for p in p_list:
-			src_old = p.read_text()
-			src_new = src_old.replace(pre_src, pre_dst)
+			src_old, src_new = p.read_text(), list()
+			for line in src_old.split('\n'):
+				if m := pre_sub.search(line):
+					line = m.group().replace(pre_src, pre_dst) + line[m.end():]
+				src_new.append(line)
+			src_new = '\n'.join(src_new)
 			if src_old == src_new: continue
+
 			if verbose: print(p)
 			p_tmp = p.parent / (p.name + '.tmp')
 			while p_tmp.exists():
-				suffix = ( base64.urlsafe_b64encode(os.urandom(4))
-					.decode().replace('-', '').replace('_', '').replace('=', '') )[:4]
+				suffix = base64.urlsafe_b64encode(os.urandom(3)).decode()
 				p_tmp = p.parent / (p.name + f'.tmp.{suffix}')
 			p_tmp_rm = p_tmp
 			p_tmp.touch(p.stat().st_mode)
