@@ -173,6 +173,10 @@ def main(args=None):
 			' Python str formatting is used, with "e" being feed entry object from feedparser module.'
 			' See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.'
 			' Default: %(default)s')
+	parser.add_argument('-C', '--list-curl', action='store_true',
+		help='List curl commands for downloading all selected files individually and exit.')
+	parser.add_argument('-A', '--list-aria2', action='store_true',
+		help='Print filelist for downloading all selected files with aria2c and exit.')
 	parser.add_argument('-i', '--inplace', action='store_true',
 		help='Download files in-place, instead of using tmpdir and then moving them all on success.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -233,9 +237,9 @@ def main(args=None):
 
 	if not file_urls: return
 
-	file_list, name_set = list(), set()
+	file_map, name_set = dict(), set()
 	for url, meta in file_urls.items():
-		file_list.append(f'{url}\n')
+		file_map[url] = None
 		name = list()
 		if opts.ts_names and meta.ts:
 			name.append(meta.ts.strftime(f'%y-%m-%d.%H%M.{1000-meta.n:03d}'))
@@ -247,8 +251,22 @@ def main(args=None):
 			name = name[:opts.max_filename_len] + '--'
 		name = name_dedup(name, name_set)
 		ext = pl.Path(ulp.urlparse(url).path).name.rsplit('.')[-1]
-		file_list.append(f'  out={name}.{ext}\n')
+		file_map[url] = f'{name}.{ext}'
+
+	if opts.list_curl:
+		for url, fn in file_map.items():
+			opts = '-fL'
+			if not fn: opts += 'OJ'
+			else: opts += f"o '{fn}'"
+			print(f"  curl {opts} '{url}'")
+		return
+
+	file_list = list()
+	for url, fn in file_map.items():
+		file_list.append(f'{url}\n')
+		if fn: file_list.append(f'  out={fn}\n')
 	file_list = ''.join(file_list)
+	if opts.list_aria2: return print(file_list.strip())
 
 	if opts.inplace:
 		return sp.run(
