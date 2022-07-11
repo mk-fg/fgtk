@@ -6,6 +6,7 @@ import xml.etree.ElementTree as etree
 import os, sys, re, logging, time, calendar, base64, json, textwrap, unicodedata
 
 import feedparser as fp # pip install --user feedparser
+import http.client # feedparser fetches can raise errors from here
 
 
 class LogMessage:
@@ -188,10 +189,13 @@ feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
 	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
 
 def feed_fetch(log, url, etag):
-	feed = fp.parse( url, agent=feed_user_agent,
-		etag=etag, request_headers=dict(Accept=feed_accept_header) )
-	status, bozo, bozo_err = (
-		feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
+	try:
+		feed = fp.parse( url, agent=feed_user_agent,
+			etag=etag, request_headers=dict(Accept=feed_accept_header) )
+		status, bozo, bozo_err = (
+			feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
+	except http.client.HTTPException as err:
+		status, bozo, bozo_err = 0, True, err_fmt(err)
 	if (not status and bozo) or (status or 1000) >= 400:
 		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
 	if status == 304: return
