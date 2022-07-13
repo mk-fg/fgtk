@@ -155,7 +155,6 @@ def cleanup_run(cleanup, paths, df=None, dry_run=False):
 
 
 def run_copy(copy, cleanup, rename, dry_run):
-	### Build list of files to copy
 	src_files = build_file_list(copy)
 
 	### Build a list of files for removal, if any cleanup is requested
