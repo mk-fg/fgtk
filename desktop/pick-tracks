@@ -153,7 +153,8 @@ def cleanup_run(cleanup, paths, df=None, dry_run=False):
 		except OSError as err:
 			log.warning('Failed to remove file (%s): %s', p, err_fmt(err))
 
-def run(copy, cleanup, rename, dry_run):
+
+def run_copy(copy, cleanup, rename, dry_run):
 	### Build list of files to copy
 	src_files = build_file_list(copy)
 
@@ -162,7 +163,8 @@ def run(copy, cleanup, rename, dry_run):
 		cleanup_paths = list()
 		cleanup_func = ft.partial(cleanup_run, cleanup, cleanup_paths, dry_run=dry_run)
 		if not cleanup.p.exists():
-			log.info('Cleanup path does not exists: %s', cleanup.p)
+			if not (dry_run and cleanup.p == copy.dst):
+				log.info('Cleanup path does not exists: %s', cleanup.p)
 		else:
 			res = sp.run(
 				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
@@ -174,10 +176,15 @@ def run(copy, cleanup, rename, dry_run):
 		# Run --clean-as-needed cleanup to specified --df-min, even with no sources
 		if cleanup.as_needed and cleanup.df_min and not src_files: cleanup_func(cleanup.df_min)
 
-	### Copy files
-	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
+	free_path = copy.dst # can be nx dir with --dry-run
+	while not free_path.exists():
+		if free_path == free_path.parent: break
+		free_path = free_path.parent
+	free = ft.partial(df_get, free_path) #copy.dst if copy.dst.exists() else )
 	stats = lambda: f'Done: {(df0 - df) / MiB:.1f} MiB, rate: {rate / MiB:.2f} MiB/s'
-	free = ft.partial(df_get, copy.dst)
+	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
+
+	### Copy files
 	df_last, ts_last = df0, ts0 = free(), time.monotonic()
 	df, ts, rate = free(), time.monotonic(), 0
 	while src_files:
@@ -199,7 +206,7 @@ def run(copy, cleanup, rename, dry_run):
 
 		src = pop_path(src_files)
 		dst = copy.dst / track_name(rename, src)
-		log.debug('Copying: %s -> %s', src, dst.name)
+		log.debug('Copy: %s -> %s', src, dst.name)
 		try:
 			if cleanup and cleanup.as_needed: # free space for a file, if requested
 				src_df = (os.stat(src).st_size + 1*2**20) * 1.2 # for any possible fs overhead
@@ -218,6 +225,14 @@ def run(copy, cleanup, rename, dry_run):
 	### Success
 	rate = (df0 - free()) / (time.monotonic() - ts0) # median rate
 	log.info('Finished%s: %s', ' [dry-run]' if dry_run else '', stats())
+
+
+def run_rename(copy, rename, dry_run):
+	src_files = build_file_list(copy)
+	for p in src_files:
+		dst = p.with_name(track_name(rename, p))
+		log.debug('Rename: %s -> %s', p, dst.name)
+		if not dry_run: p.rename(dst)
 
 
 def main(argv=None):
@@ -242,6 +257,9 @@ def main(argv=None):
 	group.add_argument('dst', nargs='?', help='Destination path.')
 	group.add_argument('-l', '--src-list', action='store_true',
 		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
+	group.add_argument('-M', '--rename', action='store_true', help=dd('''
+		Rename all src file(s) in dirs they are in, using name formatting options.
+		All path args are treated as "src" with this option.'''))
 	group.add_argument('-m', '--rm-src', action='store_true',
 		help='Use --remove-source-files with rsync, i.e. move files.')
 	group.add_argument('--any-ext', action='store_true',
@@ -312,27 +330,24 @@ def main(argv=None):
 		level=logging.DEBUG if opts.debug else logging.INFO,
 		format='{levelname} :: {message}', style="{" )
 
-	if opts.src and not opts.dst: opts.src, opts.dst = opts.src[:-1], opts.src[-1]
-	if opts.src and (opts.clean_as_needed and opts.df_min):
+	if opts.rename:
+		if opts.dst: opts.src += [opts.dst]; opts.dst = None
+	elif opts.src and not opts.dst:
+		opts.src, opts.dst = opts.src[:-1], opts.src[-1]
+		if not opts.dst: parser.error('No "dst" destination-path specified.')
+	if not opts.src: parser.error('No "src" source-path(s) specified.')
+	if opts.clean_as_needed and opts.df_min:
 		parser.error('Options --df-min and --clean-as-needed do not make sense together')
-	if not (opts.df_preclean or opts.clean_as_needed or opts.clean_path):
-		if not opts.dst: parser.error('No "dst" destination-path argument specified.')
-	else:
-		if not opts.src and opts.clean_path: opts.clean_as_needed = True
-		if not opts.dst:
-			if not opts.clean_path:
-				parser.error('Either "dst" or --cleanup-path must be specified for cleanup.')
-			else: opts.dst = opts.clean_path
 
-	src, dst = list(map(pl.Path, opts.src)), pl.Path(opts.dst)
-	if not dst.exists():
-		sp.run(['mkdir', '-p', dst], check=True)
-		log.debug('Created dst path: %s', dst)
+	if opts.rename: dst = None
+	elif not (dst := pl.Path(opts.dst)).exists():
+		log.debug('Creating dst path: %s', dst)
+		if not opts.dry_run: sp.run(['mkdir', '-p', dst], check=True)
 	if dst_df_min := opts.df_min:
 		try: dst_df_min = float(dst_df_min) * MiB
 		except ValueError: dst_df_min = size_human_parse(dst_df_min)
-	copy = CopyConf( src, dst, dst_df_min,
-		opts.src_list, not opts.any_ext, opts.ordering, opts.rm_src )
+	copy = CopyConf( list(map(pl.Path, opts.src)),
+		dst, dst_df_min, opts.src_list, not opts.any_ext, opts.ordering, opts.rm_src )
 
 	if cleanup := opts.df_preclean or opts.clean_as_needed:
 		cleanup_p = pl.Path(opts.clean_path) if opts.clean_path else dst
@@ -370,6 +385,9 @@ def main(argv=None):
 		rename = RenameConf( opts.name_format,
 			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map, field_proc )
 
-	return run(copy, cleanup, rename, opts.dry_run)
+	if copy.dst is not None:
+		return run_copy(copy, cleanup, rename, opts.dry_run)
+	else:
+		return run_rename(copy, rename, opts.dry_run)
 
 if __name__ == '__main__': sys.exit(main())
