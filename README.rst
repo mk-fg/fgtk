@@ -2870,50 +2870,45 @@ Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 [desktop] others
 ^^^^^^^^^^^^^^^^
 
-pick_tracks
+pick-tracks
 '''''''''''
 
 A simple tool to randomly pick and copy files (intended usage is music tracks)
 from source to destination.
 
-Difference from "cp" is that it will stop when destination will be filled (to
-the configurable --min-df threshold) and will pick files in arbitrary order from
-arbitrary path hierarchy.
+Difference from "cp" is that it will stop when destination will be filled
+(to a configurable --df-min threshold) or auto-cleanup files from
+-r/--clean-path as more space is needed for specified ones.
 
-Use-case is simple - insert an SD card from a player and do::
+--debug can be used to keep track of what's being done,
+and calculates how much time is left based on df-goal and median rate.
+
+Use-case is to copy files to simple mp3 player devices::
 
   % mount /mnt/sd_card
-  % rm -rf /mnt/sd_card/music
-  % pick_tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/music
+  % pick_tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/ocr
   INFO:root:Done: 1673.1 MiB, rate: 1.29 MiB/s
 
-"--debug" also keeps track of what's being done and calculates how much time is
-left based on df-goal and median rate.
+And later on::
 
-Source dir has like `3k files`_ in many dirs, and cp/rsync will do the dumb
-"we'll copy same first things every time", while this tool will create the dst
-path for you, copy always-new selection there and - due to "-s 200" - leave 200
-MiB there for podcasts you might want to also upload.
+  % pick_tracks -r /mnt/sd_card/ocr new-podcasts /mnt/sd_card/podcasts
 
-As with "cp", ``pick_tracks /path1 /path2 /dst`` is perfectly valid.
+Without needing to manage space there manually as much.
 
-And there are neat cleaup flags for cases when I need to cram something new to
-the destination, preserving as much of the stuff that's already there as
-possible (and removing least important stuff).
+Source files are filtered by extensiona and are picked in random order
+to pick different stuff from same large dirs if used repeatedly.
 
-Cleanup (if requested) also picks stuff at random up to necessary df.
+As with "cp", ``pick_tracks /path1 /path2 /dst`` usage is perfectly valid.
 
-"--shuffle" option allows to shuffle paths on fat by temporarily copying them
-off the media to some staging area and back in random order.
+Uses "rsync --inplace" and "find" to do the actual file
+listing/filtering and copy ops.
 
-Use-case is dumb mp3 players that don't have that option (see also vfat_shuffler
-script for these, which is way more efficient).
+Optionally also uses unidecode_ and mutagen_ modules, by default if available,
+to generate more descriptive and compatible destination filenames, based on
+media tags, instead of reusing source filenames, unless disabled.
 
-Uses plumbum_ to call "rsync --inplace" (faster than "cp" in most cases) and
-"find" to do the actual copy/listing.
-
-.. _3k files: http://ocremix.org/torrents/
-.. _plumbum: http://plumbum.readthedocs.org
+.. _unidecode: https://pypi.org/project/Unidecode/
+.. _mutagen: https://mutagen.readthedocs.io/en/latest/
 
 vfat_shuffler
 '''''''''''''

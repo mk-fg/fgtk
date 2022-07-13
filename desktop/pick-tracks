@@ -1,0 +1,360 @@
+#!/usr/bin/env python
+
+import dataclasses as dcs, collections as cs, subprocess as sp, contextlib as cl
+import os, sys, re, random, math, time, logging, pathlib as pl, functools as ft
+
+try: import mutagen
+except ImportError: mutagen = None
+
+try: from unidecode import unidecode
+except ImportError: unidecode = None
+
+
+@dcs.dataclass
+class CopyConf:
+	src: pl.Path; dst: pl.Path; df_min: float
+	file_list: bool; ext_filter: bool; order: bool; src_rm: bool
+
+@dcs.dataclass
+class CleanupConf: p: pl.Path; df_min: float; df_pre: float; as_needed: bool; order: bool
+
+@dcs.dataclass
+class RenameConf: fmt: str; fmt_fs: bool; max_len: int; tags_check: list; tags_map: list
+
+
+MiB = float(2**20)
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+log = logging.getLogger('pt')
+
+_size_units=list(
+	reversed(list((u, 2 ** (i * 10))
+	for i, u in enumerate('BKMGT'))) )
+
+def size_human(size):
+	for u, u1 in _size_units:
+		if size > u1: break
+	return '{:.1f}{}'.format(size / float(u1), u)
+
+def size_human_parse(size):
+	if not size or not isinstance(size, str): return size
+	if size[-1].isdigit(): return float(size)
+	for u, u1 in _size_units:
+		if size[-1] == u: break
+	else: raise ValueError('Unrecognized units: {} (value: {!r})'.format(size[-1], size))
+	return float(size[:-1]) * u1
+
+def time_diff_str( ts, ts0=None, now='now', ext=None,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	res, s = list(), abs( (ts - ts0) if ts0 is not None
+		and not getattr(ts, 'total_seconds', False) else ts )
+	if not isinstance(s, (int, float)): s = s.total_seconds()
+	if s <= 0: return now
+	for unit, unit_s in sorted(_units.items(), key=lambda v: v[1], reverse=True):
+		val = math.floor(s / float(unit_s))
+		if not val: continue
+		res.append('{:.0f}{}'.format(val, unit))
+		if len(res) >= 2: break
+		s -= val * unit_s
+	if not res: return now
+	if ext: res.append(ext)
+	return ' '.join(res)
+
+
+tags_default = dict(x='x', xxx='xxx')
+tags_subs = {
+	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
+	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
+	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }
+
+def track_name( rename, p,
+		_track_name_subs = list((re.compile(k), v) for k,v in tags_subs.items()) ):
+	name = p.name
+	if not rename: return name
+	try: tags_raw = mutagen.File(p).tags
+	except: return name
+	if not tags_raw: return name
+
+	tags = tags_default.copy()
+	for k, v in tags_raw.items():
+		if not isinstance(v, list): v = getattr(v, 'text', None)
+		if not v: continue
+		tags[k] = v[0] if isinstance(v, list) else v
+
+	if not tags: return name
+	tags = cs.defaultdict( str,
+		((k, v.replace('/', '-')) for k, v in tags.items()) )
+	for k, vs in rename.tags_map.items():
+		with cl.suppress(StopIteration):
+			tags[k] = next(tags[v] for v in vs if tags[v])
+
+	if ( rename.tags_check and
+		not all(list(tags.get(k) for k in rename.tags_check)) ): return name
+	name, ext = rename.fmt.format(tags), os.path.splitext(name)[-1]
+	if rename.max_len > 0: name = name[:rename.max_len]
+	if rename.fmt_fs:
+		for sub_re, sub in _track_name_subs: name = sub_re.sub(sub, name)
+	name += ext
+	if unidecode: name = unidecode(name)
+	return name
+
+
+def build_file_list(copy):
+	if copy.src:
+		if copy.file_list:
+			src_lists, src_files = list(), list()
+			for src in copy.src:
+				with open(src) as src: src_lists.append(src.read())
+			for path in '\0'.join(src_lists).replace('\n', '\0').split('\0'):
+				path = pl.Path(path.rstrip('\r'))
+				if not path: continue
+				if not path.is_file():
+					log.warn('Skipping non-file path: %s', path)
+					continue
+				src_files.append(path)
+		else:
+			src_files = ['-type', 'f']
+			if copy.ext_filter: src_files += '( -name *.mp3 -o -name *.ogg )'.split()
+			cmd = list(map(str, ['find', '-L', *copy.src, *src_files]))
+			log.debug('Source-file discovery cmd: %s', ' '.join(cmd))
+			cmd = sp.run(cmd, check=True, stdout=sp.PIPE)
+			src_files = cmd.stdout.decode().splitlines()
+	else: src_files = list()
+	src_files.sort()
+	# Same files accessible via multiple symlinks get removed here
+	src_files = dict((pl.Path(p).resolve(), pl.Path(p)) for p in src_files)
+	log.debug('Source-file list size: %s file(s)', len(src_files))
+	return list(src_files.values())
+
+
+def df_get(path):
+	df = os.statvfs(path or copy.dst)
+	return float(df.f_bavail * df.f_bsize)
+
+def pop_path(path_list):
+	idx = random.randint(0, len(path_list) - 1)
+	return path_list.pop(idx)
+
+def cleanup_run(cleanup, paths, df=None, dry_run=False):
+	if df is None: df = cleanup.df_min
+	elif df <= 0: return
+	if dry_run:
+		return log.debug('Cleanup dry-run (goal: %.0f MiB)', df / MiB)
+	while paths:
+		if (df := df_get(cleanup.p)) >= df: break
+		p = pop_path(paths)
+		log.debug('Removing file (df: %.1f / %.1f MiB): %s', df / MiB, df / MiB, p)
+		try: p.unlink()
+		except OSError as err:
+			log.warning('Failed to remove file (%s): %s', p, err_fmt(err))
+
+
+def main(argv=None):
+	default_name_fmt_tags_repr = '''
+		artist=albumartist,artist,TPE2,
+				TPE1,TPE2,TSOP,TXXX:Album Artist Credit,TXXX:Artist Credit,xxx|
+			title=title,TIT2| album=album,TALB,xxx| tracknumber=tracknumber,TRCK,x|'''
+	default_name_fmt_tags = (
+		default_name_fmt_tags_repr.replace('\t', '').replace('| ', '|').replace('\n', '') )
+
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [opts] src dst',
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Randomly pick and copy tracks from source to destination.')
+
+	group = parser.add_argument_group('Source/destination')
+	group.add_argument('src', nargs='*', help='Source path(s).')
+	group.add_argument('dst', nargs='?', help='Destination path.')
+	group.add_argument('-l', '--src-list', action='store_true',
+		help='Treat "src" argument(s) as a list of files to copy (either newline or zero-delimeted).')
+	group.add_argument('-m', '--rm-src', action='store_true',
+		help='Use --remove-source-files with rsync, i.e. move files.')
+	group.add_argument('--any-ext', action='store_true',
+		help='Disable filtering for mp3/ogg files only (by filename extension) and copy any files.')
+
+	group = parser.add_argument_group('Filename generation')
+	group.add_argument('-N', '--raw-names', action='store_true',
+		help='Do not rename tracks according to --name-format.')
+	group.add_argument('-f', '--name-format',
+		metavar='py_format_tpl', default='{0[title]}_[{0[tracknumber]}]_--_{0[artist]}', help=dd('''
+			Format to rename tracks to when copying to destination.
+			Same syntax as for python str.format, with keys
+				from mutagenwrapper (see docs for full list of these).
+			Will not be used if mutagenwrapper is not available.'''))
+	group.add_argument('--name-format-check',
+		metavar='key1[,key2,...]', default='title', help=dd('''
+			Comma-separated list of keys to check before renaming file according to --name-format.
+			If any of them is empty or missing, source filename will be kept.
+			Can be empty. Default: %(default)s'''))
+	group.add_argument('--name-format-mappings',
+		metavar='k1=v1[,v2,...][|k2=v3[v4,...]|...]', default=default_name_fmt_tags,
+		help=dd('''
+			Fallback keys to use if direct match is empty.
+			Default: {}''').format(dd(default_name_fmt_tags_repr).rstrip()))
+	group.add_argument('--name-format-raw', action='store_true',
+		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
+	group.add_argument('--name-len-max',
+		type=int, metavar='number', default=160,
+		help='Trim name to specified length.'
+			' No collision-detection afterwards. Default: %(default)s')
+
+	group = parser.add_argument_group('Free space cleanup')
+	group.add_argument('-s', '--df-min', metavar='float [BKMGT]', help=dd('''
+		Threshold of df on dst path to stop on.
+		Simple number (float) will be interpreted as MiB, but unit letter
+			(B, K, M, G, T) can be specified immediately after, e.g. "2.2G" for 2.2 GiB.'''))
+	group.add_argument('-c', '--df-preclean', metavar='float [BKMGT]', help=dd('''
+		Before copying stuff, clean up files from
+			destination path (also see --clean-path) up to specified free-space
+			threshold (or until theres nothing left). Files to remove are picked at random.
+		Same value spec format as with --df-min.'''))
+	group.add_argument('-a', '--clean-as-needed', action='store_true', help=dd('''
+		Clean up files from destination path
+			(also see --clean-path) as necessary to copy *all* the source files.
+		Files to remove are picked at random. Mutually exclusive with --df-min.'''))
+	group.add_argument('-r', '--clean-path', metavar='path',
+		help='Clean stuff from the specified path instead of destination.')
+
+	group = parser.add_argument_group('Sort/shuffle options')
+	group.add_argument('-o', '--ordering', action='store_true',
+		help='Copy tracks in (alphanumeric) order based on'
+			' their full path. Default is to copy files in random order.')
+
+	group = parser.add_argument_group('Debug/misc')
+	group.add_argument('-i', '--ignore-errors', action='store_true', help=dd('''
+		Don't abort on any errors from rsync.
+		These can usually happen due to e.g. fs name restrictions and whatever other io errors.'''))
+	group.add_argument('--dry-run', action='store_true', help='Dont do the actual cp/rm part.')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+	logging.basicConfig(
+		level=logging.DEBUG if opts.debug else logging.INFO,
+		format='{levelname} :: {message}', style="{" )
+
+	if opts.src and not opts.dst: opts.src, opts.dst = opts.src[:-1], opts.src[-1]
+	if opts.src and (opts.clean_as_needed and opts.df_min):
+		parser.error('Options --df-min and --clean-as-needed do not make sense together')
+	if not (opts.df_preclean or opts.clean_as_needed or opts.clean_path):
+		if not opts.dst: parser.error('No "dst" destination-path argument specified.')
+	else:
+		if not opts.src and opts.clean_path: opts.clean_as_needed = True
+		if not opts.dst:
+			if not opts.clean_path:
+				parser.error('Either "dst" or --cleanup-path must be specified for cleanup.')
+			else: opts.dst = opts.clean_path
+
+	src, dst = list(map(pl.Path, opts.src)), pl.Path(opts.dst)
+	if not dst.exists():
+		sp.run(['mkdir', '-p', dst], check=True)
+		log.debug('Created dst path: %s', dst)
+	if dst_df_min := opts.df_min:
+		try: dst_df_min = float(dst_df_min) * MiB
+		except ValueError: dst_df_min = size_human_parse(dst_df_min)
+	copy = CopyConf( src, dst, dst_df_min,
+		opts.src_list, not opts.any_ext, opts.ordering, opts.rm_src )
+
+	if cleanup := opts.df_preclean or opts.clean_as_needed:
+		cleanup_p = pl.Path(opts.clean_path) if opts.clean_path else dst
+		cleanup = CleanupConf(cleanup_p, 0, 0, opts.clean_as_needed, opts.ordering)
+		for k, v in ('df_min', opts.df_min), ('df_pre', opts.df_preclean):
+			if not v: continue
+			try: v = float(v) * MiB
+			except ValueError: v = size_human_parse(v)
+			setattr(cleanup, k, v)
+
+	if not opts.name_format or not mutagen:
+		if not opts.raw_names:
+			log.warning( 'Auto-setting --raw-names due to missing prequesites for'
+					' tag-based renaming (empty format: %r, mutagen module available: %r)',
+				not opts.name_format, bool(mutagen) )
+		opts.raw_names = True
+	if not opts.raw_names and not unidecode:
+		log.warning('FIlename transliteration will be disabled due to missing unidecode module')
+
+	if rename := not opts.raw_names:
+		tags_split = lambda tags: list(t.strip() for t in tags.split(',') if t.strip())
+		tags_check = tags_split(opts.name_format_check)
+		tags_map, specs = dict(), opts.name_format_mappings.split('|')
+		for spec in specs:
+			if not spec.strip(): continue
+			k, tags = spec.split('=', 1)
+			tags_map[k] = tags_split(tags)
+		if not unidecode:
+			log.warning('Failed to import unidecode module, name transliteration will be disabled.')
+		rename = RenameConf( opts.name_format,
+			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map )
+
+	dry_run = opts.dry_run
+
+
+	### Build list of files to copy
+	src_files = build_file_list(copy)
+
+	### Build a list of files for removal, if any cleanup is requested
+	if cleanup:
+		cleanup_paths = list()
+		cleanup_func = ft.partial(cleanup_run, cleanup, cleanup_paths, dry_run=dry_run)
+		if not cleanup.p.exists():
+			log.info('Cleanup path does not exists: %s', cleanup.p)
+		else:
+			res = sp.run(
+				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
+			cleanup = res.stdout.decode().splitlines()
+			if cleanup.df_pre:
+				log.debug( 'Doing cleanup (up to: %.1f MiB)'
+					' of the path: %r', cleanup.df_pre / MiB, cleanup.p )
+				cleanup_func(cleanup.df_pre)
+		# Run --clean-as-needed cleanup to specified --df-min, even with no sources
+		if cleanup.as_needed and cleanup.df_min and not src_files: cleanup_func(cleanup.df_min)
+
+	### Copy files
+	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
+	stats = lambda: f'Done: {(df0 - df) / MiB:.1f} MiB, rate: {rate / MiB:.2f} MiB/s'
+	free = ft.partial(df_get, copy.dst)
+	df_last, ts_last = df0, ts0 = free(), time.monotonic()
+	df, ts, rate = free(), time.monotonic(), 0
+	while src_files:
+		# ewma is used here reflect changing speeds
+		#  (due to cached writes and/or other activity) faster.
+		df, ts = free(), time.monotonic()
+		rate_n = (df_last - df) / ((ts - ts_last) or 0.001)
+		rate = ( rate_n if not rate else
+			(rate_a * rate_n + (1 - rate_a) * rate) )
+		df_last, ts_last = df, ts
+
+		if copy.df_min:
+			if df < copy.df_min: break
+			to_fill = df - copy.df_min
+			time_left = time_diff_str(int(to_fill / rate) if rate != 0 else 0)
+			log.debug(
+				' - space left to fill: %.1f MiB, rate: %.2f MiB/s, left: %s',
+				to_fill / MiB, rate / MiB, time_left )
+
+		src = pop_path(src_files)
+		log.debug('Copying: %s', src)
+
+		dst = copy.dst / track_name(rename, src)
+		try:
+			if cleanup and cleanup.as_needed: # free space for a file, if requested
+				src_df = (os.stat(src).st_size + 1*2**20) * 1.2 # for any possible fs overhead
+				if df < src_df: cleanup_func(src_df)
+			if not dry_run:
+				rsync_opts = ['--inplace', '--size-only', '--append-verify']
+				if copy.src_rm: rsync_opts += ['--remove-source-files']
+				rsync_opts.extend([src, dst])
+				try: sp.run(['rsync', *rsync_opts], check=True)
+				except sp.CalledProcessError as err:
+					if not opts.ignore_errors: raise
+					log.warning('File transfer error: %s', err_fmt(err))
+		except KeyboardInterrupt:
+			return log.info('Aborted: %s', stats()) or 1
+
+	### Success
+	rate = (df0 - free()) / (time.monotonic() - ts0) # median rate
+	log.info('Finished%s: %s', ' [dry-run]' if dry_run else '', stats())
+
+if __name__ == '__main__': sys.exit(main())
