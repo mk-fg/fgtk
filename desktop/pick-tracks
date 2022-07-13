@@ -19,7 +19,9 @@ class CopyConf:
 class CleanupConf: p: pl.Path; df_min: float; df_pre: float; as_needed: bool; order: bool
 
 @dcs.dataclass
-class RenameConf: fmt: str; fmt_fs: bool; max_len: int; tags_check: list; tags_map: list
+class RenameConf:
+	fmt: str; fmt_fs: bool; max_len: int;
+	tags_check: list; tags_map: list; field_proc: list
 
 
 MiB = float(2**20)
@@ -79,14 +81,17 @@ def track_name( rename, p,
 	for k, v in tags_raw.items():
 		if not isinstance(v, list): v = getattr(v, 'text', None)
 		if not v: continue
-		tags[k] = v[0] if isinstance(v, list) else v
+		tags[k] = str(v[0] if isinstance(v, list) else v)
 
 	if not tags: return name
-	tags = cs.defaultdict( str,
-		((k, v.replace('/', '-')) for k, v in tags.items()) )
+	tags = cs.defaultdict(str, tags.items())
 	for k, vs in rename.tags_map.items():
 		with cl.suppress(StopIteration):
 			tags[k] = next(tags[v] for v in vs if tags[v])
+
+	for k, a, b in rename.field_proc:
+		if k not in tags: continue
+		tags[k] = re.sub(a, b, tags[k])
 
 	if ( rename.tags_check and
 		not all(list(tags.get(k) for k in rename.tags_check)) ): return name
@@ -193,9 +198,8 @@ def run(copy, cleanup, rename, dry_run):
 				to_fill / MiB, rate / MiB, time_left )
 
 		src = pop_path(src_files)
-		log.debug('Copying: %s', src)
-
 		dst = copy.dst / track_name(rename, src)
+		log.debug('Copying: %s -> %s', src, dst.name)
 		try:
 			if cleanup and cleanup.as_needed: # free space for a file, if requested
 				src_df = (os.stat(src).st_size + 1*2**20) * 1.2 # for any possible fs overhead
@@ -223,6 +227,7 @@ def main(argv=None):
 			title=title,TIT2| album=album,TALB,xxx| tracknumber=tracknumber,TRCK,x|'''
 	default_name_fmt_tags = (
 		default_name_fmt_tags_repr.replace('\t', '').replace('| ', '|').replace('\n', '') )
+	default_name_proc = ['tracknumber=/.*$--']
 
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
@@ -261,6 +266,11 @@ def main(argv=None):
 		help=dd('''
 			Fallback keys to use if direct match is empty.
 			Default: {}''').format(dd(default_name_fmt_tags_repr).rstrip()))
+	group.add_argument('-p', '--name-field-proc',
+		action='append', metavar='field=src--dst', help=dd(f'''
+			Source/dest args for re.sub() on specific -f/--name-format fields, applied in order.
+			Different fields and regexps can be specified by using the option multiple times.
+			Empty value disables defaults, which are: {default_name_proc}'''))
 	group.add_argument('--name-format-raw', action='store_true',
 		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
 	group.add_argument('--name-len-max',
@@ -352,8 +362,13 @@ def main(argv=None):
 			tags_map[k] = tags_split(tags)
 		if not unidecode:
 			log.warning('Failed to import unidecode module, name transliteration will be disabled.')
+		field_proc, field_proc_raw = list(), opts.name_field_proc or default_name_proc
+		for s in field_proc_raw:
+			try: k, v = s.split('=', 1); a, b = v.split('--', 1)
+			except: parser.error(f'Invalid -p/--name-field-proc spec: {s!r}')
+			field_proc.append((k, a, b))
 		rename = RenameConf( opts.name_format,
-			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map )
+			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map, field_proc )
 
 	return run(copy, cleanup, rename, opts.dry_run)
 
