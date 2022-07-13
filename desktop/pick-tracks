@@ -148,6 +148,73 @@ def cleanup_run(cleanup, paths, df=None, dry_run=False):
 		except OSError as err:
 			log.warning('Failed to remove file (%s): %s', p, err_fmt(err))
 
+def run(copy, cleanup, rename, dry_run):
+	### Build list of files to copy
+	src_files = build_file_list(copy)
+
+	### Build a list of files for removal, if any cleanup is requested
+	if cleanup:
+		cleanup_paths = list()
+		cleanup_func = ft.partial(cleanup_run, cleanup, cleanup_paths, dry_run=dry_run)
+		if not cleanup.p.exists():
+			log.info('Cleanup path does not exists: %s', cleanup.p)
+		else:
+			res = sp.run(
+				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
+			cleanup = res.stdout.decode().splitlines()
+			if cleanup.df_pre:
+				log.debug( 'Doing cleanup (up to: %.1f MiB)'
+					' of the path: %r', cleanup.df_pre / MiB, cleanup.p )
+				cleanup_func(cleanup.df_pre)
+		# Run --clean-as-needed cleanup to specified --df-min, even with no sources
+		if cleanup.as_needed and cleanup.df_min and not src_files: cleanup_func(cleanup.df_min)
+
+	### Copy files
+	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
+	stats = lambda: f'Done: {(df0 - df) / MiB:.1f} MiB, rate: {rate / MiB:.2f} MiB/s'
+	free = ft.partial(df_get, copy.dst)
+	df_last, ts_last = df0, ts0 = free(), time.monotonic()
+	df, ts, rate = free(), time.monotonic(), 0
+	while src_files:
+		# ewma is used here reflect changing speeds
+		#  (due to cached writes and/or other activity) faster.
+		df, ts = free(), time.monotonic()
+		rate_n = (df_last - df) / ((ts - ts_last) or 0.001)
+		rate = ( rate_n if not rate else
+			(rate_a * rate_n + (1 - rate_a) * rate) )
+		df_last, ts_last = df, ts
+
+		if copy.df_min:
+			if df < copy.df_min: break
+			to_fill = df - copy.df_min
+			time_left = time_diff_str(int(to_fill / rate) if rate != 0 else 0)
+			log.debug(
+				' - space left to fill: %.1f MiB, rate: %.2f MiB/s, left: %s',
+				to_fill / MiB, rate / MiB, time_left )
+
+		src = pop_path(src_files)
+		log.debug('Copying: %s', src)
+
+		dst = copy.dst / track_name(rename, src)
+		try:
+			if cleanup and cleanup.as_needed: # free space for a file, if requested
+				src_df = (os.stat(src).st_size + 1*2**20) * 1.2 # for any possible fs overhead
+				if df < src_df: cleanup_func(src_df)
+			if not dry_run:
+				rsync_opts = ['--inplace', '--size-only', '--append-verify']
+				if copy.src_rm: rsync_opts += ['--remove-source-files']
+				rsync_opts.extend([src, dst])
+				try: sp.run(['rsync', *rsync_opts], check=True)
+				except sp.CalledProcessError as err:
+					if not opts.ignore_errors: raise
+					log.warning('File transfer error: %s', err_fmt(err))
+		except KeyboardInterrupt:
+			return log.info('Aborted: %s', stats()) or 1
+
+	### Success
+	rate = (df0 - free()) / (time.monotonic() - ts0) # median rate
+	log.info('Finished%s: %s', ' [dry-run]' if dry_run else '', stats())
+
 
 def main(argv=None):
 	default_name_fmt_tags_repr = '''
@@ -288,73 +355,6 @@ def main(argv=None):
 		rename = RenameConf( opts.name_format,
 			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map )
 
-	dry_run = opts.dry_run
-
-
-	### Build list of files to copy
-	src_files = build_file_list(copy)
-
-	### Build a list of files for removal, if any cleanup is requested
-	if cleanup:
-		cleanup_paths = list()
-		cleanup_func = ft.partial(cleanup_run, cleanup, cleanup_paths, dry_run=dry_run)
-		if not cleanup.p.exists():
-			log.info('Cleanup path does not exists: %s', cleanup.p)
-		else:
-			res = sp.run(
-				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
-			cleanup = res.stdout.decode().splitlines()
-			if cleanup.df_pre:
-				log.debug( 'Doing cleanup (up to: %.1f MiB)'
-					' of the path: %r', cleanup.df_pre / MiB, cleanup.p )
-				cleanup_func(cleanup.df_pre)
-		# Run --clean-as-needed cleanup to specified --df-min, even with no sources
-		if cleanup.as_needed and cleanup.df_min and not src_files: cleanup_func(cleanup.df_min)
-
-	### Copy files
-	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
-	stats = lambda: f'Done: {(df0 - df) / MiB:.1f} MiB, rate: {rate / MiB:.2f} MiB/s'
-	free = ft.partial(df_get, copy.dst)
-	df_last, ts_last = df0, ts0 = free(), time.monotonic()
-	df, ts, rate = free(), time.monotonic(), 0
-	while src_files:
-		# ewma is used here reflect changing speeds
-		#  (due to cached writes and/or other activity) faster.
-		df, ts = free(), time.monotonic()
-		rate_n = (df_last - df) / ((ts - ts_last) or 0.001)
-		rate = ( rate_n if not rate else
-			(rate_a * rate_n + (1 - rate_a) * rate) )
-		df_last, ts_last = df, ts
-
-		if copy.df_min:
-			if df < copy.df_min: break
-			to_fill = df - copy.df_min
-			time_left = time_diff_str(int(to_fill / rate) if rate != 0 else 0)
-			log.debug(
-				' - space left to fill: %.1f MiB, rate: %.2f MiB/s, left: %s',
-				to_fill / MiB, rate / MiB, time_left )
-
-		src = pop_path(src_files)
-		log.debug('Copying: %s', src)
-
-		dst = copy.dst / track_name(rename, src)
-		try:
-			if cleanup and cleanup.as_needed: # free space for a file, if requested
-				src_df = (os.stat(src).st_size + 1*2**20) * 1.2 # for any possible fs overhead
-				if df < src_df: cleanup_func(src_df)
-			if not dry_run:
-				rsync_opts = ['--inplace', '--size-only', '--append-verify']
-				if copy.src_rm: rsync_opts += ['--remove-source-files']
-				rsync_opts.extend([src, dst])
-				try: sp.run(['rsync', *rsync_opts], check=True)
-				except sp.CalledProcessError as err:
-					if not opts.ignore_errors: raise
-					log.warning('File transfer error: %s', err_fmt(err))
-		except KeyboardInterrupt:
-			return log.info('Aborted: %s', stats()) or 1
-
-	### Success
-	rate = (df0 - free()) / (time.monotonic() - ts0) # median rate
-	log.info('Finished%s: %s', ' [dry-run]' if dry_run else '', stats())
+	return run(copy, cleanup, rename, opts.dry_run)
 
 if __name__ == '__main__': sys.exit(main())
