@@ -180,7 +180,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 		if free_path == free_path.parent: break
 		free_path = free_path.parent
 	free = ft.partial(df_get, free_path) #copy.dst if copy.dst.exists() else )
-	stats = lambda: f'Done: {(df0 - df) / MiB:.1f} MiB, rate: {rate / MiB:.2f} MiB/s'
+	stats = lambda: f'{size_human(df0 - df)}, rate: {rate / MiB:.2f} MiB/s'
 	rate_a = 0.3 # ewma exponent for per-file rate values, 0 < rate_a < 1
 
 	### Copy files
@@ -222,8 +222,9 @@ def run_copy(copy, cleanup, rename, dry_run):
 			return log.info('Aborted: %s', stats()) or 1
 
 	### Success
-	rate = (df0 - free()) / (time.monotonic() - ts0) # median rate
-	log.info('Finished%s: %s', ' [dry-run]' if dry_run else '', stats())
+	rate = (df0 - (df := free())) / (time.monotonic() - ts0) # median rate
+	log.info( 'Finished%s: %s, df-after: %s',
+		' [dry-run]' if dry_run else '', stats(), size_human(df) )
 
 
 def run_rename(copy, rename, dry_run):
@@ -247,9 +248,9 @@ def main(argv=None):
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		usage='%(prog)s [opts] src dst',
+		usage='%(prog)s [opts] src [src...] dst',
 		formatter_class=argparse.RawTextHelpFormatter,
-		description='Randomly pick and copy tracks from source to destination.')
+		description='Randomly pick and copy tracks from source(s) to destination.')
 
 	group = parser.add_argument_group('Source/destination')
 	group.add_argument('src', nargs='*', help='Source path(s).')
@@ -349,13 +350,17 @@ def main(argv=None):
 		dst, dst_df_min, opts.src_list, not opts.any_ext, opts.ordering, opts.rm_src )
 
 	if cleanup := opts.df_preclean or opts.clean_as_needed:
-		cleanup_p = pl.Path(opts.clean_path) if opts.clean_path else dst
+		cleanup_p = pl.Path(opts.clean_path) if opts.clean_path else copy.dst
 		cleanup = CleanupConf(cleanup_p, 0, 0, opts.clean_as_needed, opts.ordering)
 		for k, v in ('df_min', opts.df_min), ('df_pre', opts.df_preclean):
 			if not v: continue
 			try: v = float(v) * MiB
 			except ValueError: v = size_human_parse(v)
 			setattr(cleanup, k, v)
+		if ( copy.dst and cleanup.p != copy.dst and
+				os.statvfs(cleanup.p).f_fsid != os.statvfs(copy.dst).f_fsid ):
+			parser.error( 'Cleanup-path is located on different'
+				f' fs from destination dir [ {copy.dst} ]: {cleanup.p}' )
 
 	if not opts.name_format or not mutagen:
 		if not opts.raw_names:
@@ -384,7 +389,7 @@ def main(argv=None):
 		rename = RenameConf( opts.name_format,
 			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map, field_proc )
 
-	if copy.dst is not None:
+	if copy.dst:
 		return run_copy(copy, cleanup, rename, opts.dry_run)
 	else:
 		return run_rename(copy, rename, opts.dry_run)

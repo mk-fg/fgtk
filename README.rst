@@ -2635,19 +2635,19 @@ and calculates how much time is left based on df-goal and median rate.
 Use-case is to copy files to simple mp3 player devices::
 
   % mount /mnt/sd_card
-  % pick_tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/ocr
-  INFO:root:Done: 1673.1 MiB, rate: 1.29 MiB/s
+  % pick-tracks -s 200 /mnt/music/OverClocked_Remix /mnt/sd_card/ocr
+  INFO :: Finished: 1673.1M, rate: 1.29 MiB/s, df-after: 199.2M
 
 And later on::
 
-  % pick_tracks -r /mnt/sd_card/ocr new-podcasts /mnt/sd_card/podcasts
+  % pick-tracks -r /mnt/sd_card/ocr new-podcasts /mnt/sd_card/podcasts
 
 Without needing to manage space there manually as much.
 
 Source files are filtered by extensiona and are picked in random order
 to pick different stuff from same large dirs if used repeatedly.
 
-As with "cp", ``pick_tracks /path1 /path2 /dst`` usage is perfectly valid.
+As with "cp", ``pick-tracks /path1 /path2 /dst`` usage is perfectly valid.
 
 Uses "rsync --inplace" and "find" to do the actual file
 listing/filtering and copy ops.
