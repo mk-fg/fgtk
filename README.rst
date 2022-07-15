@@ -2746,8 +2746,9 @@ cache file (list of yt json manifests, one per line).
 Be sure to use ``~/.config/youtube-dl/config`` for any ytdl opts, as necessary,
 or override these via env / within a script.
 
-Requires youtube-dl_ and `jq <https://stedolan.github.io/jq/>`_ (to parse URLs
-from json).
+Requires youtube-dl_ and jq_ (to parse URLs from json).
+
+.. _jq: https://stedolan.github.io/jq/
 
 streamdump
 ''''''''''
@@ -3787,30 +3788,34 @@ and to optimize efficiency).
 systemd-cglog
 ^^^^^^^^^^^^^
 
-Script to log JSON-lines with all available cgroup stats for matched unit
-file(s), as well as their start/stop events.
+Script to log JSON-lines with available cpu/mem/io cgroup stats for matched unit file(s),
+as well as their start/stop events.
 
-Uses ``systemctl list-units -ao json`` to find/fnmatch initial set of units to
-monitor and `systemd.journal`_ from there to add/remove units from set and log
-start/stop events.
+Uses ``systemctl list-units -ao json`` to find/fnmatch initial set of units
+(unless --new option is used) to monitor and `systemd.journal`_ from there to
+add/remove units from set and log start/stop events.
 
 Scrapes contents of cpu.stat, memory.stat and io.stat cgroup nodes on
 configurable -i/--poll-interval, translating their contents to
 cpu/mem/io-prefixed json keys, and device names for io stats.
+Runs until stopped or there's nothing more to monitor with --stop option.
 Uses configurable RotatingFileHandler for output json-lines log.
 
 Intended use is collecting temporary data for some testing/debugging cgroup(s),
 docker containers and such (use e.g. prometheus_ for anything more long-term instead)::
 
-  # systemd-cglog /dev/stdout 'docker-*.scope'
-
+  # systemd-cglog -ns /dev/stdout 'docker-*.scope'
   {"ts": 1657877464.7816184, "ev": "start", "u": "docker-ef7c216d.scope"}
   {"ts": 1657877464.7819324, "ev": "stat", "u": "docker-ef7c216d.scope",
     "cpu.usage_usec": 240007, "cpu.user_usec": 205953, "cpu.system_usec": 34054, ...
-    "mem.anon": 74563584, "mem.file": 24576, "mem.kernel": 745472, "mem.kernel_stack": 98304, ...
+    "mem.anon": 74563584, "mem.file": 24576, "mem.kernel": 745472, ...
     "io.vda.rbytes": 1416105984, "io.vda.wbytes": 372867072, "io.vda.rios": 68490, ... }
   ...
   {"ts": 1657877504.207708, "ev": "stop", "u": "docker-ef7c216d.scope"}
+
+Metrics collected this way can then be filtered/disaggregated by jq_ or a
+trivial script and visualized separately as needed.
+Idea here is just to gather all useful numbers over time.
 
 .. _systemd.journal: https://www.freedesktop.org/software/systemd/python-systemd/journal.html
 

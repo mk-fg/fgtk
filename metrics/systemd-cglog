@@ -91,6 +91,11 @@ def main(args=None):
 	parser.add_argument('-i', '--poll-interval',
 		type=float, metavar='seconds', default=3.0,
 		help='Interval between polling datapoints from unit(s) cgroup(s). Default: %(default).1fs')
+	parser.add_argument('-n', '--new', action='store_true',
+		help='Only monitor unit(s) that get started after this script, not pre-exising ones.')
+	parser.add_argument('-s', '--stop', action='store_true',
+		help='Stop after all monitored units exit.'
+			' Can be used with --new to log data for a single unit start/stop lifecycle.')
 	opts = parser.parse_args(args if args is not None else sys.argv[1:])
 
 	logging.basicConfig(level=logging.WARNING, format='{levelname} :: {message}', style="{")
@@ -111,13 +116,15 @@ def main(args=None):
 	ev_log.propagate = False
 	ev_log = lambda log=ev_log,**d: log.info('%s', json.dumps(dict(ts=time.time(), **d)))
 
-	unit_st = op.itemgetter('load', 'active', 'sub')
-	unit_set = set( u['unit']
-		for u in json.loads(sp.run(
-			['systemctl', 'list-units', '-ao', 'json'],
-			check=True, stdout=sp.PIPE ).stdout)
-		if unit_st(u) == ('loaded', 'active', 'running') and
-			fnmatch.fnmatch(u['unit'], opts.unit_fnmatch) )
+	if new := opts.new: unit_set = set()
+	else:
+		unit_st = op.itemgetter('load', 'active', 'sub')
+		unit_set = set( u['unit']
+			for u in json.loads(sp.run(
+				['systemctl', 'list-units', '-ao', 'json'],
+				check=True, stdout=sp.PIPE ).stdout)
+			if unit_st(u) == ('loaded', 'active', 'running') and
+				fnmatch.fnmatch(u['unit'], opts.unit_fnmatch) )
 
 	for sig in signal.SIGINT, signal.SIGTERM:
 		signal.signal(sig, lambda sig,frm: sys.exit())
@@ -160,5 +167,8 @@ def main(args=None):
 		for u, cg in list(unit_cg_map.items()):
 			try: ev_log(ev='stat', u=u, **poll_cg_stats(cg, dev_cache))
 			except OSError: del unit_cg_map[u]; unit_cg_errs[u] += 1
+
+		if unit_set: new = False
+		elif not new and opts.stop: break
 
 if __name__ == '__main__': sys.exit(main())
