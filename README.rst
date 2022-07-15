@@ -3784,6 +3784,26 @@ and to optimize efficiency).
 .. _Grafana Simple JSON Datasource: https://grafana.com/grafana/plugins/grafana-simple-json-datasource
 .. _uWSGI: https://uwsgi-docs.readthedocs.io/
 
+systemd-cglog
+^^^^^^^^^^^^^
+
+Script to log JSON-lines with all available cgroup stats for matched unit
+file(s), as well as their start/stop events.
+
+Uses ``systemctl list-units -ao json`` to find/fnmatch initial set of units to
+monitor and `systemd.journal`_ from there to add/remove units from set and log
+start/stop events.
+
+Scrapes contents of cpu.stat, memory.stat and io.stat cgroup nodes on
+configurable -i/--poll-interval, translating their contents to
+cpu/mem/io-prefixed json keys, and device names for io stats.
+Uses configurable RotatingFileHandler for output json-lines log.
+
+Intended use is collecting temporary data for some testing/debugging cgroup(s),
+docker containers and such - use prometheus for anything more long-term instead.
+
+.. _systemd.journal: https://www.freedesktop.org/software/systemd/python-systemd/journal.html
+
 
 
 [scraps]
