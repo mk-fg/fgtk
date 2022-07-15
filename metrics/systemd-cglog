@@ -25,21 +25,23 @@ def journal_unit_tracker_iter(match, ev_map, unit_set=set()):
 	'''Expects ts_max inputs for wait() delays,
 		and yields same set of currently-active units matching wildcard.'''
 	with sdj.Reader() as jj:
-		for msg_id in ev_map:
-			jj.add_match(f'MESSAGE_ID={msg_id}')
-			jj.add_disjunction()
 		jj.seek_tail()
+		jj.get_next(10) # not sure why this is needed to avoid it returning junk first
+		for msg_id in ev_map:
+			jj.add_match(f'MESSAGE_ID={msg_id.replace("-", "")}')
+			jj.add_disjunction()
 		while True:
 			ts_max = yield unit_set
 			if not ts_max: break
 			while (delay := ts_max - time.monotonic()) > 0:
 				if jj.wait(delay) == sdj.NOP: continue
-				if not (e := jj.get_next()) or ( ('systemd', '1', 'init.scope') !=
+				if not (e := jj.get_next()) or ( ('systemd', 1, 'init.scope') !=
 					tuple(e.get(k) for k in ['_COMM', '_PID', '_SYSTEMD_UNIT']) ): continue
-				if not (ev := jid_ev_map.get(e.get('MESSAGE_ID'))): continue
+				if not (ev := ev_map.get(str(e.get('MESSAGE_ID', '')))): continue
 				if not fnmatch.fnmatch(unit := e.get('UNIT', ''), match): continue
 				if ev.start: unit_set.add(unit)
 				if ev.stop: unit_set.discard(unit)
+				break # to log start/stop immediately
 
 def poll_cg_stats(cg, dev_cache=dict()):
 	stats, errs = dict(), 0
@@ -121,8 +123,8 @@ def main(args=None):
 		signal.signal(sig, lambda sig,frm: sys.exit())
 
 	tracker_ev_map = { # not sure if these stay same between releases
-		'39f53479d3a045ac8e11786248231fbf': adict(start=1, stop=0),
-		'7ad2d189f7e94e70a38c781354912448': adict(start=0, stop=1) }
+		'39f53479-d3a0-45ac-8e11-786248231fbf': adict(start=1, stop=0),
+		'7ad2d189-f7e9-4e70-a38c-781354912448': adict(start=0, stop=1) }
 	tracker = journal_unit_tracker_iter(opts.unit_fnmatch, tracker_ev_map, unit_set)
 	next(tracker)
 

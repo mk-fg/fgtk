@@ -3800,7 +3800,17 @@ cpu/mem/io-prefixed json keys, and device names for io stats.
 Uses configurable RotatingFileHandler for output json-lines log.
 
 Intended use is collecting temporary data for some testing/debugging cgroup(s),
-docker containers and such - use prometheus for anything more long-term instead.
+docker containers and such (use e.g. prometheus_ for anything more long-term instead)::
+
+  # systemd-cglog /dev/stdout 'docker-*.scope'
+
+  {"ts": 1657877464.7816184, "ev": "start", "u": "docker-ef7c216d.scope"}
+  {"ts": 1657877464.7819324, "ev": "stat", "u": "docker-ef7c216d.scope",
+    "cpu.usage_usec": 240007, "cpu.user_usec": 205953, "cpu.system_usec": 34054, ...
+    "mem.anon": 74563584, "mem.file": 24576, "mem.kernel": 745472, "mem.kernel_stack": 98304, ...
+    "io.vda.rbytes": 1416105984, "io.vda.wbytes": 372867072, "io.vda.rios": 68490, ... }
+  ...
+  {"ts": 1657877504.207708, "ev": "stop", "u": "docker-ef7c216d.scope"}
 
 .. _systemd.journal: https://www.freedesktop.org/software/systemd/python-systemd/journal.html
 
