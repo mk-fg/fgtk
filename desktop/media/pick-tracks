@@ -230,7 +230,9 @@ def run_copy(copy, cleanup, rename, dry_run):
 def run_rename(copy, rename, dry_run):
 	src_files = build_file_list(copy)
 	for p in src_files:
-		dst = p.with_name(track_name(rename, p))
+		dst_name = track_name(rename, p)
+		if p.name == dst_name: continue
+		dst = p.with_name(dst_name)
 		log.debug('Rename: %s -> %s', p, dst.name)
 		if not dry_run: p.rename(dst)
 
