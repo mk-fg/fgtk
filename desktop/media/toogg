@@ -406,8 +406,8 @@ class AudioConv:
 							f' into chunks due to unknown duration: {src}' )
 					src_chunks, chunk_len = list(), self.chunks
 					dst_name = dst_name_format(src.name)
-					start, length = start or 0, src.duration
-					length_total = length - start
+					start, length = start or 0, length or src.duration
+					length_total = length
 					dst_dir = ( dst_name if not self.inplace
 						else (str(src.parent.resolve()).strip(os.sep) + f'/{dst_name}') )
 					dst_dir = AudioConvChunkDir(dst_dir, src, src_chunks, cleanup=src.cleanup)
