@@ -238,12 +238,14 @@ void dpy_close() {
 }
 
 
-static int read_primary(char **buff, unsigned long *buff_len) {
+static int read_selection( char **buff,
+		unsigned long *buff_len, int sel_primary ) {
 	dpy_init();
 
 	XEvent evt;
 	unsigned int context = XCLIB_XCOUT_NONE;
-	Atom sel_src = XA_PRIMARY, sel_type = None;
+	Atom sel_src = sel_primary ? XA_PRIMARY : XA_CLIPBOARD(dpy);
+	Atom sel_type = None;
 	Atom target = XA_UTF8_STRING(dpy);
 	int err = 0;
 	char *xcbuff = NULL;
@@ -358,25 +360,27 @@ void str_replace(
 }
 
 void parse_opts( int argc, char *argv[],
-		int *opt_verbatim, int *opt_slashes_to_dots, int *opt_tabs_to_spaces ) {
+		int *opt_verbatim, int *opt_slashes_to_dots,
+		int *opt_tabs_to_spaces, int *opt_from_clip ) {
 	extern char *optarg;
 	extern int optind, opterr, optopt;
 
 	void usage(int err) {
 		FILE *dst = !err ? stdout : stderr;
 		fprintf( dst,
-"Usage: %s [-h|--help] [-x|--verbatim] [-d|--slashes-to-dots]\n\n"
+"Usage: %s [-h|--help] [-c/--from-clip] [-x|--verbatim] [...other-opts]\n\n"
 "\"Copies\" (actually forks pids"
 	" to hold/own that stuff) primary X11 selection\n"
-" back to primary and clipboard, stripping start/end spaces,\n"
-" removing newlines and replacing tabs with spaces by default\n"
-" (unless -x/--verbatim is specified).\n\n"
+"  back to primary and clipboard, stripping start/end spaces,\n"
+"  removing newlines and replacing tabs with spaces by default\n"
+"  (unless -x/--verbatim is specified).\n"
+"With -c/--from-clip option, clipboard selection will be used as a source instead.\n\n"
 "Extra flags (can be used with(-out)"
 	" -x/--verbatim to strip/keep other stuff):\n"
-" -d/--slashes-to-dots - replaces all forward slashes [/] with dots [.].\n"
-" -t/--tabs-to-spaces N - replaces each tab char with N spaces.\n"
-"   (default without -x/--verbatim"
-			" is one space for each tab, overrides that)\n\n", argv[0] );
+"  -d/--slashes-to-dots - replaces all forward slashes [/] with dots [.].\n"
+"  -t/--tabs-to-spaces N - replaces each tab char with N spaces.\n"
+"    (default without -x/--verbatim"
+	" is one space for each tab, overrides that)\n\n", argv[0] );
 		exit(err); }
 
 	int ch;
@@ -384,12 +388,14 @@ void parse_opts( int argc, char *argv[],
 		{"help", no_argument, NULL, 1},
 		{"verbatim", no_argument, NULL, 2},
 		{"slashes-to-dots", no_argument, NULL, 3},
-		{"tabs-to-spaces", required_argument, NULL, 4} };
-	while ((ch = getopt_long(argc, argv, ":hxdt:", opt_list, NULL)) != -1)
+		{"tabs-to-spaces", required_argument, NULL, 4},
+		{"from-clip", no_argument, NULL, 5} };
+	while ((ch = getopt_long(argc, argv, ":hxdt:c", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
 			case 'd': case 3: *opt_slashes_to_dots = 1; break;
 			case 't': case 4: *opt_tabs_to_spaces = atoi(optarg); break;
+			case 'c': case 5: *opt_from_clip = 1; break;
 			case 'h': case 1: usage(0);
 			case '?':
 				P(0, "unrecognized option - %s\n", argv[optind-1]);
@@ -405,15 +411,17 @@ void parse_opts( int argc, char *argv[],
 }
 
 int main(int argc, char *argv[]) {
-	int opt_verbatim = 0, opt_slashes_to_dots = 0, opt_tabs_to_spaces = -1;
+	int opt_verbatim = 0, opt_slashes_to_dots = 0,
+		opt_tabs_to_spaces = -1, opt_from_clip = 0;
 	parse_opts( argc, argv, &opt_verbatim,
-		&opt_slashes_to_dots, &opt_tabs_to_spaces );
+		&opt_slashes_to_dots, &opt_tabs_to_spaces, &opt_from_clip );
 
 	char *buff;
 	unsigned long buff_len;
 
 	if (chdir("/") == -1) P(1, "chdir(/) failed"); // for leftover child pids
-	if (read_primary(&buff, &buff_len)) P(1, "failed to read primary selection");
+	if (read_selection(&buff, &buff_len, !opt_from_clip))
+		P(1, "failed to read source selection buffer");
 
 	if (opt_tabs_to_spaces >= 0) {
 		char *sub = memset(malloc(opt_tabs_to_spaces), ' ', opt_tabs_to_spaces);

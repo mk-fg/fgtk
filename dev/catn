@@ -1,14 +1,14 @@
 #!/bin/bash
 
 usage() {
-	local bin=$(basename $0)
+	local bin=${0##*/}
 	[[ $1 -eq 0 ]] || exec 1>&2
 	echo "Usage: $bin [-q] file line ctx_lines"
 	echo "  or: $bin [-q] file line[:ctx_lines]"
 	echo "  or: $bin [-q] file:line[:ctx_lines]"
 	# [[ $1 -ne 0 ]] || { echo; echo "more help stuff"; }
 	exit ${1:-1}; }
-[[ "$1" = -h || "$1" = --help ]] && usage 0
+[[ "$1" != -h && "$1" != --help ]] || usage 0
 
 q=
 [[ "$1" = -q ]] && { q=t; shift; }
