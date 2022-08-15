@@ -1,43 +1,35 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, signal
+import os, sys, io, re, signal
 
 
 def main(args=None):
 	import argparse, textwrap
-
-	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
-	class SmartHelpFormatter(argparse.HelpFormatter):
-		def __init__(self, *args, **kws):
-			return super().__init__(*args, **kws, width=100)
-		def _fill_text(self, text, width, indent):
-			if '\n' not in text: return super()._fill_text(text, width, indent)
-			return ''.join(indent + line for line in text.splitlines(keepends=True))
-		def _split_lines(self, text, width):
-			return super()._split_lines(text, width)\
-				if '\n' not in text else dedent(text).splitlines()
-
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		formatter_class=SmartHelpFormatter,
+		formatter_class=argparse.RawTextHelpFormatter,
 		description='Run python repr() to stdout on every (text) line of an input file.')
 	parser.add_argument('file', nargs='*',
 		help='Input file path(s). Stdin is used if none specified or in place of "-".')
 	parser.add_argument('-b', '--binary', action='store_true',
-		help='Process file lines in binary mode, instead of decoding it with utf-8.'
-			' Should allow to see BOM and random'
-				' binary goop escaped as individual bytes, not codepoints.'
-			' Anything outside of printable ascii will be encoded'
-				' either as a special escape sequence like \\n or C-style \\xCC.')
+		help=dd('''
+			Process file lines in binary mode, instead of decoding it with utf-8.
+			Should allow to see BOM and random
+				binary goop escaped as individual bytes, not codepoints.
+			Anything outside of printable ascii will be encoded
+				either as a special escape sequence like \\n or C-style \\xCC.'''))
 	parser.add_argument('-n', '--hide-newlines', action='store_true',
-		help='Enables "universal newlines" translation and strips last \\n from each line.'
-			' Whether this is sufficient for mismatched line endings'
-				' depends on how aggressive that mode is in converting newlines.')
+		help=dd('''
+			Enables "universal newlines" translation and strips last \\n from each line.
+			Whether this is sufficient for mismatched line endings
+				depends on how aggressive that mode is in converting newlines.'''))
 	parser.add_argument('-x', '--error-replace', action='store_true',
 		help='When decoding stuff (non-binary mode, convert), replace non-decodable chars.')
 	parser.add_argument('-c', '--convert',
 		const='utf-8', nargs='?', metavar='((enc-src:)enc-dst)(+opts)',
-		help='''
+		help=dd('''
 			Instead of repr-output, convert encoding
 				from enc-src (default=utf-8-sig) to enc-dst (utf-8) and output the result.
 			[[enc-src:]enc-dst] spec can be followed by + and any of the following options:
@@ -46,7 +38,7 @@ def main(args=None):
 				+t - trim whitespace from line endings, and ensure final newline
 				+j - json-decode and pretty-print lines, or print as -b/--binary on fail
 			Examples: -c utf-8-sig+ri, -c +t, -c cp1251:utf-8+it
-			Allows to use stuff like utf-8-sig or any other codec supported by python.''')
+			Allows to use stuff like utf-8-sig or any other codec supported by python.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	file_list, file_nl = opts.file, None
