@@ -197,7 +197,8 @@ def main(args=None):
 		m = re.search(r'^(\d+)(?:-(\d+))?$', v)
 		if not m: parser.error(f'Invalid format for -n/--num option, should be N[-M]: {v!r}')
 		a, b = int(m.group(1)) or 1, int(m.group(2) or 0)
-		if b < a: a, b = b, a
+		if not b: b = a
+		elif b < a: a, b = b, a
 		ranges.append((a, b))
 
 	feed_url = opts.url
