@@ -214,6 +214,8 @@ def main(args=None):
 		metavar='(always|totals|never)', choices='always totals never'.split(), help=dd('''
 			When/whether to commit added files/changes into git repo.
 			One of: always - commit any changes, totals - commit when any logs are done, never.'''))
+	group.add_argument('-o', '--git-commit-opts', metavar='opts',
+		help='Space-separated extra options for "git commit" command.')
 	group.add_argument('-p', '--git-push', action='store_true', help='Run "git push" after commit.')
 	group.add_argument('-P', '--git-push-remote', metavar='remote', help=dd('''
 		Run "git push <remote>" after commit(s).
@@ -356,7 +358,7 @@ def main(args=None):
 				if upd_metrics: upd_msg += '\n\n' + f'Changes: {", ".join(upd_metrics)}'
 			log.debug( 'Creating git commit (when={} push={}) [ {} - {} ]',
 				opts.git_commit_type, 'ny'[bool(git_push)], dd1.isoformat(), dd2.isoformat() )
-			git_cmd(['git', 'commit', '--no-edit', '-aqm', upd_msg])
+			git_cmd(['git', 'commit', '--no-edit', *opts.git_commit_opts.split(), '-aqm', upd_msg])
 			if git_push:
 				git_push_remote = [] if git_push is True else [git_push]
 				git_cmd(['git', 'push', '-q'] + git_push_remote)
