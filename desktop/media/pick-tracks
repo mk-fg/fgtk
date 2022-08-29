@@ -167,7 +167,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 		else:
 			res = sp.run(
 				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
-			cleanup = res.stdout.decode().splitlines()
+			cleanup_paths = res.stdout.decode().splitlines()
 			if cleanup.df_pre:
 				log.debug( 'Doing cleanup (up to: %.1f MiB)'
 					' of the path: %r', cleanup.df_pre / MiB, cleanup.p )
