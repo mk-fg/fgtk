@@ -157,9 +157,9 @@ class FFProc:
 				if not pos: continue
 				if not self.stream_len: msg = pos_str(pos)
 				else:
-					msg = '{:.1f}% - {} / {}'.format(
+					msg = '{: 5.1f}% - {} / {}'.format(
 						min(1, pos / self.stream_len) * 100,
-						pos_str(pos), pos_str(self.stream_len) )
+						pos_str(pos), pos_str(self.stream_len) )[1:]
 				msg = self.print_progress_prefix(msg)
 				print_progress(msg)
 		finally: print_progress()
