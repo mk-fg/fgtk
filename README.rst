@@ -3196,15 +3196,17 @@ to inevitably assign to files on a regular-content feeds.
 qr
 '''
 
-Bash wrapper around qrencode_ to assemble and display QR-encoded strings in
-a fullscreen feh_ window, cleaning-up after itself afterwards.
+Bash wrapper around qrencode_ and zbar_ tools to assemble/display or decode
+QR-encoded strings.
 
-For example, to pass WiFi AP data to any smartphone that way:
+Encode-display mode provides an easy way to pass some data like WiFi AP creds to
+a smartphone via fullscreen feh_ window in one command:
 ``qr -s myssid -p some-passphrase``
 
 Has bunch of other options for different common use-cases.
 
 .. _qrencode: https://fukuchi.org/works/qrencode/index.html.en
+.. _zbar: https://github.com/mchehab/zbar
 .. _feh: https://feh.finalrewind.org/
 
 gtk-color-calc
