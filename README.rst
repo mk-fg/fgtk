@@ -3231,8 +3231,7 @@ filetag
 Command-line python script to scan files for tagging based on paths or filename
 extensions (e.g. tag \*.py with "py"), script shebangs or magic bytes (binary header).
 
-Simplier and more performant replacement for earlier codetag_ tool, using gdbm
-db for more efficient tag storage and lookups instead of tmsu_.
+Simplier and easiler-to-use replacement for tools like codetag_ and tmsu_.
 
 Allows for fast "sum of products" DNF queries, i.e. fairly arbitrary tag
 combinations, just convert them to DNF from whatever algebraic notation
