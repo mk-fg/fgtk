@@ -618,25 +618,6 @@ it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when ``xmllint --format`` fail and/or break such kinda-ML-but-not-XML files.
 
-entropy_
-''''''''
-.. _entropy: entropy
-
-Python (2 or 3) script to feed /dev/random linux entropy pool, to e.g. stop dumb
-tools like gpg blocking forever on ``pacman --init`` in a throwaway chroot.
-
-Basically haveged or rngd replacement for bare-bones chroots that don't have
-either, but do have python.
-
-Probably a bad idea to use it for anything other than very brief workarounds for
-such tools on an isolated systems that don't run anything else crypto-related.
-
-Shouldn't compromise deterministic stuff though, e.g. dm-crypt operation (except
-new key generation in cryptsetup or such).
-
-Should not be needed with modern kernels, which aren't supposed to have this
-silly "blocking random" problem anymore, thankfully.
-
 crypt_
 ''''''
 .. _crypt: crypt
