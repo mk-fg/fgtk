@@ -38,14 +38,16 @@ more generic, not necessarily vcs-related, solution.
 
 .. _cfgit project: http://fraggod.net/code/git/configit/
 
-scim-ln
-```````
+scim-ln_
+````````
+.. _scim-ln: scim-ln
 
 Adds a new link (symlink or catref) to a manifest (links-list), also moving file
 to scim-tree (repository) on fs-level.
 
-scim
-````
+scim_
+`````
+.. _scim: scim
 
 Main tool to check binding and metadata of files under scim-tree. Basic
 operation boils down to two (optional) steps:
@@ -59,8 +61,9 @@ operation boils down to two (optional) steps:
   patterns (``.scim_links_exclude``).
 
 
-fs
-''
+fs_
+'''
+.. _scim: scim
 
 Complex tool for high-level fs operations. Reference is built-in.
 
@@ -77,8 +80,9 @@ Copy ownership/mode from one file to another::
 
   fs cps /file1 /file2
 
-fatrace-pipe
-''''''''''''
+fatrace-pipe_
+'''''''''''''
+.. _fatrace-pipe: fatrace-pipe
 
 fatrace_-based script to read filesystem write events via linux fanotify_ system
 and match them against specific path and app name, sending matches to a FIFO
@@ -100,8 +104,9 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
 .. _fatrace: https://launchpad.net/fatrace
 .. _fanotify: http://lwn.net/Articles/339253/
 
-fatrace-run
-'''''''''''
+fatrace-run_
+''''''''''''
+.. _fatrace-run: fatrace-run
 
 Convenience wrapper around fatrace_ like fatrace-pipe above,
 but intended to only filter by path prefix and run command on specified event(s).
@@ -113,8 +118,9 @@ For example, to e.g. reload nginx when anything under its config dir/subdirs cha
 (-p to also echo events to stdout, "-f W" will filter file writes,
 D - deletions, <> - renames)
 
-findx
-'''''
+findx_
+''''''
+.. _findx: findx
 
 Wrapper around GNU find to accept paths at the end of argv if none are passed
 before query.
@@ -127,10 +133,11 @@ No matter how many years I'm using that tool, still can't get used to typing
 paths before query there, so decided to patch around that frustrating issue one
 day.
 
-patch-nspawn-ids
-''''''''''''''''
+patch-nspawn-ids_
+'''''''''''''''''
+.. _patch-nspawn-ids: patch-nspawn-ids
 
-Python3 script to "shift" or "patch" uid/gid values with new container-id
+Python script to "shift" or "patch" uid/gid values with new container-id
 according to systemd-nspawn schema, i.e. set upper 16-bit to specified
 container-id value and keep lower 16 bits to uid/gid inside the container.
 
@@ -145,8 +152,9 @@ Should be safe to use anywhere, as in most non-nspawn cases upper bits of
 uid/gid are always zero, hence any changes can be easily reverted by running
 this tool again with -c0.
 
-bindfs-idmap
-''''''''''''
+bindfs-idmap_
+'''''''''''''
+.. _bindfs-idmap: bindfs-idmap
 
 `bindfs <http://bindfs.org/>`_ wrapper script to setup id-mapping from uid of
 the mountpoint to uid/gid of the source directory.
@@ -163,8 +171,9 @@ user acc in a main namespace.
 For long-term access (e.g. for some daemon), there probably are better options
 than such bindfs hack - e.g. bind-mounts, shared uids/gids, ACLs, etc.
 
-docker-ln
-'''''''''
+docker-ln_
+''''''''''
+.. _docker-ln: docker-ln
 
 Simple bash script to symlink uppermost "merged" overlayfs layer of a running
 docker-compose setup container, to allow easy access to temporary files there.
@@ -177,8 +186,9 @@ These paths are very likely to change between container and docker-compose
 restarts for many reasons, so such symlinks are generally only valid during
 container runtime, and script needs a re-run to update these too.
 
-fast-disk-wipe
-''''''''''''''
+fast-disk-wipe_
+'''''''''''''''
+.. _fast-disk-wipe: fast-disk-wipe
 
 Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
 device in a hurry.
@@ -204,8 +214,9 @@ Generic file contents manglers
 
 Things that manipulate arbitrary file contents.
 
-repr
-''''
+repr_
+'''''
+.. _repr: repr
 
 Ever needed to check if file has newlines or BOM in it, yet every editor is
 user-friendly by default and hides these from actual file contents?
@@ -214,7 +225,7 @@ One fix is hexdump or switching to binary mode, but these are usually terrible
 for looking at text, and tend to display all non-ASCII as "." instead of nicer
 \\r \\t \\n ... escapes, not to mention unicode chars.
 
-This trivial script prints each line in a file via python3's repr(), which is
+This trivial script prints each line in a file via python's repr(), which is
 usually very nice, has none of the above issues and doesn't dump byte codes on
 you for anything it can interpret as char/codepoint or some neat escape code.
 
@@ -226,8 +237,9 @@ newlines, and sometimes you just want "MS utf-8 mode" (``repr -c utf-8-sig+r``).
 Using that with +i flag as e.g. ``repr -c utf-8-sig+ri file1 file2 ...``
 converts encoding+newlines+BOM for files in-place at no extra hassle.
 
-color
-'''''
+color_
+''''''
+.. _color: color
 
 Outputs terminal color sequences, making important output more distinctive.
 
@@ -240,8 +252,9 @@ terminal::
 
 Or to get color-escape-magic for your bash script: ``color red bold p``
 
-color-b64sort
-'''''''''''''
+color-b64sort_
+''''''''''''''
+.. _color-b64sort: color-b64sort
 
 Tool to filter, sort and compress list of colors - aka color palette - into
 base64, to then use as a compact blob in visualization scripts easily.
@@ -293,8 +306,9 @@ but using pypy instead of cpython can speed that up a lot.
 .. _"i want hue": https://medialab.github.io/iwanthue/
 .. _colormath: https://python-colormath.readthedocs.io/
 
-resolve-hostnames
-'''''''''''''''''
+resolve-hostnames_
+''''''''''''''''''
+.. _resolve-hostnames: resolve-hostnames
 
 Script (py3) to find all specified (either directly, or by regexp) hostnames and
 replace these with corresponding IP addresses, resolved through getaddrinfo(3).
@@ -335,10 +349,11 @@ names (in some arbitrary format) to IP addresses, and such.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-resolve-conf
-''''''''''''
+resolve-conf_
+'''''''''''''
+.. _resolve-conf: resolve-conf
 
-Python-3/Jinja2 script to produce a text file from a template, focused
+Python/Jinja2 script to produce a text file from a template, focused
 specifically on templating configuration files, somewhat similar to
 "resolve-hostnames" above or templating provided by ansible/saltstack.
 
@@ -408,8 +423,9 @@ service startup with a minimal toolbox on top of jinja2, without huge dep-tree
 or any other requirements and complexity, that is not scary to run from
 ``ExecStartPre=`` line as root.
 
-temp-patch
-''''''''''
+temp-patch_
+'''''''''''
+.. _temp-patch: temp-patch
 
 Tool to temporarily modify (patch) a file - until reboot or for a specified
 amount of time. Uses bind-mounts from tmpfs to make sure file will be reverted
@@ -428,16 +444,18 @@ accidental modification (that can be lost).
 There're also "-t" and "-m" flags to control timestamps during the whole
 process.
 
-term-pipe
-'''''''''
+term-pipe_
+''''''''''
+.. _term-pipe: term-pipe
 
-Py3 script with various terminal input/output piping helpers and tools.
+Python script with various terminal input/output piping helpers and tools.
 
 Has multiple modes for different use-cases, collected in same script mostly
 because they're pretty simple and not worth remembering separate ones.
 
-out-paste
-`````````
+out-paste_
+''''''''''
+.. _out-paste: out-paste
 
 Disables terminal echo and outputs line-buffered stdin to stdout.
 
@@ -455,8 +473,9 @@ Example use-case can be grepping through huge multiline strings
 There are better tools for that particular use-case, but this solution is
 universal wrt any possible input source.
 
-shell-notify
-````````````
+shell-notify_
+'''''''''''''
+.. _shell-notify: shell-notify
 
 Filter for screen/tmux/script output to send desktop notification (using sd-bus
 lib) when shell prompt is detected on stdin, to enable when some long job is
@@ -481,8 +500,9 @@ significant changes, something like "2>/tmp/errors.log" can be added at the end.
 
 Check options of this subcommand for rate-limiting and some other tweaks.
 
-yaml-to-pretty-json
-'''''''''''''''''''
+yaml-to-pretty-json_
+''''''''''''''''''''
+.. _yaml-to-pretty-json: yaml-to-pretty-json
 
 Converts yaml files to an indented json, which is a bit more readable and
 editable by hand than the usual compact one-liner serialization.
@@ -490,8 +510,9 @@ editable by hand than the usual compact one-liner serialization.
 Due to yaml itself being json superset, can be used to convert json to
 pretty-json as well.
 
-yaml-flatten
-''''''''''''
+yaml-flatten_
+'''''''''''''
+.. _yaml-flatten: yaml-flatten
 
 Converts yaml/json files to a flat "key: value" lines.
 
@@ -505,8 +526,9 @@ and empty lists/dicts and such in a readable manner too.
 Output is intended for a human reader, to easily see value paths and such,
 and definitely can't be converted back to yaml or any kind of data safely.
 
-hz
-''
+hz_
+'''
+.. _hz: hz
 
 Same thing as the common "head" tool, but works with \\x00 (aka null character,
 null byte, NUL, ␀, \\0, \\z, \\000, \\u0000, %00, ^@) delimeters.
@@ -528,8 +550,9 @@ option) would be aliased neatly to "hz", hence the script name.
 Defaults to reading ALL lines, not just arbitrary number (like 10, which is
 default for regular "head")!
 
-liac
-''''
+liac_
+'''''
+.. _liac: liac
 
 "Log Interleaver And Colorizer" python script.
 
@@ -555,8 +578,9 @@ See `blog post about liac tool`_ for more info.
 .. _runit: http://smarden.org/runit/
 .. _blog post about liac tool: http://blog.fraggod.net/2015/12/29/tool-to-interleave-and-colorize-lines-from-multiple-log-or-any-other-files.html
 
-html-embed
-''''''''''
+html-embed_
+'''''''''''
+.. _html-embed: html-embed
 
 Script to create "fat" HTML files, embedding all linked images
 (as base64-encoded data-urls), stylesheets and js into them.
@@ -565,7 +589,7 @@ All src= and href= paths must be local (e.g. "js/script.js" or "/css/main.css"),
 and will simply be treated as path components (stripping slashes on the left)
 from html dir, nothing external (e.g. "//site.com/stuff.js") will be fetched.
 
-Doesn't need anything but Python-3, based on stdlib html.parser module.
+Doesn't need anything but python, based on stdlib html.parser module.
 
 Not optimized for huge amounts of embedded data, storing all the substitutions
 in memory while it runs, and is unsafe to run on random html files, as it can
@@ -576,8 +600,9 @@ Use-case is to easily produce single-file webapps or pages to pass around (or
 share somewhere), e.g. some d3-based interactive chart page or an html report
 with a few embedded images.
 
-someml-indent
-'''''''''''''
+someml-indent_
+''''''''''''''
+.. _someml-indent: someml-indent
 
 Simple and dirty regexp + backreferences something-ML (SGML/HTML/XML) parser to
 indent tags/values in a compact way without messing-up anything else in there.
@@ -593,8 +618,9 @@ it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when ``xmllint --format`` fail and/or break such kinda-ML-but-not-XML files.
 
-entropy
-'''''''
+entropy_
+''''''''
+.. _entropy: entropy
 
 Python (2 or 3) script to feed /dev/random linux entropy pool, to e.g. stop dumb
 tools like gpg blocking forever on ``pacman --init`` in a throwaway chroot.
@@ -608,8 +634,12 @@ such tools on an isolated systems that don't run anything else crypto-related.
 Shouldn't compromise deterministic stuff though, e.g. dm-crypt operation (except
 new key generation in cryptsetup or such).
 
-crypt
-'''''
+Should not be needed with modern kernels, which aren't supposed to have this
+silly "blocking random" problem anymore, thankfully.
+
+crypt_
+''''''
+.. _crypt: crypt
 
 Trivial file/stream encryption tool using `PyNaCl's`_
 crypto_secretstream_xchacha20poly1305 authenticated encryption API.
@@ -637,8 +667,9 @@ stop and throw error at that point.
 Kernel sources/build/version management
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-kernel-patch
-''''''''''''
+kernel-patch_
+'''''''''''''
+.. _kernel-patch: kernel-patch
 
 Simple stateless script to update sources in /usr/src/linux to some (specified)
 stable version.
@@ -658,17 +689,19 @@ In short, allows to run e.g. ``kernel-patch 3.14.22`` to get 3.14.22 in
 ``/usr/src/linux`` from any other clean 3.14.\* version, or just
 ``kernel-patch`` to have the latest 3.14 patchset.
 
-kernel-conf-check
-'''''''''''''''''
+kernel-conf-check_
+''''''''''''''''''
+.. _kernel-conf-check: kernel-conf-check
 
-Ad-hoc python3 script to check any random snippet with linux kernel
+Ad-hoc python script to check any random snippet with linux kernel
 ``CONFIG_...`` values (e.g. "this is stuff you want to set" block on some wiki)
 against kernel config file, current config in /proc/config.gz or such.
 
 Reports what matches and what doesn't to stdout, trivial regexp matching.
 
-clean-boot
-''''''''''
+clean-boot_
+'''''''''''
+.. _clean-boot: clean-boot
 
 Script to remove older kernel versions (as installed by ``/sbin/installkernel``)
 from ``/boot`` or similar dir.
@@ -725,8 +758,9 @@ ZNC log helpers
 
 Tools to manage `ZNC IRC bouncer <http://znc.in/>`_ logs - archive, view, search, etc.
 
-znc-log-aggregator
-''''''''''''''''''
+znc-log-aggregator_
+'''''''''''''''''''
+.. _znc-log-aggregator: znc-log-aggregator
 
 Tool to process znc chat logs, produced by "log" module (global, per-user or
 per-network - looks everywhere) and store them using following schema::
@@ -762,8 +796,9 @@ Idea is to have more convenient hierarchy and less files for easier shell
 navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
 usage in the long run.
 
-znc-log-reader
-''''''''''''''
+znc-log-reader_
+'''''''''''''''
+.. _znc-log-reader: znc-log-reader
 
 Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
 or time range (with additional filtering by channel/nick and network) from all
@@ -774,10 +809,11 @@ the current and aggregated logs.
 systemd
 ^^^^^^^
 
-systemd-dashboard
-'''''''''''''''''
+systemd-dashboard_
+''''''''''''''''''
+.. _systemd-dashboard: systemd-dashboard
 
-Python3 script to list all currently active and non-transient systemd units,
+Python script to list all currently active and non-transient systemd units,
 so that these can be tracked as a "system state",
 and e.g. any deviations there detected/reported (simple diff can do it).
 
@@ -792,8 +828,9 @@ though it's probably obsolete otherwise since this thing was rewritten.
 
 .. _Dashboard-for-... blog post: http://blog.fraggod.net/2011/2/Dashboard-for-enabled-services-in-systemd
 
-systemd-watchdog
-''''''''''''''''
+systemd-watchdog_
+'''''''''''''''''
+.. _systemd-watchdog: systemd-watchdog
 
 Trivial script to ping systemd watchdog and do some trivial actions in-between
 to make sure os still works.
@@ -846,11 +883,12 @@ and run -x/--fail-log-cmd command(s) on any python exceptions (note: kernel
 hangs probably won't cause these), logging their stdout/stderr there -
 e.g. to dump network configuration info as in example above.
 
-Useless without systemd and requires systemd python3 module, plus fping tool if
+Useless without systemd and requires systemd python module, plus fping tool if
 -n/--check-net-gw option is used.
 
-cgrc
-''''
+cgrc_
+'''''
+.. _cgrc: cgrc
 
 Wrapper for `systemd.resource control`_ stuff to run commands in transient
 scopes within pre-defined slices, as well as wait for these and list pids
@@ -910,8 +948,9 @@ SSH and WireGuard related
 
 See also "backup" subsection.
 
-ssh-fingerprint
-'''''''''''''''
+ssh-fingerprint_
+''''''''''''''''
+.. _ssh-fingerprint: ssh-fingerprint
 
 ssh-keyscan, but outputting each key in every possible format.
 
@@ -940,10 +979,11 @@ With this command, just running it on the remote host - presumably from diff
 location, or even localhost - should give (hopefully) any possible gibberish
 permutation that openssh (or something else) may decide to throw at you.
 
-ssh-keyparse
-''''''''''''
+ssh-keyparse_
+'''''''''''''
+.. _ssh-keyparse: ssh-keyparse
 
-Python3 script to extract raw private key string from ed25519 ssh keys.
+Python script to extract raw private key string from ed25519 ssh keys.
 
 Main purpose is easy backup of ssh private keys and derivation of new secrets
 from these for other purposes.
@@ -1007,8 +1047,9 @@ thing over some voice channel, if necessary.
 
 .. _Douglas Crockford's human-oriented Base32: http://www.crockford.com/wrmg/base32.html
 
-ssh-key-init
-''''''''''''
+ssh-key-init_
+'''''''''''''
+.. _ssh-key-init: ssh-key-init
 
 Bash script to generate (init) ssh key (via ssh-keygen) without asking about
 various legacy and uninteresting options and safe against replacing existing
@@ -1024,8 +1065,9 @@ Has -m option to init key for an nspawn container under ``/var/lib/machines``
 (e.g. ``ssh-key-init -m mymachine``) and -r option to replace any existing keys.
 Sets uid/gid of the parent path for all new ones and -m700.
 
-ssh-tunnel
-''''''''''
+ssh-tunnel_
+'''''''''''
+.. _ssh-tunnel: ssh-tunnel
 
 | Script to keep persistent, unique and reasonably responsive ssh tunnels.
 | Mostly just a bash wrapper with collection of options for such use-case.
@@ -1046,10 +1088,12 @@ Which are all pretty much required for proper background tunnel operation.
 | Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.
 | Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
 
-ssh-reverse-mux-\*
-''''''''''''''''''
+ssh-reverse-mux-server_ / ssh-reverse-mux-client_
+'''''''''''''''''''''''''''''''''''''''''''''''''
+.. _ssh-reverse-mux-server: ssh-reverse-mux-server
+.. _ssh-reverse-mux-client: ssh-reverse-mux-client
 
-Python 3.6+ (asyncio) scripts to establish multiple ssh reverse-port-forwarding
+Python/asyncio scripts to establish multiple ssh reverse-port-forwarding
 ("ssh -R") connections to the same tunnel-server from mutliple hosts using same
 exact configuration on each.
 
@@ -1069,8 +1113,10 @@ Note that all --auth-secret is used for is literally handing-out sequential
 numbers, and isn't expected to be strong protection against anything,
 unlike ssh auth that should come after that.
 
-wg-mux-\*
-'''''''''
+wg-mux-server_ / wg-mux-client_
+'''''''''''''''''''''''''''''''
+.. _wg-mux-server: wg-mux-server
+.. _wg-mux-client: wg-mux-client
 
 Same thing as ssh-reverse-mux-\* scripts above, but for negotiating WireGuard
 tunnels, with persistent host tunnel IPs tracked via --ident-\* strings with
@@ -1152,8 +1198,9 @@ and then keep it alive from there indefinitely (via --ping-cmd + systemd restart
 Explicit iface/IP init in these units can be replaced by systemd-networkd
 .netdev + .network stuff, as it supports wireguard configuration there.
 
-ssh-tunnels-cleanup
-'''''''''''''''''''
+ssh-tunnels-cleanup_
+''''''''''''''''''''
+.. _ssh-tunnels-cleanup: ssh-tunnels-cleanup
 
 Bash script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
 don't have a listening socket associated with them or don't show ssh protocol
@@ -1179,10 +1226,12 @@ killing those useless ssh pids.
 
 See also: `autossh <http://www.harding.motd.ca/autossh/>`_ and such.
 
-mosh-nat / mosh-nat-bind.c
-''''''''''''''''''''''''''
+mosh-nat_ / mosh-nat-bind.c_
+''''''''''''''''''''''''''''
+.. _mosh-nat: mosh-nat
+.. _mosh-nat-bind.c: mosh-nat-bind.c
 
-Python (3.6+) wrapper for mosh-server binary to do UDP hole punching through
+Python wrapper for mosh-server binary to do UDP hole punching through
 local NAT setup before starting it.
 
 Comes with mosh-nat-bind.c source for LD_PRELOAD=./mnb.so lib to force
@@ -1220,10 +1269,11 @@ setup.
   for more info and links on such feature implemented in mosh directly.
 | Source for LD_PRELOAD lib is based on https://github.com/yongboy/bindp/
 
-tping
-'''''
+tping_
+''''''
+.. _tping: tping
 
-Python-3 (asyncio) tool to try connecting to specified TCP port until connection
+Python (asyncio) tool to try connecting to specified TCP port until connection
 can be established, then just exit, i.e. to wait until some remote port is accessible.
 
 Can be used to wait for host to reboot before trying to ssh into it, e.g.::
@@ -1253,7 +1303,7 @@ Above example can also be shortened via -s/--ssh option, e.g.::
 
 Will exec ``ssh -p1234 root@myhost`` immediately after successful tcp connection.
 
-Uses python3 stdlib stuff, namely asyncio, to juggle multiple connections in an
+Uses python stdlib stuff, namely asyncio, to juggle multiple connections in an
 efficient manner.
 
 
@@ -1261,8 +1311,9 @@ efficient manner.
 WiFi / Bluetooth helpers
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-adhocapd
-''''''''
+adhocapd_
+'''''''''
+.. _adhocapd: adhocapd
 
 Picks first wireless dev from ``iw dev`` and runs hostapd_ + udhcpd (from
 busybox) on it.
@@ -1297,8 +1348,9 @@ usb-wlan interfaces will be named according to NAME there)::
   SUBSYSTEM=="net", ACTION=="add", ENV{DEVTYPE}=="wlan",\
     DEVPATH=="*/usb[0-9]/*", NAME="wlan_usb"
 
-wpa-systemd-wrapper
-'''''''''''''''''''
+wpa-systemd-wrapper_
+''''''''''''''''''''
+.. _wpa-systemd-wrapper: wpa-systemd-wrapper
 
 Systemd wrapper for `wpa_supplicant`_ or hostapd_, enabling either to work with
 Type=notify, support WatchdogSec=, different exit codes and all that goodness.
@@ -1339,11 +1391,12 @@ code if "first-run" file exists and hostapd never gets into ENABLED state on the
 first attempt - i.e. something likely wrong with the config and there's no point
 restarting it ad nauseum.
 
-Python3/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
+Python/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
 opts for more info.
 
-bt-pan
-''''''
+bt-pan_
+'''''''
+.. _bt-pan: bt-pan
 
 Note: you might want to look at "bneptest" tool that comes with bluez - might be
 a good replacement for this script, which I haven't seen at the moment of its
@@ -1386,8 +1439,9 @@ Misc
 
 Misc one-off scripts that don't group well with anythin else.
 
-at
-''
+at_
+'''
+.. _at: at
 
 Replacement for standard unix'ish "atd" daemon in the form of a bash script.
 
@@ -1399,8 +1453,9 @@ Replacement for standard unix'ish "atd" daemon in the form of a bash script.
   Usage: ./at [ -h | -v ] when < sh_script
   With -v flag ./at mails script output if it's not empty even if exit code is zero.
 
-wgets
-'''''
+wgets_
+''''''
+.. _wgets: wgets
 
 Simple script to grab a file using wget and then validate checksum of the
 result, e.g.:
@@ -1432,16 +1487,18 @@ might be a good idea to fetch that checksum from any remote host (e.g. via
 "curl" from any open ssh session), making spoofing of both checksum and the
 original file a bit harder.
 
-mail
-''''
+mail_
+'''''
+.. _mail: mail
 
 Simple bash wrapper for sendmail command, generating From/Date headers and
 stuff, just like mailx would do, but also allowing to pass custom headers
 (useful for filtering error reports by-source), which some implementations of
 "mail" fail to do.
 
-passgen
-'''''''
+passgen_
+''''''''
+.. _passgen: passgen
 
 Uses aspell english dictionaly to generate easy-to-remember passphrase -
 a `Diceware-like`_ method.
@@ -1454,8 +1511,9 @@ Other options allow for picking number of words and sanity-checks like min/max l
 
 .. _Diceware-like: https://en.wikipedia.org/wiki/Diceware
 
-hhash
-'''''
+hhash_
+''''''
+.. _hhash: hhash
 
 Produces lower-entropy "human hash" phrase consisting of aspell english
 dictionary words for input arg(s) or data on stdin.
@@ -1488,8 +1546,9 @@ consistent results on this machine. Updating that dictionary will change outputs
 
 .. _libsodium: https://libsodium.org/
 
-urlparse
-''''''''
+urlparse_
+'''''''''
+.. _urlparse: urlparse
 
 Simple script to parse long URL with lots of parameters, decode and print it out
 in an easily readable ordered YAML format or diff (that is, just using "diff"
@@ -1498,8 +1557,9 @@ command on two outputs) with another URL.
 No more squinting at some huge incomprehensible ecommerce URLs before scraping
 the hell out of them!
 
-ip-ext
-''''''
+ip-ext_
+'''''''
+.. _ip-ext: ip-ext
 
 Some minor tools for network configuration from console/scripts, which iproute2
 seem to be lacking, in a py3 script.
@@ -1528,8 +1588,9 @@ easy-to-remember static ones.
 including any custom chains, using iptables-save/restore command-line tools, and
 sets policy for default chains to ACCEPT.
 
-blinky
-''''''
+blinky_
+'''''''
+.. _blinky: blinky
 
 Script to blink gpio-connected leds via ``/sys/class/gpio`` interface.
 
@@ -1539,8 +1600,9 @@ cooperation between several instances using same gpio pin, "until" timestamp
 spec, and generally everything I can think of being useful (mostly for use from
 other scripts though).
 
-openssl-fingerprint
-'''''''''''''''''''
+openssl-fingerprint_
+''''''''''''''''''''
+.. _openssl-fingerprint: openssl-fingerprint
 
 Do ``openssl s_client -connect somesite </dev/null | openssl
 x509 -fingerprint -noout -sha1`` in a nicer way - openssl cli tool doesn't seem
@@ -1553,8 +1615,9 @@ localhost:1080``) link::
   % openssl-fingerprint google.com localhost:1080
   SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
 
-nsh
-'''
+nsh_
+''''
+.. _nsh: nsh
 
 Bash script to "nsenter" into specified machine's (as can be seen in ``ps -eo
 machine`` or ``nsh`` when run without args) container namespaces and run login
@@ -1579,8 +1642,9 @@ If run without argument or with -l/--list option, will list running machines.
 
 See also: lsns(1), nsenter(1), unshare(1)
 
-pam-run
-'''''''
+pam-run_
+''''''''
+.. _pam-run: pam-run
 
 Wrapper that opens specified PAM session (as per one of the configs in
 ``/etc/pam.d``, e.g. "system-login"), switches to specified uid/gid and runs
@@ -1608,26 +1672,28 @@ display/tty and class/type from env) without much hassle or other weirdness like
 or testing (e.g. try logins with passwords from file), as it has nothing
 specific (or even related) to desktops.
 
-Self-contained python-3 script, using libpam via ctypes.
+Self-contained python script, using libpam via ctypes.
 
 Warning: this script is no replacement for su/sudo wrt uid/gid-switching, and
 doesn't implement all the checks and sanitization these tools do, so only
 intended to be run from static, clean or trusted environment (e.g. started by
 systemd or manually).
 
-primes
-''''''
+primes_
+'''''''
+.. _primes: primes
 
-Python3 script to print prime numbers in specified range.
+Python script to print prime numbers in specified range.
 
 For small ranges only, as it does brute-force [2, sqrt(n)] division checks,
 and intended to generate primes for non-overlapping "tick % n" workload spacing,
 not any kind of crypto operations.
 
-boot-patcher
-''''''''''''
+boot-patcher_
+'''''''''''''
+.. _boot-patcher: boot-patcher
 
-Py3 script to run on early boot, checking specific directory for update-files
+Py script to run on early boot, checking specific directory for update-files
 and unpack/run these, recording names to skip applied ones on subsequent boots.
 
 Idea for it is to be very simple, straightforward, single-file drop-in script to
@@ -1722,8 +1788,9 @@ Misc notes:
 
 - Run as ``boot-patcher --print-systemd-unit`` for the only bit of setup it needs.
 
-audit-follow
-''''''''''''
+audit-follow_
+'''''''''''''
+.. _audit-follow: audit-follow
 
 Simple py3 script to decode audit messages from "journalctl -af -o json" output,
 i.e. stuff like this::
@@ -1764,8 +1831,9 @@ Some useful incantations (cheatsheet)::
 | auditd + ausearch can be used as an offline/advanced alternative to such script.
 | More powerful options for such task on linux can be sysdig and various BPF tools.
 
-tui-binary-conv
-'''''''''''''''
+tui-binary-conv_
+''''''''''''''''
+.. _tui-binary-conv: tui-binary-conv
 
 Simple ncurses-based interactive (TUI) decimal/hex/binary
 py3 converter script for the terminal.
@@ -1781,10 +1849,11 @@ There's a picture of it `on the blog page here`_.
 
 .. _on the blog page here: http://blog.fraggod.net/2019/01/10/tui-console-dechexbinary-converter-tool.html
 
-maildir-cat
-'''''''''''
+maildir-cat_
+''''''''''''
+.. _maildir-cat: maildir-cat
 
-Python3 script to iterate over all messages in all folders of a maildir and
+Python script to iterate over all messages in all folders of a maildir and
 print (decoded) headers and plain + html body of each (decoded) message, with
 every line prefixed by its filename.
 
@@ -1798,8 +1867,9 @@ as simple text files there.
 | Can also be pointed to maildir subdirs (same thing) or individual files.
 | Uses python stdlib email.* modules for all processing.
 
-dns-update-proxy
-''''''''''''''''
+dns-update-proxy_
+'''''''''''''''''
+.. _dns-update-proxy: dns-update-proxy
 
 Small py3/asyncio UDP listener that receives ~100B ``pk || box(name:addr)``
 libnacl-encrypted packets, decrypts (name, addr) tuples from there,
@@ -1847,10 +1917,11 @@ Example snippet for sending update packets::
 
 .. _nsd: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
-dns-test-daemon
-'''''''''''''''
+dns-test-daemon_
+''''''''''''''''
+.. _dns-test-daemon: dns-test-daemon
 
-Python3 + `async_dns`_ authoritative DNS resolver daemon to return
+Python + `async_dns`_ authoritative DNS resolver daemon to return
 hashed-name results for testing DNS resolver operation.
 
 For example::
@@ -1903,10 +1974,11 @@ network is down, which runs "fping" to check that on detected DNS failures.
 
 .. _async_dns: https://github.com/gera2ld/async_dns
 
-nginx-access-log-stat-block
-'''''''''''''''''''''''''''
+nginx-access-log-stat-block_
+''''''''''''''''''''''''''''
+.. _nginx-access-log-stat-block: nginx-access-log-stat-block
 
-Python3/ctypes script to be used alongside nginx-stat-check_ module, reliably
+Python/ctypes script to be used alongside nginx-stat-check_ module, reliably
 tailing any kind of access.log-like file(s) where first (space-separated) field
 is IP address and creating files with name corresponding to these in specified
 db_dir.
@@ -1957,8 +2029,9 @@ fine for intended purpose (bots spam requests anyway).
 
 .. _nginx-stat-check: https://github.com/mk-fg/nginx-stat-check
 
-hashname
-''''''''
+hashname_
+'''''''''
+.. _hashname: hashname
 
 Script to add base32-encoded content hash to filenames.
 
@@ -1976,8 +2049,9 @@ For collecting files with commonly-repeated names into some dir, like random
 
 Use -h/--help for info on more useful options.
 
-sys-wait
-''''''''
+sys-wait_
+'''''''''
+.. _sys-wait: sys-wait
 
 Bash script to check and wait for various system conditions, processes or
 thresholds like load average or PSI values.
@@ -1992,8 +2066,9 @@ Helps to avoid writing those annoyingly-common ``while :; do some-check ||
 break; sleep 60; done; run-other-stuff`` when something heavy/long is already
 running and you just don't have the heart to break and reschedule it properly.
 
-yt-feed-to-email
-''''''''''''''''
+yt-feed-to-email_
+'''''''''''''''''
+.. _yt-feed-to-email: yt-feed-to-email
 
 Python + feedparser_ RSS-to-email notification script for YouTube RSS feeds.
 
@@ -2018,8 +2093,9 @@ notification emails on that platform.
 
 Minor things I tend to use when writing code and stuff.
 
-indent-replace
-^^^^^^^^^^^^^^
+indent-replace_
+^^^^^^^^^^^^^^^
+.. _indent-replace: dev/indent-replace
 
 Very simple script to replace tabs with spaces and back, doing minor sanity
 checks and printing files with replacements to stdout.
@@ -2028,8 +2104,9 @@ Goal is to avoid all inconvenience with handling unfamiliar indent types in
 editor, and just have it setup for strictly one of those, doing translation
 before/after commits manually.
 
-indent-braces
-^^^^^^^^^^^^^
+indent-braces_
+^^^^^^^^^^^^^^
+.. _indent-braces: dev/indent-braces
 
 Script to indent lines in a file based on opening/closing braces and nothing else.
 
@@ -2045,8 +2122,9 @@ include same byte as braces in other characters (like utf-8).
 
 Running on large (multi-MiB) files via pypy3 works much faster than cpython.
 
-golang_filter
-^^^^^^^^^^^^^
+golang_filter_
+^^^^^^^^^^^^^^
+.. _golang_filter: dev/golang_filter
 
 Same idea as in "tabs_filter", but on a larger scale - basically does to Go_
 what coffee-script_ does to the syntax of javascript - drops all the unnecessary
@@ -2070,8 +2148,9 @@ intentation is correct.
 Again, ideally no one should even notice that I actually don't have that crap in
 the editor, while repo and compiler will see the proper (bloated) code.
 
-distribute_regen
-^^^^^^^^^^^^^^^^
+distribute_regen_
+^^^^^^^^^^^^^^^^^
+.. _distribute_regen: dev/distribute_regen
 
 Tool to auto-update python package metadata in setup.py and README files.
 
@@ -2087,8 +2166,9 @@ README.rst.
 Designed to be used from pre-commit hook, like ``ln -s /path/to/distribute_regen
 .git/hooks/pre-commit``, to update version number before every commit.
 
-darcs_bundle_to_diff
-^^^^^^^^^^^^^^^^^^^^
+darcs_bundle_to_diff_
+^^^^^^^^^^^^^^^^^^^^^
+.. _darcs_bundle_to_diff: dev/darcs_bundle_to_diff
 
 Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
 hunks. Handles file creations and all sorts of updates, but probably not moves
@@ -2099,8 +2179,9 @@ tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
 out-of-date, but I imagine it shouldn't take much effort to make it work with
 any other bundles.
 
-git-nym
-^^^^^^^
+git-nym_
+^^^^^^^^
+.. _git-nym: dev/git-nym
 
 Script to read NYM env var and run git using that ssh id instead of whatever
 ssh-agent or e.g. ``~/.ssh/id_rsa`` provides.
@@ -2116,8 +2197,9 @@ e.g.  clone the specified repo using ``~/.ssh/id_rsa__project-x`` key or as
 Also to just test new keys with git, disregarding ssh-agent and lingering
 control sockets with NYM_CLEAN flag set.
 
-git-meld
-^^^^^^^^
+git-meld_
+^^^^^^^^^
+.. _git-meld: dev/git-meld
 
 Git-command replacement for git-diff to run meld instead of regular
 (git-provided) textual diff, but aggregating all the files into one invocation.
@@ -2137,8 +2219,9 @@ Should be installed as ``git-meld`` somewhere in PATH *and* symlinked as
 ``meld-git`` (git-meld runs ``GIT_EXTERNAL_DIFF=meld-git git diff "$@"``) to
 work.
 
-catn
-^^^^
+catn_
+^^^^^
+.. _catn: dev/catn
 
 Similar to "cat" (specifically coreutils' ``cat -n file``), but shows specific
 line in a file with a few "context" lines around it::
@@ -2159,8 +2242,9 @@ context" (can be omitted as 3 is the default value there).
 ``catn -q ...`` outputs line + context verbatim, so it'd be more useful for
 piping to another file/command or terminal copy-paste.
 
-git_terminate
-^^^^^^^^^^^^^
+git_terminate_
+^^^^^^^^^^^^^^
+.. _git_terminate: dev/git_terminate
 
 Script to permanently delete files/folders from repository and its history -
 including "dangling" objects where these might still exist.
@@ -2173,8 +2257,9 @@ parameters on the whole repository, so any other possible history not stashed or
 linked to existing branches/remotes (e.g. stuff in ``git reflog``) will be
 purged.
 
-git_contains
-^^^^^^^^^^^^
+git_contains_
+^^^^^^^^^^^^^
+.. _git_contains: dev/git_contains
 
 Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
 "SPECIFYING REVISIONS" in git-rev-parse(1)) object(s) exist (e.g.  merged) in a
@@ -2207,8 +2292,9 @@ Essentially does ``git rev-list <tree-ish2> | grep $(git rev-parse
 
 Lines in square brackets above are comments, not actual output.
 
-gtk-val-slider
-^^^^^^^^^^^^^^
+gtk-val-slider_
+^^^^^^^^^^^^^^^
+.. _gtk-val-slider: dev/gtk-val-slider
 
 Renders gtk3 window with a slider widget and writes value (float or int) picked
 there either to stdout or to a specified file, with some rate-limiting delay.
@@ -2220,8 +2306,9 @@ setup app to read value(s) that should be there from file(s), specify proper
 value range to the thing and play around with values all you want to see what
 happens.
 
-git-version-bump-filter
-^^^^^^^^^^^^^^^^^^^^^^^
+git-version-bump-filter_
+^^^^^^^^^^^^^^^^^^^^^^^^
+.. _git-version-bump-filter: dev/git-version-bump-filter
 
 Very simple script to bump version numbers for file(s) in a git repo before
 commit, implemented via git content filters and gitattributes(5).
@@ -2268,8 +2355,9 @@ avoid loosing these).
 
 Runs a single git-log and sed command under the hood, nothing fancy.
 
-git-prepare-commit-msg-hook
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+git-prepare-commit-msg-hook_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _git-prepare-commit-msg-hook: dev/git-prepare-commit-msg-hook
 
 Common hook that I use for all git repos to append useful comment-lines to
 generated commit-msg, including which relative dir you're currently in,
@@ -2336,8 +2424,10 @@ where I don't want to have this hook yet, but might be just me, of course.
 
 Various dedicated backup tools and snippets.
 
-ssh-r-sync / ssh-r-sync-recv
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ssh-r-sync_ / ssh-r-sync-recv_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _ssh-r-sync: backup/ssh-r-sync
+.. _ssh-r-sync-recv: backup/ssh-r-sync-recv
 
 "ssh -Rsync" - SSH shell and client to negotiate/run rsync pulls over ssh
 reverse tunnels ("ssh -R") without any extra client-side setup.
@@ -2384,11 +2474,12 @@ To use any special rsync options or pre/post-sync actions on the backup-host sid
 rsync output/errors checking, etc), hook scripts can be used there,
 see ``ssh-r-sync-recv --hook-list`` for more info.
 
-| Only needs python3 + ssh + rsync on either side.
+| Only needs python + ssh + rsync on either side.
 | See ``ssh-r-sync-recv -h`` for sshd_config setup notes.
 
-ssh-dump
-^^^^^^^^
+ssh-dump_
+^^^^^^^^^
+.. _ssh-dump: backup/ssh-dump
 
 Bash wrapper around ssh to run it in non-interactive command mode, storing
 output to specified path with date-suffix and optional compression/rotation.
@@ -2399,8 +2490,9 @@ contents from remote host for backup purposes.
 Passes bunch of common options to use ssh batch mode, disable non-key auth and
 enable keepalive in case of long-running remote commands.
 
-mikrotik-export
-^^^^^^^^^^^^^^^
+mikrotik-export_
+^^^^^^^^^^^^^^^^
+.. _mikrotik-export: backup/mikrotik-export
 
 Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
 DSA-only firmware via specified ("--auth-file" option) user/password and get the
@@ -2416,8 +2508,9 @@ admin@router /export`` with RSA keys works perfectly well.
 "ssh-dump" script above can be used to pass all necessary non-interactive
 mode options and compress/rotate resulting file with these.
 
-zfs-snapper
-^^^^^^^^^^^
+zfs-snapper_
+^^^^^^^^^^^^
+.. _zfs-snapper: backup/zfs-snapper
 
 Simple py script to create ZFS snapshot and keep a number of older snapshots
 according to a `retention policy, similar to how btrbk tool does it`_
@@ -2440,8 +2533,9 @@ Similar to sanoid_, but much simplier and in python instead of perl.
 .. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
 .. _sanoid: https://github.com/jimsalterjrs/sanoid
 
-btrfs-snapper
-^^^^^^^^^^^^^
+btrfs-snapper_
+^^^^^^^^^^^^^^
+.. _btrfs-snapper: backup/btrfs-snapper
 
 Same as zfs-snapper script above, but for making and managing
 read-only snapshots of btrfs subvolumes in a specific directory for those,
@@ -2452,8 +2546,9 @@ without a ton of extra features that's been piled-on there over time.
 
 .. _btrbk: https://digint.ch/btrbk/
 
-dir-snapper
-^^^^^^^^^^^
+dir-snapper_
+^^^^^^^^^^^^
+.. _dir-snapper: backup/dir-snapper
 
 Similar to zfs-snapper and btrfs-snapper scripts above, except it simply
 rotates directories instead of running any fs-specific snapshotting commands.
@@ -2481,8 +2576,9 @@ like passing magnet: links to transmission, or processing .torrent files.
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
 process) various media files and streams.
 
-parec_from_flash
-''''''''''''''''
+parec_from_flash_
+'''''''''''''''''
+.. _parec_from_flash: desktop/media/parec_from_flash
 
 Creates null-sink in pulseaudio and redirects browser flash plugin audio output
 stream to it, also starting "parec" and oggenc to record/encode whatever happens
@@ -2491,20 +2587,23 @@ there.
 Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
-pa_track_history
-''''''''''''''''
+pa_track_history_
+'''''''''''''''''
+.. _pa_track_history: desktop/media/pa_track_history
 
 Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
 
-pa_mute
-'''''''
+pa_mute_
+''''''''
+.. _pa_mute: desktop/media/pa_mute
 
 Simple script to toggle mute for all pluseaudio streams from a specified pid.
 
-pa_modtoggle
-''''''''''''
+pa_modtoggle_
+'''''''''''''
+.. _pa_modtoggle: desktop/media/pa_modtoggle
 
 Script to toggle - load or unload - pulseaudio module.
 
@@ -2519,12 +2618,13 @@ Same exact command will unload the module (matching it by module name only), if 
 
 Optional -s/--status flag can be used to print whether module is currently loaded.
 
-Uses/requires `pulsectl module`_, Python-3.
+Uses/requires `pulsectl module`_, python.
 
 .. _pulsectl module: https://github.com/mk-fg/python-pulse-control/
 
-mpv_icy_track_history
-'''''''''''''''''''''
+mpv_icy_track_history_
+''''''''''''''''''''''
+.. _mpv_icy_track_history: desktop/media/mpv_icy_track_history
 
 Same as pa_track_history above, but gets tracks when mpv_ dumps icy-\* tags
 (passed in shoutcast streams) to stdout, which should be at the start of every
@@ -2534,8 +2634,9 @@ More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
 .. _mpv: http://mpv.io/
 
-icy_record
-''''''''''
+icy_record_
+'''''''''''
+.. _icy_record: desktop/media/icy_record
 
 Simple script to dump "online radio" kind of streams to a bunch of separate
 files, split when stream title (as passed in icy StreamTitle metadata) changes.
@@ -2552,15 +2653,17 @@ over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
 This doesn't seem to be an issue for at least mp3 streams though, which work
 fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
 
-radio
-'''''
+radio_
+''''''
+.. _radio: desktop/media/radio
 
 Wrapper around mpv_icy_track_history to pick and play hard-coded radio
 streams with appropriate settings, generally simplified ui, logging and echoing
 what's being played, with a mute button (on SIGQUIT button from terminal).
 
-toogg
-'''''
+toogg_
+''''''
+.. _toogg: desktop/media/toogg
 
 Any-media-to-ogg convertor, using ffmpeg and - optionally (with -l/--loudnorm) -
 its `loudnorm filter`_ (EBU R128 loudness normalization) in double-pass mode.
@@ -2570,7 +2673,7 @@ audio player.
 
 Can process several source files or URLs (whatever youtube-dl accepts) in
 parallel, split large files into chunks (processed concurrently), displays
-progress (from ``ffmpeg -progress`` pipe), python3/asyncio.
+progress (from ``ffmpeg -progress`` pipe), python/asyncio.
 
 loudnorm filter is fairly recent addition to ffmpeg (added in 3.1 release of
 2016-06-27, has libebur128 built-in in 3.2+), and might not be available in
@@ -2580,10 +2683,11 @@ Needs youtube-dl installed if URLs are specified instead of regular files.
 
 .. _loudnorm filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm
 
-totty
-'''''
+totty_
+''''''
+.. _totty: desktop/media/totty
 
-Wrapper around awesome img2xterm_ tool to display images in a color-capable
+Wrapper around img2xterm_ tool to display images in a color-capable
 terminal (e.g. xterm, not necessarily terminology).
 
 Useful to query "which image is it" right from tty. Quality of the resulting
@@ -2591,8 +2695,9 @@ images is kinda amazing, given tty limitations.
 
 .. _img2xterm: https://github.com/rossy2401/img2xterm
 
-split
-'''''
+split_
+''''''
+.. _split: desktop/media/split
 
 Simple bash script to split media files into chunks of specified length (in
 minutes), e.g. ``split some-long-audiobook.mp3 sla 20`` will produce
@@ -2605,8 +2710,9 @@ Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
 (default, changed by passing these after duration arg) to grab only audio chunks
 from the source file.
 
-audio_split_m4b
-'''''''''''''''
+audio_split_m4b_
+''''''''''''''''
+.. _audio_split_m4b: desktop/media/audio_split_m4b
 
 Splits m4b audiobook files on chapters (list of which are encoded into m4b as
 metadata) with ffprobe/ffmpeg.
@@ -2619,8 +2725,9 @@ be controlled with --name-format, default is ``{n:03d}__{title}.aac``).
 Doesn't do any transcoding, which can easily be performed later to e.g.  convert
 resulting aac files to mp3 or ogg, if necessary.
 
-pick-tracks
-'''''''''''
+pick-tracks_
+''''''''''''
+.. _pick-tracks: desktop/media/pick-tracks
 
 A simple tool to randomly pick and copy files (intended usage is music tracks)
 from source to destination.
@@ -2659,8 +2766,9 @@ media tags, instead of reusing source filenames, unless disabled.
 .. _unidecode: https://pypi.org/project/Unidecode/
 .. _mutagen: https://mutagen.readthedocs.io/en/latest/
 
-twitch_vod_fetch
-''''''''''''''''
+twitch_vod_fetch_
+'''''''''''''''''
+.. _twitch_vod_fetch: desktop/media/twitch_vod_fetch
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
 
@@ -2716,7 +2824,7 @@ General usage examples (wrapped)::
     &>sc2_blizzcon_finals.log &
   % mpv sc2_blizzcon_finals.mp4   # starts playback before download ends
 
-| Needs Python-3.7+, youtube-dl_, `aiohttp <https://aiohttp.readthedocs.io/>`_ and aria2_.
+| Needs python, youtube-dl_, `aiohttp <https://aiohttp.readthedocs.io/>`_ and aria2_.
 | A bit more info (on its previous py2 version) can be found in `this twitchtv-vods-... blog post`_.
 
 .. _Choonster's fork of this repo: https://github.com/Choonster/fgtk#twitch-vod-fetch
@@ -2725,8 +2833,9 @@ General usage examples (wrapped)::
 .. _aria2: http://aria2.sourceforge.net/
 .. _this twitchtv-vods-... blog post: http://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
 
-ytdl-chan
-'''''''''
+ytdl-chan_
+''''''''''
+.. _ytdl-chan: desktop/media/ytdl-chan
 
 Bash wrapper script around youtube-dl_ tool to download numbered range of videos
 (from n_first to n_last) for youtube channel in reverse order to how they're
@@ -2750,8 +2859,9 @@ Requires youtube-dl_ and jq_ (to parse URLs from json).
 
 .. _jq: https://stedolan.github.io/jq/
 
-streamdump
-''''''''''
+streamdump_
+'''''''''''
+.. _streamdump: desktop/media/streamdump
 
 Bash wrapper for streamlink_ to make dumping stream to a file more reliable,
 auto-restarting the process with new filename after any "stream ended" events
@@ -2770,8 +2880,9 @@ minute or few, or working around streamlink quirks and fatal errors.
 
 .. _streamlink: https://github.com/streamlink/streamlink
 
-image-compact
-'''''''''''''
+image-compact_
+''''''''''''''
+.. _image-compact: desktop/media/image-compact
 
 Wrapper for ImageMagick's convert and jpegoptim tools to process large images
 from multi-Mpx source like a phone camera and make it reasonably-sized instead
@@ -2787,8 +2898,9 @@ the aspect ratio.
 
 A bunch of tools to issue various desktop notifications.
 
-exec
-''''
+exec_
+'''''
+.. _exec: desktop/notifications/exec
 
 Wrapper to run specified command and notify (via `desktop-notifications`_ only
 atm) if it fails (including "no such binary" errors) or produces any stderr.
@@ -2816,8 +2928,9 @@ on some "magnet:..." link was successfully processed or discarded with some erro
 
 .. _desktop-notifications: http://developer.gnome.org/notification-spec/
 
-power
-'''''
+power_
+''''''
+.. _power: desktop/notifications/power
 
 Script to spam `desktop-notifications`_ when charger gets plugged/unplugged via
 udev rules on an old laptop with somewhat flaky power connector.
@@ -2826,11 +2939,12 @@ Useful to save a few battery/power cycles due to random electrical contact loss
 in charger or just plain negligence, if nothing else in DE has good indication
 for that already.
 
-| Uses python3/pyudev and systemd dbus lib via ctypes for notifications.
+| Uses python/pyudev and systemd dbus lib via ctypes for notifications.
 | Run with --print-systemd-unit to get systemd/udev templates.
 
-logtail
-'''''''
+logtail_
+''''''''
+.. _logtail: desktop/notifications/logtail
 
 Script to watch log files (as many as necessary) for changes with inotify and
 report any new lines appearing there via desktop notifications, handling file
@@ -2853,11 +2967,12 @@ Somewhat advanced usage example::
     --xattr-db "$XDG_RUNTIME_DIR"/logtail.db \
     /var/log/messages /var/log/important/*
 
-Python-3, needs python-gobject ("gi" module, for notifications), uses inotify
+Python, needs python-gobject ("gi" module, for notifications), uses inotify
 via ctypes.
 
-dovecot-mail
-''''''''''''
+dovecot-mail_
+'''''''''''''
+.. _dovecot-mail: desktop/notifications/dovecot-mail
 
 Daemon script to monitor dovecot delivery logs (either generic ones, or produced
 via "mail_log" plugin), efficiently find delivered messages by their message-id
@@ -2885,8 +3000,9 @@ folders yet, and this simple hack doesn't even require running a mail client.
 
 .. _as implemented in notification-thing daemon: https://github.com/mk-fg/notification-thing/#network-broadcasting
 
-icon
-''''
+icon_
+'''''
+.. _icon: desktop/notifications/icon
 
 Script to display specified xdg icon or image in a transparent popup window,
 with specified size (proportional scaling) and offset.
@@ -2911,8 +3027,9 @@ Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 [desktop] others
 ^^^^^^^^^^^^^^^^
 
-vfat_shuffler
-'''''''''''''
+vfat_shuffler_
+''''''''''''''
+.. _vfat_shuffler: desktop/vfat_shuffler
 
 Python script to list/shuffle/order and do some other things to LFN entries
 inside vfat filesystem directory without mounting the thing.
@@ -2953,8 +3070,9 @@ back in 2013) - `maxpat78/FATtools <https://github.com/maxpat78/FATtools/>`_.
 
 .. _dentries: https://en.wikipedia.org/wiki/File_Allocation_Table#Directory_entry
 
-fan_control
-'''''''''''
+fan_control_
+''''''''''''
+.. _fan_control: desktop/fan_control
 
 Script to control speed of dying laptop fan on Acer S3 using direct reads/writes
 from/to ``/dev/ports`` to not run it too fast (causing loud screech and
@@ -2963,8 +3081,9 @@ vibrating plastic) yet trying to keep cpu cool enough.
 Or, failing that, use cpupower tool to drop frequency (making it run cooler in
 general) and issue dire warnings to desktop.
 
-emms_beets_enqueue
-''''''''''''''''''
+emms_beets_enqueue_
+'''''''''''''''''''
+.. _emms_beets_enqueue: desktop/emms_beets_enqueue
 
 Script to query beets_ music database (possibly on a remote host) with specified
 parameters and add found tracks to EMMS_ playlist (via emacsclient).
@@ -2974,8 +3093,9 @@ Also allows to just dump resulting paths or enqueue a list of them from stdin.
 .. _beets: http://beets.readthedocs.org/
 .. _EMMS: https://www.gnu.org/software/emms/
 
-ff_backup
-'''''''''
+ff_backup_
+''''''''''
+.. _ff_backup: desktop/ff_backup
 
 Script to backup various firefox settings in a diff/scm-friendly manner
 (i.e. decoded from horrible one-liner json into pyaml_, so that they can be
@@ -2987,8 +3107,9 @@ resets config sometimes.
 Can/should be extended to all sorts of other ff/ext settings in the future - and
 probably is already, see its yaml config for details.
 
-ff_mozlz4
-'''''''''
+ff_mozlz4_
+''''''''''
+.. _ff_mozlz4: desktop/ff_mozlz4
 
 Simple py3 script to decompress .mozlz4 files, which can be found in FF profile
 directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-data``,
@@ -3003,8 +3124,9 @@ Usage example (`jq tool <https://stedolan.github.io/jq/>`_ is for pretty json)::
   % nano search.json
   % ff_mozlz4 search.json
 
-bt_agent
-''''''''
+bt_agent_
+'''''''''
+.. _bt_agent: desktop/bt_agent
 
 BlueZ bluetooth authorization agent script/daemon.
 
@@ -3024,10 +3146,11 @@ Does device power-on by default, has ``-p/--pairable [seconds]``,
 ``-d/--discoverable [seconds]`` and ``-t/--set-trusted`` options to cover usual
 initialization routines.
 
-Python-3.x, needs dbus-python module with glib loop support.
+Python, needs dbus-python module with glib loop support.
 
-alarm
-'''''
+alarm_
+''''''
+.. _alarm: desktop/alarm
 
 Script to issue notification(s) after some specified period of time.
 
@@ -3067,10 +3190,11 @@ Can keep track of pending alarms if -p/--pid-file option is used (see also
 -l/-list and -k/--kill opts), for persistent notifications (between reboots and
 such), there's an --at option to use at(1p) daemon.
 
-Python-3, needs python-gobject ("gi" module) for desktop notifications.
+Python, needs python-gobject ("gi" module) for desktop notifications.
 
-acpi-wakeup-config
-''''''''''''''''''
+acpi-wakeup-config_
+'''''''''''''''''''
+.. _acpi-wakeup-config: desktop/acpi-wakeup-config
 
 Bash script to statelessly enable/disable (and not toggle) events in
 ``/proc/acpi/wakeup`` (wakeup events from various system sleep states).
@@ -3084,8 +3208,9 @@ when one wants to set it to a specific value.
 Also has special ``+all`` and ``-all`` switches to enable/disable all events and
 prints the whole wakeup-table if ran without arguments.
 
-olaat
-'''''
+olaat_
+''''''
+.. _olaat: desktop/olaat
 
 "one-letter-at-a-time" script to display (via gtk3/gi) a semi-transparent
 overlay with lines from stdin, which one can navigate up/down and left/right wrt
@@ -3096,10 +3221,11 @@ Useful to do any kind of letter-by-letter checks and stuff manually.
 Can also be an example code / stub for composited screen overlays with input
 grab.
 
-blinds
-''''''
+blinds_
+'''''''
+.. _blinds: desktop/blinds
 
-Py3/Gtk3 script to draw an empty colored/transparent window with custom hints
+Python/Gtk3 script to draw an empty colored/transparent window with custom hints
 (default: undecorated) and size/position just to cover some screen area.
 
 Useful as a hack to cover windows that grab input or do something stupid on
@@ -3115,8 +3241,9 @@ With custom wm hints/opacity::
 
 (see -h/--help output for a full list of these)
 
-evdev-to-xev
-''''''''''''
+evdev-to-xev_
+'''''''''''''
+.. _evdev-to-xev: desktop/evdev-to-xev
 
 Simple tool to bind events (and specific values passed with these) from
 arbitrary evdev device(s) to keyboard button presses (through uinput).
@@ -3133,13 +3260,14 @@ Or, to type stuff on gamepad button press: ``BTN_SOUTH 1: [t,e,s,t,enter]``
 | Script can be run without any options to print config file example.
 | Can work with multiple evdev inputs (uses asyncio to poll stuff).
 
-Requires python3, python-evdev_, standard "uinput" kernel module enabled/loaded,
+Requires python, python-evdev_, standard "uinput" kernel module enabled/loaded,
 read access to specified evdev(s) and rw to /dev/uinput.
 
 .. _python-evdev: http://python-evdev.readthedocs.org/
 
-exclip
-''''''
+exclip_
+'''''''
+.. _exclip: desktop/exclip
 
 Small standalone C binary based on xclip_ code to copy primary X11 selection
 text (utf-8) from terminal (or whatever else) to clipboard as a single line,
@@ -3162,8 +3290,9 @@ various ways - see -h/--help output for more info.
 
 .. _xclip: https://github.com/astrand/xclip
 
-xdpms
-'''''
+xdpms_
+''''''
+.. _xdpms: desktop/xdpms
 
 Tiny 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
 many seconds are left until dpms will turn off display(s) (dpms as in ``xset q``),
@@ -3180,10 +3309,11 @@ somewhere, instead of needing this kind of polling.
 
 .. _xprintidle: https://github.com/g0hl1n/xprintidle
 
-rss-get
-'''''''
+rss-get_
+''''''''
+.. _rss-get: desktop/rss-get
 
-Python3/feedparser script to download items attached to RSS feeds fast using
+Python/feedparser script to download items attached to RSS feeds fast using
 aria2_ tool, or just printing the info/URLs.
 
 Example use can be grabbing some range of podcast mp3s from a feed URL.
@@ -3193,8 +3323,9 @@ script has option to pass it destination filenames according to item date/time
 instead of the usual nonsensical, incoherent and inconsistent names authors seem
 to inevitably assign to files on a regular-content feeds.
 
-qr
+qr_
 '''
+.. _qr: desktop/qr
 
 Bash wrapper around qrencode_ and zbar_ tools to assemble/display or decode
 QR-encoded strings.
@@ -3209,8 +3340,9 @@ Has bunch of other options for different common use-cases.
 .. _zbar: https://github.com/mchehab/zbar
 .. _feh: https://feh.finalrewind.org/
 
-gtk-color-calc
-''''''''''''''
+gtk-color-calc_
+'''''''''''''''
+.. _gtk-color-calc: desktop/gtk-color-calc
 
 CLI tool to calculate color values and print/convert them in various ways.
 
@@ -3221,12 +3353,13 @@ And for now that's the main use of it, as that CSS spec allows to mix and shade
 already, plan is to extend it later with any extra math as needed.
 
 Prints resulting color back in all possible formats, including HSL and CIE
-L\*a\*b\*, requires python3/gtk3 to run.
+L\*a\*b\*, requires python/gtk3 to run.
 
 .. _GTK3 CSS color specs: https://developer.gnome.org/gtk3/stable/chap-css-overview.html
 
-filetag
-'''''''
+filetag_
+''''''''
+.. _filetag: desktop/filetag
 
 Command-line python script to scan files for tagging based on paths or filename
 extensions (e.g. tag \*.py with "py"), script shebangs or magic bytes (binary header).
@@ -3248,8 +3381,9 @@ forgot already :)
 .. _tmsu: https://tmsu.org/
 .. _dcode.fr calculator: https://www.dcode.fr/boolean-expressions-calculator
 
-hamster-tally
-'''''''''''''
+hamster-tally_
+''''''''''''''
+.. _hamster-tally: desktop/hamster-tally
 
 A tool to query activity logs from `Project Hamster`_ time-tracker
 lib/daemon/tools on a daily basis, aggregate it into weekly log files,
@@ -3301,8 +3435,9 @@ See head of specific .c files for compilation/loading/usage instructions.
 
 Tools for automating various Arch Linux tasks.
 
-elf-deps
-^^^^^^^^
+elf-deps_
+^^^^^^^^^
+.. _elf-deps: arch/elf-deps
 
 Shows shared-lib dependencies for specified binary/so even if it's for different
 arch (``objdump-deps`` option), packages they might belong to (``objdump-pkgs``)
@@ -3342,8 +3477,9 @@ And to list all deps of a binary or a lib and their deps recursively, there's
 Can be useful for providing necessary stuff to run proprietary 32-bit binaries
 (like games or crapware) on amd64.
 
-pacman-manifest
-^^^^^^^^^^^^^^^
+pacman-manifest_
+^^^^^^^^^^^^^^^^
+.. _pacman-manifest: arch/pacman-manifest
 
 Creates text manifests for Arch setup in ``/var/lib/pacman/``:
 
@@ -3366,14 +3502,16 @@ Useful to pull them all into some git to keep track what gets installed or
 updated in the system over time, including makepkg'ed things and ad-hoc stuff in
 /usr/local.
 
-pacman-extra-files
-^^^^^^^^^^^^^^^^^^
+pacman-extra-files_
+^^^^^^^^^^^^^^^^^^^
+.. _pacman-extra-files: arch/pacman-extra-files
 
 Lists files that don't belong to any of the packages in either in default
 ``/etc /opt /usr`` dirs or whichever ones are specified.
 
-pacman-pacnew
-^^^^^^^^^^^^^
+pacman-pacnew_
+^^^^^^^^^^^^^^
+.. _pacman-pacnew: arch/pacman-pacnew
 
 My version of utility to merge .pacnew files with originals, using convenient
 and familiar (at least to me) ``git add -p`` interface and git diffs in general.
@@ -3396,8 +3534,9 @@ Bash script, requires git and perl (as "git-add--interactive" is a perl script).
 Shorter and simplier than most scripts for same purpose, as git does most of the
 work in this case, less wheels re-invented, less interfaces to learn/remember.
 
-pacman-fsck
-^^^^^^^^^^^
+pacman-fsck_
+^^^^^^^^^^^^
+.. _pacman-fsck: arch/pacman-fsck
 
 Python script to validate checksums of fs files against ones recoded in mtree
 files stored by pacman on each package install under /var/lib/pacman/local/<pkg>.
@@ -3409,8 +3548,9 @@ types of errors or path prefixes (to avoid checking /etc files for example).
 Does not need pacman itself, only its mtree files (decompressing them via bsdcat),
 uses posix_fadvise to avoid needlessly trashing fs cache during operation.
 
-tar-strap
-^^^^^^^^^
+tar-strap_
+^^^^^^^^^^
+.. _tar-strap: arch/tar-strap
 
 Wrapper to quickly download and setup archlinux chroot (for e.g. systemd-nspawn
 container) using bootstrap tarball from https://mirrors.kernel.org/archlinux/iso/latest/
@@ -3423,8 +3563,9 @@ Should be way faster than pacstrap, but kinda similar otherwise.
 
 Either URL or path to source tarball should be specified on the command line.
 
-can-strap
-^^^^^^^^^
+can-strap_
+^^^^^^^^^^
+.. _can-strap: arch/can-strap
 
 Wrapper to bootstrap ready-to-use Arch container ("can") in /var/lib/machines,
 which (at the moment of writing) boils down to these steps:
@@ -3456,8 +3597,9 @@ suitable to boot and log into with e.g. ``systemd-nspawn -bn -M buildbot-32``.
 .. _archlinux-pkgbuilds: https://github.com/mk-fg/archlinux-pkgbuilds
 .. _can-base PKGBUILD: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
 
-curl-cache
-^^^^^^^^^^
+curl-cache_
+^^^^^^^^^^^
+.. _curl-cache: arch/curl-cache
 
 XferCommand script to use in pacman.conf for trying package downloads from
 cache-servers (partial mirrors) first, using passed mirror URL as a fallback.
@@ -3485,8 +3627,9 @@ and -h/--help output from script for more options.
 
 Various helper tools for automating Alpine Linux OS-level tasks.
 
-manifest
-^^^^^^^^
+manifest_
+^^^^^^^^^
+.. _manifest: alpine/manifest
 
 Similar to `pacman-manifest`_ script above, but for alpine - creates text
 manifest files for current Alpine setup in ``/etc/apk/``:
@@ -3522,8 +3665,9 @@ new/unnecessary/forgotten ``/usr/local`` stuff, etc.
 Tools for working with various time-series databases and metrics-monitoring
 systems - collection, aggregation, configuration, graphs, etc.
 
-rrd-sensors-logger
-^^^^^^^^^^^^^^^^^^
+rrd-sensors-logger_
+^^^^^^^^^^^^^^^^^^^
+.. _rrd-sensors-logger: metrics/rrd-sensors-logger
 
 Daemon script to grab data from whatever sensors and log it all via rrdtool.
 
@@ -3580,8 +3724,9 @@ fixups to read stuff or use newer modules there.
 .. _rrdtool: http://oss.oetiker.ch/rrdtool/
 
 
-graphite-scratchpad
-^^^^^^^^^^^^^^^^^^^
+graphite-scratchpad_
+^^^^^^^^^^^^^^^^^^^^
+.. _graphite-scratchpad: metrics/graphite-scratchpad
 
 Tool to load/dump stored graphite_ graphs through formats easily editable by
 hand.
@@ -3625,8 +3770,9 @@ with GUI.
 .. _graphite: http://graphite.readthedocs.org/
 .. _pyaml: https://github.com/mk-fg/pretty-yaml
 
-gnuplot-free
-^^^^^^^^^^^^
+gnuplot-free_
+^^^^^^^^^^^^^
+.. _gnuplot-free: metrics/gnuplot-free
 
 Rolling plot of "free" output via gnuplot.
 
@@ -3636,8 +3782,9 @@ There's more info on it in `gnuplot-for-live-last-30-seconds`_ blog post.
 
 .. _gnuplot-for-live-last-30-seconds: http://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
 
-d3-line-chart-boilerplate
-^^^^^^^^^^^^^^^^^^^^^^^^^
+d3-line-chart-boilerplate_
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _d3-line-chart-boilerplate: metrics/d3-line-chart-boilerplate
 
 Boilerplate `d3.js`_ page for basic line chart to plot arbitrary JS function
 outputs or data array with axii, grid, mouseover datapoint tooltips and such.
@@ -3651,8 +3798,9 @@ Direct gh-pages link: `d3-line-chart-boilerplate.html`_
 .. _d3-line-chart-boilerplate.html: https://mk-fg.github.io/fgtk/metrics/d3-line-chart-boilerplate.html
 .. _d3.js: http://d3js.org/
 
-d3-histogram-boilerplate
-^^^^^^^^^^^^^^^^^^^^^^^^
+d3-histogram-boilerplate_
+^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _d3-histogram-boilerplate: metrics/d3-histogram-boilerplate
 
 Similar d3 boilerplate-chart as d3-line-chart-boilerplate,
 but for plotting some kind of value distribution with vertical bars.
@@ -3663,8 +3811,9 @@ Direct gh-pages link: `d3-histogram-boilerplate.html`_
 
 .. _d3-histogram-boilerplate.html: https://mk-fg.github.io/fgtk/metrics/d3-histogram-boilerplate.html
 
-d3-temp-rh-sensor-tsv-series-chart
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+d3-temp-rh-sensor-tsv-series-chart_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _d3-temp-rh-sensor-tsv-series-chart: metrics/d3-temp-rh-sensor-tsv-series-chart
 
 `d3.js`_-based ES6 graphing app for time-series data from rather common
 temperature (t) and relative humidity (rh) sensors (DHT22, sht1x, etc) in tsv
@@ -3685,8 +3834,9 @@ blog post.
 .. _d3-temp-rh-sensor-tsv-series-chart.zip: https://github.com/mk-fg/fgtk/raw/master/metrics/d3-temp-rh-sensor-tsv-series-chart.sample.zip
 .. _d3-chart-for-common-temperaturerh-time-series-data: http://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
 
-d3-du-disk-space-usage-layout
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+d3-du-disk-space-usage-layout_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _d3-du-disk-space-usage-layout: metrics/d3-du-disk-space-usage-layout
 
 `d3.js`_-based xdiskusage_ implementation - app to parse ``du -b`` output and
 display directory hierarchy as d3 "partition" layout, with node size
@@ -3701,8 +3851,9 @@ them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
 .. _xdiskusage: http://xdiskusage.sourceforge.net/
 .. _d3-du-disk-space-usage-layout.html: https://mk-fg.github.io/fgtk/metrics/d3-du-disk-space-usage-layout.html
 
-prometheus-snmp-iface-counters-exporter
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+prometheus-snmp-iface-counters-exporter_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _prometheus-snmp-iface-counters-exporter: metrics/prometheus-snmp-iface-counters-exporter
 
 Script to poll 64-bit IF-MIB SNMPv3 counters for specified interface,
 checking for resets on these via NETSERVER-MIB::hrSystemUptime
@@ -3728,8 +3879,9 @@ Uses `prometheus_client`_ and pysnmp_ modules for exporting and querying.
 .. _prometheus_client: https://github.com/prometheus/client_python
 .. _pysnmp: https://github.com/etingof/pysnmp
 
-prometheus-grafana-simplejson-aggregator
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+prometheus-grafana-simplejson-aggregator_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _prometheus-grafana-simplejson-aggregator: metrics/prometheus-grafana-simplejson-aggregator
 
 Aggregator to query prometheus_ server for specified metrics/labels, aggregate
 them by-day/week/month/year to sqlite db tables and export these via uWSGI_ for
@@ -3786,8 +3938,9 @@ and to optimize efficiency).
 .. _Grafana Simple JSON Datasource: https://grafana.com/grafana/plugins/grafana-simple-json-datasource
 .. _uWSGI: https://uwsgi-docs.readthedocs.io/
 
-systemd-cglog
-^^^^^^^^^^^^^
+systemd-cglog_
+^^^^^^^^^^^^^^
+.. _systemd-cglog: metrics/systemd-cglog
 
 Script to log JSON-lines with available cpu/mem/io cgroup stats for matched unit file(s),
 as well as their start/stop events.
@@ -3829,15 +3982,17 @@ Typically templates for simple host-specific scripts that run from cron daemon
 to check something and produce stderr output and non-0 exit code upon detecting
 any anomalies.
 
-df
+df_
 ^^^
+.. _df: cron-checks/df
 
 Standard template for a trivial bash + coreutils "df" checker to put into
 crontab on any random linux box, to warn when any of the mountpoints are about
 to run out of space/inodes.
 
-attrs
-^^^^^
+attrs_
+^^^^^^
+.. _attrs: cron-checks/attrs
 
 Bash script to monitor for diffs in extended attributes on dirs/mountpoints
 like /usr /var /etc /opt, which are typically under package manager's control,
@@ -3859,10 +4014,11 @@ list, unless installed deliberately, or it's clear that xattrs are needed there.
 All configuration stuff is at the top of the script.
 Should be smart enough to navigate btrfs subvols, but not data mountpoints.
 
-systemd
-^^^^^^^
+systemd_
+^^^^^^^^
+.. _systemd: systemd-dashboard
 
-Symlink to a `systemd-dashboard`_ script - it kinda belongs here too.
+Symlink to a systemd-dashboard_ script - it kinda belongs here too.
 
 
 
@@ -3872,8 +4028,9 @@ Symlink to a `systemd-dashboard`_ script - it kinda belongs here too.
 Misc prefabs and *really* ad-hoc scripts,
 mostly stored here as templates to make something out of later.
 
-rsync-diff
-^^^^^^^^^^
+rsync-diff_
+^^^^^^^^^^^
+.. _rsync-diff: scraps/rsync-diff
 
 Script to sync paths, based on berkley db and rsync.
 
@@ -3892,14 +4049,16 @@ Wrote it before realizing that it's quite pointless for my mirroring use-case -
 do have full source and destination trees, so rsync can be used to compare
 (if diff file-list is needed) or sync them.
 
-pcap-process
-^^^^^^^^^^^^
+pcap-process_
+^^^^^^^^^^^^^
+.. _pcap-process: scraps/pcap-process
 
 Processor for tshark's xml (pdml) output, for cases when wireshark's
 filtering/ui is not enough or it should be automated.
 
-log-tail-check
-^^^^^^^^^^^^^^
+log-tail-check_
+^^^^^^^^^^^^^^^
+.. _log-tail-check: scraps/log-tail-check
 
 Script (or a template of one) designed to be run periodically to process latest
 log entries.
@@ -3914,8 +4073,9 @@ data there).
 Also stores state of the actual processing there, which is just "check occurence
 of regexp 'name' group within timeout, print line if there isn't" in the script.
 
-resize-rpi-fat32-for-card
-^^^^^^^^^^^^^^^^^^^^^^^^^
+resize-rpi-fat32-for-card_
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _resize-rpi-fat32-for-card: scraps/resize-rpi-fat32-for-card
 
 Script to resize RPi's boot FAT32 partition and filesystem to conver as much of
 the SD card as possible, from RPi itself, while booted from the same card.
@@ -3931,10 +4091,11 @@ blog post.
 .. _util-linux: https://www.kernel.org/pub/linux/utils/util-linux/
 .. _parted: http://www.gnu.org/software/parted/parted.html
 
-asciitree-parse
-^^^^^^^^^^^^^^^
+asciitree-parse_
+^^^^^^^^^^^^^^^^
+.. _asciitree-parse: scraps/asciitree-parse
 
-Py3 script to parse output of asciitree.LeftAligned tree, as produced by
+Py script to parse output of asciitree.LeftAligned tree, as produced by
 `asciitree module`_ (see module docs for format examples).
 
 Can be embedded into python code as a parser for easily-readable trees of
@@ -3942,10 +4103,11 @@ strings, without need to abuse YAML or something less-readable for those.
 
 .. _asciitree module: https://pypi.python.org/pypi/asciitree/0.3.3
 
-glusterfs-xattr-trusted-to-user
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+glusterfs-xattr-trusted-to-user_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _glusterfs-xattr-trusted-to-user: scraps/glusterfs-xattr-trusted-to-user
 
-Script (python3) to copy trusted.\* xattrs to user.\* and/or wipe out either one
+Script (python) to copy trusted.\* xattrs to user.\* and/or wipe out either one
 of these.
 
 Useful when running patched glusterd in a container, as described in
@@ -3953,19 +4115,21 @@ Useful when running patched glusterd in a container, as described in
 
 .. _running-glusterfs-in-a-user-namespace blog post here: http://blog.fraggod.net/2017/03/21/running-glusterfs-in-a-user-namespace-uid-mapped-container.html
 
-led-blink-arg
-^^^^^^^^^^^^^
+led-blink-arg_
+^^^^^^^^^^^^^^
+.. _led-blink-arg: scraps/led-blink-arg
 
-Py3 script to blink bit-pattern from a passed argument using linux led subsystem
+Python script to blink bit-pattern from a passed argument using linux led subsystem
 (i.e. one of the leds in /sys/class/leds).
 
 Useful to make e.g. RPi boards booted from identical OS img distinguishable by
 blinking last bits of their IP address, MAC, serial number or stuff like that.
 
-led-blink-seq
-^^^^^^^^^^^^^
+led-blink-seq_
+^^^^^^^^^^^^^^
+.. _led-blink-seq: scraps/led-blink-seq
 
-Py3 script to blink any arbitrary on/off sequence or numbers (using bits) on an
+Python script to blink any arbitrary on/off sequence or numbers (using bits) on an
 LED, using sysfs interface (/sys/class/leds or /sys/class/gpio).
 
 Sequence is expressed using simple embedded language, for example::
@@ -3991,32 +4155,35 @@ Where:
 Somewhat easier than writing one-off "set(0), sleep(100), set(1), ..." scripts
 with mostly boilerplate or extra deps for this simple purpose.
 
-gue-tunnel
-^^^^^^^^^^
+gue-tunnel_
+^^^^^^^^^^^
+.. _gue-tunnel: scraps/gue-tunnel
 
 Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
 
 One command instead of bunch of them, with some built-in templating to make it
 easier to use on identical remote hosts.
 
-wifi-client-match
-^^^^^^^^^^^^^^^^^
+wifi-client-match_
+^^^^^^^^^^^^^^^^^^
+.. _wifi-client-match: scraps/wifi-client-match
 
-Basic script to automate `wpa_supplicant`_ matching AP in a python3 script
+Basic script to automate `wpa_supplicant`_ matching AP in a python script
 (e.g. by ssid regexp or any other parameters), pick best/working BSSID and
 connect to it.
 
 For cases when wpa_supplicant.conf is not powerful enough.
 
-Python3, uses dbus-python module and its glib eventloop.
+Python, uses dbus-python module and its glib eventloop.
 
 .. _wpa_supplicant: https://w1.fi/wpa_supplicant/
 .. _hostapd: https://w1.fi/hostapd/
 
-mem-search-replace
-^^^^^^^^^^^^^^^^^^
+mem-search-replace_
+^^^^^^^^^^^^^^^^^^^
+.. _mem-search-replace: scraps/mem-search-replace
 
-Unfinished simple python3 script to search/replace memory of a process via
+Unfinished simple python script to search/replace memory of a process via
 process_vm_readv / process_vm_writev calls while it's running.
 
 Useful for hacks to update stuff in running binary apps without having to
@@ -4024,11 +4191,12 @@ restart or disrupt them in any way, but found that this approach was too tedious
 in my specific case due to how stuff is stored there, so didn't bother with
 process_vm_writev part.
 
-gpm-track
-^^^^^^^^^
+gpm-track_
+^^^^^^^^^^
+.. _gpm-track: scraps/gpm-track
 
-Py3 script to capture and print mouse events from GPM_ (as in libgpm) in
-specified tty.
+Python script to capture and print mouse events from GPM_ (as in libgpm)
+in specified tty.
 
 Main event receiver is gpm-track.c (build with ``gcc -O2 gpm-track.c -o
 gpm-track -lgpm -lrt``) proxy-binary though, which writes latest mouse position
@@ -4048,8 +4216,9 @@ useful for GUIs, alas.
 
 .. _GPM: https://github.com/telmich/gpm
 
-rsyslogs
-^^^^^^^^
+rsyslogs_
+^^^^^^^^^
+.. _rsyslogs: scraps/rsyslogs
 
 Wrappers to test tools that tend to spam /dev/log regardless of their settings.
 
@@ -4077,8 +4246,9 @@ where such uncommon spam to syslog gets delivered via desktop notifications
 
 .. _rsyslog: https://www.rsyslog.com/
 
-relp-test
-^^^^^^^^^
+relp-test_
+^^^^^^^^^^
+.. _relp-test: scraps/relp-test
 
 Small .c binary around librelp_ to build and send syslog message over RELP
 protocol to daemons like rsyslog_ with specified timeout.
@@ -4095,8 +4265,9 @@ Run binary without args to get more usage info and/or see .c file header for tha
 
 .. _librelp: https://github.com/rsyslog/librelp
 
-ccc-dl
-^^^^^^
+ccc-dl_
+^^^^^^^
+.. _ccc-dl: scraps/ccc-dl
 
 Script to download Chaos Communication Congress (ccc/c3) videos as simple .mp4
 files from a given fahrplan or media.ccc.de link (at least rc3 2020 ones).
@@ -4112,8 +4283,9 @@ This script simplifies it to one command, querying their JSON APIs under the hoo
 using all proper IDs and such, which is still like 3-4 complicated json-parsing requests,
 hence the need for a proper script to do it.
 
-exec.c
-^^^^^^
+exec.c_
+^^^^^^^
+.. _exec.c: scraps/exec.c
 
 5-liner C binary to execvp() whatever was passed to it as arguments.
 
