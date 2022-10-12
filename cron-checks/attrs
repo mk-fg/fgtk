@@ -1,0 +1,79 @@
+#!/bin/bash
+
+mp_roots='usr|var|etc|opt|srv' mp_exc='^/(srv/backup(/|$)|root/)' mp_list=
+strip_file=/var/lib/xattrs.strip state_file=/var/lib/xattrs.cache
+find_exc='/var/log/journal/|/var/lib/docker/'
+nice_wrap='cgrc -u cron-check-attrs apps-nofscache -- nice ionice -c3'
+
+usage() {
+	local bin=$(basename $0)
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin [-x] [-l|--mp-list] [--mp-v pat] [--find-v pat] [--strip file]"
+	echo "Runs a 'find -xattr' over all mountpoints under: $mp_roots"
+	echo "Prints diff of any executables files with xattrs or suid bits."
+	echo "-l/--mp-list only lists mountpoints to crawl and exits."
+	echo "--mp-v pattern is for 'lsblk -no MOUNTPOINT | grep -vP'."
+	echo "  Default: $mp_exc"
+	echo "--path-v pattern is for 'find ... | grep -vP'."
+	echo "  Default: $find_exc"
+	echo "--strip file can specify exact full paths to any found files"
+	echo "  to strip xattrs/suids from instead of tracking them in the diffs."
+	echo "  Default: $strip_file"
+	echo "Last xattr/suid state is stored in: $state_file"
+	exit ${1:-1}; }
+[[ "$1" = -X ]] && shift || {
+	set -e; cmd=$(realpath -e "$0")
+	exec $nice_wrap "$cmd" -X "$@"; }
+[[ "$1" = -h || "$1" = --help ]] && usage 0
+[[ "$1" != -x ]] || { set -x; shift; }
+[[ "$1" != -l && "$1" != --mp-list ]] || { mp_list=t; shift; }
+[[ "$1" != --mp-v ]] || { mp_exc="$2"; shift 2; }
+[[ "$1" != --find-v ]] || { find_exc="$2"; shift 2; }
+[[ "$1" != --strip ]] || { strip_file="$2"; shift 2; }
+[[ -z "$1" ]] || usage 1
+
+
+export LC_ALL=C
+umask 077
+
+set -o pipefail
+err=0
+
+# All mountpoints under package manager control
+readarray -t mps < <(
+	lsblk -no MOUNTPOINT |
+		grep -aP '^/(('"$mp_roots"')(/.*)?)?$' )
+
+# Can subvolumes
+can=/var/lib/machines
+mountpoint -q $can && {
+	for slug in $(btrfs su l -o $can | cut -d\  -f9)
+	do mps+=( $can/$slug ); done }
+
+[[ -z "$mp_exc" ]] \
+	|| readarray -t mps < <(printf '%s\n' "${mps[@]}" | grep -avP "$mp_exc")
+[[ -z "$mp_list" ]] || { printf '%s\n' "${mps[@]}"; exit; }
+
+find "${mps[@]}" -xdev \
+		-type c -o -type b -o \( -type f -perm /111 \( -xattr . -o -perm /u=s,g=s \) \) \
+		2> >(grep -aPv '^(/usr/bin/)?find: .*: Permission denied$' >&2) |
+	grep -avP "$find_exc" | sort -u >"$state_file.new" ||:
+
+[[ -z "$strip_file" ]] || {
+	sort -u "$strip_file" >"$state_file.comm"
+	while read p; do
+		[[ -n "$p" ]] || continue
+		chmod u-s,g-s "$p" && setfacl -b "$p" || err=1
+		setcap -r "$p" 2>/dev/null ||: # "has no capablity to remove" errors
+		getfattr "$p" | awk '!/^(#|$)/' |
+			xargs -n1 -I'{}' setfattr -x '{}' "$p"
+	done < <(comm -12 "$state_file.new" "$state_file.comm")
+	comm -23 "$state_file.new" "$state_file.comm" >"$state_file.tmp"
+	mv "$state_file.tmp" "$state_file.new"
+	rm -f "$state_file.comm"
+}
+
+[[ ! -e "$state_file" ]] || diff -uw "$state_file"{,.new} || err=$?
+mv "$state_file"{.new,} || exit 1
+
+exit $err

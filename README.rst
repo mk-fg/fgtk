@@ -3822,6 +3822,50 @@ Idea here is just to gather all useful numbers over time.
 
 
 
+[cron-checks]
+~~~~~~~~~~~~~
+
+Typically templates for simple host-specific scripts that run from cron daemon
+to check something and produce stderr output and non-0 exit code upon detecting
+any anomalies.
+
+df
+^^^
+
+Standard template for a trivial bash + coreutils "df" checker to put into
+crontab on any random linux box, to warn when any of the mountpoints are about
+to run out of space/inodes.
+
+attrs
+^^^^^
+
+Bash script to monitor for diffs in extended attributes on dirs/mountpoints
+like /usr /var /etc /opt, which are typically under package manager's control,
+and send diffs if there are any changes.
+
+Also just strips xattrs from binaries in a separate list.
+
+Idea is to detect when new suid files/dirs or ones with special ACLs/capabilities
+get installed, and either note new potential insecurity or strip them of these.
+
+General observation is that almost all dangerous suid binaries (that get
+routinely exploited - see xorg, policykit, net tools, etc) are not actually
+used for anything but providing glaring security issues, but still get bundled
+as a dependencies with other stuff.
+
+So an easy thing to do is to track any new ones and put them on a "strip xattrs"
+list, unless installed deliberately, or it's clear that xattrs are needed there.
+
+All configuration stuff is at the top of the script.
+Should be smart enough to navigate btrfs subvols, but not data mountpoints.
+
+systemd
+^^^^^^^
+
+Symlink to a `systemd-dashboard`_ script - it kinda belongs here too.
+
+
+
 [scraps]
 ~~~~~~~~
 
@@ -3869,12 +3913,6 @@ data there).
 
 Also stores state of the actual processing there, which is just "check occurence
 of regexp 'name' group within timeout, print line if there isn't" in the script.
-
-check-df
-^^^^^^^^
-
-Standard template for a trivial bash + coreutils "df" checker to put into
-crontab on any random linux box, just in case.
 
 resize-rpi-fat32-for-card
 ^^^^^^^^^^^^^^^^^^^^^^^^^
