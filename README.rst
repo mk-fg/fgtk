@@ -12,6 +12,12 @@ License for all scripts is `WTFPL <http://www.wtfpl.net/txt/copying/>`__
 .. contents::
   :backlinks: none
 
+Repository URLs:
+
+- https://github.com/mk-fg/fgtk
+- https://codeberg.org/mk-fg/fgtk
+- https://fraggod.net/code/git/fgtk
+
 
 
 Scripts
