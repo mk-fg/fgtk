@@ -4005,14 +4005,13 @@ git-manifest_
 ^^^^^^^^^^^^^
 .. _git-manifest: cron-checks/git-manifest
 
-Python script (no deps) to build a manifest of full linux permissions
-for all files under git control in specified repository(-ies), to stdout.
+Self-contained python script (no deps) to build a manifest of full linux
+permissions for all files under git control in specified repository(-ies), to stdout.
 
 Included permissions are: uname, gname, path-type, mode, acls, capabilities, xattrs.
 
 Intended to be used with repos of config files on mutable hosts, which are
-directly used there by apps, so permissions on them and their paths matter,
-and might as well be checked into git on commits, to be tracked/fixed.
+directly used there by apps, so permissions on them and their paths matter.
 
 Output should look roughly like this::
 
@@ -4028,6 +4027,12 @@ Output should look roughly like this::
   /some/other/repo user:group:d0755 ...
 
 Stable for diffs, with all data needed to restore permissions/xattrs in there.
+
+These can be diff'ed in crontab to alert on changes, or checked into git, to be
+tracked there alongside files themselves.
+
+``-f/--git-ls-file`` option allows to run potentially-unsafe "git ls-files"
+command separately, or use file lists from some other non-git source.
 
 systemd_
 ^^^^^^^^

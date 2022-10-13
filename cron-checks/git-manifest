@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import pathlib as pl, functools as ft, subprocess as sp
-import os, sys, io, re, glob, stat, pwd, grp, struct, enum, base64
+import os, sys, io, re, glob, stat, pwd, grp
+import struct, enum, base64, pathlib as pl
 
 
 class ACLTag(enum.IntEnum):
@@ -85,12 +85,35 @@ def parse_caps(cap):
 	return (pre + ':' + caps).rstrip(':')
 
 
+def openat2_read(p_git, p, _cache=[]):
+	'Reads and returns contents of p under p_git dir reliably'
+	# Simple way to avoid symlink-related race-conditions w/o disallowing them:
+	#  p = realpath(path); validate_is_acceptable(p); file = openat2(p, no_symlinks)
+	# As of 2022-10-13 glibc has no openat2() wrapper yet, hence syscall here.
+	p = (p_git / p).resolve(True)
+	if not p.is_relative_to(p_git):
+		raise PermissionError( '-f/--git-ls-file'
+			' points to outside git repo dir [ {p_git} ]: {p}' )
+	if not _cache:
+		import ctypes as ct
+		openat2_how = ct.create_string_buffer(struct.pack(
+			'@QQQ', os.O_RDONLY | os.O_NOFOLLOW, 0, res_no_symlinks := 0x04 ))
+		c_sys_openat2, c_at_fdcwd, openat2_how_len = 437, -100, len(openat2_how) - 1
+		def _openat2(p):
+			fd = ct.CDLL(None, use_errno=True).syscall(
+				c_sys_openat2, c_at_fdcwd, str(p).encode(), openat2_how, openat2_how_len )
+			if fd < 0: raise OSError(err := ct.get_errno(), os.strerror(err))
+			return open(fd, 'r')
+		_cache.append(_openat2)
+	with _cache[0](p) as src: return src.read()
+
 def git_path_rel(git_path, p, res=True):
 	p_res = git_path / p
 	if res: p_res = p_res.resolve()
 	if not p_res.is_relative_to(git_path):
 		raise ValueError(f'Specified path outside of git repo: {p}')
 	return pl.Path(str(p_res)[len(str(git_path))+1:])
+
 
 def main(args=None):
 	import argparse, textwrap
@@ -109,6 +132,10 @@ def main(args=None):
 		Paths can have glob/fnmatch shell-style wildcards in them (python glob module).
 		Does not raise warnings/errors for dirs that don't have .git repo in them.
 		Default is to work with git repository in the current dir.'''))
+	parser.add_argument('-f', '--git-ls-file', help=dd('''
+		Instead of running "git ls-files" in each of the paths,
+			read same (newline-separated output) from specified path inside repo dir(s).
+		If file is missing in any of the specified/detected repositories, error will be raised.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	git_dirs = getattr(opts, 'git-dirs')
@@ -122,27 +149,35 @@ def main(args=None):
 			if (p / '.git').is_dir(): git_dirs.append(p)
 	git_dirs.sort(key=lambda p: str(p.resolve()))
 
+	if not opts.git_ls_file:
+		import subprocess as sp
+		git_ls_files = lambda p_git: sp.run( ['git', 'ls-files', '-z'],
+			check=True, cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')
+
 	git_paths = dict()
-	git_cmd = lambda *a,**k: sp.run(
-		['git', *a], check=True, env=dict(GIT_EDITOR='/bin/false'), **k )
 	for n, p_git in enumerate(git_dirs):
 		p_git = git_dirs[n] = p_git.resolve()
-		git_paths[p_git] = True; git_paths['.git'] = True
-		for p in sorted(git_cmd( 'ls-files', '-z',
-				cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')):
+		git_paths[p_git] = p_git; git_paths[p_git / '.git'] = '.git'
+		if not opts.git_ls_file: git_ls = git_ls_files(p_git)
+		else:
+			git_ls = openat2_read(p_git, opts.git_ls_file)
+			git_ls = list(s.rstrip('\r') for s in git_ls.split('\n') if s.strip())
+		for p in sorted(git_ls):
 			if not p: continue
 			p = pl.Path((ps := pl.Path(p).parts)[0])
-			git_paths[p] = True
-			for c in ps[1:]: p /= c; git_paths[p] = True
+			git_paths[p_git / p] = p
+			for c in ps[1:]: p /= c; git_paths[p_git / p] = p
 
 	p_types = list(
 		(t, getattr(stat, f'S_IS{k.upper()}'))
 		for t, k in zip( 'f d c b p l s d w'.split(),
 			'reg dir chr blk fifo lnk sock door wht'.split() ) )
 	p_git = None
-	for p_str in git_paths:
+	for p, p_str in git_paths.items():
 		p_rel = p_str not in git_dirs
-		if not p_rel: p = p_git = p_str; print()
+		if not p_rel:
+			if p_git: print()
+			p = p_git = p_str
 		else: p = p_git / p_str
 		perm = str(p_str) if not p_rel else f'  {p_str}'
 
@@ -157,7 +192,9 @@ def main(args=None):
 		perm += f' {st_user}:{st_group}:{st_type}{st_mode:04o}'
 
 		caps, acls = list(), list()
-		xattrs = dict((k, os.getxattr(p, k)) for k in os.listxattr(p))
+		xattrs = dict(
+			(k, os.getxattr(p, k, follow_symlinks=False))
+			for k in os.listxattr(p, follow_symlinks=False) )
 		if cap := xattrs.pop('security.capability', ''):
 			caps.append(parse_caps(cap))
 		if acl := xattrs.pop('system.posix_acl_access', ''):
