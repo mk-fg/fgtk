@@ -1,0 +1,182 @@
+#!/usr/bin/env python
+
+import pathlib as pl, functools as ft, subprocess as sp
+import os, sys, io, re, glob, stat, pwd, grp, struct, enum, base64
+
+
+class ACLTag(enum.IntEnum):
+	uo = 0x01; u = 0x02; go = 0x04; g = 0x08
+	mask = 0x10; other = 0x20
+	str = property(lambda s: s._name_)
+
+class ACLPerm(enum.IntFlag):
+	r = 4; w = 2; x = 1
+	str = property(lambda s: ''.join(
+		(v._name_ if v in s else '-') for v in s.__class__ ))
+
+def parse_acl(acl, prefix=''):
+	acl, lines = io.BytesIO(acl), list()
+	if (v := acl.read(4)) != b'\2\0\0\0':
+		raise ValueError(f'ACL version mismatch [ {v} ]')
+	while True:
+		entry = acl.read(8)
+		if not entry: break
+		elif len(entry) != 8: raise ValueError('ACL length mismatch')
+		tag, perm, n = struct.unpack('<HHI', entry)
+		tag = ACLTag(tag); perm = ACLPerm(perm)
+		match tag:
+			case ACLTag.uo | ACLTag.go:
+				lines.append(f'{tag.str[0]}::{perm.str}')
+			case ACLTag.u | ACLTag.g:
+				try:
+					name = ( pwd.getpwuid(n).pw_name
+						if tag is tag.u else grp.getgrgid(n).gr_name )
+				except KeyError: name = str(n)
+				if set(name).intersection(':,'): raise ValueError(n, name)
+				lines.append(f'{tag.str}:{name}:{perm.str}')
+			case ACLTag.other: lines.append(f'o::{perm.str}')
+			case ACLTag.mask: lines.append(f'm::{perm.str}')
+			case _: raise ValueError(tag)
+		lines.sort(key=lambda s: ('ugmo'.index(s[0]), s))
+	return ','.join(f'{prefix}{s}' for s in lines)
+
+
+Caps = enum.IntEnum('Caps', dict((cap, 1 << n) for n, cap in enumerate((
+	'chown dac_override dac_read_search fowner fsetid kill setgid setuid setpcap'
+	' linux_immutable net_bind_service net_broadcast net_admin net_raw ipc_lock ipc_owner'
+	' sys_module sys_rawio sys_chroot sys_ptrace sys_pacct sys_admin sys_boot'
+	' sys_nice sys_resource sys_time sys_tty_config mknod lease audit_write audit_control'
+	' setfcap mac_override mac_admin syslog wake_alarm block_suspend audit_read'
+	' perfmon bpf checkpoint_restore' ).split())))
+
+def parse_caps(cap):
+	cap, lines = io.BytesIO(cap), list()
+	if len(v := cap.read(4)) != 4:
+		raise ValueError('Broken capability string')
+	v, = struct.unpack('<I', v)
+	ver, eff = (v >> 3*8) & 0xff, v & 1
+	if ver not in [2, 3]:
+		raise ValueError(f'Unsupported capability version {ver}')
+	uint32 = lambda: int.from_bytes(cap.read(4), 'little')
+	perm1, inh1 = uint32(), uint32()
+	perm2, inh2 = uint32(), uint32()
+	if (n := len(cap.read())) != {2:0, 3:4}[ver]:
+		raise ValueError(f'Cap-string mismatch [ {n} != 4 ]')
+	perm_bits, inh_bits = perm2 << 32 | perm1, inh2 << 32 | inh1
+	perm, inh = set(), set()
+	for c in Caps:
+		if perm_bits & c.value: perm.add(c.name); perm_bits -= c.value
+		if inh_bits & c.value: inh.add(c.name); inh_bits -= c.value
+	if perm_bits or inh_bits:
+		raise ValueError(f'Unrecognized cap-bits: P={perm_bits:x} I={inh_bits:x}')
+	if not (eff or perm or inh): return ''
+	cap_str = lambda caps: ','.join(sorted(caps, key=Caps.__getitem__))
+	caps = [cap_str(perm) + ':' + cap_str(inh)]
+	if perm and perm.issubset(inh):
+		caps.extend([
+			'' + cap_str(perm) + ':+' + cap_str(inh-perm),
+			'-' + cap_str(inh-perm) + ':' + cap_str(inh) ])
+	elif inh and inh.issubset(perm):
+		caps.extend([
+			'+' + cap_str(perm-inh) + ':' + cap_str(inh),
+			'' + cap_str(perm) + ':-' + cap_str(perm-inh) ])
+	caps = sorted(caps, key=len)[0]
+	pre = ''.join(v for v,e in zip('EPI', [eff, perm, inh]) if e)
+	return (pre + ':' + caps).rstrip(':')
+
+
+def git_path_rel(git_path, p, res=True):
+	p_res = git_path / p
+	if res: p_res = p_res.resolve()
+	if not p_res.is_relative_to(git_path):
+		raise ValueError(f'Specified path outside of git repo: {p}')
+	return pl.Path(str(p_res)[len(str(git_path))+1:])
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Build a manifest of full permissions (uid/gid/mode/acls/xattrs)
+				for files under git control in specified repository(-ies), to stdout.
+			Intended to be used with repos of config files on mutable hosts,
+				which are directly used there by the apps,
+				so permissions on them (as well as their paths) matter,
+				and can be checked into git on commits, to be tracked/fixed.'''))
+	parser.add_argument('git-dirs', nargs='*', help=dd('''
+		Path(s) with ".git" directories in them, to get repo file-list from.
+		Paths can have glob/fnmatch shell-style wildcards in them (python glob module).
+		Does not raise warnings/errors for dirs that don't have .git repo in them.
+		Default is to work with git repository in the current dir.'''))
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	git_dirs = getattr(opts, 'git-dirs')
+	if not git_dirs:
+		git_dirs = [pl.Path('.')]
+		if not (git_dirs[0] / '.git').is_dir():
+			parser.error('No git-dirs specified and current dir is not a repository')
+	git_dirs, git_dirs_src = list(), git_dirs
+	for p in git_dirs_src:
+		for p in map(pl.Path, glob.glob(os.path.expanduser(p), recursive=True)):
+			if (p / '.git').is_dir(): git_dirs.append(p)
+	git_dirs.sort(key=lambda p: str(p.resolve()))
+
+	git_paths = dict()
+	git_cmd = lambda *a,**k: sp.run(
+		['git', *a], check=True, env=dict(GIT_EDITOR='/bin/false'), **k )
+	for n, p_git in enumerate(git_dirs):
+		p_git = git_dirs[n] = p_git.resolve()
+		git_paths[p_git] = True; git_paths['.git'] = True
+		for p in sorted(git_cmd( 'ls-files', '-z',
+				cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')):
+			if not p: continue
+			p = pl.Path((ps := pl.Path(p).parts)[0])
+			git_paths[p] = True
+			for c in ps[1:]: p /= c; git_paths[p] = True
+
+	p_types = list(
+		(t, getattr(stat, f'S_IS{k.upper()}'))
+		for t, k in zip( 'f d c b p l s d w'.split(),
+			'reg dir chr blk fifo lnk sock door wht'.split() ) )
+	p_git = None
+	for p_str in git_paths:
+		p_rel = p_str not in git_dirs
+		if not p_rel: p = p_git = p_str; print()
+		else: p = p_git / p_str
+		perm = str(p_str) if not p_rel else f'  {p_str}'
+
+		try: st = p.stat(follow_symlinks=False)
+		except FileNotFoundError: continue
+		try: st_user = pwd.getpwuid(st.st_uid).pw_name
+		except KeyError: st_user = str(st.st_uid)
+		try: st_group = grp.getgrgid(st.st_gid).gr_name
+		except KeyError: st_group = str(st.st_gid)
+		st_type = ''.join(t for t, chk in p_types if chk(st.st_mode))
+		st_mode = stat.S_IMODE(st.st_mode)
+		perm += f' {st_user}:{st_group}:{st_type}{st_mode:04o}'
+
+		caps, acls = list(), list()
+		xattrs = dict((k, os.getxattr(p, k)) for k in os.listxattr(p))
+		if cap := xattrs.pop('security.capability', ''):
+			caps.append(parse_caps(cap))
+		if acl := xattrs.pop('system.posix_acl_access', ''):
+			acls.append(parse_acl(acl))
+		if acl := xattrs.pop('system.posix_acl_default', ''):
+			acls.append(parse_acl(acl, 'd:'))
+		if caps or acls or xattrs:
+			perm += f'/{",".join(caps)}'
+			if acls or xattrs:
+				perm += f'/{",".join(acls)}'
+				if xattrs:
+					ext = list()
+					for k,v in xattrs.items():
+						try: v = v.decode().replace(',', ',,').replace(':', '::')
+						except ValueError:
+							v = base64.urlsafe_b64encode(v).decode()
+						ext.append(f'{k}:{v}')
+					perm += f'/{",".join(ext)}'
+
+		print(perm)
+
+if __name__ == '__main__': sys.exit(main())

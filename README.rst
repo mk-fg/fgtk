@@ -4001,6 +4001,34 @@ list, unless installed deliberately, or it's clear that xattrs are needed there.
 All configuration stuff is at the top of the script.
 Should be smart enough to navigate btrfs subvols, but not data mountpoints.
 
+git-manifest_
+^^^^^^^^^^^^^
+.. _git-manifest: cron-checks/git-manifest
+
+Python script (no deps) to build a manifest of full linux permissions
+for all files under git control in specified repository(-ies), to stdout.
+
+Included permissions are: uname, gname, path-type, mode, acls, capabilities, xattrs.
+
+Intended to be used with repos of config files on mutable hosts, which are
+directly used there by apps, so permissions on them and their paths matter,
+and might as well be checked into git on commits, to be tracked/fixed.
+
+Output should look roughly like this::
+
+  /path/to/repo user:group:d0755
+    .git user:group:d0755
+    README.rst user:group:f0644
+    secret.conf root:root:f0600
+    suid.bin root:root:f4711
+    caps.bin root:root:f4700/EP:net_raw/u::rwx,u:netuser:--x,g::r-x,m::r-x,o::---
+    logs user:group:d0755
+    logs/test.log user:group:f0644///user.tail-pos:line=287
+
+  /some/other/repo user:group:d0755 ...
+
+Stable for diffs, with all data needed to restore permissions/xattrs in there.
+
 systemd_
 ^^^^^^^^
 .. _systemd: systemd-dashboard
