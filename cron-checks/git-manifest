@@ -1,7 +1,32 @@
 #!/usr/bin/env python
 
-import os, sys, io, re, glob, stat, pwd, grp
-import struct, enum, base64, pathlib as pl
+import os, sys, io, re, glob, stat, struct, enum, base64, pathlib as pl
+
+
+def make_uidgid_resolver( numeric=False,
+		num_hex=False, offset=(0, 0), mask_and=None, mask_or=None ):
+	'Return uidgid func with baked-in processing parameters'
+	if numeric: uid_func = gid_func = None
+	else:
+		import pwd, grp
+		uid_func = lambda n: pwd.getpwuid(n).pw_name
+		gid_func = lambda n: grp.getgrgid(n).gr_name
+	def uidgid(uid=None, gid=None):
+		'Returns specified id, resolved according to baked-in parameters'
+		res = list()
+		for offset, (n, resolve) in zip(
+				uidgid.offset, [(uid, uid_func), (gid, gid_func)] ):
+			if n is None: continue
+			if resolve:
+				try: res.append(resolve(n)); continue
+				except KeyError: pass
+			if offset: n += offset
+			if mask_and is not None: n &= mask_and
+			if mask_or is not None: n |= mask_or
+			res.append(f'{n:x}' if num_hex else str(n))
+		return res if len(res) != 1 else res[0]
+	uidgid.offset = offset
+	return uidgid
 
 
 class ACLTag(enum.IntEnum):
@@ -14,7 +39,7 @@ class ACLPerm(enum.IntFlag):
 	str = property(lambda s: ''.join(
 		(v._name_ if v in s else '-') for v in s.__class__ ))
 
-def parse_acl(acl, prefix=''):
+def parse_acl(acl, uidgid, prefix=''):
 	acl, lines = io.BytesIO(acl), list()
 	if (v := acl.read(4)) != b'\2\0\0\0':
 		raise ValueError(f'ACL version mismatch [ {v} ]')
@@ -28,10 +53,7 @@ def parse_acl(acl, prefix=''):
 			case ACLTag.uo | ACLTag.go:
 				lines.append(f'{tag.str[0]}::{perm.str}')
 			case ACLTag.u | ACLTag.g:
-				try:
-					name = ( pwd.getpwuid(n).pw_name
-						if tag is tag.u else grp.getgrgid(n).gr_name )
-				except KeyError: name = str(n)
+				name = uidgid(uid=n) if tag is tag.u else uidgid(gid=n)
 				if set(name).intersection(':,'): raise ValueError(n, name)
 				lines.append(f'{tag.str}:{name}:{perm.str}')
 			case ACLTag.other: lines.append(f'o::{perm.str}')
@@ -107,19 +129,13 @@ def openat2_read(p_git, p, _cache=[]):
 		_cache.append(_openat2)
 	with _cache[0](p) as src: return src.read()
 
-def git_path_rel(git_path, p, res=True):
-	p_res = git_path / p
-	if res: p_res = p_res.resolve()
-	if not p_res.is_relative_to(git_path):
-		raise ValueError(f'Specified path outside of git repo: {p}')
-	return pl.Path(str(p_res)[len(str(git_path))+1:])
-
 
 def main(args=None):
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] [git-dirs]',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			Build a manifest of full permissions (uid/gid/mode/acls/xattrs)
 				for files under git control in specified repository(-ies), to stdout.
@@ -127,15 +143,35 @@ def main(args=None):
 				which are directly used there by the apps,
 				so permissions on them (as well as their paths) matter,
 				and can be checked into git on commits, to be tracked/fixed.'''))
+
 	parser.add_argument('git-dirs', nargs='*', help=dd('''
 		Path(s) with ".git" directories in them, to get repo file-list from.
 		Paths can have glob/fnmatch shell-style wildcards in them (python glob module).
 		Does not raise warnings/errors for dirs that don't have .git repo in them.
 		Default is to work with git repository in the current dir.'''))
-	parser.add_argument('-f', '--git-ls-file', help=dd('''
+	parser.add_argument('-f', '--git-ls-file', metavar='rel-path', help=dd('''
 		Instead of running "git ls-files" in each of the paths,
 			read same (newline-separated output) from specified path inside repo dir(s).
 		If file is missing in any of the specified/detected repositories, error will be raised.'''))
+
+	group = parser.add_argument_group('uid/gid options')
+	group.add_argument('-n', '--ids-numeric', action='store_true',
+		help='Do not resolve uid/gid values to names, leave as numbers.')
+	group.add_argument('-H', '--ids-hex', action='store_true', help=dd('''
+		Whenever numeric id is output, use hexadecimal numbers instead of decimal.
+		This can be useful for composite uid/gid values,
+			where specific bytes have separate meanings, e.g. ids in systemd-nspawn.
+		Can be combined with -n/--ids-numeric, but does not imply it.'''))
+	group.add_argument('--ids-offset-from-root', action='store_true', help=dd('''
+		Output numeric uid/gid values as an offset from
+			uid/gid of the repository root directory, applied before mask, if any.
+		Might be useful with idmapped mounts or userns containers.'''))
+	group.add_argument('--ids-mask', metavar='and-hex(/or-hex)', help=dd('''
+		Two hex and-mask[/or-mask] numbers to apply to all output numeric uids/gids.
+		Can be used to discard specific bits/bytes in a composite/mapped id numbers.
+		Masks are only used on last N bytes specified in them, ignoring other bytes.
+		Value like "/f10000" can be used to only specify bitwise OR mask without AND part.'''))
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	git_dirs = getattr(opts, 'git-dirs')
@@ -153,6 +189,15 @@ def main(args=None):
 		import subprocess as sp
 		git_ls_files = lambda p_git: sp.run( ['git', 'ls-files', '-z'],
 			check=True, cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')
+
+	if not opts.ids_mask: mask_and = mask_or = None
+	else:
+		mask_and, sep, mask_or = opts.ids_mask.partition('/')
+		mask_and, mask_or = (
+			int(pad*max(0, 16 - len(m)) + m, 16)
+			for m, pad in [(mask_and, 'f'), (mask_or, '0')] )
+	uidgid = make_uidgid_resolver( numeric=opts.ids_numeric,
+		num_hex=opts.ids_hex, mask_and=mask_and, mask_or=mask_or )
 
 	git_paths = dict()
 	for n, p_git in enumerate(git_dirs):
@@ -174,19 +219,18 @@ def main(args=None):
 			'reg dir chr blk fifo lnk sock door wht'.split() ) )
 	p_git = None
 	for p, p_str in git_paths.items():
-		p_rel = p_str not in git_dirs
-		if not p_rel:
+		p_root = p_str in git_dirs
+		if p_root:
 			if p_git: print()
 			p = p_git = p_str
 		else: p = p_git / p_str
-		perm = str(p_str) if not p_rel else f'  {p_str}'
+		perm = str(p_str) if p_root else f'  {p_str}'
 
 		try: st = p.stat(follow_symlinks=False)
 		except FileNotFoundError: continue
-		try: st_user = pwd.getpwuid(st.st_uid).pw_name
-		except KeyError: st_user = str(st.st_uid)
-		try: st_group = grp.getgrgid(st.st_gid).gr_name
-		except KeyError: st_group = str(st.st_gid)
+		if opts.ids_offset_from_root and p_root:
+			uidgid.offset = -st.st_uid, -st.st_gid
+		st_user, st_group = uidgid(st.st_uid, st.st_gid)
 		st_type = ''.join(t for t, chk in p_types if chk(st.st_mode))
 		st_mode = stat.S_IMODE(st.st_mode)
 		perm += f' {st_user}:{st_group}:{st_type}{st_mode:04o}'
@@ -198,9 +242,9 @@ def main(args=None):
 		if cap := xattrs.pop('security.capability', ''):
 			caps.append(parse_caps(cap))
 		if acl := xattrs.pop('system.posix_acl_access', ''):
-			acls.append(parse_acl(acl))
+			acls.append(parse_acl(acl, uidgid))
 		if acl := xattrs.pop('system.posix_acl_default', ''):
-			acls.append(parse_acl(acl, 'd:'))
+			acls.append(parse_acl(acl, uidgid, 'd:'))
 		if caps or acls or xattrs:
 			perm += f'/{",".join(caps)}'
 			if acls or xattrs:

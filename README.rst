@@ -4033,6 +4033,8 @@ tracked there alongside files themselves.
 
 ``-f/--git-ls-file`` option allows to run potentially-unsafe "git ls-files"
 command separately, or use file lists from some other non-git source.
+There's also a bunch of uid/gid mangling options, to output these as dec/hex
+numbers or offset/mask in some way.
 
 systemd_
 ^^^^^^^^
