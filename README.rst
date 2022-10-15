@@ -2075,8 +2075,9 @@ notification emails on that platform.
 .. _EWMA: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
 
 
-[dev] Dev tools
-~~~~~~~~~~~~~~~
+`[dev] Dev tools`_
+~~~~~~~~~~~~~~~~~~
+.. _[dev] Dev tools: dev
 
 Minor things I tend to use when writing code and stuff.
 
@@ -2406,8 +2407,9 @@ where I don't want to have this hook yet, but might be just me, of course.
 
 
 
-[backup] Backup helpers
-~~~~~~~~~~~~~~~~~~~~~~~
+`[backup] Backup helpers`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[backup] Backup helpers: backup
 
 Various dedicated backup tools and snippets.
 
@@ -2544,21 +2546,24 @@ Useful for generic "backup to a dir" scripts, where deduplication on
 fs level is handled somewhere else or unnecessary.
 
 
-[desktop] Linux desktop stuff
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`[desktop] Linux desktop stuff`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[desktop] Linux desktop stuff: desktop
 
 Helpers for more interactive (client) machine, DE and apps there.
 
 
-[desktop/uri_handlers]
-^^^^^^^^^^^^^^^^^^^^^^
+`[desktop/uri_handlers]`_
+^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _[desktop/uri_handlers]: desktop/uri_handlers
 
 Scripts to delegate downloads from browser to more sensible download managers,
 like passing magnet: links to transmission, or processing .torrent files.
 
 
-[desktop/media]
-^^^^^^^^^^^^^^^
+`[desktop/media]`_
+^^^^^^^^^^^^^^^^^^
+.. _[desktop/media]: desktop/media
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
 process) various media files and streams.
@@ -2880,8 +2885,9 @@ mode, or with optional size argument to scale it differently, but always preserv
 the aspect ratio.
 
 
-[desktop/notifications]
-^^^^^^^^^^^^^^^^^^^^^^^
+`[desktop/notifications]`_
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _[desktop/notifications]: desktop/notifications
 
 A bunch of tools to issue various desktop notifications.
 
@@ -3011,8 +3017,9 @@ will be displayed in a semi-transparent box instead.
 Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 
 
-[desktop] others
-^^^^^^^^^^^^^^^^
+`[desktop] others`_
+^^^^^^^^^^^^^^^^^^^
+.. _[desktop] others: desktop
 
 vfat_shuffler_
 ''''''''''''''
@@ -3388,8 +3395,9 @@ allowed through follow-up commits.
 
 
 
-[vm] VM scripts
-~~~~~~~~~~~~~~~
+`[vm] VM scripts`_
+~~~~~~~~~~~~~~~~~~
+.. _[vm] VM scripts: vm
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
 
@@ -3402,8 +3410,9 @@ qemu/kvm, as latter already have decent enough interfaces to work with.
 
 
 
-[bpf] Linux eBPF filters
-~~~~~~~~~~~~~~~~~~~~~~~~
+`[bpf] Linux eBPF filters`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[bpf] Linux eBPF filters: bpf
 
 eBPF at this point is kinda like generic "extension language" in linux,
 and supported `at an ever-growing number of points
@@ -3417,8 +3426,9 @@ See head of specific .c files for compilation/loading/usage instructions.
 
 
 
-[arch] ArchLinux(+ARM)
-~~~~~~~~~~~~~~~~~~~~~~
+`[arch] ArchLinux(+ARM)`_
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[arch] ArchLinux(+ARM): arch
 
 Tools for automating various Arch Linux tasks.
 
@@ -3609,8 +3619,9 @@ and -h/--help output from script for more options.
 
 
 
-[alpine] Alpine Linux
-~~~~~~~~~~~~~~~~~~~~~
+`[alpine] Alpine Linux`_
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[alpine] Alpine Linux: alpine
 
 Various helper tools for automating Alpine Linux OS-level tasks.
 
@@ -3646,8 +3657,9 @@ new/unnecessary/forgotten ``/usr/local`` stuff, etc.
 
 
 
-[metrics] Charts and metrics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`[metrics] Charts and metrics`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[metrics] Charts and metrics: metrics
 
 Tools for working with various time-series databases and metrics-monitoring
 systems - collection, aggregation, configuration, graphs, etc.
@@ -3962,8 +3974,9 @@ Idea here is just to gather all useful numbers over time.
 
 
 
-[cron-checks]
-~~~~~~~~~~~~~
+`[cron-checks]`_
+~~~~~~~~~~~~~~~~
+.. _[cron-checks]: cron-checks
 
 Typically templates for simple host-specific scripts that run from cron daemon
 to check something and produce stderr output and non-0 exit code upon detecting
@@ -4044,8 +4057,9 @@ Symlink to a systemd-dashboard_ script - it kinda belongs here too.
 
 
 
-[scraps]
-~~~~~~~~
+`[scraps]`_
+~~~~~~~~~~~
+.. _[scraps]: scraps
 
 Misc prefabs and *really* ad-hoc scripts,
 mostly stored here as templates to make something out of later.
