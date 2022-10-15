@@ -69,7 +69,7 @@ def check_tail(src, conf, report=True, ts_base=dict()):
 	try:
 		pos_old = os.getxattr(src.name, conf.xattr_pos)
 		tail_seek(src, pos_old)
-	except (TailCheckError, IOError): src.seek(0)
+	except (TailCheckError, OSError): src.seek(0)
 
 	ts_last = dict()
 	line_re, ts_re = map(re.compile, (conf.line_re, conf.ts_re))
@@ -89,7 +89,7 @@ def check_tail(src, conf, report=True, ts_base=dict()):
 	if pos != pos_old: os.setxattr(src.name, conf.xattr_pos, pos)
 
 	try: ts_file = name_map_load(os.getxattr(src.name, conf.xattr_ts))
-	except IOError: ts_file = dict()
+	except OSError: ts_file = dict()
 
 	ts_now = time.time()
 	for name in conf.check_names:

@@ -1,35 +1,29 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
-from contextlib import closing
-from os.path import join
 from xml.sax.saxutils import escape as xml_escape
+import pathlib as pl, datetime as dt
 import email, email.header, email.errors
-import os, sys, re, iso8601, calendar, time, zmq, json
+import os, sys, re, time, json, struct, hashlib
+
+import zmq # pyzmq
 
 
 def file_follow( src, open_tail=True,
-		read_interval_min=0.1,
-			read_interval_max=20, read_interval_mul=1.1,
-		rotation_check_interval=20, yield_file=False, **open_kwz ):
-	from time import time, sleep
-	from io import open
-	import os, types
-
-	open_tail = open_tail and isinstance(src, types.StringTypes)
-	src_open = lambda: open(path, mode='rb', **open_kwz)
+		read_int_min=0.1, read_int_max=20, read_int_mul=1.1,
+		rotation_check_interval=20, yield_file=False, **open_kws ):
+	'Tails file for lines via read() calls with adaptive interval between those'
+	open_tail = open_tail and isinstance(src, str)
+	src_open = lambda: open(path, 'rb', **open_kws)
 	stat = lambda f: (os.fstat(f) if isinstance(f, int) else os.stat(f))
 	sanity_chk_stats = lambda stat: (stat.st_ino, stat.st_dev)
-	sanity_chk_ts = lambda ts=None: (ts or time()) + rotation_check_interval
+	sanity_chk_ts = lambda ts=None: (ts or time.time()) + rotation_check_interval
 
-	if isinstance(src, types.StringTypes): src, path = None, src
+	if isinstance(src, str): src, path = None, src
 	else:
 		path = src.name
-		src_inode, src_inode_ts =\
-			sanity_chk_stats(stat(src.fileno())), sanity_chk_ts()
-	line, read_chk = '', read_interval_min
+		src_inode, src_inode_ts = (
+			sanity_chk_stats(stat(src.fileno())), sanity_chk_ts() )
+	line, read_chk = b'', read_int_min
 
 	while True:
 
@@ -38,14 +32,14 @@ def file_follow( src, open_tail=True,
 			if open_tail:
 				src.seek(0, os.SEEK_END)
 				open_tail = False
-			src_inode, src_inode_ts =\
-				sanity_chk_stats(stat(src.fileno())), sanity_chk_ts()
+			src_inode, src_inode_ts = (
+				sanity_chk_stats(stat(src.fileno())), sanity_chk_ts() )
 			src_inode_chk = None
 
-		ts = time()
+		ts = time.time()
 		if ts > src_inode_ts: # rotation check
-			src_inode_chk, src_inode_ts =\
-				sanity_chk_stats(stat(path)), sanity_chk_ts(ts)
+			src_inode_chk, src_inode_ts = (
+				sanity_chk_stats(stat(path)), sanity_chk_ts(ts) )
 			if stat(src.fileno()).st_size < src.tell(): src.seek(0) # truncated
 		else: src_inode_chk = None
 
@@ -53,129 +47,133 @@ def file_follow( src, open_tail=True,
 		if not buff: # eof
 			if src_inode_chk and src_inode_chk != src_inode: # rotated
 				src.close()
-				src, line = None, ''
+				src, line = None, b''
 				continue
 			if read_chk is None:
 				yield (buff if not yield_file else (buff, src))
 			else:
-				sleep(read_chk)
-				read_chk *= read_interval_mul
-				if read_chk > read_interval_max:
-					read_chk = read_interval_max
+				time.sleep(read_chk)
+				read_chk *= read_int_mul
+				if read_chk > read_int_max: read_chk = read_int_max
 		else:
 			line += buff
-			read_chk = read_interval_min
+			read_chk = read_int_min
 
-		if line and line[-1] == '\n': # complete line
-			try:
-				val = yield (line if not yield_file else (line, src))
-				if val is not None: raise KeyboardInterrupt
-			except KeyboardInterrupt: break
-			line = ''
+		if line and line.endswith(b'\n'): # complete line
+			val = yield (line if not yield_file else (line, src))
+			if val is not None: break
+			line = b''
 
-	src.close()
+	if src: src.close()
 
-
-def file_follow_durable( path,
-		min_dump_interval=10,
-		xattr_name='user.mail_notify.pos', xattr_update=True,
-		**follow_kwz ):
-	'''Records log position into xattrs after reading line every
-			min_dump_interval seconds.
-		Checksum of the last line at the position
-			is also recorded (so line itself don't have to fit into xattr) to make sure
-			file wasn't truncated between last xattr dump and re-open.'''
-
-	from xattr import xattr
-	from io import open
-	from hashlib import sha1
-	from time import time
-	import struct
+def file_follow_durable( path, min_dump_interval=10,
+		xattr_name='user.mail-notify.pos', xattr_update=True, **follow_kws ):
+	'''Records log position into xattrs after reading line every min_dump_interval seconds.
+		Checksum of the last line at the position is also recorded
+			(so line itself don't have to fit into xattr) to make sure file wasn't
+			truncated between last xattr dump and re-open.'''
+	pos_fmt, pos_hash = struct.Struct('>II10s'), ( lambda buff:
+		hashlib.blake2s(buff, digest_size=10, key=b'tail-chk').digest() )
 
 	# Try to restore position
-	src = open(path, mode='rb')
-	src_xattr = xattr(src)
+	src = open(path, 'rb')
 	try:
-		if not xattr_name: raise KeyError
-		pos = src_xattr[xattr_name]
-	except KeyError: pos = None
+		if not xattr_name: raise OSError
+		pos = os.getxattr(src.fileno(), xattr_name)
+		pos, line_len, line_hash = pos_fmt.unpack(pos)
+	except (OSError, struct.error): pos = None
 	if pos:
-		data_len = struct.calcsize('=I')
-		(pos,), chksum = struct.unpack('=I', pos[:data_len]), pos[data_len:]
-		(data_len,), chksum = struct.unpack('=I', chksum[:data_len]), chksum[data_len:]
 		try:
-			src.seek(pos - data_len)
-			if sha1(src.read(data_len)).digest() != chksum:
-				raise IOError('Last log line doesnt match checksum')
-		except (OSError, IOError) as err:
+			src.seek(pos - line_len)
+			if pos_hash(line := src.read(line_len)) != line_hash:
+				raise OSError('last log-line does not match hash')
+		except OSError as err:
 			log.info('Failed to restore log position: %s', err)
 			src.seek(0)
-	tailer = file_follow(src, yield_file=True, **follow_kwz)
+	tailer = file_follow(src, yield_file=True, **follow_kws)
 
 	# ...and keep it updated
-	pos_dump_ts_get = lambda ts=None: (ts or time()) + min_dump_interval
-	pos_dump_ts = pos_dump_ts_get()
+	pos_dump_ts_next = lambda ts=0: (
+		(ts or time.monotonic()) + min_dump_interval )
+	pos_dump_ts = 0
 	while True:
 		line, src_chk = next(tailer)
 		if not line: pos_dump_ts = 0 # force-write xattr
-		ts = time()
-		if ts > pos_dump_ts:
-			if src is not src_chk:
-				src, src_xattr = src_chk, xattr(src_chk)
+		if (ts := time.monotonic()) >= pos_dump_ts:
+			if src is not src_chk: src = src_chk
 			pos_new = src.tell()
 			if pos != pos_new:
 				pos = pos_new
 				if xattr_update:
-					src_xattr[xattr_name] =\
-						struct.pack('=I', pos)\
-						+ struct.pack('=I', len(line))\
-						+ sha1(line).digest()
-			pos_dump_ts = pos_dump_ts_get(ts)
-		if (yield line.decode('utf-8', 'replace')):
-			tailer.send(StopIteration)
-			break
+					os.setxattr( src.fileno(), xattr_name,
+						pos_fmt.pack(pos, len(line), pos_hash(line)) )
+			pos_dump_ts = pos_dump_ts_next(ts)
+		if (yield line.decode('utf-8', 'replace')): tailer.send(StopIteration); break
 
+
+def parse_iso8601(spec, tz_default=dt.timezone.utc, _re=re.compile(
+		r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
+		r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
+	if not (m := _re.search(spec)): raise ValueError(spec)
+	if m.group('tz'):
+		tz = m.group('tz')
+		if tz == 'Z': tz = dt.timezone.utc
+		else:
+			k = {'+':1,'-':-1}[tz[0]]
+			hh, mm = ((int(n) * k) for n in tz[1:].split(':', 1))
+			tz = dt.timezone(dt.timedelta(hours=hh, minutes=mm), tz)
+	else: tz = tz_default
+	ts_list = list(m.groups()[:5])
+	if not ts_list[3]: ts_list[3] = ts_list[4] = 0
+	ts_list = [ *map(int, ts_list),
+		int(m.group('s') or 0), int(m.group('us') or 0) ]
+	ts = dt.datetime.strptime(
+		'{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:06d}'.format(*ts_list),
+		'%Y-%m-%d %H:%M:%S.%f' )
+	return ts.replace(tzinfo=tz).timestamp()
 
 def mail_find(maildir, msgid, msgpath, ts, ts_diff_max=5*60):
-	if msgpath != 'INBOX':
-		maildir = join(maildir, '.{}'.format(msgpath))
+	if msgpath != 'INBOX': maildir = maildir / f'.{msgpath}'
 	for d in 'new', 'cur':
-		path = join(maildir, d)
-		for mail in sorted(os.listdir(path), reverse=True):
-			if not re.search(r'^\d+\.', mail): continue
-			mail = join(path, mail)
-			if abs(ts - os.stat(mail).st_mtime) > ts_diff_max: break # newest mails should be first
-			with open(mail) as src:
+		for mail in sorted((maildir / d).iterdir(), reverse=True):
+			if not re.search(r'^\d+\.', mail.name): continue
+			try: ts_mail = mail.stat().st_mtime
+			except FileNotFoundError: continue
+			if abs(ts - ts_mail) > ts_diff_max: break # newest mails should be first
+			with mail.open() as src:
 				msg_id_line = False
 				for line in src:
 					line = line.strip()
 					if not line: break # end of headers
-					if msg_id_line: match = re.search(r'^\s*(<[^>]+>)(\s|$)', line)
+					if msg_id_line: m = re.search(r'^\s*(<[^>]+>)(\s|$)', line)
 					else:
-						match = re.search(r'^message-id:\s*(?:(<[^>]+>)\s*)?$', line, re.I)
-						if match and not match.group(1): msg_id_line = True; continue
+						m = re.search(r'(?i)^message-id:\s*(?:(<[^>]+>)\s*)?$', line)
+						if m and not m.group(1): msg_id_line = True; continue
 					msg_id_line = False
-					if not match or match.group(1) != msgid: continue
+					if not m or m.group(1) != msgid: continue
 					src.seek(0)
 					return email.message_from_file(src)
 
 def mail_iter_log(log_tailer, maildir, path_filters=list()):
 	path_exclude_cache = set()
 
-	for line in iter(log_tailer.next, u''):
-		# u"2013-11-26T22:50:19.455012+06:00 mail.info dovecot[-]:
-		#   lda(fraggod): sieve: msgid=<20131126165018.BFDC02A0EA2@malediction.core>: stored mail into mailbox 'INBOX'\n"
-		# u"Jan 10 04:47:56 daedalus dovecot[899]: lda(fraggod)<899><kdxmBqy7F16DAwAAMpFoNw>:
-		#   sieve: msgid=<20200109234725.4A0D5A277F@malediction.host.fraggod.net>: fileinto action: stored mail into mailbox 'reports'"
-		match = re.search(
-			r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}) mail\.info dovecot\[(-|\d+)\]:\s+'
+	for line in log_tailer:
+		# "2013-11-26T22:50:19.455012+06:00 mail.info dovecot[-]:
+		#   lda(fraggod): sieve: msgid=<20131126165018.BFDC02A0EA2@malediction.core>:
+		#   stored mail into mailbox 'INBOX'\n"
+		# "Jan 10 04:47:56 daedalus dovecot[899]: lda(fraggod)<899><kdxmBqy7F16DAwAAMpFoNw>:
+		#   sieve: msgid=<20200109234725.4A0D5A277F@malediction.host.fraggod.net>: fileinto action:
+		#   stored mail into mailbox 'reports'"
+		m = re.search(
+			r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2})'
+			r' mail\.info dovecot\[(-|\d+)\]:\s+'
 			r'lda\([^)]+\)(<\d+><[^>]+>)?: sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
 			r'( fileinto action:)? stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
-		if not match:
+		if not m:
 			log.warn('Failed to match line: %r', line.strip())
 			continue
-		ts = calendar.timegm(iso8601.parse_date(match.group('ts')).utctimetuple())
-		msgid, msgpath = match.group('msgid'), match.group('path')
+		ts = parse_iso8601(m.group('ts'))
+		msgid, msgpath = m.group('msgid'), m.group('path')
 
 		if msgid == 'unspecified':
 			log.info('Skipping message with unspeficied msgid (path: %s)', msgpath)
@@ -202,14 +200,10 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 		yield msgpath, msg
 
 
-def zmq_addr(addr):
-	if not re.search(r'^\w+://', addr):
-		return 'tcp://{}'.format(addr)
-	return addr
-
 def header_decode(line):
 	# Doesn't pick up some badly-concatenated stuff
-	return ' '.join( val.decode(enc or 'utf-8', 'replace')
+	return ' '.join(
+		(val if isinstance(val, str) else val.decode(enc or 'utf-8', 'replace'))
 		for val, enc in email.header.decode_header(line) )
 
 def header(msg, k):
@@ -278,69 +272,70 @@ def main(args=None):
 
 	if not opts.bind and not opts.dst:
 		parser.error('At least one of either --bind or --dst must be specified.')
+	p_maildir, p_log = map(pl.Path, [opts.maildir_path, opts.log_path])
+	if not all(p.exists() for p in [p_maildir, p_log]):
+		parser.error('Missing maildir/log path(s)')
 
 	global log
 	import logging
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
-	log_tailer = file_follow_durable( opts.log_path,
-		xattr_name='user.mail_notify.pos', xattr_update=not opts.dry_run )
-
-	ctx = zmq.Context()
+	log_tailer = file_follow_durable(opts.log_path, xattr_update=not opts.dry_run)
+	ctx, sock = zmq.Context(), None
 	try:
-		with closing(ctx.socket(zmq.PUB)) as sock:
-			if hasattr(zmq, 'IPV4ONLY'):
-				sock.setsockopt(zmq.IPV4ONLY, False)
-			sock.setsockopt(zmq.RECONNECT_IVL_MAX, int(300 * 1000))
-			sock.setsockopt(zmq.LINGER, int(opts.wait_connect * 1000))
-			sock.setsockopt(zmq.SNDHWM, 50)
+		sock = ctx.socket(zmq.PUB)
+		if hasattr(zmq, 'IPV4ONLY'): sock.setsockopt(zmq.IPV4ONLY, False)
+		sock.setsockopt(zmq.RECONNECT_IVL_MAX, int(300 * 1000))
+		sock.setsockopt(zmq.LINGER, int(opts.wait_connect * 1000))
+		sock.setsockopt(zmq.SNDHWM, 50)
 
-			if opts.bind:
-				for dst in it.imap(zmq_addr, opts.bind):
-					log.debug('Binding to %s', dst)
-					sock.bind(dst)
-			if opts.dst:
-				log.debug('Connecting to %s peer(s)', len(opts.dst))
-				for dst in it.imap(zmq_addr, opts.dst): sock.connect(dst)
-			time.sleep(opts.wait_connect)
+		zmq_addr = lambda addr: ( f'tcp://{addr}'
+			if not re.search(r'^\w+://', addr) else addr )
+		if opts.bind:
+			for dst in map(zmq_addr, opts.bind):
+				log.debug('Binding to %s', dst)
+				sock.bind(dst)
+		if opts.dst:
+			log.debug('Connecting to %s peer(s)', len(opts.dst))
+			for dst in map(zmq_addr, opts.dst): sock.connect(dst)
+		time.sleep(opts.wait_connect)
 
-			def zmq_send(summary, body):
-				msg = dict(
-					summary=summary, body=body,
-					app_name=opts.app_name, icon=','.join(opts.icon or []) )
-				msg = '\1' + json.dumps([opts.hostname, time.time(), msg])
-				try: sock.send(msg, zmq.DONTWAIT)
-				except zmq.ZMQError as err:
-					if err.errno != zmq.EAGAIN: raise
+		def zmq_send(summary, body):
+			msg = dict(
+				summary=summary, body=body,
+				app_name=opts.app_name, icon=','.join(opts.icon or []) )
+			msg = '\1' + json.dumps([opts.hostname, time.time(), msg])
+			try: sock.send_string(msg, zmq.DONTWAIT)
+			except zmq.ZMQError as err:
+				if err.errno != zmq.EAGAIN: raise
 
-			if opts.test_message:
-				log.debug('Dispatching test notification')
-				format_kws = dict( host=os.uname()[1],
-						pub=', '.join(opts.bind), sub=', '.join(opts.dst) )\
-					if not opts.pango_markup else\
-					dict( host='<b>{}</b>'.format(xml_escape(os.uname()[1])),
-						pub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.bind),
-						sub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.dst) )
-				zmq_send( 'Mail notification test',
-					( 'Mail notification daemon started successfully on host:'
-						' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )\
-					.format(**format_kws) )
+		if opts.test_message:
+			log.debug('Dispatching test notification')
+			format_kws = dict( host=os.uname()[1],
+					pub=', '.join(opts.bind), sub=', '.join(opts.dst) )\
+				if not opts.pango_markup else\
+				dict( host='<b>{}</b>'.format(xml_escape(os.uname()[1])),
+					pub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.bind),
+					sub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.dst) )
+			zmq_send( 'Mail notification test',
+				( 'Mail notification daemon started successfully on host:'
+					' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )\
+				.format(**format_kws) )
 
-			for path, msg in mail_iter_log(log_tailer, opts.maildir_path, opts.filter):
-				msg_from, msg_subj = (header(msg, k) for k in ['from', 'subject'])
-				log.debug('Dispatching notification: (%s) %s - %s', path, msg_from, msg_subj)
-				if opts.pango_markup:
-					path, msg_from, msg_subj = map(xml_escape, [path, msg_from, msg_subj])
-					msg_path = '<b>{}</b>'.format(path)
-				else: msg_path = path
-				zmq_send(
-					'New mail ({})'.format(path),
-					u'Path: {}\nFrom: {}\nSubject: {}'.format(msg_path, msg_from, msg_subj) )
+		for path, msg in mail_iter_log(log_tailer, p_maildir, opts.filter):
+			msg_from, msg_subj = (header(msg, k) for k in ['from', 'subject'])
+			log.debug('Dispatching notification: (%s) %s - %s', path, msg_from, msg_subj)
+			if opts.pango_markup:
+				path, msg_from, msg_subj = map(xml_escape, [path, msg_from, msg_subj])
+				msg_path = '<b>{}</b>'.format(path)
+			else: msg_path = path
+			zmq_send( 'New mail ({})'.format(path),
+				'Path: {}\nFrom: {}\nSubject: {}'.format(msg_path, msg_from, msg_subj) )
 
 	finally:
 		log.debug('Terminating zmq context...')
+		if sock: sock.close()
 		ctx.term()
-
 
 if __name__ == '__main__': sys.exit(main())
