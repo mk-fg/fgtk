@@ -4096,18 +4096,26 @@ log-tail-check_
 ^^^^^^^^^^^^^^^
 .. _log-tail-check: scraps/log-tail-check
 
-Script (or a template of one) designed to be run periodically to process latest
-log entries.
+Python script (or a template of one) designed to be run periodically to process
+latest entries in some log via regexp, match some timestamped lines from those.
 
-Handles log rotation/truncation and multiple changing logs cases.
+Handles log rotation/truncation and multiple-changing-logs cases.
 
-Only reads actually last lines, storing last position and hash of "N bytes after
-that" (incl. N itself) in files' "user." xattrs, to reliably detect if file was
-rotated/truncated on the next run (i.e. if offset doesn't exist or there's diff
-data there).
+Only reads lines appended to the file(s) since last check, storing last position
+and hash of "N bytes after that" (incl. N itself) in files' "user." xattrs,
+to reliably detect if file was rotated/truncated on the next run (offset doesn't
+exist or there's diff data there).
 
-Also stores state of the actual processing there, which is just "check occurence
-of regexp 'name' group within timeout, print line if there isn't" in the script.
+Also stores state of the line-processing in xattrs, which is a simple "check
+occurence of regexp 'name' group within last hour, print msg if there isn't"
+in the script, with example input-log for this template-script looking like this::
+
+  2022-10-15T12:33:44+05:00 name1
+  2022-10-15T12:35:44+05:00 name2
+  2022-10-15T12:36:44+05:00 name1
+  ...
+
+To test with: ``./scraps/log-tail-check -n name1 -n name2 -n name3 test.log``
 
 resize-rpi-fat32-for-card_
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
