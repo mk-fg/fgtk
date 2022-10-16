@@ -162,12 +162,13 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 		#   lda(fraggod): sieve: msgid=<20131126165018.BFDC02A0EA2@malediction.core>:
 		#   stored mail into mailbox 'INBOX'\n"
 		# "Jan 10 04:47:56 daedalus dovecot[899]: lda(fraggod)<899><kdxmBqy7F16DAwAAMpFoNw>:
-		#   sieve: msgid=<20200109234725.4A0D5A277F@malediction.host.fraggod.net>: fileinto action:
-		#   stored mail into mailbox 'reports'"
+		#   sieve: msgid=<20200109234725.4A0D5A277F@malediction.host.fraggod.net>:
+		#   fileinto action: stored mail into mailbox 'reports'"
 		m = re.search(
 			r'(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2})'
 			r' mail\.info dovecot\[(-|\d+)\]:\s+'
-			r'lda\([^)]+\)(<\d+><[^>]+>)?: sieve: msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
+			r'lda\([^)]+\)(<\d+><[^>]+>)?: sieve:'
+			r' msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
 			r'( fileinto action:)? stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
 		if not m:
 			log.warn('Failed to match line: %r', line.strip())
@@ -179,7 +180,8 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 			log.info('Skipping message with unspeficied msgid (path: %s)', msgpath)
 			continue
 
-		if msgpath not in path_exclude_cache:
+		if msgpath in path_exclude_cache: msg_pass = False
+		else:
 			msg_pass = True
 			for pat in path_filters:
 				if not pat: continue
@@ -187,37 +189,31 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 				if re.search(pat, msgpath):
 					if not inc: msg_pass = False
 					break
-		else: msg_pass = False
 		if not msg_pass:
 			path_exclude_cache.add(msgpath)
 			log.debug('Skipping mail for path: %s', msgpath)
 			continue
 
-		msg = mail_find(maildir, msgid, msgpath, ts)
-		if msg is None:
+		if (msg := mail_find(maildir, msgid, msgpath, ts)) is None:
 			log.info('Failed to find delivered (path: %s) message: %s', msgpath, msgid)
 			continue
 		yield msgpath, msg
 
-
-def header_decode(line):
-	# Doesn't pick up some badly-concatenated stuff
-	return ' '.join(
+def mail_header(msg, k):
+	decode = lambda line: ' '.join(
 		(val if isinstance(val, str) else val.decode(enc or 'utf-8', 'replace'))
 		for val, enc in email.header.decode_header(line) )
-
-def header(msg, k):
-	res, header = list(), header_decode(msg.get(k, ''))
+	res, header = list(), decode(msg.get(k, ''))
+	# email.header.decode_header misses some badly-concatenated stuff
 	while True:
-		match = re.search('=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
-		if not match:
+		m = re.search('=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
+		if not m:
 			res.append(header)
 			break
-		start, end = match.span(0)
-		match = header[start:end]
-		try: match = header_decode(match)
+		start, end = m.span(0)
+		try: m = decode(header[start:end])
 		except email.errors.HeaderParseError: pass
-		res.extend([header[:start], match])
+		res.extend([header[:start], m])
 		header = header[end:]
 	return ''.join(res)
 
@@ -228,7 +224,8 @@ def main(args=None):
 		description='Monitor (tail) specified dovecot log'
 			' and dispatch new mail delivery notifications via zeromq pub socket.')
 	parser.add_argument('log_path', help='Path to dovecot log file.')
-	parser.add_argument('maildir_path', help='Path to maildir where mails are delivered to.')
+	parser.add_argument('maildir_path',
+		help='Path to maildir where mails are delivered to.')
 
 	parser.add_argument('-b', '--bind',
 		action='append', metavar='ip:port',
@@ -238,7 +235,8 @@ def main(args=None):
 	parser.add_argument('-d', '--dst',
 		action='append', metavar='ip:port',
 		help='Peer address to connect zmq socket to - can be either ip:port'
-				' (assumed to be tcp socket, e.g. 1.2.3.4:5678) or full zmq url (e.g. tcp://1.2.3.4:5678).'
+				' (assumed to be tcp socket, e.g. 1.2.3.4:5678)'
+				' or full zmq url (e.g. tcp://1.2.3.4:5678).'
 			' Can be specified multiple times to deliver message to more than one peer.')
 
 	parser.add_argument('-n', '--hostname',
@@ -259,7 +257,8 @@ def main(args=None):
 	parser.add_argument('-a', '--app-name', metavar='name', default='mail_notify',
 		help='App name for the icon (default: %(default)s).')
 	parser.add_argument('-i', '--icon', action='append', metavar='icon',
-		help='Icon name, path or alias. Can be specified multiple times (for fallback icon names).')
+		help='Icon name, path or alias.'
+			' Can be specified multiple times (for fallback icon names).')
 
 	parser.add_argument('--test-message', action='store_true',
 		help='Issue test notification right after start.')
@@ -312,26 +311,25 @@ def main(args=None):
 
 		if opts.test_message:
 			log.debug('Dispatching test notification')
-			format_kws = dict( host=os.uname()[1],
-					pub=', '.join(opts.bind), sub=', '.join(opts.dst) )\
-				if not opts.pango_markup else\
-				dict( host='<b>{}</b>'.format(xml_escape(os.uname()[1])),
-					pub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.bind),
-					sub=', '.join('<u>{}</u>'.format(xml_escape(v)) for v in opts.dst) )
+			host, pub, sub = os.uname()[1], opts.bind, opts.dst
+			if opts.pango_markup:
+				host = f'<b>{xml_escape(host)}</b>'
+				pub = (f'<u>{xml_escape(v)}</u>' for v in pub)
+				sub = (f'<u>{xml_escape(v)}</u>' for v in sub)
+			pub, sub = ', '.join(pub), ', '.join(sub)
 			zmq_send( 'Mail notification test',
-				( 'Mail notification daemon started successfully on host:'
-					' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )\
-				.format(**format_kws) )
+				'Mail notification daemon started successfully on host:'
+				f' {host}\nPub socket(s): {pub}\nConnecting to: {sub}' )
 
 		for path, msg in mail_iter_log(log_tailer, p_maildir, opts.filter):
-			msg_from, msg_subj = (header(msg, k) for k in ['from', 'subject'])
+			msg_from, msg_subj = (mail_header(msg, k) for k in ['from', 'subject'])
 			log.debug('Dispatching notification: (%s) %s - %s', path, msg_from, msg_subj)
-			if opts.pango_markup:
+			if not opts.pango_markup: msg_path = path
+			else:
 				path, msg_from, msg_subj = map(xml_escape, [path, msg_from, msg_subj])
-				msg_path = '<b>{}</b>'.format(path)
-			else: msg_path = path
-			zmq_send( 'New mail ({})'.format(path),
-				'Path: {}\nFrom: {}\nSubject: {}'.format(msg_path, msg_from, msg_subj) )
+				msg_path = f'<b>{path}</b>'
+			zmq_send( f'New mail ({path})',
+				f'Path: {msg_path}\nFrom: {msg_from}\nSubject: {msg_subj}' )
 
 	finally:
 		log.debug('Terminating zmq context...')

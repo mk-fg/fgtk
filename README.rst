@@ -2968,9 +2968,9 @@ dovecot-mail_
 .. _dovecot-mail: desktop/notifications/dovecot-mail
 
 Daemon script to monitor dovecot delivery logs (either generic ones, or produced
-via "mail_log" plugin), efficiently find delivered messages by their message-id
-and issue desktop notification to a remote host with parsed message details
-(path it was filed under, decoded from and subject headers).
+via "mail_log" plugin), efficiently find delivered messages in maildir by their
+message-ids from the log, and issue desktop notification to a remote host with parsed
+message details (path it was filed under, decoded "from" and "subject" headers).
 
 Things like rsyslog make it fairly easy to create a separate log with such
 notifications for just one user, e.g.::
@@ -2986,12 +2986,16 @@ notifications for just one user, e.g.::
     File="/var/log/processing/mail.deliver.someuser.log" )
 
 Remote notifications are delivered to desktop machines via robust zeromq pub/sub
-sockets `as implemented in notification-thing daemon`_ I have for that purpose.
+sockets `as implemented in notification-thing daemon`_ (one that I'm using),
+but script can easily be tweaked to use some other mechanism.
 
-Even idle-imap doesn't seem to provide proper push notifications with multiple
-folders yet, and this simple hack doesn't even require running a mail client.
+This hack doesn't require running a mail client, but it's possible that these
+might also support realtime notifications like these via IDLE and NOTIFY IMAP
+protocol commands, but `claws-mail doesn't seem to support those yet`_,
+and that's the one I have here.
 
 .. _as implemented in notification-thing daemon: https://github.com/mk-fg/notification-thing/#network-broadcasting
+.. _claws-mail doesn't seem to support those yet: https://www.thewildbeast.co.uk/claws-mail/bugzilla/show_bug.cgi?id=1408
 
 icon_
 '''''
