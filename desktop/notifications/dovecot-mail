@@ -221,52 +221,57 @@ def mail_header(msg, k):
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
-		description='Monitor (tail) specified dovecot log'
+		usage='%(prog)s [options] log-path maildir-path',
+		description='Monitor (tail) specified dovecot log file'
 			' and dispatch new mail delivery notifications via zeromq pub socket.')
 	parser.add_argument('log_path', help='Path to dovecot log file.')
 	parser.add_argument('maildir_path',
 		help='Path to maildir where mails are delivered to.')
 
-	parser.add_argument('-b', '--bind',
+	group = parser.add_argument_group('ZeroMQ socket options')
+	group.add_argument('-b', '--bind',
 		action='append', metavar='ip:port',
 		help='zmq socket bind address - can be either ip:port (assumed to be'
-				' tcp socket, e.g. 1.2.3.4:5678) or full zmq url (e.g. tcp://1.2.3.4:5678).'
+				' tcp socket, e.g. 1.2.3.4:5678) or full zmq url (tcp://1.2.3.4:5678).'
 			' Can be specified multiple times to bind to more than one address/port.')
-	parser.add_argument('-d', '--dst',
+	group.add_argument('-d', '--dst',
 		action='append', metavar='ip:port',
 		help='Peer address to connect zmq socket to - can be either ip:port'
-				' (assumed to be tcp socket, e.g. 1.2.3.4:5678)'
-				' or full zmq url (e.g. tcp://1.2.3.4:5678).'
+				' (assumed to be tcp socket, like 1.2.3.4:5678)'
+				' or full zmq url (tcp://1.2.3.4:5678).'
 			' Can be specified multiple times to deliver message to more than one peer.')
+	group.add_argument('-w', '--wait-connect',
+		type=float, metavar='seconds', default=1.0,
+		help='Timeout to wait for peer connections to establish'
+			' (default: %(default)s) and unsent messages to linger on app stop.')
 
-	parser.add_argument('-n', '--hostname',
-		metavar='network_name', default=os.uname()[1],
-		help='Source name to use for dispatched message.')
-	parser.add_argument('-w', '--wait-connect',
-		type=float, metavar='seconds', default=1,
-		help='Timeout to wait for peer connections to'
-			' establish (default: %(default)s) and unsent messages to linger.')
-
-	parser.add_argument('-f', '--filter', action='append', metavar='spec',
+	group = parser.add_argument_group('Filtering')
+	group.add_argument('-f', '--filter', action='append', metavar='spec',
 		help='Filter-pattern (format: [+/-]regexp) for mail path.'
 			' Patterns are evaluated in same order'
 				' as they are specified with "pass" as a default action.'
 			' Optional "-" or "+" sign before regexp explicitly marks pattern as'
 				' include or exclude one, otherwise patterns are treated as "exclude".')
 
-	parser.add_argument('-a', '--app-name', metavar='name', default='mail_notify',
+	group = parser.add_argument_group('Message formatting')
+	group.add_argument('-n', '--hostname',
+		metavar='network_name', default=os.uname()[1],
+		help='Source name to use for dispatched message.')
+	group.add_argument('-a', '--app-name', metavar='name', default='mail_notify',
 		help='App name for the icon (default: %(default)s).')
-	parser.add_argument('-i', '--icon', action='append', metavar='icon',
+	group.add_argument('-i', '--icon', action='append', metavar='icon',
 		help='Icon name, path or alias.'
 			' Can be specified multiple times (for fallback icon names).')
-
-	parser.add_argument('--test-message', action='store_true',
-		help='Issue test notification right after start.')
-	parser.add_argument('--pango-markup', action='store_true',
+	group.add_argument('--pango-markup', action='store_true',
 		help='Use pango markup in issued notifications and escape other stuff.')
-	parser.add_argument('--dry-run', action='store_true',
+
+	group = parser.add_argument_group('Testing/debug options')
+	group.add_argument('--test-message', action='store_true',
+		help='Issue test notification right after start.')
+	group.add_argument('--dry-run', action='store_true',
 		help='Do not store/update log position - just parse and generate notifications.')
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if not opts.bind and not opts.dst:
