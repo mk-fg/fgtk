@@ -2,7 +2,7 @@
 
 
 dev= ssid= pass= ip_base=
-ap_band= ap_chan= ap_ht= ap_vht=
+ap_band= ap_chan= ap_ht= ap_vht= ap_mtu=
 
 ssid_list=(
 	'Police Surveillance Van 2'
@@ -86,6 +86,7 @@ run() {
 	[[ -n "$ap_chan" ]] || ap_chan=2
 	[[ -z "$ap_ht" ]] || ap_ht="ieee80211n=1"
 	[[ -z "$ap_vht" ]] || ap_vht=$'ieee80211ac=1\nvht_oper_centr_freq_seg0_idx='"$ap_vht"
+	[[ -n "$ap_mtu" ]] || ap_mtu=1400
 
 	ip_gw="$ip_base".1
 	ip_min="$ip_base".2 ip_max="$ip_base".254
@@ -97,7 +98,7 @@ run() {
 	echo "ssid: $ssid"
 	echo "pass: $pass"
 	echo "ip: $ip_min - $ip_max ($ip_mask), gw: $ip_gw"
-	echo "wifi: band=$ap_band chan=$ap_chan $ap_ht ${ap_vht%%$'\n'*}"
+	echo "wifi: band=$ap_band chan=$ap_chan mtu=$ap_mtu $ap_ht ${ap_vht%%$'\n'*}"
 	echo '--------------------'
 	echo "sysctl -w net.ipv4.conf.all.forwarding=1"
 	echo "iptables -t nat -I POSTROUTING -s ${ip_net} -j MASQUERADE"
@@ -124,6 +125,7 @@ end $ip_max
 option subnet $ip_mask
 option dns 1.1.1.1
 option router $ip_gw
+option mtu $ap_mtu
 
 interface $dev
 
@@ -203,6 +205,7 @@ while [[ -n "$1" ]]; do
 		-c|--wifi-chan) shift; ap_chan=$1; shift ;;
 		-ht|--wifi-ht) shift; ap_ht=t ;;
 		-vht|--wifi-vht-seg0) shift; ap_ht=t; ap_vht=$1; shift ;;
+		-mtu) shift; ap_mtu=$1; shift ;;
 
 		welp) exit 1 ;;
 		*) echo "Unknown option: $1" && exit 1 ;;
