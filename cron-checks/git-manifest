@@ -44,11 +44,10 @@ def parse_acl(acl, uidgid, prefix=''):
 	if (v := acl.read(4)) != b'\2\0\0\0':
 		raise ValueError(f'ACL version mismatch [ {v} ]')
 	while True:
-		entry = acl.read(8)
-		if not entry: break
+		if not (entry := acl.read(8)): break
 		elif len(entry) != 8: raise ValueError('ACL length mismatch')
-		tag, perm, n = struct.unpack('<HHI', entry)
-		tag = ACLTag(tag); perm = ACLPerm(perm)
+		tag, perm, n = struct.unpack('HHI', entry)
+		tag, perm = ACLTag(tag), ACLPerm(perm)
 		match tag:
 			case ACLTag.uo | ACLTag.go:
 				lines.append(f'{tag.str[0]}::{perm.str}')
@@ -59,12 +58,12 @@ def parse_acl(acl, uidgid, prefix=''):
 			case ACLTag.other: lines.append(f'o::{perm.str}')
 			case ACLTag.mask: lines.append(f'm::{perm.str}')
 			case _: raise ValueError(tag)
-		lines.sort(key=lambda s: ('ugmo'.index(s[0]), s))
+	lines.sort(key=lambda s: ('ugmo'.index(s[0]), s))
 	return ','.join(f'{prefix}{s}' for s in lines)
 
 
 Caps = enum.IntEnum('Caps', dict((cap, 1 << n) for n, cap in enumerate((
-	'chown dac_override dac_read_search fowner fsetid kill setgid setuid setpcap'
+	' chown dac_override dac_read_search fowner fsetid kill setgid setuid setpcap'
 	' linux_immutable net_bind_service net_broadcast net_admin net_raw ipc_lock ipc_owner'
 	' sys_module sys_rawio sys_chroot sys_ptrace sys_pacct sys_admin sys_boot'
 	' sys_nice sys_resource sys_time sys_tty_config mknod lease audit_write audit_control'
@@ -73,17 +72,11 @@ Caps = enum.IntEnum('Caps', dict((cap, 1 << n) for n, cap in enumerate((
 
 def parse_caps(cap):
 	cap, lines = io.BytesIO(cap), list()
-	if len(v := cap.read(4)) != 4:
-		raise ValueError('Broken capability string')
-	v, = struct.unpack('<I', v)
-	ver, eff = (v >> 3*8) & 0xff, v & 1
-	if ver not in [2, 3]:
-		raise ValueError(f'Unsupported capability version {ver}')
-	uint32 = lambda: int.from_bytes(cap.read(4), 'little')
-	perm1, inh1 = uint32(), uint32()
-	perm2, inh2 = uint32(), uint32()
-	if (n := len(cap.read())) != {2:0, 3:4}[ver]:
-		raise ValueError(f'Cap-string mismatch [ {n} != 4 ]')
+	ver, eff = ((v := struct.unpack('I', cap.read(4))[0]) >> 3*8) & 0xff, v & 1
+	if ver not in [2, 3]: raise ValueError(f'Unsupported capability v{ver}')
+	perm1, inh1, perm2, inh2 = struct.unpack('IIII', cap.read(16))
+	if (n := len(cap.read())) != (n_tail := {2:0, 3:4}[ver]):
+		raise ValueError(f'Cap-string length mismatch [ {n} != {n_tail} ]')
 	perm_bits, inh_bits = perm2 << 32 | perm1, inh2 << 32 | inh1
 	perm, inh = set(), set()
 	for c in Caps:
