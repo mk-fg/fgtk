@@ -30,7 +30,7 @@ Scripts
 File/dir/fs management
 ^^^^^^^^^^^^^^^^^^^^^^
 
-File/link/dir and filesystem manipulation tools.
+File/link/dir and filesystem structure manipulation tools.
 
 scim set
 ''''''''
@@ -215,10 +215,10 @@ See head of the file for build and usage info.
 
 
 
-Generic file contents manglers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Various file-data processing tools
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Things that manipulate arbitrary file contents.
+Things that manipulate some kind of data formats or mangle generic file/pipe contents.
 
 repr_
 '''''
@@ -257,60 +257,6 @@ terminal::
   % t -f /var/log/app2.log | color blue - &
 
 Or to get color-escape-magic for your bash script: ``color red bold p``
-
-color-b64sort_
-''''''''''''''
-.. _color-b64sort: color-b64sort
-
-Tool to filter, sort and compress list of colors - aka color palette - into
-base64, to then use as a compact blob in visualization scripts easily.
-
-- Input: a list of hex-encoded colors, separated by any spaces/newlines.
-
-- Filtering:
-
-  Removes colors too close to specified background color
-  (using specified Delta E CIE 2000 color-diff threshold).
-
-  Compares colors all-to-all, and removes ones that are too close to each other,
-  with a similar configurable threshold.
-
-- Ordering:
-
-  Picks next color based on min(deltas-with-others) value, to get the most
-  distinct color on every step.
-
-  This is further configured by using higher weights of min(deltas-with-n-last)
-  colors, so that next pick ends up being as distinct as possible from N ones
-  that are right before it first, and then the rest of them.
-
-  Current default for ``-k/--sort-delta-keys`` "weight:count" list is "0.3:5
-  0.2:10 0.1:20", with leftover 0.4 weight used for min(deltas-with-all-picked)
-  value.
-
-- Output:
-
-  Urlsafe-base64 of concatenated 3-byte color values in RGB order,
-  instead of more bulky "lines of hex-encoded colors" or other color-spec types,
-  to hardcode without taking too much space.
-
-Intended use it to have output color list of 50+ values, and then pick them in
-order (for chart lines, tree branches, table row/cell backgrounds, etc), which
-should return most distinctive colors first, without resorting to repetition as
-quickly as with e.g. D3.js fixed 10/20-color palettes.
-
-There are many great tools like `"i want hue"`_ that can be used to generate input
-color list for this script, with features like accounting for color blindness types,
-but it can be just a sequence of points from any nice gradient too - input
-ordering or similarity should not matter.
-
-It's a small python script, which uses colormath_ module for Delta E CIE 2000
-color-diff calculations.
-Can take some time to run with long lists due to how all\*all combinatorics work,
-but using pypy instead of cpython can speed that up a lot.
-
-.. _"i want hue": https://medialab.github.io/iwanthue/
-.. _colormath: https://python-colormath.readthedocs.io/
 
 resolve-hostnames_
 ''''''''''''''''''
@@ -623,6 +569,61 @@ Kinda like BeautifulSoup, except not limited to html and trivial enough so that
 it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when ``xmllint --format`` fail and/or break such kinda-ML-but-not-XML files.
+
+hashname_
+'''''''''
+.. _hashname: hashname
+
+Script to add base32-encoded content hash to filenames.
+
+For example::
+
+  % hashnames -p *.jpg
+
+  wallpaper001.jpg -> wallpaper001.kw30e7cqytmmw.jpg
+  wallpaper893.jpg -> wallpaper893.vbf0t0qht4dd0.jpg
+  wallpaper895.jpg -> wallpaper895.q5mp0j95bxbdr.jpg
+  wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
+
+For collecting files with commonly-repeated names into some dir, like random
+"wallpaper.jpg" or "image.jpg" images above from the internets.
+
+Use -h/--help for info on more useful options.
+
+hhash_
+''''''
+.. _hhash: hhash
+
+Produces lower-entropy "human hash" phrase consisting of aspell english
+dictionary words for input arg(s) or data on stdin.
+
+It works by first calculating BLAKE2 hash of input string/data via libsodium_,
+and then encoding it using consistent word-alphabet, exactly like something like
+base32 or base64 does.
+
+Example::
+
+  % hhash -e AAAAC3NzaC1lZDI1NTE5AAAAIPh5/VmxDwgtJI0HiFBqZkbyV1I1YK+2DVjGjYydNp5o
+  allan avenues regrade windups flours
+  entropy-stats: word-count=5 dict-words=126643 word-bits=17.0 total-bits=84.8
+
+Here -e is used to print entropy estimate for produced words.
+
+Note that resulting entropy values can be fractional if word-alphabet ends up
+being padded to map exactly to N bits (e.g. 17 bits above), so that words in it
+can be repeated, hence not exactly 17 bits of distinct values.
+
+Written in OCAML, linked against libsodium_ (for BLAKE2 hash function) via small
+C glue code, build with::
+
+  % ocamlopt -o hhash -O2 unix.cmxa str.cmxa \
+     -cclib -lsodium -ccopt -Wl,--no-as-needed hhash.ml hhash.ml.c
+  % strip hhash
+
+Caches dictionary into a ~/.cache/hhash.dict (-c option) on first run to produce
+consistent results on this machine. Updating that dictionary will change outputs!
+
+.. _libsodium: https://libsodium.org/
 
 crypt_
 ''''''
@@ -1498,41 +1499,6 @@ Other options allow for picking number of words and sanity-checks like min/max l
 
 .. _Diceware-like: https://en.wikipedia.org/wiki/Diceware
 
-hhash_
-''''''
-.. _hhash: hhash
-
-Produces lower-entropy "human hash" phrase consisting of aspell english
-dictionary words for input arg(s) or data on stdin.
-
-It works by first calculating BLAKE2 hash of input string/data via libsodium_,
-and then encoding it using consistent word-alphabet, exactly like something like
-base32 or base64 does.
-
-Example::
-
-  % hhash -e AAAAC3NzaC1lZDI1NTE5AAAAIPh5/VmxDwgtJI0HiFBqZkbyV1I1YK+2DVjGjYydNp5o
-  allan avenues regrade windups flours
-  entropy-stats: word-count=5 dict-words=126643 word-bits=17.0 total-bits=84.8
-
-Here -e is used to print entropy estimate for produced words.
-
-Note that resulting entropy values can be fractional if word-alphabet ends up
-being padded to map exactly to N bits (e.g. 17 bits above), so that words in it
-can be repeated, hence not exactly 17 bits of distinct values.
-
-Written in OCAML, linked against libsodium_ (for BLAKE2 hash function) via small
-C glue code, build with::
-
-  % ocamlopt -o hhash -O2 unix.cmxa str.cmxa \
-     -cclib -lsodium -ccopt -Wl,--no-as-needed hhash.ml hhash.ml.c
-  % strip hhash
-
-Caches dictionary into a ~/.cache/hhash.dict (-c option) on first run to produce
-consistent results on this machine. Updating that dictionary will change outputs!
-
-.. _libsodium: https://libsodium.org/
-
 urlparse_
 '''''''''
 .. _urlparse: urlparse
@@ -2016,26 +1982,6 @@ fine for intended purpose (bots spam requests anyway).
 
 .. _nginx-stat-check: https://github.com/mk-fg/nginx-stat-check
 
-hashname_
-'''''''''
-.. _hashname: hashname
-
-Script to add base32-encoded content hash to filenames.
-
-For example::
-
-  % hashnames -p *.jpg
-
-  wallpaper001.jpg -> wallpaper001.kw30e7cqytmmw.jpg
-  wallpaper893.jpg -> wallpaper893.vbf0t0qht4dd0.jpg
-  wallpaper895.jpg -> wallpaper895.q5mp0j95bxbdr.jpg
-  wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
-
-For collecting files with commonly-repeated names into some dir, like random
-"wallpaper.jpg" or "image.jpg" images above from the internets.
-
-Use -h/--help for info on more useful options.
-
 sys-wait_
 '''''''''
 .. _sys-wait: sys-wait
@@ -2073,6 +2019,60 @@ notification emails on that platform.
 
 .. _feedparser: https://pythonhosted.org/feedparser/
 .. _EWMA: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
+
+color-b64sort_
+''''''''''''''
+.. _color-b64sort: color-b64sort
+
+Tool to filter, sort and compress list of colors - aka color palette - into
+base64, to then use as a compact blob in visualization scripts easily.
+
+- Input: a list of hex-encoded colors, separated by any spaces/newlines.
+
+- Filtering:
+
+  Removes colors too close to specified background color
+  (using specified Delta E CIE 2000 color-diff threshold).
+
+  Compares colors all-to-all, and removes ones that are too close to each other,
+  with a similar configurable threshold.
+
+- Ordering:
+
+  Picks next color based on min(deltas-with-others) value, to get the most
+  distinct color on every step.
+
+  This is further configured by using higher weights of min(deltas-with-n-last)
+  colors, so that next pick ends up being as distinct as possible from N ones
+  that are right before it first, and then the rest of them.
+
+  Current default for ``-k/--sort-delta-keys`` "weight:count" list is "0.3:5
+  0.2:10 0.1:20", with leftover 0.4 weight used for min(deltas-with-all-picked)
+  value.
+
+- Output:
+
+  Urlsafe-base64 of concatenated 3-byte color values in RGB order,
+  instead of more bulky "lines of hex-encoded colors" or other color-spec types,
+  to hardcode without taking too much space.
+
+Intended use it to have output color list of 50+ values, and then pick them in
+order (for chart lines, tree branches, table row/cell backgrounds, etc), which
+should return most distinctive colors first, without resorting to repetition as
+quickly as with e.g. D3.js fixed 10/20-color palettes.
+
+There are many great tools like `"i want hue"`_ that can be used to generate input
+color list for this script, with features like accounting for color blindness types,
+but it can be just a sequence of points from any nice gradient too - input
+ordering or similarity should not matter.
+
+It's a small python script, which uses colormath_ module for Delta E CIE 2000
+color-diff calculations.
+Can take some time to run with long lists due to how all\*all combinatorics work,
+but using pypy instead of cpython can speed that up a lot.
+
+.. _"i want hue": https://medialab.github.io/iwanthue/
+.. _colormath: https://python-colormath.readthedocs.io/
 
 
 `[dev] Dev tools`_
