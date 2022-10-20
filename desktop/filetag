@@ -105,7 +105,8 @@ tag_map = dict(
 		'([bdo]?a|t?c|k|z)?sh': 'sh' },
 	code_path = {
 		'/(Makefile|CMakeLists.txt|Imakefile|makepp|configure)$': 'make',
-		'rakefile': 'ruby', '/config$': 'conf', '/zsh/_[^/]+$': 'sh', 'patch': 'diff' } )
+		r'/([Dd]ockerfile|[Dd]ocker(file)?\.[^/]+)$': 'docker',
+		'/config$': 'conf', 'rakefile': 'ruby', '/zsh/_[^/]+$': 'sh', 'patch': 'diff' } )
 
 
 class TagDB:
