@@ -123,7 +123,7 @@ slice=$1
 		[ -n "$procs" ] || break
 		[ -z "$queue_timeout" ] || {
 			queue_timeout=$(($queue_timeout - $queue_delay))
-			[ "$queue_timeout" -gt 0 ] || exit 36; }
+			[ "$queue_timeout" -ge 0 ] || exit 36; }
 		sleep "$queue_delay"
 	done
 	[ -n "$1" ] || exit 0 # wait without command
