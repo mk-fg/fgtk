@@ -13,6 +13,8 @@ def main(args=None):
 		description='Run python repr() to stdout on every (text) line of an input file.')
 	parser.add_argument('file', nargs='*',
 		help='Input file path(s). Stdin is used if none specified or in place of "-".')
+	parser.add_argument('-a', '--ascii', action='store_true',
+		help='Use ascii() representation instead of repr(), i.e. utf-8 chars as \\uXXXX.')
 	parser.add_argument('-b', '--binary', action='store_true',
 		help=dd('''
 			Process file lines in binary mode, instead of decoding it with utf-8.
@@ -85,7 +87,9 @@ def main(args=None):
 				else:
 					if opts.hide_newlines: line = line.rstrip(b'\r\n')
 					if opts.binary: line = repr(line)[2:-1] + '\n'
-					else: line = repr(line.decode('utf-8-sig', dec_errors))[1:-1] + '\n'
+					else:
+						line = (ascii if opts.ascii else repr)(
+							line.decode('utf-8-sig', dec_errors) )[1:-1] + '\n'
 					dst_stdout.write(line.encode())
 					dst_stdout.flush()
 
