@@ -117,13 +117,16 @@ slice=$1
 
 ### queue
 [ -z "$queue" ] || {
+	[ -z "$queue_timeout" ] || {
+		queue_ms=$(printf '%.0f' "$queue_timeout"e3)
+		queue_delay_ms=$(printf '%.0f' "$queue_delay"e3); }
 	setcg
 	while :; do
 		setprocs
 		[ -n "$procs" ] || break
 		[ -z "$queue_timeout" ] || {
-			queue_timeout=$(($queue_timeout - $queue_delay))
-			[ "$queue_timeout" -ge 0 ] || exit 36; }
+			queue_ms=$(($queue_ms - $queue_delay_ms))
+			[ "$queue_ms" -ge 0 ] || exit 36; }
 		sleep "$queue_delay"
 	done
 	[ -n "$1" ] || exit 0 # wait without command
