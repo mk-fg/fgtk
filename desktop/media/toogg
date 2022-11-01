@@ -772,28 +772,6 @@ def main(args=None):
 	ytdl_opts = opts.ytdl_opts or list()
 	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
 
-	if opts.loudnorm:
-		import subprocess, distutils.version
-		ffmpeg_info = subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, check=True)
-		ffmpeg_ver = check = None
-		for line in ffmpeg_info.stdout.decode().splitlines():
-			if line.startswith('ffmpeg version'):
-				ffmpeg_ver = re.sub(r'^[^\d]+', '', line.split()[2]) # why it's "n4.2.2" sometimes? idk
-				ffmpeg_ver = distutils.version.LooseVersion(ffmpeg_ver)
-				if ffmpeg_ver >= '3.2.0': check = True
-				elif ffmpeg_ver < '3.1.0': check = False
-				else: continue
-				break
-			if ffmpeg_ver and line.startswith('configuration:'):
-				assert ffmpeg_ver >= '3.1.0' and ffmpeg_ver < '3.1.999', ffmpeg_ver
-				check = '--enable-libebur128' in line.split()
-				break
-		if check is False:
-			parser.error('--loudnorm option is used, but libebur128 support in ffmpeg is not detected')
-		elif check is None:
-			log.warning( 'Failed to conclusively check ffmpeg (detected version: {})'
-				' for libebur128 support, script can fail at volume normalization steps', ffmpeg_ver )
-
 	success = asyncio.run(AudioConv.run_async(
 		src_list, dst_name_tpl=opts.name, start=start, length=length,
 		chunks=chunks, chunks_beep=bool(chunks and opts.chunks_beep),
