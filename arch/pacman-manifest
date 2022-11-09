@@ -12,6 +12,7 @@ export LC_ALL=C
 
 pacman -Qqe >/var/lib/pacman/db.explicit ||:
 pacman -Qqt >/var/lib/pacman/db.leaf ||:
+pacman -Qqdtt >/var/lib/pacman/db.optdeps ||:
 pacman -Qqm >/var/lib/pacman/db.extras ||:
 pacman -Qq >/var/lib/pacman/db.set ||:
 pacman -Q >/var/lib/pacman/db.all ||:
