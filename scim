@@ -302,10 +302,10 @@ def meta_map_make(root, lines, exc, nnn, uidgid):
 				if nnn.inc_meta_errs(): break
 	return res
 
-def meta_map_update(root, meta_map, path_re, nnn, uidgid, fix, update_list):
+def meta_map_update(root, meta_map, path_res, nnn, uidgid, fix, update_list):
 	for ns, meta in list(meta_map.items()):
 		if nnn.errs_limit: return
-		if not path_re.search(ns): continue
+		if not any(pre.search(ns) for pre in path_res): continue
 
 		try: meta_new = meta_get(p := root / ns, uidgid)
 		except OSError as err:
@@ -397,7 +397,7 @@ def link_diff_cmd(diff_cmd_list, src, dst):
 		if proc.returncode: break
 	log_links.warning(' >>>>>>>>>')
 
-def link_list_enforce( root, lines, exc, diff_cmd_list, path_re, nnn,
+def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		uidgid, fix, meta, content_from_repo, meta_to_repo, no_content ):
 	linked_nodes, err_fail_check = set(), None
 
@@ -428,7 +428,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_re, nnn,
 			if src.is_dir():
 				log_links.debug('Linked whole path [bad-practice]:%d: %s', n, node)
 			linked_nodes.add(ns) # skipped in reverse-check
-		if not path_re.search(ns): continue
+		if not any(pre.search(ns) for pre in path_res): continue
 
 		if not src.exists():
 			if nnn.inc_errs(): break
@@ -526,13 +526,13 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_re, nnn,
 
 		## Copies - check permissions and content
 		elif lt & lt.cp:
-			if meta: # match metadata - fix_from_repo behavior
+			if meta: # copy metadata, from dir/repo to fs by default
 				cp_from, cp_to = (src, dst) if not meta_to_repo else (dst, src)
 				meta_src, meta_dst = (meta_get(p, uidgid) for p in [cp_from, cp_to])
 				if meta_src != meta_dst:
 					# XXX: use meta_map here to avoid multiple metadata round-trips
-					log_links.error( 'Metadata mismatch for %s path [ %s ]:%d:'
-						' < %s > should be < %s >', *( ('live-fs', dst)
+					log_links.error( 'Metadata mismatch for %s path'
+						' [ %s ]:%d: < %s > should be < %s >', *( ('live-fs', dst)
 							if not meta_to_repo else ('src', node) ), n, meta_dst, meta_src )
 					if fix:
 						try: meta_set(cp_to, uidgid, meta_src)
@@ -589,7 +589,6 @@ def main(args=None):
 					under current dir, or an upper one where manifest files are found (similar to git).
 				Manifest-files can refer to paths relative to this directory.
 			"fs" or "live-fs" refers to files linking into it or deployed/copied from it.'''))
-	# XXX: check that all opts are implemented
 	# TODO: add scim-ln as an option here
 
 	group = parser.add_argument_group('Main output/operation modes')
@@ -621,10 +620,11 @@ def main(args=None):
 	group.add_argument('-b', '--links-broken', action='store_true', help=dd('''
 		Only process links that are "broken" in some way
 			without any diff involved - e.g. "Not a symlink" cases. Implies -l/--links.'''))
-	group.add_argument('--links-meta', action='store_true',
-		help='Sync metadata (dir -> live-fs) for linked files. Implies -l/--links.')
+	group.add_argument('--links-meta', action='store_true', help=dd('''
+		Sync metadata for linked files (dir/repo -> live-fs, unless reversed).
+		Implies -l/--links, but does not involve -m/--meta and --meta-list in any way.'''))
 	group.add_argument('-m', '--meta', dest='meta_on', action='store_true', help=dd('''
-		Run metadata-related manipulations.
+		Run metadata-related manipulations - enforce/update --meta-list.
 		Implied if none of -l/--links or -m/--meta are specified explicitly,
 			except when user has no ability to manipulate file
 			ownership (e.g. non-root) and meta-list file does not exists.'''))
@@ -632,28 +632,28 @@ def main(args=None):
 	group = parser.add_argument_group('Path filtering')
 	group.add_argument('-p', '--path-match', metavar='path', action='append', help=dd('''
 		Only process entries that match specified local path.
-		Path spec can include glob/fnmatch wildcards, with ** matching slashes.
-		Option can be used multiple times to include all matched paths.'''))
+		Path spec can include python/shell glob/fnmatch wildcards, with ** matching slashes.
+		Option can be used multiple times to include all paths matched by any pattern.'''))
 
 	group = parser.add_argument_group('Manifest file names/paths')
 	group.add_argument('--links-list', dest='links',
 		metavar='name/path', default='.scim_links', help=dd('''
 			Either basename (which will be searched upwards from cwd)
-				or full path to links-list manifest file. Default: %(default)r'''))
+				or full path to links-list manifest file. Default: %(default)s'''))
 	group.add_argument('--links-exclude', dest='links_exc',
 		metavar='name/path', default='.scim_links_exclude', help=dd('''
 			Either basename or full path of links-exclude file.
 			This is a file with regexp patters (python re) to ignore when
 				checking for files not yet in the links-list manifest, kinda like gitignore.
-			Should be in the same directory as links-list file. Default: %(default)r'''))
+			Should be in the same directory as links-list file. Default: %(default)s'''))
 	group.add_argument('--meta-list', dest='meta',
 		metavar='name/path', default='.scim_meta', help=dd('''
 			Either basename or full path of metadata manifest file.
-			Should be in the same path as links-list. Default: %(default)r'''))
+			Should be in the same path as links-list. Default: %(default)s'''))
 	group.add_argument('--meta-exclude', dest='meta_exc',
 		metavar='name/path', default='.scim_meta_exclude', help=dd('''
 			Either basename or full path of metadata-exclude file.
-			Should be in the same path as links-list. Default: %(default)r'''))
+			Should be in the same path as links-list. Default: %(default)s'''))
 
 	group = parser.add_argument_group('Misc other tweaks')
 	group.add_argument('--diff-cmd',
@@ -672,14 +672,9 @@ def main(args=None):
 			Default: %(default)r'''))
 	group.add_argument('--numeric-ids', action='store_true',
 		help='Use numeric ids instead of user/group names everywhere.')
-	group.add_argument('-x', '--posix-subset', action='store_true', help=dd('''
-		Don't raise errors on failures of ops like chmod/chown
-			and try workarounds for some file creation/open flags like O_TRUNC.
-		Intended for usage with not-quite-posix filesystems, e.g. mounted via fuse drivers.'''))
 	group.add_argument('--debug', action='store_true', help='Log info on what is going on.')
 
 	opts = parser.parse_args()
-	if opts.links_meta: opts.links = True
 
 	if opts.check: log_level = logging.CRITICAL
 	elif opts.debug: log_level = logging.DEBUG
@@ -693,8 +688,8 @@ def main(args=None):
 	log_meta = logging.getLogger('meta')
 	log_links = logging.getLogger('links')
 
-	conf = adict( fix=bool(opts.fix),
-		nnn=ChangeCount(errs=opts.limit) )
+	conf = adict( fix=opts.fix and not opts.check,
+		nnn=ChangeCount(errs=opts.limit if not opts.check else 1) )
 
 	mf_links = pl.Path(opts.links)
 	if mf_links.is_absolute():
@@ -718,6 +713,7 @@ def main(args=None):
 		conf[k] = ListFile(p_abs, p := p_abs.relative_to(root))
 		conf.lists.append(p)
 
+	if opts.links_meta: opts.links = True
 	if not opts.links_on and not opts.meta_on:
 		if not conf.meta.exists():
 			if os.geteuid() != 0: conf.meta = False
@@ -728,10 +724,10 @@ def main(args=None):
 	conf.meta_uidgid = meta_uidgid_resolver(opts.numeric_ids)
 
 	if pat := opts.path_match:
-		conf.path_filter = re.compile( fnmatch
-			.translate(pat.replace('**', '\ue017').replace('**', '\ue018'))
-			.replace('\ue017', '.*').replace('\ue018', '[^/]*') )
-	else: conf.path_filter = re.compile('')
+		conf.path_filter = list(re.compile( fnmatch
+				.translate(pat.replace('**', '\ue017').replace('**', '\ue018'))
+				.replace('\ue017', '.*').replace('\ue018', '[^/]*') ) for pat in pat)
+	else: conf.path_filter = [re.compile('')]
 
 	if conf.meta:
 		conf.meta_exc = list(re.compile(ln) for ln in conf.meta_exc.lines() if ln)
@@ -764,7 +760,7 @@ def main(args=None):
 		conf.links_exc = list(re.compile(ln) for ln in conf.links_exc.lines() if ln)
 		conf.links_exc.extend(re.compile(
 			f'^{re.escape(str(node))}$' ) for node in conf.lists)
-		if opts.summary: conf.diff_cmd = None
+		if opts.summary or opts.check: conf.diff_cmd = None
 		else:
 			conf.diff_cmd = [opts.diff_cmd.split()]
 			if opts.diff_cmd2 and opts.diff_cmd2 not in [opts.diff_cmd, '-']:
@@ -782,6 +778,8 @@ def main(args=None):
 	if conf.nnn.errs and opts.summary:
 		log.info( f'Total {"things to fix" if not conf.fix else "fixes"}'
 			f' = {conf.nnn.errs:,d} (metadata quirks = {conf.nnn.meta:,d})' )
-	return bool(conf.nnn.errs) if not conf.fix else 0
+
+	if opts.check and conf.nnn.errs: return 39
+	return bool(conf.nnn.errs) if not conf.fix else bool(conf.nnn.errs_fix)
 
 if __name__ == '__main__': sys.exit(main())
