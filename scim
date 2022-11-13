@@ -79,34 +79,27 @@ class ChangeCount:
 
 ### Metadata handling
 
-def meta_uidgid_resolver( numeric=False,
-		num_hex=False, offset=(0, 0), mask_and=None, mask_or=None ):
+def meta_uidgid_resolver(numeric=False):
 	'Return uidgid func with baked-in processing parameters'
 	if numeric:
 		uid_func = gid_func = lambda n: n if isinstance(n, int) else int(n)
 	else:
 		import pwd, grp
 		uid_func = lambda n: ( pwd.getpwuid(n).pw_name
-			if isinstance(n, int) else pwd.getpwnam(n).pw_uid )
+			if isinstance(n, int) else (
+				int(n) if n.isdigit() else pwd.getpwnam(n).pw_uid ) )
 		gid_func = lambda n: ( grp.getgrgid(n).gr_name
-			if isinstance(n, int) else grp.getgrnam(n).gr_gid )
+			if isinstance(n, int) else (
+				int(n) if n.isdigit() else grp.getgrnam(n).gr_gid ) )
 	def uidgid(uid=None, gid=None):
 		'Returns specified id, resolved according to baked-in parameters'
 		res = list()
-		for offset, (m, resolve) in zip(
-				uidgid.offset, [(uid, uid_func), (gid, gid_func)] ):
-			if m is None: continue
-			try: n = resolve(m)
+		for n0, resolve in (uid, uid_func), (gid, gid_func):
+			if n0 is None: continue
+			try: n = resolve(n0)
 			except KeyError: pass
-			if not isinstance(n, int): res.append(n); continue
-			if offset: n += offset
-			if mask_and is not None: n &= mask_and
-			if mask_or is not None: n |= mask_or
-			res.append(
-				int(n) if not isinstance(m, int)
-				else (f'{n:x}' if num_hex else str(n)) )
+			res.append(int(n) if not isinstance(n0, int) else str(n))
 		return res if len(res) != 1 else res[0]
-	uidgid.offset = offset
 	return uidgid
 
 class ACLTag(enum.IntEnum):
@@ -530,7 +523,6 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 				cp_from, cp_to = (src, dst) if not meta_to_repo else (dst, src)
 				meta_src, meta_dst = (meta_get(p, uidgid) for p in [cp_from, cp_to])
 				if meta_src != meta_dst:
-					# XXX: use meta_map here to avoid multiple metadata round-trips
 					log_links.error( 'Metadata mismatch for %s path'
 						' [ %s ]:%d: < %s > should be < %s >', *( ('live-fs', dst)
 							if not meta_to_repo else ('src', node) ), n, meta_dst, meta_src )
