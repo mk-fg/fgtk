@@ -58,7 +58,6 @@ def parse_acl(acl, uidgid, prefix=''):
 			case ACLTag.other: lines.append(f'o::{perm.str}')
 			case ACLTag.mask: lines.append(f'm::{perm.str}')
 			case _: raise ValueError(tag)
-	lines.sort(key=lambda s: ('ugmo'.index(s[0]), s))
 	return ','.join(f'{prefix}{s}' for s in lines)
 
 
@@ -71,7 +70,7 @@ Caps = enum.IntEnum('Caps', dict((cap, 1 << n) for n, cap in enumerate((
 	' perfmon bpf checkpoint_restore' ).split())))
 
 def parse_caps(cap):
-	cap, lines = io.BytesIO(cap), list()
+	cap = io.BytesIO(cap)
 	ver, eff = ((v := struct.unpack('I', cap.read(4))[0]) >> 3*8) & 0xff, v & 1
 	if ver not in [2, 3]: raise ValueError(f'Unsupported capability v{ver}')
 	perm1, inh1, perm2, inh2 = struct.unpack('IIII', cap.read(16))
@@ -245,10 +244,12 @@ def main(args=None):
 				if xattrs:
 					ext = list()
 					for k,v in xattrs.items():
-						try: v = v.decode().replace(',', ',,').replace(':', '::')
+						try:
+							v = v.decode('ascii')
+							if ',' in v or ':' in v: raise ValueError
 						except ValueError:
-							v = base64.urlsafe_b64encode(v).decode()
-						ext.append(f'{k}:{v}')
+							v = ':' + base64.urlsafe_b64encode(v).decode()
+						ext.append(f'{k}={v}')
 					perm += f'/{",".join(ext)}'
 
 		print(perm)

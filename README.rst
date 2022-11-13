@@ -24,52 +24,69 @@ Scripts
 -------
 
 
-[-root-] Various console/system things
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[-root-] Various CLI/system things
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 File/dir/fs management
 ^^^^^^^^^^^^^^^^^^^^^^
 
 File/link/dir and filesystem structure manipulation tools.
 
-scim set
-''''''''
+scim_
+'''''
+.. _scim: scim
 
-A set of tools to bind a bunch of scattered files to a single path, with
-completely unrelated internal path structure. Intended usage is to link
-configuration files to scm-controlled path (repository).
+Non-interactive CLI tool to keep a list of files to symlink or copy into/from
+some "dotfiles" configuration dir or repository, and keep/check/update/restore
+metadata manifest for these files.
 
-Actually started as `cfgit project`_, but then evolved away from git vcs into a
-more generic, not necessarily vcs-related, solution.
+Keeps track of ACLs, POSIX capabilities and xattrs for metadata, runs file
+diffs for file copies and links, supports a bunch of neat symlinking options
+(like using relative symlinks, relative symlinks into symlinked repo-dir, etc).
+
+Idea is to keep links and metadata manifest files in some configuration repo,
+and run the tool occasionally after system updates or manual changes to pull
+updated files into repo, update files on fs from the repo, fix links/permissions
+on fs, copy/add new ones, etc - all manifest/maintenance ops done via this script.
+
+Format for links-list looks something like this::
+
+  .gitconfig -> .git/config
+  /usr/share/zoneinfo/Asia/Yekaterinburg -> /etc/localtime
+  bpf -> /etc/bpf
+  zshrc > /etc/zsh/zshrc
+  kernel-config > /usr/src/linux/.config
+  myapp/secret.conf -> /etc/myapp/secret.conf
+  myapp/suid.bin -> /usr/local/bin/myapp
+  myapp/caps.bin -> /usr/local/bin/myapp-helper
+
+And metadata is also a simple plaintext file, with fancier stuff towards the
+end of lines, on paths where it's used/needed::
+
+  .gitconfig root:root:644
+  bpf root:wheel:750
+  zshrc root:root:644
+  kernel-config root:wheel:664
+  myapp/secret.conf root:root:600
+  myapp/suid.bin root:root:4711
+  myapp/caps.bin root:root:4700/EP:net_raw/u::rwx,u:netuser:--x,g::r-x,m::r-x,o::---
+
+In addition to lists, there're separate links/meta exclude-files with regexps of
+paths to not warn about being missing in links-list or track metadata for.
+
+Only needs python3 to run, has bundled implementation for parsing/encoding
+modern linux ACLs/capabilities extended attributes.
+Uses ``git diff --no-index`` for ``--diff-cmd`` by default, as it is very fast,
+has nice colors and should be widely available.
+
+Started as a `cfgit project`_ long time ago, evolved away into this more generic
+(and not necessarily git-related) tool.
 
 .. _cfgit project: http://fraggod.net/code/git/configit/
 
-scim-ln_
-````````
-.. _scim-ln: scim-ln
-
-Adds a new link (symlink or catref) to a manifest (links-list), also moving file
-to scim-tree (repository) on fs-level.
-
-scim_
-`````
-.. _scim: scim
-
-Main tool to check binding and metadata of files under scim-tree. Basic
-operation boils down to two (optional) steps:
-
-* Check files' metadata (uid, gid, mode, acl, posix capabilities) against
-  metadata-list (``.scim_meta``, by default), if any, updating the metadata/list
-  if requested, except for exclusion-patterns (``.scim_meta_exclude``).
-
-* Check tree against links-list (``.scim_links``), warning about any files /
-  paths in the same root, which aren't on the list, yet not in exclusion
-  patterns (``.scim_links_exclude``).
-
-
 fs_
 '''
-.. _scim: scim
+.. _fs: fs
 
 Complex tool for high-level fs operations. Reference is built-in.
 
