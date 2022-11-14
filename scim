@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import stat, base64, struct, pathlib as pl, contextlib as cl
+import base64, struct, pathlib as pl, contextlib as cl
 import os, sys, io, stat, logging, enum, re, tempfile
 
 
@@ -15,24 +15,51 @@ class adict(dict):
 		super().__init__(*args, **kwargs)
 		self.__dict__ = self
 
+def copy_fd_meta(fd_src, fd_dst, mode=None, uidgid=None, xattrs=None):
+	'''Metadata values: True = copy from src,
+		None = best-effort copy, False = ignore, other value = apply that.'''
+	uidgid_be, xattrs_be = uidgid is None, xattrs is None
+	val_auto = lambda v: fd_src is not None and (v is True or v is None)
+	if val_auto(mode) or val_auto(uidgid):
+		st = os.stat(fd_src)
+		if val_auto(mode): mode = stat.S_IMODE(st.st_mode)
+		if val_auto(uidgid): uidgid = st.st_uid, st.st_gid
+	if val_auto(xattrs) and getattr(os, 'getxattr', None):
+		xattrs = dict()
+		for k in os.listxattr(fd_src):
+			try: xattrs[k] = os.getxattr(fd_src, k)
+			except OSError:
+				if not xattrs_be: raise
+	val_restore = lambda v: not (v is False or val_auto(v))
+	if val_restore(mode): os.fchmod(fd_dst, mode)
+	if val_restore(uidgid):
+		try: os.fchown(fd_dst, *uidgid)
+		except OSError:
+			if not uidgid_be: raise
+	if val_restore(xattrs):
+		for k, v in xattrs.items():
+			try: os.setxattr(fd_dst, k, v)
+			except OSError:
+				if not xattrs_be: raise
+
 @cl.contextmanager
-def safe_replacement(path, *open_args, mode=None, xattrs=None, **open_kws):
-	'Context to atomically create/replace file-path in-place unless errors are raised'
-	path, xattrs = str(path), None
-	if mode is None:
-		try: mode = int(stat.S_IMODE(os.lstat(path).st_mode))
-		except FileNotFoundError: pass
-	if xattrs is None and getattr(os, 'getxattr', None):
-		try: xattrs = dict((k, os.getxattr(path, k)) for k in os.listxattr(path))
-		except FileNotFoundError: pass
+def safe_replacement( path, *open_args,
+		mode=None, uidgid=None, xattrs=None, **open_kws ):
+	'''Context to atomically create/replace file-path in-place unless errors are raised.
+		Metadata options: True = copy from path,
+			None = best-effort copy, False = ignore, other value = apply that.'''
 	open_kws.update( delete=False,
-		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+		dir=os.path.dirname(path := str(path)), prefix=os.path.basename(path)+'.' )
 	if not open_args: open_kws.setdefault('mode', 'w')
 	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
 		try:
-			if type(mode) is int: os.fchmod(tmp.fileno(), mode)
-			if xattrs:
-				for k, v in xattrs.items(): os.setxattr(path, k, v)
+			fd_src = None
+			try:
+				try: fd_src = os.open(path, os.O_RDONLY)
+				except FileNotFoundError: pass
+				copy_fd_meta(fd_src, tmp.fileno(), mode, uidgid, xattrs)
+			finally:
+				if fd_src is not None: os.close(fd_src)
 			yield tmp
 			if not tmp.closed: tmp.flush()
 			try: os.fdatasync(tmp)
@@ -42,15 +69,17 @@ def safe_replacement(path, *open_args, mode=None, xattrs=None, **open_kws):
 			try: os.unlink(tmp.name)
 			except FileNotFoundError: pass
 
-def open_linksafe(root, p, _cache=[]):
-	'Returns read-only fd for specified path under specified root-dir'
+def open_read_fd(p, root=None, _cache=[]):
+	'''Returns read-only fd context for specified path under root-dir,
+		opened safely wrt symlinks pointing outside of that root, if specified.'''
 	# Simple way to avoid symlink-related race-conditions w/o disallowing them:
 	#  p = realpath(path); validate_is_acceptable(p); file = openat2(p, no_symlinks)
 	# As of 2022-10-13 glibc has no openat2() wrapper yet, hence syscall here.
-	root = root.resolve(True)
-	if not (p := pl.Path(p)).is_absolute(): p = root / p
-	if not (p := p.resolve(True)).is_relative_to(root):
-		raise OSError(f'Specified path/root mismatch [ {p} ]: {root}')
+	if root:
+		p = (root := root.resolve(True)) / p
+		if not (p := p.resolve(True)).is_relative_to(root):
+			raise OSError(f'Specified path/root mismatch [ {p} ]: {root}')
+	else: p = p.resolve(True) # no-validation passthrough
 	if not _cache:
 		import ctypes as ct
 		openat2_how = ct.create_string_buffer(struct.pack(
@@ -72,7 +101,8 @@ def open_linksafe(root, p, _cache=[]):
 
 class ListFile:
 	cache = None
-	def __init__(self, p, p_rel): self.path, self.node = p, str(p_rel)
+	def __init__(self, root, p):
+		self.root, self.path, self.node = root, p, str(p.relative_to(root))
 	def exists(self): return self.path.exists()
 	def lines(self):
 		if self.cache is None:
@@ -212,6 +242,7 @@ def meta_acls_encode(acls, uidgid):
 	return ((b'\2\0\0\0' + b''.join(entries)) for entries in [acl_acc, acl_def])
 
 def meta_caps_encode(caps):
+	if not caps: return
 	pre, caps = caps.split(':', 1)
 	cp, sep, ci = caps.partition(':')
 	(cpx, cp), (cix, ci) = ((cap[:1], set(
@@ -226,17 +257,10 @@ def meta_caps_encode(caps):
 
 
 def meta_get(p, uidgid, root=None):
-	return _meta_fd_ctx(p, root, _meta_get, uidgid)
+	with open_read_fd(p, root) as fd: return _meta_get(fd, uidgid)
 
 def meta_set(p, uidgid, meta, root=None):
-	return _meta_fd_ctx(p, root, _meta_set, uidgid, meta)
-
-def _meta_fd_ctx(p, root, func, *args, **kws):
-	if root: ctx = open_linksafe(root, p)
-	else: ctx = open(p, 'rb')
-	with ctx as fd:
-		if not isinstance(fd, int): fd = fd.fileno()
-		return func(fd, *args)
+	with open_read_fd(p, root) as fd: return _meta_set(fd, uidgid, meta)
 
 def _meta_get(fd, uidgid):
 	fstat = os.stat(fd)
@@ -276,7 +300,7 @@ def _meta_set(fd, uidgid, meta):
 	except ValueError: pass
 	uid, gid, mode = meta.split(':')
 	(uid, gid), mode = uidgid(uid, gid), int(mode, 8)
-	caps = meta_caps_encode(caps, uidgid)
+	caps = meta_caps_encode(caps)
 	if xattrs:
 		xattrs, xattr_str = dict(), xattrs
 		for xattr in xattr_str.split(','):
@@ -289,7 +313,7 @@ def _meta_set(fd, uidgid, meta):
 	os.chown(fd, uid, gid)
 	os.chmod(fd, mode)
 	if acls:
-		acl_acc, acl_def = meta_acls_encode(acls, uidgid)
+		acl_acc, acl_def = meta_acls_encode((acls or '').split(','), uidgid)
 		os.setxattr(fd, 'system.posix_acl_access', acl_acc, os.XATTR_CREATE)
 		os.setxattr(fd, 'system.posix_acl_default', acl_def, os.XATTR_CREATE)
 	if caps: os.setxattr(fd, 'security.capability', caps, os.XATTR_CREATE)
@@ -381,22 +405,20 @@ def link_file_type( p,
 		if getattr(stat, f'S_IS{c.upper()}')(mode): types.append(_ts_name.get(c, c))
 	return '/'.join(types) or '???'
 
-def link_copy(src, dst, meta=False, **repl_kws):
+def link_copy(src, dst, meta=False, root=None, **repl_kws):
 	'Copy src to dst with all metadata (if requested), in a reasonably atomic way'
-	with src.open('rb') as a:
-		a_fd = a.fileno()
+	with open_read_fd(src, root) as a_fd:
+		a = open(a_fd, 'rb')
 		kws = dict() if not meta else dict(
-			mode=stat.S_IMODE(os.stat(a_fd).st_mode),
+			mode=stat.S_IMODE((st := os.stat(a_fd)).st_mode),
+			uidgid=(st.st_uid, st.st_gid),
 			xattrs=dict((k, os.getxattr(a_fd, k)) for k in os.listxattr(a_fd)) )
 		kws.update(repl_kws)
 		a.seek(0, os.SEEK_END)
-		with safe_replacement(dst, **kws) as b:
+		with safe_replacement(dst, 'wb', **kws) as b:
 			os.sendfile(b.fileno(), a_fd, 0, a.tell())
 
-def link_copy_data(src, dst):
-	return link_copy(src, dst, mode=False, xattrs=False)
-
-def link_match_data(src, dst, bs=64 * 2**10):
+def link_match_data(src, dst, bs=64*2**10):
 	try:
 		if src.samefile(dst): return True
 		sa, sb = src.stat(), dst.stat()
@@ -435,7 +457,7 @@ def link_list_hash(lines):
 		node, lt, dst = link_line_split(line)
 		if not node: continue
 		list_hash[str(node)] = lt, dst
-		list_hash[str(dst)] = list_hash[line] = str(node)
+		list_hash[str(dst)], list_hash[line] = str(node), str(dst)
 	return list_hash
 
 def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
@@ -457,8 +479,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		if (ns := str(node)) and any(chk.search(ns) for chk in exc):
 			log_meta.debug('Excluded path in links-list:%d: %s', n, line)
 
-		src = root / node
-		dst = root / dst.expanduser()
+		src, dst = root / node, root / dst.expanduser()
 		src_rsym = src if not lt == lt.rsym else link_relative_path(src, dst)
 		dst_res = dst.resolve()
 		if src.resolve() == root: root, err_fail_check = dst, nnn.errs
@@ -485,7 +506,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 								' an existing dir [ %s ]:%d: %s', node, n, dst )
 							if nnn.inc_errs_fix(): break
 							continue
-						link_copy(src, dst, meta=meta)
+						link_copy(src, dst, meta, root)
 				except OSError as err:
 					log_links.warning( 'Failed to create link dst [ %s'
 						' %s %s ]:%d: %s', n, node, LinkTypeSep[lt], dst, err )
@@ -526,13 +547,13 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 						' with %s:%d: %s [fix: <dst]', dst_repl, n, node )
 					link_diff_cmd(diff_cmd_list, src, dst)
 			else:
-				if copy_dst_contents_to_src: link_copy_data(dst_res, src)
+				if copy_dst_contents_to_src: link_copy(dst_res, src)
 				dst.unlink()
 				if lt & lt.sym:
 					dst.symlink_to(src_rsym)
 					uid, gid = (st := src.stat()).st_uid, st.st_gid
 					os.chown(dst, uid, gid, follow_symlinks=False)
-				elif lt & lt.cp: link_copy(src, dst, meta=meta)
+				elif lt & lt.cp: link_copy(src, dst, meta, root)
 				log_links.info( 'Corrected: %s %s %s %s',
 					node, '<>'[content_from_repo], LinkTypeSep[lt], dst )
 			continue # rest of the checks irrelevant here, or copy/link fixed everything
@@ -592,7 +613,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 							n, node, link_file_type(src), cp_dir, dst, link_file_type(dst) )
 					else: link_diff_cmd(diff_cmd_list, cp_to, cp_from)
 				else:
-					link_copy_data(cp_from, cp_to)
+					link_copy(cp_from, cp_to)
 					log_links.info('Copy: %s %s %s', node, cp_dir, dst)
 				if nnn.inc_errs(): break
 
@@ -637,7 +658,7 @@ def link_copy_new(root, src, dst_list, links_hash, lt, meta, dst_home):
 			return log_links.critical('Path/line already in links-list: %s', p)
 		if src.exists():
 			return log_links.critical('Destination path already exists: %s', src)
-		link_copy(dst_res, src, meta=meta)
+		link_copy(dst_res, src, meta)
 		if lt & lt.sym:
 			link = src if lt != lt.rsym else link_relative_path(src, dst_res)
 			links_replace.append((src, dst_res, link))
@@ -810,13 +831,12 @@ def main(args=None):
 			parser.error(
 				'All manifest/exclude-files should be in the'
 				f' same scim-path: [ {p} ] is not in [ {root} ]' )
-		conf[k] = ListFile(p_abs, p := p_abs.relative_to(root))
-		conf.lists.append(p)
+		lsf = conf[k] = ListFile(root, p_abs)
+		conf.lists.append(lsf.node)
 
 	if not opts.links_on and not opts.meta_on:
 		if not conf.meta.exists():
 			if os.geteuid() != 0: conf.meta = False
-			# TODO: can check effective cap_chown and acl/xattr caps here
 	else:
 		if not ( opts.links_on or opts.ln or
 			opts.links_meta or opts.links_broken ): conf.links = False
