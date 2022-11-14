@@ -113,9 +113,10 @@ def openat2_read(p_git, p, _cache=[]):
 		openat2_how = ct.create_string_buffer(struct.pack(
 			'@QQQ', os.O_RDONLY | os.O_NOFOLLOW, 0, res_no_symlinks := 0x04 ))
 		c_sys_openat2, c_at_fdcwd, openat2_how_len = 437, -100, len(openat2_how) - 1
+		c_syscall = ct.CDLL(None, use_errno=True).syscall
 		def _openat2(p):
-			fd = ct.CDLL(None, use_errno=True).syscall(
-				c_sys_openat2, c_at_fdcwd, str(p).encode(), openat2_how, openat2_how_len )
+			fd = c_syscall( c_sys_openat2,
+				c_at_fdcwd, bytes(p), openat2_how, openat2_how_len )
 			if fd < 0: raise OSError(err := ct.get_errno(), os.strerror(err))
 			return open(fd, 'r')
 		_cache.append(_openat2)

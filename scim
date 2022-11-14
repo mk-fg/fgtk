@@ -42,6 +42,34 @@ def safe_replacement(path, *open_args, mode=None, xattrs=None, **open_kws):
 			try: os.unlink(tmp.name)
 			except FileNotFoundError: pass
 
+def open_linksafe(root, p, _cache=[]):
+	'Returns read-only fd for specified path under specified root-dir'
+	# Simple way to avoid symlink-related race-conditions w/o disallowing them:
+	#  p = realpath(path); validate_is_acceptable(p); file = openat2(p, no_symlinks)
+	# As of 2022-10-13 glibc has no openat2() wrapper yet, hence syscall here.
+	root = root.resolve(True)
+	if not (p := pl.Path(p)).is_absolute(): p = root / p
+	if not (p := p.resolve(True)).is_relative_to(root):
+		raise OSError(f'Specified path/root mismatch [ {p} ]: {root}')
+	if not _cache:
+		import ctypes as ct
+		openat2_how = ct.create_string_buffer(struct.pack(
+			'@QQQ', os.O_RDONLY | os.O_NOFOLLOW, 0, res_no_symlinks := 0x04 ))
+		c_sys_openat2, c_at_fdcwd, openat2_how_len = 437, -100, len(openat2_how) - 1
+		c_syscall = ct.CDLL(None, use_errno=True).syscall
+		@cl.contextmanager
+		def _openat2(p):
+			fd = c_syscall( c_sys_openat2,
+				c_at_fdcwd, bytes(p), openat2_how, openat2_how_len )
+			if fd < 0: raise OSError(err := ct.get_errno(), os.strerror(err))
+			try: yield fd
+			finally:
+				try: os.close(fd)
+				except OSError as err:
+					if err.errno != 9: raise # EBADFD = already closed
+		_cache.append(_openat2)
+	return _cache[0](p)
+
 class ListFile:
 	cache = None
 	def __init__(self, p, p_rel): self.path, self.node = p, str(p_rel)
@@ -197,16 +225,25 @@ def meta_caps_encode(caps):
 		(3 << 3*8) + ('E' in pre), perm1, inh1, perm2, inh2 )
 
 
-def meta_get(p, uidgid):
-	# TODO: use fd for p, opened ignoring symlinks for all ops here
-	fstat = p.stat(follow_symlinks=False)
+def meta_get(p, uidgid, root=None):
+	return _meta_fd_ctx(p, root, _meta_get, uidgid)
+
+def meta_set(p, uidgid, meta, root=None):
+	return _meta_fd_ctx(p, root, _meta_set, uidgid, meta)
+
+def _meta_fd_ctx(p, root, func, *args, **kws):
+	if root: ctx = open_linksafe(root, p)
+	else: ctx = open(p, 'rb')
+	with ctx as fd:
+		if not isinstance(fd, int): fd = fd.fileno()
+		return func(fd, *args)
+
+def _meta_get(fd, uidgid):
+	fstat = os.stat(fd)
+	try: xattrs = dict((k, os.getxattr(fd, k)) for k in os.listxattr(fd))
+	except: xattrs = dict()
 	meta = ':'.join(uidgid(fstat.st_uid, fstat.st_gid))
 	meta += f':{stat.S_IMODE(fstat.st_mode):o}'
-	try:
-		xattrs = dict(
-			(k, os.getxattr(p, k, follow_symlinks=False))
-			for k in os.listxattr(p, follow_symlinks=False) )
-	except: xattrs = dict()
 	caps, acls = list(), list()
 	if cap := xattrs.pop('security.capability', ''):
 		caps.append(meta_caps_parse(cap))
@@ -230,8 +267,7 @@ def meta_get(p, uidgid):
 				meta += f'/{",".join(ext)}'
 	return meta
 
-def meta_set(p, uidgid, meta):
-	# TODO: use fd for p, opened ignoring symlinks for all ops here
+def _meta_set(fd, uidgid, meta):
 	caps = acls = xattrs = None
 	try:
 		meta, xattrs = meta.split('/', 1)
@@ -240,27 +276,25 @@ def meta_set(p, uidgid, meta):
 	except ValueError: pass
 	uid, gid, mode = meta.split(':')
 	(uid, gid), mode = uidgid(uid, gid), int(mode, 8)
-	# Strip mode/xattrs to prevent racy access in-between changes
-	os.chmod(p, 0, follow_symlinks=False)
-	for k in os.listxattr(p, follow_symlinks=False):
-		os.removexattr(p, k, follow_symlinks=False)
-	os.chown(p, uid, gid, follow_symlinks=False)
-	os.chmod(p, mode, follow_symlinks=False)
-	if acls:
-		acl_acc, acl_def = meta_acls_encode(acls, uidgid)
-		os.setxattr( p, 'system.posix_acl_access',
-			acl_acc, os.XATTR_CREATE, follow_symlinks=False )
-		os.setxattr( p, 'system.posix_acl_default',
-			acl_def, os.XATTR_CREATE, follow_symlinks=False )
-	if caps:
-		os.setxattr( p, 'security.capability',
-			meta_caps_encode(caps, uidgid),
-			os.XATTR_CREATE, follow_symlinks=False )
+	caps = meta_caps_encode(caps, uidgid)
 	if xattrs:
-		for xattr in xattrs.split(','):
+		xattrs, xattr_str = dict(), xattrs
+		for xattr in xattr_str.split(','):
 			k, v = xattr.split(':', 1)
 			if v.startswith(':'): v = base64.urlsafe_b64decode(v[1:])
-			os.setxattr(p, k, v, os.XATTR_CREATE, follow_symlinks=False)
+			xattrs[k] = v
+	# Strip mode/xattrs first to prevent racy access in-between changes
+	os.chmod(fd, 0)
+	for k in os.listxattr(fd): os.removexattr(fd, k)
+	os.chown(fd, uid, gid)
+	os.chmod(fd, mode)
+	if acls:
+		acl_acc, acl_def = meta_acls_encode(acls, uidgid)
+		os.setxattr(fd, 'system.posix_acl_access', acl_acc, os.XATTR_CREATE)
+		os.setxattr(fd, 'system.posix_acl_default', acl_def, os.XATTR_CREATE)
+	if caps: os.setxattr(fd, 'security.capability', caps, os.XATTR_CREATE)
+	if xattrs:
+		for k, v in xattrs.items(): os.setxattr(fd, k, v, os.XATTR_CREATE)
 
 
 def meta_map_make(root, lines, exc, nnn, uidgid):
@@ -289,7 +323,7 @@ def meta_map_make(root, lines, exc, nnn, uidgid):
 			for s in (src := p_dir / fn).relative_to(root).parts:
 				if (ns := str(node := node / s)) in res: continue
 				if any(chk.search(ns) for chk in exc): continue
-				meta = res[ns] = meta_get(root / node, uidgid)
+				meta = res[ns] = meta_get(node, uidgid, root)
 				log_meta.warning('Not in metadata-list [ %s ]: %s', node, meta)
 				if nnn.inc_meta_errs(): break
 	return res
@@ -299,7 +333,7 @@ def meta_map_update(root, meta_map, path_res, nnn, uidgid, fix, update_list):
 		if nnn.errs_limit: return
 		if not any(pre.search(ns) for pre in path_res): continue
 
-		try: meta_new = meta_get(p := root / ns, uidgid)
+		try: meta_new = meta_get(ns, uidgid, root)
 		except OSError as err:
 			log_meta.error('Failed to stat path, removing it [ %s ]: %s', ns, err)
 			del meta_map[ns]
@@ -315,7 +349,7 @@ def meta_map_update(root, meta_map, path_res, nnn, uidgid, fix, update_list):
 			meta = meta_map[ns] = meta_new
 			if nnn.inc_meta(): break
 		elif fix:
-			try: meta_set(p, uidgid, meta)
+			try: meta_set(ns, uidgid, meta, root)
 			except OSError as err:
 				log_meta.warning('Unable to fix metadata [ %s ]: %s : %s', ns, meta, err)
 				if nnn.inc_errs_fix(): break
@@ -349,7 +383,6 @@ def link_file_type( p,
 
 def link_copy(src, dst, meta=False, **repl_kws):
 	'Copy src to dst with all metadata (if requested), in a reasonably atomic way'
-	# TODO: should ideally open() src/dst without symlinks too
 	with src.open('rb') as a:
 		a_fd = a.fileno()
 		kws = dict() if not meta else dict(
@@ -532,8 +565,10 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		## Copies - check permissions and content
 		elif lt & lt.cp:
 			if meta: # copy metadata, from dir/repo to fs by default
-				cp_from, cp_to = (src, dst) if not meta_to_repo else (dst, src)
-				meta_src, meta_dst = (meta_get(p, uidgid) for p in [cp_from, cp_to])
+				cp_from, cp_to = src, dst
+				meta_src, meta_dst = meta_get(src, uidgid, root), meta_get(dst, uidgid)
+				if meta_to_repo:
+					cp_from, cp_to, meta_src, meta_dst = cp_to, cp_from, meta_dst, meta_src
 				if meta_src != meta_dst:
 					log_links.error( 'Metadata mismatch for %s path'
 						' [ %s ]:%d: < %s > should be < %s >', *( ('live-fs', dst)
@@ -836,13 +871,14 @@ def main(args=None):
 				conf.path_filter, conf.nnn, conf.meta_uidgid,
 				fix=conf.fix, update_list=conf.meta_update_list )
 			if conf.fix and conf.nnn.meta:
-				if not (meta_node_exists := node.get(conf.meta.node)):
+				if not (meta_node_exists := conf.meta_map.get(conf.meta.node)):
 					user, group = conf.meta_uidgid(os.getuid(), os.getgid())
-					meta = meta_map[conf.meta.node] = f'{user}:{group}:600'
+					meta = conf.meta_map[conf.meta.node] = f'{user}:{group}:600'
 					conf.nnn.inc_meta()
 				conf.meta.update( f'{node} {meta}'
-					for node, meta in sorted(meta_map.items()) )
-				if not meta_node_exists: meta_set(conf.meta.node, meta)
+					for node, meta in sorted(conf.meta_map.items()) )
+				if not meta_node_exists:
+					meta_set(conf.meta.node, conf.meta_uidgid, meta, conf.root)
 				log_meta.info('Metadata list updated: %d change(s)', conf.nnn.meta)
 
 		# Meta-list update has to be delayed if it's replaced from
