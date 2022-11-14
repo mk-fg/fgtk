@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 
-import pathlib as pl, itertools as it, contextlib as cl
-import collections as cs, subprocess as sp
-import fnmatch, pwd, grp, stat, base64, struct
-import os, sys, io, logging, enum, re, shutil, tempfile
+import stat, base64, struct, pathlib as pl, contextlib as cl
+import os, sys, io, stat, logging, enum, re, tempfile
 
 
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
@@ -50,7 +48,8 @@ class ListFile:
 	def exists(self): return self.path.exists()
 	def lines(self):
 		if self.cache is None:
-			self.cache = list(ln.strip() for ln in self.path.read_text().split('\n'))
+			self.cache = list( ln.strip()
+				for ln in self.path.read_text().rstrip().split('\n') )
 			if any(( ln.startswith('>>>>>>>') or
 					ln.startswith('<<<<<<<') ) for ln in self.cache):
 				log.error(f'git-merge block detected in [ {self.path.name} ]:{n}')
@@ -354,10 +353,8 @@ def link_copy(src, dst, meta=False, **repl_kws):
 	with src.open('rb') as a:
 		a_fd = a.fileno()
 		kws = dict() if not meta else dict(
-			mode=stat.ST_IMODE(os.stat(a_fd).st_mode),
-			xattrs=dict(
-				(k, os.getxattr(a_fd, k, follow_symlinks=False))
-				for k in os.listxattr(a_fd, follow_symlinks=False) ) )
+			mode=stat.S_IMODE(os.stat(a_fd).st_mode),
+			xattrs=dict((k, os.getxattr(a_fd, k)) for k in os.listxattr(a_fd)) )
 		kws.update(repl_kws)
 		a.seek(0, os.SEEK_END)
 		with safe_replacement(dst, **kws) as b:
@@ -381,14 +378,32 @@ def link_match_data(src, dst, bs=64 * 2**10):
 
 def link_diff_cmd(diff_cmd_list, src, dst):
 	if not diff_cmd_list: return
+	import subprocess
 	log_links.warning(' <<<<<<<<< Source/Replacement diff:')
 	for diff_cmd in diff_cmd_list:
-		try: proc = sp.run(diff_cmd + [src, dst])
+		try: proc = subprocess.run(diff_cmd + [src, dst])
 		except Exception as err:
 			log_links.fatal('Failed to run diff-command: %s', err_fmt(err))
 			raise
 		if proc.returncode: break
 	log_links.warning(' >>>>>>>>>')
+
+def link_line_split(line):
+	for lt, sep in LinkTypeSep.items():
+		try: node, dst = line.split(f' {sep} ')
+		except ValueError: continue
+		return pl.Path(node), lt, pl.Path(dst)
+	else: return None, None, None
+
+def link_list_hash(lines):
+	list_hash = dict()
+	for line in lines:
+		if not line: continue
+		node, lt, dst = link_line_split(line)
+		if not node: continue
+		list_hash[str(node)] = lt, dst
+		list_hash[str(dst)] = list_hash[line] = str(node)
+	return list_hash
 
 def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		uidgid, fix, meta, content_from_repo, meta_to_repo, no_content ):
@@ -402,18 +417,15 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		if nnn.errs_limit: break
 
 		if not line: continue
-		for lt, sep in LinkTypeSep.items():
-			try: node, dst = line.split(f' {sep} ')
-			except ValueError: pass
-			else: break
-		else:
-			log_links.error('Incorrect line format [uncorrectable]:%d: %r', n, line)
+		node, lt, dst = link_line_split(line)
+		if not node:
+			log_links.error('Invalid line format [uncorrectable]:%d: %r', n, line)
 			continue
 		if (ns := str(node)) and any(chk.search(ns) for chk in exc):
 			log_meta.debug('Excluded path in links-list:%d: %s', n, line)
 
 		src = root / node
-		dst = root / pl.Path(dst).expanduser()
+		dst = root / dst.expanduser()
 		src_rsym = src if not lt == lt.rsym else link_relative_path(src, dst)
 		dst_res = dst.resolve()
 		if src.resolve() == root: root, err_fail_check = dst, nnn.errs
@@ -564,6 +576,51 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 				log_links.warning('Not in links-list: %s', src.relative_to(root))
 				if nnn.inc_errs(): break
 
+def link_copy_new(root, src, dst_list, links_hash, lt, meta, dst_home):
+	if root_new := links_hash.get('.'):
+		if not isinstance(root_new, str) and (lt := root_new[0]) & lt.sym:
+			if root.resolve().samefile(root_new := root_new[1].expanduser()):
+				root = root_new
+	lines, links_replace = list(), list()
+
+	src_rel = src.resolve().relative_to(root.resolve())
+	if src_rel.is_dir(): node_func = lambda dst: src_rel / dst.name
+	elif len(dst_list) > 1:
+		return log_links.critical('Destination must be a dir w/ multiple new links')
+	else: node_func = lambda dst: src_rel
+
+	for dst in dst_list:
+		dst_chk = [dst, dst := (dst_res := dst.resolve())]
+		if dst_home:
+			try: dst_chk.append(dst := pl.Path('~') / dst.relative_to(dst_home))
+			except ValueError: pass
+		dst_chk.append(node := node_func(dst))
+		dst_chk.append(src := root / node)
+		dst_chk.append(line := f'{node} {LinkTypeSep[lt]} {dst}')
+		for p in dst_chk:
+			if str(p) not in links_hash: continue
+			return log_links.critical('Path/line already in links-list: %s', p)
+		if src.exists():
+			return log_links.critical('Destination path already exists: %s', src)
+		link_copy(dst_res, src, meta=meta)
+		if lt & lt.sym:
+			link = src if lt != lt.rsym else link_relative_path(src, dst_res)
+			links_replace.append((src, dst_res, link))
+		print(line)
+		lines.append(line)
+
+	for src, dst, link in links_replace:
+		for n in range(50):
+			ext = base64.urlsafe_b64encode(os.urandom(3)).decode()
+			if not (tmp := dst.with_name(dst.name + f'.tmp.{ext}')).exists(): break
+		else: raise RuntimeError(f'Failed to find tmp-path for: {dst}')
+		tmp.symlink_to(link)
+		if not tmp.samefile(src):
+			tmp.unlink()
+			raise RuntimeError(f'Symlink samefile-check failed: {tmp} [ {link} ] != {src}')
+		tmp.rename(dst)
+	return lines
+
 
 
 def main(args=None):
@@ -581,7 +638,6 @@ def main(args=None):
 					under current dir, or an upper one where manifest files are found (similar to git).
 				Manifest-files can refer to paths relative to this directory.
 			"fs" or "live-fs" refers to files linking into it or deployed/copied from it.'''))
-	# TODO: add scim-ln as an option here
 
 	group = parser.add_argument_group('Main output/operation modes')
 	group.add_argument('-c', '--check', action='store_true', help=dd('''
@@ -596,6 +652,23 @@ def main(args=None):
 		Metadata is restored for known files, then list is updated with new/deleted ones.'''))
 	group.add_argument('-n', '--limit', type=int, metavar='n',
 		help='Process only specified number of diffs from the top of the manifest file(s).')
+
+	group = parser.add_argument_group('Creating new link(s)')
+	group.add_argument('-L', '--ln', metavar='src/dst', nargs='*', help=dd('''
+		Create new link entry(-ies) in link-list file and copy/symlink file(s) and exit.
+		Should be followed by "source... [destination]" argument(s), with
+			destination being either new path to create or a directory, similar to how "ln" works.
+		Can be used without follow-up arguments to sort the links in-place.
+		Most other options are not used with this one, except for ones
+			in this group, -m/--meta, links/metadata list file paths and logging tweaks.
+		Using -m/--meta (default with uid=root) will copy/preserve all metadata for file(s).
+		Default destination is current directory, if omitted.'''))
+	group.add_argument('--symlink', action='store_true',
+		help='Create symlink instead of a copy. Alias: -l (lowercase L)')
+	group.add_argument('--relative', action='store_true',
+		help='Create relative symlink (implies -l/--symlink). Alias: -r')
+	group.add_argument('--no-tilde', action='store_true',
+		help='Do not replace current user\'s homedir with ~ in dst path.')
 
 	group = parser.add_argument_group('Opts to apply diffs in reverse')
 	group.add_argument('-r', '--reverse', action='store_true',
@@ -705,17 +778,45 @@ def main(args=None):
 		conf[k] = ListFile(p_abs, p := p_abs.relative_to(root))
 		conf.lists.append(p)
 
-	if opts.links_meta: opts.links = True
 	if not opts.links_on and not opts.meta_on:
 		if not conf.meta.exists():
 			if os.geteuid() != 0: conf.meta = False
 			# TODO: can check effective cap_chown and acl/xattr caps here
 	else:
-		if not (opts.links_on or opts.links_broken): conf.links = False
+		if not ( opts.links_on or opts.ln or
+			opts.links_meta or opts.links_broken ): conf.links = False
 		if not opts.meta_on: conf.meta = False
 	conf.meta_uidgid = meta_uidgid_resolver(opts.numeric_ids)
 
+	if opts.ln is not None:
+		lines_new, lines = list(), conf.links.lines()
+		if opts.ln:
+			opts.symlink, opts.relative = opts.links_on, opts.reverse
+			if len(dst_list := list(opts.ln)) == 1: dst_list.append('.')
+			dst_list = list(map(pl.Path, dst_list))
+			dst_list, src = dst_list[:-1], dst_list[-1]
+			for dst in dst_list:
+				if dst.is_symlink(): err = 'Specified path is already a symlink'
+				elif dst.is_dir(): err = 'Directory links not supported'
+				else: continue
+				log_links.critical('%s: %s', err, dst); return 1
+			links_hash = link_list_hash(lines)
+			lt = ( LinkType.rsym if not opts.relative else
+				(LinkType.sym if opts.symlink else LinkType.cp) )
+			try:
+				if opts.no_tilde: raise ValueError
+				import pwd
+				dst_home = pl.Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+			except: dst_home = None
+			lines_new = link_copy_new(
+				conf.root, src, dst_list, links_hash,
+				lt=lt, meta=conf.meta, dst_home=dst_home )
+			if not lines_new: return 1
+		conf.links.update(sorted([*lines, *lines_new]))
+		return log_links.info('Links-list updated: %d change(s)', len(lines_new))
+
 	if pat := opts.path_match:
+		import fnmatch
 		conf.path_filter = list(re.compile( fnmatch
 				.translate(pat.replace('**', '\ue017').replace('**', '\ue018'))
 				.replace('\ue017', '.*').replace('\ue018', '[^/]*') ) for pat in pat)
