@@ -1,17 +1,13 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-from collections import deque
-import os, sys
+import os, sys, collections as cs
 
 def reorder_paths(argv):
 	cmd, args = argv[0], argv[1:]
 	if not args or not args[0].startswith('-'): return argv
-	from os.path import exists, isdir
-	args, xargs = deque(args), args
+	args, xargs = cs.deque(args), args
 	for p in reversed(xargs):
-		if not p.startswith('-') and isdir(p):
+		if not p.startswith('-') and os.path.isdir(p):
 			print('Reordering path at the end:', p, file=sys.stderr)
 			args.appendleft(args.pop())
 			continue

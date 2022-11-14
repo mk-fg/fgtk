@@ -1,8 +1,5 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
 import os, sys, io, re
 
 
@@ -19,12 +16,10 @@ def main(args=None):
 		description='"head", but with \\x00 delimeters.'
 			' Ensures that final chunk ends with delimeter by default.')
 
-	parser.add_argument('file',
-		nargs='?', metavar='path',
+	parser.add_argument('file', nargs='?', metavar='path',
 		help='Path to a file to process instead of stdin.')
 
-	parser.add_argument('-n', '--count',
-		metavar='number', type=int,
+	parser.add_argument('-n', '--count', metavar='number', type=int,
 		help='Max number of entries to read. Default is to read ALL of them.')
 
 	parser.add_argument('-r', '--replace-with-newlines',
@@ -36,24 +31,22 @@ def main(args=None):
 
 	parser.add_argument('-b', '--max-buffer-size',
 		metavar='bytes', type=int, default=2*2**20,
-		help='Max size of a single entry (in bytes), i.e. a peek buffer.'
-			' Cannot be larger than {}B.'.format(bs_max))
+		help='Max size of a single entry (in bytes),'
+			f' i.e. a peek buffer. Cannot be larger than {bs_max}B.')
 	parser.add_argument('--no-final-delimiter',
 		action='store_true', help='Do not ensure that final chunk ends with delimeter (e.g. \\x00).')
 
 	opts = parser.parse_args(args)
 
 	if opts.max_buffer_size > bs_max:
-		parser.error('--max-buffer-size cannot be larger than {} (hardcoded limit).'.format(bs_max))
+		parser.error(f'--max-buffer-size cannot be larger than {bs_max} (hardcoded limit).')
 
-	sep = '\0' if not opts.replace_with_nulls else '\n'
-	glue = '\0' if not opts.replace_with_newlines else '\n'
+	sep = b'\0' if not opts.replace_with_nulls else b'\n'
+	glue = b'\0' if not opts.replace_with_newlines else b'\n'
 
 	src = sys.stdin.fileno() if not opts.file else opts.file
-	src = io.open(src, 'rb')
-	src = io.BufferedReader(src, buffer_size=opts.max_buffer_size)
-
-	with src as src:
+	dst = sys.stdout.buffer
+	with open(src, 'rb', opts.max_buffer_size) as src:
 		bs, bs_last, count = None, None, 0
 		while True:
 			if bs is None: bs = bs_start
@@ -67,12 +60,12 @@ def main(args=None):
 				if pos == -1:
 					if bs == opts.max_buffer_size:
 						raise RuntimeError( 'Failed to find next'
-							' \\x00 byte with buffer size: {}'.format(opts.max_buffer_size) )
+							f' \\x00 byte with buffer size: {opts.max_buffer_size}' )
 					bs, bs_last = max(bs * 2, opts.max_buffer_size), bs_now
 					continue
 			bs_last = None
 
-			if count and (buff or not opts.no_final_delimiter): sys.stdout.write(glue)
+			if count and (buff or not opts.no_final_delimiter): dst.write(glue)
 			if opts.count and count >= opts.count: break
 			if not buff: break
 			count += 1
@@ -80,11 +73,11 @@ def main(args=None):
 			if pos is not None:
 				buff = src.read(pos)
 				assert sep not in buff and src.read(1) == sep, 'bad chunk read'
-				sys.stdout.write(buff)
+				dst.write(buff)
 			else: # "read until the end" command
-				for buff in iter(ft.partial(src.read, bs_max), ''):
+				for buff in iter(lambda: src.read(bs_max), b''):
 					assert sep not in buff, 'bad unlimited read'
-					sys.stdout.write(buff)
+					dst.write(buff)
 			bs = None
 
 if __name__ == '__main__': sys.exit(main())

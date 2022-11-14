@@ -148,13 +148,12 @@ findx_
 Wrapper around GNU find to accept paths at the end of argv if none are passed
 before query.
 
-Makes it somewhat more consistent with most other commands that accept options
-and a lists of paths (almost always after opts), but still warns when/if
-reordering takes place.
+Makes it somewhat more consistent with most other commands that accept
+options and a lists of paths (almost always after opts),
+but still warns when/if reordering takes place.
 
-No matter how many years I'm using that tool, still can't get used to typing
-paths before query there, so decided to patch around that frustrating issue one
-day.
+No matter how many years I'm using that tool, still sometimes type paths
+after query there, so decided to patch around that frustrating issue one day.
 
 patch-nspawn-ids_
 '''''''''''''''''
@@ -499,11 +498,11 @@ hz_
 '''
 .. _hz: hz
 
-Same thing as the common "head" tool, but works with \\x00 (aka null character,
-null byte, NUL, ␀, \\0, \\z, \\000, \\u0000, %00, ^@) delimeters.
+Same thing as the common "head", but works with \\x00
+(aka null char/byte , NUL, ␀, \\0, \\z, \\000, \\u0000, %00, ^@) delimeters.
 
-Can be done with putting "tr" in the pipeline before and after "head", but this
-one is probably less fugly.
+Can be done with putting "tr" in the pipeline before and after "head",
+but this one is maybe a bit less fugly.
 
 Allows replacing input null-bytes with newlines in the output
 (--replace-with-newlines option) and vice-versa.
@@ -716,8 +715,7 @@ patchset versions from each major one, and only then latest per-major patchset,
 until free space goal (specified percentage, 20% by default) is met.
 
 Also keeps specified number of last-to-remove versions, can prioritize cleanup
-of ".old" verssion variants, keep ``config-*`` files... and other stuff (see
---help).
+of ".old" verssion variants, keep ``config-*`` files... and other stuff (see --help).
 
 Example::
 
@@ -748,13 +746,13 @@ Example::
   ...
   DEBUG:root:Finished (df: 58.9%, versions left: 4, versions removed: 66).
 
-("df" doesn't rise here because of --dry-run, ``-f 100`` = "remove all
-non-preserved" - as df can't really get to 100%)
+("df" doesn't rise here because of --dry-run, ``-f 100`` =
+"remove all non-preserved" - as df can't really get to 100%)
 
 Note how 3.2.0.1 (non-.old 3.2.0) gets removed first, then 3.2.1, 3.2.2, and so
 on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
-"latest patchset for major" versions, except those that are preserved
-unconditionally (listed at the top).
+"latest patchset for major" versions, except those that are preserved unconditionally
+(listed at the top).
 
 
 
@@ -1487,10 +1485,10 @@ Idea is that - upon encountering an http link with either checksum on the page
 or in the file nearby - you can easily run the thing providing both link and
 checksum to fetch the file.
 
-If checksum is available in e.g. \*.sha1 file alongside the original one, it
-might be a good idea to fetch that checksum from any remote host (e.g. via
-"curl" from any open ssh session), making spoofing of both checksum and the
-original file a bit harder.
+If checksum is available in e.g. \*.sha1 file alongside the original one,
+it might be a good idea to fetch that checksum on a different host or a proxy,
+making spoofing of both checksum and the original file on the same connection
+a bit harder.
 
 mail_
 '''''
