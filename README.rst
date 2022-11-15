@@ -3110,15 +3110,17 @@ ff_backup_
 ''''''''''
 .. _ff_backup: desktop/ff_backup
 
-Script to backup various firefox settings in a diff/scm-friendly manner
-(i.e. decoded from horrible one-liner json into pyaml_, so that they can be
-tracked in e.g. git.
+Old python2 script to backup firefox tab list and settings in a diff/scm-friendly
+manner - i.e. decoded from horrible one-liner json into pyaml_, so that they
+can be tracked in git.
 
 Written out of frustration about how YouTube Center seem to loose its shit and
 resets config sometimes.
 
 Can/should be extended to all sorts of other ff/ext settings in the future - and
-probably is already, see its yaml config for details.
+probably is already, see its ff_backup.yaml_ output example for details.
+
+.. _ff_backup.yaml: desktop/ff_backup.yaml
 
 ff_mozlz4_
 ''''''''''
@@ -3136,6 +3138,15 @@ Usage example (`jq tool <https://stedolan.github.io/jq/>`_ is for pretty json)::
   % ff_mozlz4 < search.json.mozlz4 | jq . > search.json
   % nano search.json
   % ff_mozlz4 search.json
+
+ff-cli_
+'''''''
+.. _ff-cli: desktop/ff-cli
+
+Command-line tool to interact with firefox-like browsers and their profile
+settings/data. Print a list of currently open tabs/URLs for example.
+
+Initial update of ff_backup_ script, to be extended with more stuff.
 
 bt_agent_
 '''''''''
