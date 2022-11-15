@@ -3122,31 +3122,23 @@ probably is already, see its ff_backup.yaml_ output example for details.
 
 .. _ff_backup.yaml: desktop/ff_backup.yaml
 
-ff_mozlz4_
-''''''''''
-.. _ff_mozlz4: desktop/ff_mozlz4
-
-Simple py3 script to decompress .mozlz4 files, which can be found in FF profile
-directory (e.g. search.json.mozlz4), and are ``"mozLz40\0" || lz4-compressed-data``,
-which lz4 cli tool can't handle due to that mozLz40 header.
-
-Same cli interface as with gzip/xz/lz4 and such, uses `lz4
-<https://github.com/python-lz4/python-lz4/>`_ module (``pip3 install --user lz4``).
-
-Usage example (`jq tool <https://stedolan.github.io/jq/>`_ is for pretty json)::
-
-  % ff_mozlz4 < search.json.mozlz4 | jq . > search.json
-  % nano search.json
-  % ff_mozlz4 search.json
-
 ff-cli_
 '''''''
 .. _ff-cli: desktop/ff-cli
 
-Command-line tool to interact with firefox-like browsers and their profile
-settings/data. Print a list of currently open tabs/URLs for example.
+Command-line tools to interact with firefox-like browsers and their profile
+settings/data, like list currently open tabs/URLs or (de-)compress .mozlz4 files.
 
-Initial update of ff_backup_ script, to be extended with more stuff.
+Currently has following tools/commands implemented:
+
+- tabs - list currently open tabs, as stored in
+  ``sessionstore-backups/recovery.jsonlz4`` file.
+
+- mozlz4 - compress/decompress firefox lz4 files, which have slightly different
+  format from what the usual "lz4" cli tool supports, has same interface as
+  gzip, xz, zstd, lz4, and such compression tools.
+
+To be extended with more stuff over time.
 
 bt_agent_
 '''''''''

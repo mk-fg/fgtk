@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 
-import os, sys, re, configparser, json, pathlib as pl
+import os, sys, configparser, json, pathlib as pl
 
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
 
 def get_profile_dir(profile, ff_home):
 	if profile:
@@ -20,19 +25,72 @@ def get_profile_dir(profile, ff_home):
 	for p in paths:
 		if profile in p.name.lower(): return p
 
-def mozlz4_read(p, bs_max=8 * 2**20):
-	# This is a different format than lz4 tool produces, and not just wrt header
+
+def mozlz4_open_path(conf, p, to_stdout, to_bytes):
+	if p.name.lower().endswith('lz4'):
+		if conf.compress:
+			print( 'WARNING: Specified path already ends with *lz4 suffix,'
+				f' might end up being compressed twice: {p}', file=sys.stderr )
+		elif not conf.decompress: conf.decompress = True
+	elif not (conf.compress or conf.decompress): conf.compress = True
+	assert conf.compress ^ conf.decompress == 1
+	conf.src, replace_func = p.open('rb'), None
+	if to_bytes: return
+	if to_stdout: conf.dst = os.fdopen(sys.stdout.fileno(), 'wb'); return
+	import tempfile
+	if conf.compress: p = p.with_name(p.name + '.mozlz4')
+	elif p.name.endswith('lz4'):
+		if (name := p.name.rsplit('.', 1)[0]) == p.name: name = name[:-3]
+		p = p.with_name(name)
+	conf.dst = tempfile.NamedTemporaryFile(
+		delete=False, dir=str(p.parent), prefix=str(p.name)+'.' )
+	conf.replace_func = lambda: pl.Path(conf.dst.name).rename(p)
+
+def mozlz4_open_streams(conf, to_bytes):
+	conf.src = open(sys.stdin.fileno(), 'rb')
+	if not to_bytes: conf.dst = open(sys.stdout.fileno(), 'wb')
+	if not conf.compress:
+		if not conf.decompress:
+			conf.decompress = conf.src.peek(8) == b'mozLz40\0'
+			if not conf.decompress: conf.compress = True
+
+def mozlz4( p=None, compress=None, decompress=None,
+		to_stdout=False, to_bytes=False, bs_max=8 * 2**20 ):
 	import lz4.block # https://python-lz4.readthedocs.io/
-	with p.open('rb') as src: data = src.read(bs_max + 1)
-	if len(data) >= bs_max: # intended for small json files only
-		raise MemoryError(f'File size >bs_max limit ({bs_max/2**20:,.1f} MiB)')
-	if (hdr := data[:8]) != b'mozLz40\0':
-		raise ValueError(f'Incorrect file header magic: {hdr}')
-	return lz4.block.decompress(data[8:])
+	conf = adict(
+		src=None, dst=None, replace_func=None,
+		compress=bool(compress), decompress=bool(decompress) )
+	try:
+		if p: mozlz4_open_path(conf, pl.Path(p), to_stdout, to_bytes)
+		else: mozlz4_open_streams(conf, to_bytes)
+		assert conf.compress ^ conf.decompress == 1
+		data = conf.src.read(bs_max + 1)
+		if len(data) >= bs_max: # intended for small json files only
+			raise MemoryError(f'File size >bs_max limit ({bs_max/2**20:,.1f} MiB)')
+		if conf.compress: data = b'mozLz40\0' + lz4.block.compress(data)
+		if conf.decompress:
+			if (hdr := data[:8]) != b'mozLz40\0':
+				raise ValueError(f'Incorrect file header magic: {hdr}')
+			data = lz4.block.decompress(data[8:])
+		if not conf.dst: return data
+		conf.dst.write(data)
+		conf.dst.flush()
+		if conf.replace_func:
+			conf.replace_func()
+			if isinstance(conf.src.name, str):
+				try: os.unlink(conf.src.name)
+				except OSError: pass
+	finally:
+		if conf.src: conf.src.close()
+		if conf.dst:
+			if isinstance(conf.dst.name, str):
+				try: os.unlink(conf.dst.name)
+				except OSError: pass
+			conf.dst.close()
 
 
 def main(args=None):
-	import argparse, textwrap
+	import argparse, textwrap, re
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
@@ -45,8 +103,28 @@ def main(args=None):
 			or a full path to profile dir (default: find Default=1 profile).'''))
 	cmds = parser.add_subparsers(title='Commands',
 		description='Use -h/--help with these to list command-specific options.', dest='call')
+
 	cmd = cmds.add_parser('tabs',
 		formatter_class=argparse.RawTextHelpFormatter, help='List currently opened tabs')
+
+	cmd = cmds.add_parser('mozlz4',
+		formatter_class=argparse.RawTextHelpFormatter,
+		help='Compress/decompress firefox lz4 files', description=dd('''
+			Compress/decompress firefox/mozilla\'s *lz4 files.
+			Works roughly same as all compression tools on linux, e.g. gzip, xz, lz4, zstd.'''))
+	cmd.add_argument('path', nargs='?', help=dd('''
+		File(s) to operate on. Used with -c/--compress or -d/--decompress options.
+		By default, --compress will write a new file with .mozlz4 suffix,
+			removing the old one, and --decompress will remove .mozlz4 suffix
+			and compressed file, if present.
+		If no path is specified, stdin/stdout will be used.'''))
+	cmd.add_argument('-c', '--compress', action='store_true',
+		help='Compress specified file or stdin stream. Default for paths that dont end with *lz4.')
+	cmd.add_argument('-d', '--decompress', action='store_true',
+		help='Decompress specified file or stdin stream. Default for stdin with mozLz40 header.')
+	cmd.add_argument('-o', '--stdout', action='store_true',
+		help='Compress/decompress to stdout, even when file path is specified.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	def _profile_path():
@@ -60,15 +138,20 @@ def main(args=None):
 		case 'tabs':
 			p = _profile_path() / (fn := 'sessionstore-backups/recovery.jsonlz4')
 			if not p.exists(): parser.error(f'Missing profile session-file: {fn}')
-			n, session = 0, json.loads(mozlz4_read(p))
+			n, session = 0, json.loads(mozlz4(p, decompress=True, to_bytes=True))
 			for win in session['windows']:
 				for tab in win.get('tabs', list()):
 					if tab.get('hidden'): continue
 					if not (entries := tab.get('entries')): continue
-					last_entry = entries[tab['index'] - 1] # index is 1-base there
+					last_entry = entries[tab['index'] - 1] # index starts from 1 there
 					title, url = (last_entry.get(k) for k in ['title', 'url'])
 					n += 1; print(f'\n[Tab {n}] {title}\n  {url}')
 			if n: print()
+
+		case 'mozlz4':
+			if opts.compress and opts.decompress:
+				parser.error('Both --compress and --decompress at the same time make no sense.')
+			mozlz4(opts.path, opts.compress, opts.decompress, opts.stdout)
 
 		case None: parser.error('No command specified')
 		case _: parser.error(f'Unrecognized command: {opts.call}')
