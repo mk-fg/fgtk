@@ -3,11 +3,6 @@
 import os, sys, configparser, json, pathlib as pl
 
 
-class adict(dict):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		self.__dict__ = self
-
 def get_profile_dir(profile, ff_home):
 	if profile:
 		if profile.startswith('/'): return pl.Path(profile)
@@ -26,25 +21,28 @@ def get_profile_dir(profile, ff_home):
 		if profile in p.name.lower(): return p
 
 
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
 def mozlz4_open_path(conf, p, to_stdout, to_bytes):
-	if p.name.lower().endswith('lz4'):
+	if (fn := p.name.lower()).endswith('lz4'):
 		if conf.compress:
 			print( 'WARNING: Specified path already ends with *lz4 suffix,'
 				f' might end up being compressed twice: {p}', file=sys.stderr )
 		elif not conf.decompress: conf.decompress = True
 	elif not (conf.compress or conf.decompress): conf.compress = True
-	assert conf.compress ^ conf.decompress == 1
-	conf.src, replace_func = p.open('rb'), None
+	conf.src = p.open('rb')
 	if to_bytes: return
 	if to_stdout: conf.dst = os.fdopen(sys.stdout.fileno(), 'wb'); return
 	import tempfile
 	if conf.compress: p = p.with_name(p.name + '.mozlz4')
-	elif p.name.endswith('lz4'):
-		if (name := p.name.rsplit('.', 1)[0]) == p.name: name = name[:-3]
-		p = p.with_name(name)
+	elif fn.endswith('lz4'):
+		p = p.with_name(p.name[:-7 if fn.endswith('.mozlz4') else -3])
 	conf.dst = tempfile.NamedTemporaryFile(
 		delete=False, dir=str(p.parent), prefix=str(p.name)+'.' )
-	conf.replace_func = lambda: pl.Path(conf.dst.name).rename(p)
+	conf.dst_finalize = lambda: pl.Path(conf.dst.name).rename(p)
 
 def mozlz4_open_streams(conf, to_bytes):
 	conf.src = open(sys.stdin.fileno(), 'rb')
@@ -58,28 +56,26 @@ def mozlz4( p=None, compress=None, decompress=None,
 		to_stdout=False, to_bytes=False, bs_max=8 * 2**20 ):
 	import lz4.block # https://python-lz4.readthedocs.io/
 	conf = adict(
-		src=None, dst=None, replace_func=None,
+		src=None, dst=None, dst_finalize=None,
 		compress=bool(compress), decompress=bool(decompress) )
 	try:
 		if p: mozlz4_open_path(conf, pl.Path(p), to_stdout, to_bytes)
 		else: mozlz4_open_streams(conf, to_bytes)
-		assert conf.compress ^ conf.decompress == 1
-		data = conf.src.read(bs_max + 1)
+		assert conf.compress ^ conf.decompress
+		data, moz_hdr = conf.src.read(bs_max + 1), b'mozLz40\0'
 		if len(data) >= bs_max: # intended for small json files only
 			raise MemoryError(f'File size >bs_max limit ({bs_max/2**20:,.1f} MiB)')
-		if conf.compress: data = b'mozLz40\0' + lz4.block.compress(data)
+		if conf.compress: data = moz_hdr + lz4.block.compress(data)
 		if conf.decompress:
-			if (hdr := data[:8]) != b'mozLz40\0':
+			if (hdr := data[:8]) != moz_hdr:
 				raise ValueError(f'Incorrect file header magic: {hdr}')
 			data = lz4.block.decompress(data[8:])
 		if not conf.dst: return data
 		conf.dst.write(data)
 		conf.dst.flush()
-		if conf.replace_func:
-			conf.replace_func()
-			if isinstance(conf.src.name, str):
-				try: os.unlink(conf.src.name)
-				except OSError: pass
+		if conf.dst_finalize:
+			conf.dst_finalize()
+			if isinstance(conf.src.name, str): os.unlink(conf.src.name)
 	finally:
 		if conf.src: conf.src.close()
 		if conf.dst:
