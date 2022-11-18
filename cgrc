@@ -7,6 +7,7 @@
 
 set -e
 
+export LC_ALL=C
 check= list= unit= slice= stats= mode=scope
 queue= queue_delay=7 queue_timeout= value= path= props=
 
@@ -39,7 +40,8 @@ usage() {
 	echo >&2 "     Main diff is that forked pids will be killed after main one exits."
 	echo >&2 "-v - Show or set target cgroup parameter. Both key and value are raw strings."
 	echo >&2 "     Special value 'list' will list available cgroup knobs in cgroup dir."
-	echo >&2 "     Examples: -v list, -v cpu.max, -v cpu.max='900000 500000'"
+	echo >&2 "     K/M/G/T following digits can replace 000-groups, _ can separate groups."
+	echo >&2 "     Examples: -v list, -v cpu.max, -v cpu.max=max, -v cpu.max='2_900K 500K'"
 	echo >&2 "-p - Print path to specified scope/slice/service."
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
@@ -143,9 +145,18 @@ slice=$1
 	if [ "$k" = list ]
 	then ls -1p /sys/fs/cgroup"$cg" | grep -v '/$'
 	else
-		[ "$k" = "$v" ] || echo "$v" > "$p" \
-			|| { err=$?; echo >&2 "ERROR - failed to set $k=$v [$p]"; }
-		cat "$p"
+		[ "$k" = "$v" ] || { echo "$v" | awk '{while (n++ <= NR) {
+				if (match($n,/^([0-9]+_)*[0-9]+[KMGTP]?$/)) {
+					sub("_","",$n); if (m=index("KMGTP", substr($n,length($n),1))) {
+						$n=substr($n,1,length($n)-1); while (m-- > 0) $n=$n "000" } } }; print}' \
+			> "$p"; } || { err=$?; echo >&2 "ERROR - failed to set $k=$v [$p]"; }
+		awk '{n=0; while (n++ <= NR) { m=0
+			while (match($n,/^[0-9]+[0-9]{3}$/) && m < 5) {
+				k=length($n)-3
+				if (substr($n,k+1)=="000") { $n=substr($n,1,k); m++ }
+				else while (match($n,/[0-9]{4}(_|$)/))
+					$n = substr($n,1,RSTART) "_" substr($n,RSTART+1) }
+			$n = $n substr("KMGTP", m, m ? 1 : 0) }; print}' "$p"
 	fi
 	[ -n "$1" ] || exit $err # limit get/set without command
 }
