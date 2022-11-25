@@ -52,7 +52,7 @@ def mozlz4_open_streams(conf, to_bytes):
 	if not to_bytes: conf.dst = open(sys.stdout.fileno(), 'wb')
 	if not conf.compress:
 		if not conf.decompress:
-			conf.decompress = conf.src.peek(8) == b'mozLz40\0'
+			conf.decompress = conf.src.peek(8)[:8] == b'mozLz40\0'
 			if not conf.decompress: conf.compress = True
 
 def mozlz4( p=None, compress=None, decompress=None,
