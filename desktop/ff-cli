@@ -129,6 +129,14 @@ def main(args=None):
 	cmd.add_argument('-f', '--fmt', metavar='fmt', default='{s}', help=dd('''
 		Format for output lines, using following vars: n, s, s.path, s.title, s.url
 		Example: [{n}] {s.title} - {s.url}'''))
+	cmd.add_argument('-c', '--cycle', action='store_true', help=dd('''
+		Cycle filtered bookmarks in last-returned order, refreshing the queue when it's empty.
+		-r/--shuffle option affects order of how items get updated in queue.
+		Intended for cycling through random bookmarked stuff with less repetition.'''))
+	cmd.add_argument('--cycle-queue-file',
+		metavar='file', default='~/.cache/ff-cli.bookmark-cycle', help=dd('''
+			File to store a queue of bookmarks for -c/--cycle option.
+			Default: %(default)s'''))
 
 	cmd = cmds.add_parser('mozlz4', aliases=['lz4'],
 		formatter_class=argparse.RawTextHelpFormatter,
@@ -188,16 +196,28 @@ def main(args=None):
 		if filters := list(s.lower() for s in opts.filter if s):
 			bms = list( bm for bm in bms
 				if (bs := bm.lower()) and all(s in bs for s in filters) )
-		if opts.shuffle:
-			import random
-			random.shuffle(bms)
-		if opts.limit: bms = bms[:opts.limit]
+
+		if opts.shuffle: import random; random.shuffle(bms)
+		if opts.cycle and (p := pl.Path(opts.cycle_queue_file).expanduser()):
+			bms = dict((bm.url, bm) for bm in bms)
+			try: queue = p.read_text()
+			except OSError: queue = ''
+			queue = list(url.strip() for url in queue.splitlines() if url in bms)
+			n = min(len(bms), opts.limit or len(bms))
+			urls, queue = queue[:n], queue[n:]
+			if n := n - len(urls):
+				queue = list(bms)
+				urls.extend(queue[:n]); queue, n = queue[n:], n - len(queue)
+			p.write_text(''.join(f'{url}\n' for url in queue))
+			bms = list(bms[url] for url in urls)
+		elif opts.limit: bms = bms[:opts.limit]
+
 		if open_ok := opts.open: import subprocess as sp
 		for n, bm in enumerate(bms, 1):
 			print(opts.fmt.format(n=n, s=bm))
 			if open_ok and sp.run(['firefox', bm.url]).returncode: open_ok = bm
 		if open_ok and open_ok is not True:
-			print(f'firefox URL-open command failed for: {open_ok.url}')
+			print(f'Firefox URL-open command failed for: {open_ok.url}', file=sys.stderr)
 			exit_code = 1
 
 	elif opts.call in ['mozlz4', 'lz4']:
