@@ -3134,6 +3134,10 @@ Currently has following tools/commands implemented:
 - tabs - list currently open tabs, as stored in
   ``sessionstore-backups/recovery.jsonlz4`` file.
 
+- bookmarks - list and/or open bookmarks from latest "bookmarksbackup" file,
+  optionally filtered/shuffled/limited, mostly to open N random bookmarks
+  of some "time-waster feed" variety.
+
 - mozlz4 - compress/decompress firefox lz4 files, which have slightly different
   format from what the usual "lz4" cli tool supports, has same interface as
   gzip, xz, zstd, lz4, and such compression tools.

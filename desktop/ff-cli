@@ -3,6 +3,14 @@
 import os, sys, configparser, json, pathlib as pl
 
 
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
+
+class astr(str): pass
+
+
 def get_profile_dir(profile, ff_home):
 	if profile:
 		if profile.startswith('/'): return pl.Path(profile)
@@ -20,11 +28,6 @@ def get_profile_dir(profile, ff_home):
 	for p in paths:
 		if profile in p.name.lower(): return p
 
-
-class adict(dict):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		self.__dict__ = self
 
 def mozlz4_open_path(conf, p, to_stdout, to_bytes):
 	if (fn := p.name.lower()).endswith('lz4'):
@@ -80,9 +83,11 @@ def mozlz4( p=None, compress=None, decompress=None,
 		if conf.src: conf.src.close()
 		if conf.dst:
 			if isinstance(conf.dst.name, str):
-				try: os.unlink(conf.dst.name)
-				except OSError: pass
+				pl.Path(conf.dst.name).unlink(missing_ok=True)
 			conf.dst.close()
+
+def jsonlz4_read(p):
+	return json.loads(mozlz4(p, decompress=True, to_bytes=True))
 
 
 def main(args=None):
@@ -100,10 +105,32 @@ def main(args=None):
 	cmds = parser.add_subparsers(title='Commands',
 		description='Use -h/--help with these to list command-specific options.', dest='call')
 
-	cmd = cmds.add_parser('tabs',
+	cmd = cmds.add_parser('tabs', aliases=['t'],
 		formatter_class=argparse.RawTextHelpFormatter, help='List currently opened tabs')
 
-	cmd = cmds.add_parser('mozlz4',
+	cmd = cmds.add_parser('bookmarks', aliases=['bm'],
+		formatter_class=argparse.RawTextHelpFormatter,
+		help='Query/open bookmarks', description=dd('''
+			Read bookmarks from bookmarksbackup dir dump(s).
+			about:config has controls for whether and how often these files get exported/updated.
+			browser.bookmarks.autoExportHTML also looks like a good option for these, not supported.
+			Arguments are simple "must contain all strings" filters, opts can limit/shuffle/open.'''))
+	cmd.add_argument('filter', nargs='*', help=dd('''
+		Filter strings, all of which must be included in either bookmark path, title or URL.
+		CI-matched against strings like this: some/bookmark/dirs :: bm-title :: the-url'''))
+	cmd.add_argument('-r', '--shuffle',
+		action='store_true', help='Shuffle resulting list randomly.')
+	cmd.add_argument('-n', '--limit', type=int, metavar='N',
+		help='Limit number of bookmarks to N entries max (after -r/--shuffle).')
+	cmd.add_argument('-o', '--open', action='store_true',
+		help='Open URLs in addition to printing them, using "firefox" binary in PATH.')
+	cmd.add_argument('--js', action='store_true',
+		help='Include "javascript:..." bookmarklets in addition to URLs.')
+	cmd.add_argument('-f', '--fmt', metavar='fmt', default='{s}', help=dd('''
+		Format for output lines, using following vars: n, s, s.path, s.title, s.url
+		Example: [{n}] {s.title} - {s.url}'''))
+
+	cmd = cmds.add_parser('mozlz4', aliases=['lz4'],
 		formatter_class=argparse.RawTextHelpFormatter,
 		help='Compress/decompress firefox lz4 files', description=dd('''
 			Compress/decompress firefox/mozilla\'s *lz4 files.
@@ -122,6 +149,7 @@ def main(args=None):
 		help='Compress/decompress to stdout, even when file path is specified.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+	exit_code = 0
 
 	def _profile_path():
 		if not (p := get_profile_dir(opts.profile, opts.ff_home)):
@@ -129,27 +157,57 @@ def main(args=None):
 				f' [ {opts.profile} ] in -H/--ff-home dir [ {opts.ff_home} ]' )
 		return p
 
-	match opts.call:
+	if opts.call in ['tabs', 't']:
+		p = _profile_path() / (fn := 'sessionstore-backups/recovery.jsonlz4')
+		if not p.exists(): parser.error(f'Missing profile session-file: {fn}')
+		n, session = 0, jsonlz4_read(p)
+		for win in session['windows']:
+			for tab in win.get('tabs', list()):
+				if tab.get('hidden'): continue
+				if not (entries := tab.get('entries')): continue
+				last_entry = entries[tab['index'] - 1] # index starts from 1 there
+				title, url = (last_entry.get(k) for k in ['title', 'url'])
+				n += 1; print(f'\n[Tab {n}] {title}\n  {url}')
+		if n: print()
 
-		case 'tabs':
-			p = _profile_path() / (fn := 'sessionstore-backups/recovery.jsonlz4')
-			if not p.exists(): parser.error(f'Missing profile session-file: {fn}')
-			n, session = 0, json.loads(mozlz4(p, decompress=True, to_bytes=True))
-			for win in session['windows']:
-				for tab in win.get('tabs', list()):
-					if tab.get('hidden'): continue
-					if not (entries := tab.get('entries')): continue
-					last_entry = entries[tab['index'] - 1] # index starts from 1 there
-					title, url = (last_entry.get(k) for k in ['title', 'url'])
-					n += 1; print(f'\n[Tab {n}] {title}\n  {url}')
-			if n: print()
+	elif opts.call in ['bookmarks', 'bm']:
+		try:
+			if not (ps := list((_profile_path() / 'bookmarkbackups').iterdir())): return
+		except OSError: return
+		def _bm_recurse(bm, p=pl.Path('')):
+			bms, title = list(), bm.get('title', '')
+			if bms_sub := bm.get('children'):
+				for bm in bms_sub: bms.extend(_bm_recurse(bm, p / title))
+			elif url := bm.get('uri'):
+				if opts.js or not url.startswith('javascript:'):
+					bms.append(bm := astr(f'{p} :: {title} :: {url}'))
+					bm.path, bm.title, bm.url = p, title, url
+			return bms
+		bms = jsonlz4_read(sorted(ps, key=lambda p: p.name)[-1])
+		bms, errs = _bm_recurse(bms), 0
+		if filters := list(s.lower() for s in opts.filter if s):
+			bms = list( bm for bm in bms
+				if (bs := bm.lower()) and all(s in bs for s in filters) )
+		if opts.shuffle:
+			import random
+			random.shuffle(bms)
+		if opts.limit: bms = bms[:opts.limit]
+		if open_ok := opts.open: import subprocess as sp
+		for n, bm in enumerate(bms, 1):
+			print(opts.fmt.format(n=n, s=bm))
+			if open_ok and sp.run(['firefox', bm.url]).returncode: open_ok = bm
+		if open_ok and open_ok is not True:
+			print(f'firefox URL-open command failed for: {open_ok.url}')
+			exit_code = 1
 
-		case 'mozlz4':
-			if opts.compress and opts.decompress:
-				parser.error('Both --compress and --decompress at the same time make no sense.')
-			mozlz4(opts.path, opts.compress, opts.decompress, opts.stdout)
+	elif opts.call in ['mozlz4', 'lz4']:
+		if opts.compress and opts.decompress:
+			parser.error('Both --compress and --decompress at the same time make no sense.')
+		mozlz4(opts.path, opts.compress, opts.decompress, opts.stdout)
 
-		case None: parser.error('No command specified')
-		case _: parser.error(f'Unrecognized command: {opts.call}')
+	elif opts.call is None: parser.error('No command specified')
+	else: parser.error(f'Unrecognized command: {opts.call}')
+
+	return exit_code
 
 if __name__ == '__main__': sys.exit(main())
