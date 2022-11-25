@@ -29,6 +29,39 @@ def get_profile_dir(profile, ff_home):
 		if profile in p.name.lower(): return p
 
 
+def pick_bookmarks(bms_json, filters, shuffle, limit, js, cycle_file):
+	def _bm_recurse(bm, p=pl.Path('')):
+		bms, title = list(), bm.get('title', '')
+		if bms_sub := bm.get('children'):
+			for bm in bms_sub: bms.extend(_bm_recurse(bm, p / title))
+		elif url := bm.get('uri'):
+			if js or not url.startswith('javascript:'):
+				bms.append(bm := astr(f'{p} :: {title} :: {url}'))
+				bm.path, bm.title, bm.url = p, title, url
+		return bms
+
+	bms = _bm_recurse(bms_json)
+	if filters:
+		bms = list( bm for bm in bms
+			if (bs := bm.lower()) and all(s in bs for s in filters) )
+	if shuffle: import random; random.shuffle(bms)
+
+	if cycle_file:
+		bms = dict((bm.url, bm) for bm in bms)
+		try: queue = cycle_file.read_text()
+		except OSError: queue = ''
+		queue = list(url.strip() for url in queue.splitlines() if url in bms)
+		n = min(len(bms), limit or len(bms))
+		urls, queue = queue[:n], queue[n:]
+		if n := n - len(urls):
+			queue = list(bms)
+			urls.extend(queue[:n]); queue, n = queue[n:], n - len(queue)
+		cycle_file.write_text(''.join(f'{url}\n' for url in queue))
+		bms = list(bms[url] for url in urls)
+	elif limit: bms = bms[:limit]
+	return bms
+
+
 def mozlz4_open_path(conf, p, to_stdout, to_bytes):
 	if (fn := p.name.lower()).endswith('lz4'):
 		if conf.compress:
@@ -157,7 +190,6 @@ def main(args=None):
 		help='Compress/decompress to stdout, even when file path is specified.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
-	exit_code = 0
 
 	def _profile_path():
 		if not (p := get_profile_dir(opts.profile, opts.ff_home)):
@@ -182,43 +214,18 @@ def main(args=None):
 		try:
 			if not (ps := list((_profile_path() / 'bookmarkbackups').iterdir())): return
 		except OSError: return
-		def _bm_recurse(bm, p=pl.Path('')):
-			bms, title = list(), bm.get('title', '')
-			if bms_sub := bm.get('children'):
-				for bm in bms_sub: bms.extend(_bm_recurse(bm, p / title))
-			elif url := bm.get('uri'):
-				if opts.js or not url.startswith('javascript:'):
-					bms.append(bm := astr(f'{p} :: {title} :: {url}'))
-					bm.path, bm.title, bm.url = p, title, url
-			return bms
-		bms = jsonlz4_read(sorted(ps, key=lambda p: p.name)[-1])
-		bms, errs = _bm_recurse(bms), 0
-		if filters := list(s.lower() for s in opts.filter if s):
-			bms = list( bm for bm in bms
-				if (bs := bm.lower()) and all(s in bs for s in filters) )
-
-		if opts.shuffle: import random; random.shuffle(bms)
-		if opts.cycle and (p := pl.Path(opts.cycle_queue_file).expanduser()):
-			bms = dict((bm.url, bm) for bm in bms)
-			try: queue = p.read_text()
-			except OSError: queue = ''
-			queue = list(url.strip() for url in queue.splitlines() if url in bms)
-			n = min(len(bms), opts.limit or len(bms))
-			urls, queue = queue[:n], queue[n:]
-			if n := n - len(urls):
-				queue = list(bms)
-				urls.extend(queue[:n]); queue, n = queue[n:], n - len(queue)
-			p.write_text(''.join(f'{url}\n' for url in queue))
-			bms = list(bms[url] for url in urls)
-		elif opts.limit: bms = bms[:opts.limit]
-
-		if open_ok := opts.open: import subprocess as sp
+		bms = pick_bookmarks(
+			jsonlz4_read(sorted(ps, key=lambda p: p.name)[-1]),
+			filters=list(s.lower() for s in opts.filter if s),
+			shuffle=opts.shuffle, limit=opts.limit, js=opts.js,
+			cycle_file=opts.cycle and pl.Path(opts.cycle_queue_file).expanduser() )
+		if open_chk := opts.open: import subprocess as sp
 		for n, bm in enumerate(bms, 1):
 			print(opts.fmt.format(n=n, s=bm))
-			if open_ok and sp.run(['firefox', bm.url]).returncode: open_ok = bm
-		if open_ok and open_ok is not True:
-			print(f'Firefox URL-open command failed for: {open_ok.url}', file=sys.stderr)
-			exit_code = 1
+			if open_chk and sp.run(['firefox', bm.url]).returncode: open_chk = bm
+		if open_chk and open_chk is not True:
+			print(f'Firefox URL-open command failed for: {open_chk.url}', file=sys.stderr)
+			return 1
 
 	elif opts.call in ['mozlz4', 'lz4']:
 		if opts.compress and opts.decompress:
@@ -227,7 +234,5 @@ def main(args=None):
 
 	elif opts.call is None: parser.error('No command specified')
 	else: parser.error(f'Unrecognized command: {opts.call}')
-
-	return exit_code
 
 if __name__ == '__main__': sys.exit(main())
