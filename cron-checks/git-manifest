@@ -148,6 +148,16 @@ def main(args=None):
 		If file is missing in any of the specified/detected repositories, error will be raised.
 		Special "-" (hyphen) value will read list from stdin, allowing only one git-repo dir.'''))
 
+	group = parser.add_argument_group('Output options')
+	group.add_argument('-o', '--output',
+		metavar='[ugtmacxn]', default='ugtmacxn', help=dd('''
+			Combination of one-letter flags for what to print for each path:
+				u - user/uid, g - group/gid (see "uid/gid options" below for these),
+				t - node type before mode (f/d/l/etc), m - octal permissions/mode,
+				c - capabilities, a - POSIX ACLs (access/default, if exist), x - xattrs,
+				n - skip printing non-root paths for which resulting permission-string is empty.
+			Default: print everything that is there.'''))
+
 	group = parser.add_argument_group('uid/gid options')
 	group.add_argument('-n', '--ids-numeric', action='store_true',
 		help='Do not resolve uid/gid values to names, leave as numbers.')
@@ -203,6 +213,10 @@ def main(args=None):
 	uidgid = make_uidgid_resolver( numeric=opts.ids_numeric,
 		num_hex=opts.ids_hex, mask_and=mask_and, mask_or=mask_or )
 
+	out = dict.fromkeys(parser.get_default('output'))
+	out.update(dict.fromkeys(opts.output, True))
+	out = type('Output', (object,), out)
+
 	git_paths = dict()
 	for n, p_git in enumerate(git_dirs):
 		p_git = git_dirs[n] = p_git.resolve()
@@ -225,42 +239,52 @@ def main(args=None):
 			if p_git: print()
 			p = p_git = p_str
 		else: p = p_git / p_str
-		perm = str(p_str) if p_root else f'  {p_str}'
+		perm = ''
 
-		try: st = p.stat(follow_symlinks=False)
-		except FileNotFoundError: continue
-		if opts.ids_offset_from_root and p_root:
-			uidgid.offset = -st.st_uid, -st.st_gid
-		st_user, st_group = uidgid(st.st_uid, st.st_gid)
-		st_type = ''.join(t for t, chk in p_types if chk(st.st_mode))
-		st_mode = stat.S_IMODE(st.st_mode)
-		perm += f' {st_user}:{st_group}:{st_type}{st_mode:04o}'
+		if out.u or out.g or out.t or out.m:
+			try: st = p.stat(follow_symlinks=False)
+			except FileNotFoundError: continue
+			ext = list()
+			if out.u or out.g:
+				if opts.ids_offset_from_root and p_root:
+					uidgid.offset = -st.st_uid, -st.st_gid
+				st_user, st_group = uidgid(st.st_uid, st.st_gid)
+				if out.u: ext.append(st_user)
+				if out.g: ext.append(st_group)
+			if out.t or out.m:
+				st_type = ''.join(t for t, chk in p_types if chk(st.st_mode)) if out.t else ''
+				st_mode = f'{stat.S_IMODE(st.st_mode):04o}' if out.m else ''
+				ext.append(st_type + st_mode)
+			perm += ':'.join(ext)
 
-		caps, acls = list(), list()
-		xattrs = dict(
-			(k, os.getxattr(p, k, follow_symlinks=False))
-			for k in os.listxattr(p, follow_symlinks=False) )
-		if cap := xattrs.pop('security.capability', ''):
-			caps.append(parse_caps(cap))
-		if acl := xattrs.pop('system.posix_acl_access', ''):
-			acls.append(parse_acl(acl, uidgid))
-		if acl := xattrs.pop('system.posix_acl_default', ''):
-			acls.append(parse_acl(acl, uidgid, 'd:'))
-		if caps or acls or xattrs:
-			perm += f'/{",".join(caps)}'
-			if acls or xattrs:
-				perm += f'/{",".join(acls)}'
-				if xattrs:
-					ext = list()
-					for k,v in xattrs.items():
-						try:
-							v = v.decode('ascii')
-							if ',' in v or ':' in v: raise ValueError
-						except ValueError:
-							v = ':' + base64.urlsafe_b64encode(v).decode()
-						ext.append(f'{k}={v}')
-					perm += f'/{",".join(ext)}'
+		if out.a or out.c or out.x:
+			caps, acls, xattrs = list(), list(), dict(
+				(k, os.getxattr(p, k, follow_symlinks=False))
+				for k in os.listxattr(p, follow_symlinks=False) )
+			if (cap := xattrs.pop('security.capability', '')) and out.c:
+				caps.append(parse_caps(cap))
+			if (acl := xattrs.pop('system.posix_acl_access', '')) and out.a:
+				acls.append(parse_acl(acl, uidgid))
+			if (acl := xattrs.pop('system.posix_acl_default', '')) and out.a:
+				acls.append(parse_acl(acl, uidgid, 'd:'))
+			if not out.x: xattrs.clear()
+			if caps or acls or xattrs:
+				perm += f'/{",".join(caps)}'
+				if acls or xattrs:
+					perm += f'/{",".join(acls)}'
+					if xattrs:
+						ext = list()
+						for k,v in xattrs.items():
+							try:
+								v = v.decode('ascii')
+								if ',' in v or ':' in v: raise ValueError
+							except ValueError:
+								v = ':' + base64.urlsafe_b64encode(v).decode()
+							ext.append(f'{k}={v}')
+						perm += f'/{",".join(ext)}'
 
-		print(perm)
+		if out.n and not (p_root or perm): continue
+		if perm: perm = ' ' + perm
+		print((str(p_str) if p_root else f'  {p_str}') + perm)
 
 if __name__ == '__main__': sys.exit(main())

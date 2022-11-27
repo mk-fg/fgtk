@@ -4047,7 +4047,8 @@ git-manifest_
 Self-contained python script (no deps) to build a manifest of full linux
 permissions for all files under git control in specified repository(-ies), to stdout.
 
-Included permissions are: uname, gname, path-type, mode, acls, capabilities, xattrs.
+Included permissions are: uname, gname, path-type, mode, acls, capabilities, xattrs -
+with default ``-o/--output`` flags and uid/gid options.
 
 Intended to be used with repos of config files on mutable hosts, which are
 directly used there by apps, so permissions on them and their paths matter.
@@ -4072,12 +4073,11 @@ tracked there alongside files themselves.
 
 ``-f/--git-ls-file`` option allows to run potentially-unsafe "git ls-files"
 command separately, or use file lists from some other non-git source.
-There's also a bunch of uid/gid mangling options, to output these as dec/hex
-numbers or offset/mask in some way.
+There're also some output and uid/gid mangling options (names, dec/hex ints, offset/mask).
 
 Can be combined with tools like b2tag_ to make a manifest with checksums in xattrs::
 
-  script.sh user:user:f0755///user.shatag.blake2b512=3fc5c347...,user.shatag.ts=1669540773.658921171
+  script.sh ///user.shatag.blake2b512=3fc5c347...,user.shatag.ts=1669540773.658921171
 
 .. _b2tag: https://github.com/modelrockettier/b2tag
 
