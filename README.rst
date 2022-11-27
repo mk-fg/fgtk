@@ -4000,9 +4000,9 @@ Idea here is just to gather all useful numbers over time.
 
 
 
-`[cron-checks]`_
-~~~~~~~~~~~~~~~~
-.. _[cron-checks]: cron-checks
+`[cron-checks] Things to run from crontab scripts for diffs/alerts`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _[cron-checks] Things to run from crontab scripts for diffs/alerts: cron-checks
 
 Typically templates for simple host-specific scripts that run from cron daemon
 to check something and produce stderr output and non-0 exit code upon detecting
@@ -4074,6 +4074,12 @@ tracked there alongside files themselves.
 command separately, or use file lists from some other non-git source.
 There's also a bunch of uid/gid mangling options, to output these as dec/hex
 numbers or offset/mask in some way.
+
+Can be combined with tools like b2tag_ to make a manifest with checksums in xattrs::
+
+  script.sh user:user:f0755///user.shatag.blake2b512=3fc5c347...,user.shatag.ts=1669540773.658921171
+
+.. _b2tag: https://github.com/modelrockettier/b2tag
 
 systemd_
 ^^^^^^^^
