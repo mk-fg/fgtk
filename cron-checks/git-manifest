@@ -145,7 +145,8 @@ def main(args=None):
 	parser.add_argument('-f', '--git-ls-file', metavar='rel-path', help=dd('''
 		Instead of running "git ls-files" in each of the paths,
 			read same (newline-separated output) from specified path inside repo dir(s).
-		If file is missing in any of the specified/detected repositories, error will be raised.'''))
+		If file is missing in any of the specified/detected repositories, error will be raised.
+		Special "-" (hyphen) value will read list from stdin, allowing only one git-repo dir.'''))
 
 	group = parser.add_argument_group('uid/gid options')
 	group.add_argument('-n', '--ids-numeric', action='store_true',
@@ -182,6 +183,16 @@ def main(args=None):
 		import subprocess as sp
 		git_ls_files = lambda p_git: sp.run( ['git', 'ls-files', '-z'],
 			check=True, cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')
+	elif opts.git_ls_file == '-':
+		if len(git_dirs) != 1:
+			parser.error( 'Reading -f/--git-ls-file from'
+				' stdin allows processing only one git-dir.' )
+		git_ls_files = ( lambda p_git:
+			sys.stdin.read().translate(dict(zip(b'\r\n', [None, '\0']))).split('\0') )
+	else:
+		git_ls_files = ( lambda p_git:
+			list(s.rstrip('\r') for s in openat2_read(
+				p_git, opts.git_ls_file ).split('\n') if s.strip()) )
 
 	if not opts.ids_mask: mask_and = mask_or = None
 	else:
@@ -196,10 +207,7 @@ def main(args=None):
 	for n, p_git in enumerate(git_dirs):
 		p_git = git_dirs[n] = p_git.resolve()
 		git_paths[p_git] = p_git; git_paths[p_git / '.git'] = '.git'
-		if not opts.git_ls_file: git_ls = git_ls_files(p_git)
-		else:
-			git_ls = openat2_read(p_git, opts.git_ls_file)
-			git_ls = list(s.rstrip('\r') for s in git_ls.split('\n') if s.strip())
+		git_ls = git_ls_files(p_git)
 		for p in sorted(git_ls):
 			if not p: continue
 			p = pl.Path((ps := pl.Path(p).parts)[0])
