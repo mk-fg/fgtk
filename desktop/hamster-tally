@@ -92,7 +92,7 @@ def dd_week(dd1):
 	return dd1, dd2
 
 log_fn_months = ( 'January February March April May'
-	' June July August September October November' ).split()
+	' June July August September October November December' ).split()
 def log_fn_fmt_vars(dd1, dd2):
 	dd, dd1_str = dd1, f'{dd1.day:02d}'
 	if dd1.month != dd2.month: # week split between two months
