@@ -8,6 +8,7 @@ import feedparser as fp
 
 
 p_err = lambda *a,**k: print('ERROR:', *a, file=sys.stderr, **k) or 1
+str_norm = lambda v: unicodedata.normalize('NFKC', v).casefold()
 
 class adict(dict):
 	def __init__(self, *args, **kwargs):
@@ -67,7 +68,7 @@ def feed_parse(url):
 
 def feed_entry_enclosures(entry, ext_filter=None):
 	'Return filtered list of feed entry enclosure URLs in a consistent type-order, if any.'
-	enc_urls, str_norm = list(), lambda v: unicodedata.normalize('NFKC', v).casefold()
+	enc_urls = list()
 	if ext_filter: ext_filter = str_norm(ext_filter.strip())
 	for enc in sorted(entry.enclosures or list(), key=lambda enc: enc.get('type') or '-'):
 		enc_href = enc.get('href')
@@ -163,7 +164,9 @@ def main(args=None):
 		help='Use timestamp-derived "YY-mm-dd.HHMM.N.ext" filename, if possible.')
 	group.add_argument('-v', '--headline-names', action='store_true',
 		help='Derive enclosure filename from item headline, if possible.'
-			' Can be used together with -t/--ts-names to get timestamp + heanline filename.')
+			' Can be used together with -t/--ts-names to get timestamp + headline filename.')
+	group.add_argument('-p', '--name-prefix', metavar='prefix',
+		help='Prefix to put at the start of every downloaded filename, auto-separated by a dot.')
 	group.add_argument('--max-filename-len', type=int, metavar='n', default=90,
 		help='Maximum length for filenames produced by -t and/or -v opts (in characters, not bytes).'
 			' Anything beyond that will be cut and replaced by "--" before dot-extension suffix.'
@@ -284,12 +287,16 @@ def main(args=None):
 			input=file_list.encode(), check=True ) and None
 
 	import shutil, tempfile
-	p_dst = pl.Path.cwd()
+	p_dst_dir = pl.Path.cwd()
 	with tempfile.TemporaryDirectory(prefix=f'.rss-get.{os.getpid()}.') as p:
 		p_tmpdir = pl.Path(p)
 		sp.run(
 			[*conf.aria2c_cmd, '--input-file', '-'],
 			cwd=p_tmpdir, input=file_list.encode(), check=True )
-		for p in sorted(p_tmpdir.iterdir(), key=lambda p: p.name): shutil.move(p, p_dst)
+		for p in sorted(p_tmpdir.iterdir(), key=lambda p: p.name):
+			p_dst = p_dst_dir
+			if ( (pre := opts.name_prefix) and not
+				str_norm(fn := p.name).startswith(str_norm(pre)) ): p_dst /= f'{pre}.{fn}'
+			shutil.move(p, p_dst)
 
 if __name__ == '__main__': sys.exit(main())
