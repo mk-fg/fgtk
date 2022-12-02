@@ -54,10 +54,13 @@ def pick_bookmarks(bms_json, filters, shuffle, limit, js, cycle_file):
 		except OSError: queue = ''
 		queue = list(url.strip() for url in queue.splitlines() if url in bms)
 		n = min(len(bms), limit or len(bms))
-		urls, queue = queue[:n], queue[n:]
+		urls, queue = dict.fromkeys(queue[:n]), queue[n:]
 		if n := n - len(urls):
-			queue = list(bms)
-			urls.extend(queue[:n]); queue, n = queue[n:], n - len(queue)
+			queue = dict.fromkeys(bms)
+			for url in list(queue):
+				n -= url not in urls
+				urls[url] = queue.pop(url)
+				if n <= 0: break
 		cycle_file.write_text(''.join(f'{url}\n' for url in queue))
 		bms = list(bms[url] for url in urls)
 	elif limit: bms = bms[:limit]
