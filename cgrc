@@ -46,13 +46,14 @@ usage() {
 	echo >&2 "-x - 'set -x' debug mode."
 	echo >&2
 	echo >&2 "Examples:"
+	echo >&2 "  cgrc app-ffmpeg -- ffmpeg ..."
 	echo >&2 "  cgrc -ru ff app-browser -- firefox --profile myprofile"
 	echo >&2 "  cgrc -rcu ff && echo 'ff process exited'"
 	echo >&2 "  cgrc -o CPUWeight=200 -o MemoryMax=6G app-browser -- chromium"
 	echo >&2 "  cgrc -q app-leech -- curl -OL http://site.com/file-to-queue.bin"
 	echo >&2 "  cgrc -l app | xargs ps u"
 	echo >&2 "  cgrc -v cpu.max app-pacman"
-	echo >&2 "  cgrc -v cpu.max='1500000 500000' app-pacman"
+	echo >&2 "  cgrc -v cpu.max='2M 500K' app-pacman"
 	echo >&2 "  cgrc -sru pulseaudio"
 	echo >&2
 	exit ${1:-1}
