@@ -30,7 +30,7 @@ def copy_fd_meta(fd_src, fd_dst, mode=None, uidgid=None, xattrs=None):
 			try: xattrs[k] = os.getxattr(fd_src, k)
 			except OSError:
 				if not xattrs_be: raise
-	val_restore = lambda v: not (v is False or val_auto(v))
+	val_restore = lambda v: v is not False and v is not None
 	if val_restore(mode): os.fchmod(fd_dst, mode)
 	if val_restore(uidgid):
 		try: os.fchown(fd_dst, *uidgid)
@@ -834,6 +834,9 @@ def main(args=None):
 		lsf = conf[k] = ListFile(root, p_abs)
 		conf.lists.append(lsf.node)
 
+	if opts.ln is not None:
+		opts.symlink, opts.relative, opts.links_on = (
+			opts.symlink or opts.links_on, opts.relative or opts.reverse, None )
 	if not opts.links_on and not opts.meta_on:
 		if not conf.meta.exists():
 			if os.geteuid() != 0: conf.meta = False
@@ -846,7 +849,6 @@ def main(args=None):
 	if opts.ln is not None:
 		lines_new, lines = list(), conf.links.lines()
 		if opts.ln:
-			opts.symlink, opts.relative = opts.links_on, opts.reverse
 			if len(dst_list := list(opts.ln)) == 1: dst_list.append('.')
 			dst_list = list(map(pl.Path, dst_list))
 			dst_list, src = dst_list[:-1], dst_list[-1]
@@ -856,7 +858,7 @@ def main(args=None):
 				else: continue
 				log_links.critical('%s: %s', err, dst); return 1
 			links_hash = link_list_hash(lines)
-			lt = ( LinkType.rsym if not opts.relative else
+			lt = ( LinkType.rsym if opts.relative else
 				(LinkType.sym if opts.symlink else LinkType.cp) )
 			try:
 				if opts.no_tilde: raise ValueError
