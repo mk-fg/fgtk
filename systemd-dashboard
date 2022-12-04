@@ -254,7 +254,7 @@ def main(args=None):
 	if not opts.unit:
 		# These are purely for performance optimization purposes.
 		# On hosts with containers, dumps can get pretty large and slow to parse.
-		filter_prop_keys = { 'Type', 'Source Path',
+		filter_prop_keys = { 'Type', 'Source Path', 'StandardInput',
 			'Transient', 'Unit Load State', 'Unit Active State', 'TriggeredBy' }
 		filters = dict(
 			filter_prop=lambda k,_set=filter_prop_keys: k in _set,
@@ -286,8 +286,8 @@ def main(args=None):
 		# Does not skip: Unit=X from timers/sockets
 		# WARNING: be sure to add all props used there to filter_prop_keys above!
 		if unit.endswith('.mount') and f'{unit[:-6]}.automount' in state: continue
-		if unit.endswith('.service') and (
-			f'{unit[:-8]}.timer' in state or f'{unit[:-8]}.socket' in state ): continue
+		if unit.endswith('.service') and ( s.standard_input_N == 'socket'
+			or f'{unit[:-8]}.timer' in state or f'{unit[:-8]}.socket' in state ): continue
 		if s.type_N == 'dbus': continue
 		if s.source_path_N == '/proc/self/mountinfo': continue
 		if s.transient_N == 'yes': continue
