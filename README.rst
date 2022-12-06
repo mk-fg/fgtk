@@ -772,8 +772,7 @@ per-network - looks everywhere) and store them using following schema::
   <net>/priv/<nick>__<yy>-<mm>.log.xz
 
 Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
-Values there are parsed according to any one of these (whichever matches
-first):
+Values there are parsed according to any one of these (whichever matches first):
 
 * ``users/<net>/moddata/log/<chan>_<date>.log``
 
@@ -785,18 +784,18 @@ first):
 Each line gets processed by regexp to do ``[HH:MM:SS] <nick> some msg`` ->
 ``[yy-mm-dd HH:MM:SS] <nick> some msg``.
 
-Latest (current day) logs are skipped. New logs for each run are concatenated to
-the monthly .xz file.
+Latest (current day) logs are skipped.
+New logs for each run are concatenated to the monthly .xz file.
 
-Should be safe to stop at any time without any data loss - all the resulting
-.xz's get written to temporary files and renamed at the very end (followed only
-by unlinking of the source files).
+Should be safe to stop at any time without any data loss -
+all resulting .xz's get written to temporary files and renamed at the very end,
+followed by unlinking of the source files, with nothing changed or updated in-place.
 
-All temp files are produced in the destination dir and should be cleaned-up on
-any abort/exit/finish.
+All temp files are produced in the destination dir, even with --dry-run,
+and should be cleaned-up on any abort/exit/finish.
 
 Idea is to have more convenient hierarchy and less files for easier shell
-navigation/grepping (xzless/xzgrep), plus don't worry about the excessive space
+navigation/grepping (xzless/xzgrep), without needing to worry about space
 usage in the long run.
 
 znc-log-reader_

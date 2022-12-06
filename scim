@@ -795,7 +795,7 @@ def main(args=None):
 		help='Use numeric ids instead of user/group names everywhere.')
 	group.add_argument('--debug', action='store_true', help='Log info on what is going on.')
 
-	opts = parser.parse_args()
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.check: log_level = logging.CRITICAL
 	elif opts.debug: log_level = logging.DEBUG

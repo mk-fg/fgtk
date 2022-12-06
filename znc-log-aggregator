@@ -1,257 +1,256 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
-from subprocess import Popen, PIPE, STDOUT
-from collections import namedtuple
-from os.path import expanduser, realpath, join, isdir, exists
-from datetime import date, datetime, timedelta
-import os, sys, re, glob, types, tempfile
+import subprocess as sp, contextlib as cl, datetime as dt, functools as ft
+import os, sys, re, tempfile, logging, pathlib as pl
 
 
-class LogDate(namedtuple('LogDate', 'year month day')):
+def rel_path(p):
+	p0, p = pl.Path('.').resolve(), p.resolve()
+	return p.relative_to(p0) if p.is_relative_to(p0) else p
 
-	def __new__(cls, year_or_str, month=None, day=None):
-		if month == day == None and isinstance(year_or_str, types.StringTypes):
-			assert len(year_or_str) == 8, year_or_str
-			year, month, day = int(year_or_str[:4]), int(year_or_str[4:6]), int(year_or_str[6:8])
-		else: year = year_or_str
-		assert all(it.imap(lambda x: isinstance(x, int), [year, month, day])), [year, month, day]
-		assert 2100 > year >= 1900, year
-		year %= 100
-		return super(LogDate, cls).__new__(cls, year, month, day)
 
+def sort_logfiles_readline(p):
+	'First timestamp in a file can be used for ordering'
+	with p.open() as src:
+		while not (s := src.readline().strip()): pass
+	return s
 
 def sort_logfiles(files):
-	'Order files with possible-duplicate LogDate.'
+	'Order files with possibly-duplicate date'
 	files_dup = dict()
-
-	for ts, path in files:
+	for ts, p in files:
 		if ts not in files_dup: files_dup[ts] = list()
-		assert path not in files_dup[ts], path
-		files_dup[ts].append(path)
+		files_dup[ts].append(p)
+	for ts, ps in sorted(files_dup.items()):
+		if len(ps) == 1: yield ts, ps; continue
+		else: yield ts, sorted(ps, key=sort_logfiles_readline)
 
-	for ts, paths in sorted(files_dup.viewitems()):
-		assert len(paths) > 0, ts
-		if len(paths) == 1: yield ts, paths
-		else:
-			yield ts, sorted( paths,
-				key=lambda path: open(path).readline() )
+def agg_logs(ctx, p_logs, logs, bs=2 * 2**20):
+	'Read/compress all data to various tempfiles'
+	chat_prefixes = '#&' # chars that are not in user nicks
+	ts_now = dt.date.today()
+	chan_agg, chan_paths = dict(), dict() # {net-chan-yy-mm: agg_files}
+
+	def proc_queue(logs):
+		for net, chans in sorted(logs.items()):
+			p_chat, p_priv = p_logs / f'{net}/chat', p_logs / f'{net}/priv'
+			for p in [p_chat, p_priv]:
+				if not p.is_dir(): p.mkdir(parents=True)
+
+			chats = set() # to detect duplicates with diff in stripped chars
+			for chan, files in sorted(chans.items()):
+				if chat := any(chan[0] == c for c in chat_prefixes):
+					# "#" and "&" prefixes don't work well with shells, so strip these,
+					#  taking care that there are no duplicate names as a result
+					if chan.startswith('#'): chan = chan[1:]
+					while chan.startswith('#'): chan = '_' + chan[1:]
+					if chan.startswith('&'): chan = '+' + chan[1:]
+				if chan in chats: raise AssertionError(chan) # & and # channels exist
+				chats.add(chan)
+				p_chan = chan_paths[net, chan] = p_chat if chat else p_priv
+
+				for ts, ps in sort_logfiles(files):
+					if ts == ts_now: continue # skip current log
+					yield p_chan, net, chan, ts, ps
+
+	for p_chan, net, chan, ts, ps in proc_queue(logs):
+		## Create intermediate "<chan>_YY-MM-DD.log" plaintext log
+		# These logs are picked-up by glob into .xz
+
+		p_dst = p_chan / f'{chan}__{ts.strftime("%y-%m-%d")}.log'
+		agg_files, agg_key = set(), (net, chan, ts.year % 100, ts.month)
+		if agg_key not in chan_agg: chan_agg[agg_key] = set()
+
+		with tempfile.NamedTemporaryFile(
+				dir=p_chan, prefix=p_dst.name+'.', delete=False ) as tmp:
+			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
+			for p in ps:
+				agg_files.add(p)
+				with p.open('rb') as src: # append contents to the tmp file
+					for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
+					# Make sure each written file ends with newline
+					tmp.seek(-1, os.SEEK_END)
+					if tmp.read(1) != b'\n': tmp.write(b'\n')
+
+		p_tmp.rename(p_dst) # intermediate log with all agg_files
+		ctx.callback(p_dst.unlink, missing_ok=True)
+		chan_agg[agg_key].update(agg_files)
+		log.debug( 'Updated daily log file'
+			f' [ {net} - {chan} ]: {rel_path(p_dst)}' )
+
+	xz_tuples = list() # (sources, tmp_xz, dst_xz) for final mv+rm
+	for (net, chan, yy, mm), agg_files in sorted(chan_agg.items()):
+		## Create "<chan>_YY-MM.log.xz" aggregated monthly log
+		p_tmp, p_xz = agg_logs_chan(
+			ctx, chan_paths[net, chan], net, chan, yy, mm )
+		xz_tuples.append((agg_files, p_tmp, p_xz))
+	return xz_tuples
+
+def agg_logs_chan(ctx, p_chan, net, chan, yy, mm, bs=2 * 2**20):
+	'''Aggregate logs for one channel into
+		monthly xz file, reusing pre-existing part of it, if any.'''
+	fn_base = f'{chan}__{yy:02d}-{mm:02d}.log'
+	fn_sub_re = re.compile(
+		r'__(?P<yy>\d{2})-(?P<mm>\d{2})-(?P<dd>\d{2})\.log$' )
+	p_xz = p_chan / f'{fn_base}.xz'
+	log.debug(f'Aggregating channel [ {net} - {chan} ]: {rel_path(p_xz)}')
+
+	# Aggregate all logfiles to tmp file, prefixing each line with full timestamp
+	with tempfile.NamedTemporaryFile(
+			dir=p_chan, prefix=fn_base+'.', delete=False ) as tmp:
+		ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
+		for p in sorted(p_chan.glob(f'{chan}__{yy:02d}-{mm:02d}-[0-9][0-9].log')):
+			m = fn_sub_re.search(str(p))
+			ys, ms, ds = (int(m.group(k)) for k in ['yy', 'mm', 'dd'])
+			line_pat = re.compile(br'^(\s*\[)(\d{2}:\d{2}(:\d{2})?\]\s+)')
+			line_sub = fr'\g<1>{ys:02d}-{ms:02d}-{ds:02d} \g<2>'.encode()
+			with p.open('rb') as src:
+				for line in iter(src.readline, b''):
+					tmp.write(line_pat.sub(line_sub, line))
+	p_tmp.rename(p_dst := p_chan / fn_base) # plaintext *monthly* log *tail*
+	ctx.callback(p_dst.unlink, missing_ok=True)
+
+	# Compress and concatenate with the old xz file
+	with tempfile.NamedTemporaryFile(
+			dir=p_chan, prefix=p_xz.name+'.', delete=False ) as tmp:
+		ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
+		if p_xz.exists(): # copy old part first
+			with p_xz.open('rb') as src:
+				for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
+			tmp.flush()
+		with p_dst.open('rb') as src: # compress/append new part
+			sp.run(
+				['xz', '--compress', '--format=xz', '--check=sha256'],
+				check=True, stdin=src, stdout=tmp )
+		tmp.seek(0)
+		sp.run( # make sure decompression of the whole thing works
+			['xz', '--test', '--format=xz', '--check=sha256'],
+			check=True, stdin=tmp )
+
+	if p_xz.exists() and p_tmp.stat().st_size <= p_xz.stat().st_size:
+		raise AssertionError(p_dst, p_xz)
+	return p_tmp, p_xz
 
 
-def main_core(argv=None):
-	import argparse
+def find_logs():
+	p_logs, logs = pl.Path('.').resolve(), dict()
+
+	def logs_append(net, chan, ts_str, p):
+		if net not in logs: logs[net] = dict()
+		if chan not in logs[net]: logs[net][chan] = list()
+		ts = dt.date(*map(int, [ts_str[:4], ts_str[4:6], ts_str[6:8]]))
+		if not (len(ts_str) == 8 and 2050 > ts.year >= 2000):
+			raise AssertionError(ts_str)
+		logs[net][chan].append((ts, p.resolve()))
+
+	def re_chk(re_str, p, *groups):
+		if not (m := re.search(re_str, str(p))): raise AssertionError(re_str, p)
+		if groups: return (m.group(k) for k in groups)
+		return m
+
+	# Prehistoric logs
+	for p in p_logs.glob('users/*/moddata/log/*.log'):
+		net, chan, ts = re_chk(
+			r'/users/(?P<net>[^/]+)/moddata/'
+				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+			p, 'net', 'chan', 'ts' )
+		logs_append(net, chan, ts, p)
+
+	# Logs for old-style setup with user=network, multi-network users
+	for p in p_logs.glob('moddata/log/*.log'):
+		user, net, chan, ts = re_chk(
+			r'/moddata/log/(?P<user>[^/]+?)'
+				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+			p, 'user', 'net', 'chan', 'ts' )
+		if net == 'default': net = user
+		if '_' in f'{user}{net}': raise AssertionError(net, p)
+		logs_append(net, chan, ts, p)
+
+	# Modern logs enabled globally for multi-network users
+	# Can also be enabled by user: users/*/moddata/log/*/*/*.log
+	# Can also be enabled by network: users/*/networks/*/moddata/log/*/*.log
+	# All these are redundant with globally-enabled module, so not used here
+	for p in p_logs.glob('moddata/log/*/*/*/*.log'):
+		user, net, chan, ts = re_chk(
+			r'/moddata/log/(?P<user>[^/]+?)/'
+				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$',
+			p, 'user', 'net', 'chan', 'ts' )
+		if '_' in f'{user}{net}': raise AssertionError(net, p)
+		logs_append(net, chan, ts.replace('-', ''), p)
+
+	return logs
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Collect ZNC logs in a single place, aggregating and compressing them as well.')
-	parser.add_argument('-s', '--znc-home', default='~znc',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Collect ZNC logs in one dir (-d/--log-dir),
+				prefixing, aggregating and compressing them as necessary.
+
+			Aggregates and creates all files with tmp-suffixes first,
+				then renames them all to final names, then removes all temp files,
+				then removes all processed src logs - strictly in that order,
+				with errors interrupting the process safely for actual data.
+			Dry-run mode only disables "rename" and "remove src logs" steps,
+				but still does all the work exactly as it would without these couple lines.
+			Temp files are always created and cleaned-up, even if not used.
+			Never overwrites or updates any files in-place.
+
+			Lines in aggregated files are processed to have full ISO-8601
+				date/time prefix, not just time-of-day or similar truncated variants.'''))
+	parser.add_argument('-s', '--znc-home', metavar='dir', default='~znc',
 		help='Path to ZNC home directory (default: %(default)s).')
-	parser.add_argument('-d', '--log-dir', default='~znc/logs',
-		help='Path to destination directory to store aggregated logs to (default: %(default)s).')
+	parser.add_argument('-d', '--log-dir', metavar='dir', default='~znc/logs',
+		help='Path to destination directory'
+			' to store aggregated logs to (default: %(default)s).')
 	parser.add_argument('--dry-run', action='store_true',
 		help='Do all the stuff, but dont actually create any non-tmp files.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	opts = parser.parse_args()
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	opts.znc_home = expanduser(opts.znc_home)
-	opts.log_dir = expanduser(opts.log_dir)
+	global log
+	logging.basicConfig(
+		format='%(asctime)s :: %(name)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.INFO )
+	log = logging.getLogger('zla')
 
-	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
-	log = logging.getLogger()
+	p_logs = pl.Path(opts.log_dir).expanduser().resolve()
+	p_logs.mkdir(exist_ok=True)
+	os.chdir(pl.Path(opts.znc_home).expanduser()) # strips it for rel_path logging
+	dry_run = ' [DRY-RUN]' if opts.dry_run else ''
 
+	log.debug(f'Finding and normalizing log sources [ {p_logs} ]')
+	logs = find_logs()
 
-	## Find all the logs
-	## Aside: znc people sure do love to change how they store their logs!
+	agg_files_set = set()
+	with cl.ExitStack() as ctx:
+		log.debug(f'Aggregating log data [ {p_logs} ]')
+		xz_tuples = agg_logs(ctx, p_logs, logs)
 
-	log.debug('Finding and normalizing log sources')
-	os.chdir(opts.znc_home)
-	ts_now = datetime.now()
+		log.debug(f'Moving new xz files into place ({len(xz_tuples):,d}){dry_run}')
+		for agg_files, p_xz_tmp, p_xz in xz_tuples:
+			if log.isEnabledFor(logging.DEBUG):
+				sz1, sz0 = ( p_xz_tmp.stat().st_size,
+					p_xz.stat().st_size if p_xz.exists() else 0 )
+				log.debug(f'  {rel_path(p_xz)} [ {sz0:,d} -> {sz1:,d} B]')
+				agg_lines, agg_sz = list(), 0
+				for p in agg_files:
+					agg_sz += (sz := p.stat().st_size)
+					agg_lines.append(f'    {rel_path(p)} [ {sz:,d} B]')
+				log.debug( f'      <- {p_xz_tmp.name}'
+					f' [+ {agg_sz:,d} -> {sz1-sz0:,d} B] (+ {len(agg_files)} file(s))' )
+				for msg in agg_lines: log.debug(msg)
+			if not dry_run: p_xz_tmp.rename(p_xz)
+			agg_files_set.update(agg_files)
 
-	logs = dict()
-	def logs_append(net, chan, ts, path):
-		if net not in logs: logs[net] = dict()
-		if chan not in logs[net]: logs[net][chan] = list()
-		logs[net][chan].append((LogDate(ts), realpath(path)))
-
-	# Prehistoric logs
-	for path in glob.glob('users/*/moddata/log/*.log'):
-		match = re.search( r'^users/(?P<net>[^/]+)/'
-			'moddata/log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
-		logs_append(net, chan, ts, path)
-
-	# Logs for old-style setup with user=network
-	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( r'^moddata/log/(?P<net>[^/]+?)'
-			r'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
-		assert '_' not in net, [net, path]
-		logs_append(net, chan, ts, path)
-
-	# Old (initial) logs for multi-network users
-	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( r'^moddata/log/(?P<user>[^/]+?)'
-			r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
-		if net == 'default': continue
-		assert '_' not in user and '_' not in net, [user, net, path]
-		assert user not in logs, user
-		logs_append(net, chan, ts, path)
-
-	# Modern logs for multi-network users
-	for path in glob.glob('moddata/log/*/*/*/*.log'):
-		match = re.search( r'^moddata/log/(?P<user>[^/]+?)/'
-			r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$', path )
-		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
-		assert '_' not in user and '_' not in net, [user, net, path]
-		logs_append(net, chan, ts.replace('-', ''), path)
-
-	# from pprint import pprint
-	# pprint(logs)
-
-
-	## Read all the data to tempfiles
-	log.debug('Aggregating log data')
-	if not isdir(opts.log_dir): os.mkdir(opts.log_dir)
-	os.chdir(opts.log_dir)
-
-	chat_prefixes = '#&' # chars that are not in user nicks
-	bs = 2 * 2**20 # read/write block size
-
-	xz_tuples = list() # (sources, tmp_xz, dst_xz) tuples for final mv+rm
-
-	for net, chans in sorted(logs.viewitems()):
-		log.debug('Processing logs for network: {} ({} channels)'.format(net, len(chans)))
-
-		# This distinction is important for human, but not to irc
-		dir_chat, dir_priv = '{}/chat'.format(net), '{}/priv'.format(net)
-		for path in [dir_chat, dir_priv]:
-			if not isdir(path): os.makedirs(path, 0755)
-
-		chats = set() # to detect duplicates with diff in stripped chars
-
-		for chan, files in sorted(chans.viewitems()):
-			priv = not any(it.imap(chan.startswith, chat_prefixes)) # private messages
-			chan_dir = dir_chat if not priv else dir_priv
-			chan_agg = dict() # aggregation - {(chan, year, month): source_files}
-
-			if not priv:
-				# "#" and "&" prefixes don't work well with shells, so strip these,
-				#  taking care that there are no duplicate names as a result
-				if chan.startswith('#'): chan = chan[1:]
-				while chan.startswith('#'): chan = '_' + chan[1:]
-				if chan.startswith('&'): chan = '+' + chan[1:]
-				assert chan not in chats, chan
-				chats.add(chan)
-
-			for ts, paths in sort_logfiles(files):
-				# Skip current logs
-				if (ts.year, ts.month, ts.day) ==\
-					(ts_now.year%100, ts_now.month, ts_now.day): continue
-
-				name = '{0}__{1.year:02}-{1.month:02}-{1.day:02}.log'.format(chan, ts)
-				name_dst = join(chan_dir, name)
-
-				agg_files, agg_key = set(), (chan, ts.year, ts.month)
-				if agg_key not in chan_agg: chan_agg[agg_key] = set()
-
-				with tempfile.NamedTemporaryFile(
-						dir=chan_dir, prefix=name+'.', delete=False ) as tmp:
-					tmpfiles_cleanup.add(tmp.name)
-					for path in paths:
-						# Append contents to the tmp file
-						agg_files.add(path)
-						with open(path) as src:
-							for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
-							# Make sure each written file ends with newline
-							tmp.seek(-1, os.SEEK_END)
-							last_byte = tmp.read(1)
-							assert last_byte and not tmp.read(), path
-							if last_byte != b'\n': tmp.write(b'\n')
-
-				# Ok, now we have plaintext log *for-day*
-				os.rename(tmp.name, name_dst)
-				tmpfiles_cleanup.add(name_dst)
-				chan_agg[agg_key].update(agg_files)
-
-			log.debug('Aggregating channel (private: {}): {}'.format(priv, chan))
-
-			# Aggregate plain logs into .xz
-			for (chan, year, month), xz_files in sorted(chan_agg.viewitems()):
-				name_base = '{}__{:02}-{:02}.log'.format(chan, year, month)
-				name_xz = '{}.xz'.format(name_base)
-				name_sub_re = re.compile(r'__(?P<y>\d{2})-(?P<mo>\d{2})-(?P<d>\d{2})\.log$')
-
-				# Aggregate all the logfiles to tmp file, prefixing each line with full timestamp
-				with tempfile.NamedTemporaryFile(
-						dir=chan_dir, prefix=name_base+'.', delete=False ) as tmp:
-					tmpfiles_cleanup.add(tmp.name)
-					for path in sorted(glob.glob(join( chan_dir,
-							'{}__{:02}-{:02}-[0-9][0-9].log'.format(chan, year, month) ))):
-						match = name_sub_re.search(path)
-						assert match, path
-						line_pat = re.compile(br'^(\s*\[)(\d{2}:\d{2}(:\d{2})?\]\s+)')
-						line_sub = br'\g<1>{:02}-{:02}-{:02} \g<2>'\
-							.format(*(int(match.group(g)) for g in ['y', 'mo', 'd']))
-						with open(path) as src:
-							for line in iter(src.readline, b''):
-								tmp.write(line_pat.sub(line_sub, line))
-				# Plaintext log *tail* *for-month*
-				name_dst = join(chan_dir, name_base)
-				os.rename(tmp.name, name_dst)
-				tmpfiles_cleanup.add(name_dst)
-
-				# Compress and concatenate with the old xz file
-				with tempfile.NamedTemporaryFile(
-						dir=chan_dir, prefix=name_xz+'.', delete=False ) as tmp:
-					tmpfiles_cleanup.add(tmp.name)
-					name_dst_xz = join(chan_dir, name_xz)
-					# write older part first
-					if exists(name_dst_xz):
-						with open(name_dst_xz) as src:
-							for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
-						tmp.flush()
-					# compress
-					assert not Popen(
-						['xz', '--compress', '--format=xz', '--check=sha256'],
-						stdin=open(name_dst), stdout=tmp ).wait(), ['xz cat', name_dst, tmp.name]
-					# check if decompression works
-					tmp.seek(0)
-					assert not Popen(
-						['xz', '--test', '--format=xz', '--check=sha256'],
-						stdin=tmp ).wait(), ['xz test', tmp.name, name_dst]
-
-				# Done with this month
-				if exists(name_dst_xz):
-					assert os.stat(tmp.name).st_size > os.stat(name_dst_xz).st_size, name_dst_xz
-				assert xz_files, name_dst_xz
-				xz_tuples.append((xz_files, tmp.name, name_dst_xz))
-
-			# Done with the chan
-		# Done with the net
-
-
-	## Done with the aggregation into tempfiles, commit changes
-	if not opts.dry_run:
-		log.debug('Moving all produced files into place')
-		for xz_files, src, dst in xz_tuples:
-			os.rename(src, dst)
-			tmpfiles_cleanup.update(xz_files)
+	log.debug(f'Removing aggregated source files ({len(agg_files_set):,d}){dry_run}')
+	for p in agg_files_set:
+		if not dry_run: p.unlink()
 
 	log.debug('Finished')
-
-
-tmpfiles_cleanup = set()
-
-def main(argv=None):
-	try: main_core(argv)
-	finally:
-		for path in tmpfiles_cleanup:
-			try: os.unlink(path)
-			except: pass
 
 if __name__ == '__main__': sys.exit(main())
