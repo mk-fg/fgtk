@@ -28,15 +28,13 @@ def sort_logfiles(files):
 def agg_logs(ctx, p_logs, logs, fn_tpl):
 	'Read/compress all data to .xz tempfiles'
 	chat_prefixes = '#&' # chars that are not in user nicks
-	ts_now = dt.date.today()
-	chan_agg = dict() # {fn: p_xz, [(ts, p), ...]}
+	ts_now, chan_agg = dt.date.today(), dict() # {p_xz: [(ts, p), ...]}
 
 	for net, chans in sorted(logs.items()):
 		p_chat, p_priv = p_logs / f'{net}/chat', p_logs / f'{net}/priv'
 		for p in [p_chat, p_priv]:
 			if not p.is_dir(): p.mkdir(parents=True)
 
-		chats = set() # to detect duplicates with diff in stripped chars
 		for chan, files in sorted(chans.items()):
 			if chat := any(chan[0] == c for c in chat_prefixes):
 				# "#" and "&" prefixes don't work well with shells, so strip these,
@@ -44,8 +42,6 @@ def agg_logs(ctx, p_logs, logs, fn_tpl):
 				if chan.startswith('#'): chan = chan[1:]
 				while chan.startswith('#'): chan = '_' + chan[1:]
 				if chan.startswith('&'): chan = '+' + chan[1:]
-			if chan in chats: raise AssertionError(chan) # same & and # chans exist
-			chats.add(chan)
 			p_chan = p_chat if chat else p_priv
 
 			agg_files = dict()
@@ -56,14 +52,13 @@ def agg_logs(ctx, p_logs, logs, fn_tpl):
 				agg_files.setdefault(fn, list()).extend((ts, p) for p in ps)
 
 			for fn, agg_files in agg_files.items():
-				if fn not in chan_agg: chan_agg[fn] = p_chan / fn, agg_files; continue
-				log.debug(f'WARNING: Diff nets/chans with same dst file [ {fn} ]')
-				p_xz, fn_files = chan_agg[fn]
-				fn_files.extend(agg_files); fn_files.sort()
+				if (p_xz := p_chan / fn) not in chan_agg: chan_agg[p_xz] = agg_files; continue
+				log.warning(f'Diff nets/chans with same dst file [ {p_xz.name} ]')
+				chan_agg[p_xz].extend(agg_files); chan_agg[p_xz].sort()
 
 	xz_tuples = list() # (sources, tmp_xz, dst_xz) for final mv+rm
-	for fn, (p_xz, agg_files) in sorted(chan_agg.items()):
-		log.debug(f'Aggregating channel [+ {len(agg_files)} log(s)]: {fn}')
+	for p_xz, agg_files in sorted(chan_agg.items()):
+		log.debug(f'Aggregating channel [+ {len(agg_files)} log(s)]: {p_xz.name}')
 		with tempfile.NamedTemporaryFile(
 				dir=p_xz.parent, prefix=p_xz.name+'.', delete=False ) as tmp:
 			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
