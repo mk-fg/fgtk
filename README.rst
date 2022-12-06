@@ -759,35 +759,31 @@ on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
 ZNC log helpers
 ^^^^^^^^^^^^^^^
 
-Tools to manage `ZNC IRC bouncer <http://znc.in/>`_ logs - archive, view, search, etc.
+Couple scripts to manage `ZNC IRC bouncer <http://znc.in/>`_ logs -
+archive, view, search, etc.
 
 znc-log-aggregator_
 '''''''''''''''''''
 .. _znc-log-aggregator: znc-log-aggregator
 
-Tool to process znc chat logs, produced by "log" module (global, per-user or
-per-network - looks everywhere) and store them using following schema::
+Tool to process ZNC chat logs, produced by "log" module (one enabled globally,
+with default wildcards) and store them using following schema under some -d/--log-dir::
 
   <net>/chat/<channel>__<yy>-<mm>.log.xz
   <net>/priv/<nick>__<yy>-<mm>.log.xz
 
 Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
-Values there are parsed according to any one of these (whichever matches first):
 
-* ``users/<net>/moddata/log/<chan>_<date>.log``
+With values from ZNC log paths: ``moddata/log/*/<net>/<chan/nick>/<yyyy-mm-dd>.log``
 
-* ``moddata/log/<net>_default_<chan>_<date>.log`` (no "_" in ``<net>`` allowed)
-
-* ``moddata/log/<user>_<net>_<chan>_<date>.log`` (no "_" in ``<user>`` or
-  ``<net>`` allowed)
-
-Each line gets processed by regexp to do ``[HH:MM:SS] <nick> some msg`` ->
-``[yy-mm-dd HH:MM:SS] <nick> some msg``.
+Each ZNC-log line gets processed by regexp to add proper date, so that one
+doesn't have to use long timestamps in ZNC itself: ``[HH:MM:SS] <nick> some
+msg`` -> ``[yy-mm-dd HH:MM:SS] <nick> some msg``.
 
 Latest (current day) logs are skipped.
-New logs for each run are concatenated to the monthly .xz file.
+New logs for each run are concatenated into a monthly .xz file.
 
-Should be safe to stop at any time without any data loss -
+Should be safe to stop at any time without data loss -
 all resulting .xz's get written to temporary files and renamed at the very end,
 followed by unlinking of the source files, with nothing changed or updated in-place.
 
@@ -795,8 +791,11 @@ All temp files are produced in the destination dir, even with --dry-run,
 and should be cleaned-up on any abort/exit/finish.
 
 Idea is to have more convenient hierarchy and less files for easier shell
-navigation/grepping (xzless/xzgrep), without needing to worry about space
-usage in the long run.
+navigation/grepping (xzless/xzgrep), and without needing to worry about space
+usage of uncompressed logs in the long run.
+
+ZNC changed how it stores logs a few times over the years, and this tools
+also helped maintain consistent storage schema across these.
 
 znc-log-reader_
 '''''''''''''''
