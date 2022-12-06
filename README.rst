@@ -777,8 +777,8 @@ Where "priv" differs from "chat" in latter being prefixed by "#" or "&".
 With values from ZNC log paths: ``moddata/log/*/<net>/<chan/nick>/<yyyy-mm-dd>.log``
 
 Each ZNC-log line gets processed by regexp to add proper date, so that one
-doesn't have to use long timestamps in ZNC itself: ``[HH:MM:SS] <nick> some
-msg`` -> ``[yy-mm-dd HH:MM:SS] <nick> some msg``.
+doesn't have to use long timestamps in ZNC itself:
+``[HH:MM:SS] <nick> some msg`` -> ``[yy-mm-dd HH:MM:SS] <nick> some msg``.
 
 Latest (current day) logs are skipped.
 New logs for each run are concatenated into a monthly .xz file.

@@ -25,111 +25,79 @@ def sort_logfiles(files):
 		if len(ps) == 1: yield ts, ps; continue
 		else: yield ts, sorted(ps, key=sort_logfiles_readline)
 
-def agg_logs(ctx, p_logs, logs, bs=2 * 2**20):
-	'Read/compress all data to various tempfiles'
+def agg_logs(ctx, p_logs, logs, fn_tpl):
+	'Read/compress all data to .xz tempfiles'
 	chat_prefixes = '#&' # chars that are not in user nicks
 	ts_now = dt.date.today()
-	chan_agg, chan_paths = dict(), dict() # {net-chan-yy-mm: agg_files}
+	chan_agg = dict() # {fn: p_xz, [(ts, p), ...]}
 
-	def proc_queue(logs):
-		for net, chans in sorted(logs.items()):
-			p_chat, p_priv = p_logs / f'{net}/chat', p_logs / f'{net}/priv'
-			for p in [p_chat, p_priv]:
-				if not p.is_dir(): p.mkdir(parents=True)
+	for net, chans in sorted(logs.items()):
+		p_chat, p_priv = p_logs / f'{net}/chat', p_logs / f'{net}/priv'
+		for p in [p_chat, p_priv]:
+			if not p.is_dir(): p.mkdir(parents=True)
 
-			chats = set() # to detect duplicates with diff in stripped chars
-			for chan, files in sorted(chans.items()):
-				if chat := any(chan[0] == c for c in chat_prefixes):
-					# "#" and "&" prefixes don't work well with shells, so strip these,
-					#  taking care that there are no duplicate names as a result
-					if chan.startswith('#'): chan = chan[1:]
-					while chan.startswith('#'): chan = '_' + chan[1:]
-					if chan.startswith('&'): chan = '+' + chan[1:]
-				if chan in chats: raise AssertionError(chan) # & and # channels exist
-				chats.add(chan)
-				p_chan = chan_paths[net, chan] = p_chat if chat else p_priv
+		chats = set() # to detect duplicates with diff in stripped chars
+		for chan, files in sorted(chans.items()):
+			if chat := any(chan[0] == c for c in chat_prefixes):
+				# "#" and "&" prefixes don't work well with shells, so strip these,
+				#  taking care that there are no duplicate names as a result
+				if chan.startswith('#'): chan = chan[1:]
+				while chan.startswith('#'): chan = '_' + chan[1:]
+				if chan.startswith('&'): chan = '+' + chan[1:]
+			if chan in chats: raise AssertionError(chan) # same & and # chans exist
+			chats.add(chan)
+			p_chan = p_chat if chat else p_priv
 
-				for ts, ps in sort_logfiles(files):
-					if ts == ts_now: continue # skip current log
-					yield p_chan, net, chan, ts, ps
+			agg_files = dict()
+			for ts, ps in sort_logfiles(files):
+				if ts == ts_now: continue # skip current log(s)
+				fn = fn_tpl.format( net=net,
+					chan=chan, yy=ts.year % 100, mm=ts.month )
+				agg_files.setdefault(fn, list()).extend((ts, p) for p in ps)
 
-	for p_chan, net, chan, ts, ps in proc_queue(logs):
-		## Create intermediate "<chan>_YY-MM-DD.log" plaintext log
-		# These logs are picked-up by glob into .xz
-
-		p_dst = p_chan / f'{chan}__{ts.strftime("%y-%m-%d")}.log'
-		agg_files, agg_key = set(), (net, chan, ts.year % 100, ts.month)
-		if agg_key not in chan_agg: chan_agg[agg_key] = set()
-
-		with tempfile.NamedTemporaryFile(
-				dir=p_chan, prefix=p_dst.name+'.', delete=False ) as tmp:
-			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
-			for p in ps:
-				agg_files.add(p)
-				with p.open('rb') as src: # append contents to the tmp file
-					for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
-					# Make sure each written file ends with newline
-					tmp.seek(-1, os.SEEK_END)
-					if tmp.read(1) != b'\n': tmp.write(b'\n')
-
-		p_tmp.rename(p_dst) # intermediate log with all agg_files
-		ctx.callback(p_dst.unlink, missing_ok=True)
-		chan_agg[agg_key].update(agg_files)
-		log.debug( 'Updated daily log file'
-			f' [ {net} - {chan} ]: {rel_path(p_dst)}' )
+			for fn, agg_files in agg_files.items():
+				if fn not in chan_agg: chan_agg[fn] = p_chan / fn, agg_files; continue
+				log.debug(f'WARNING: Diff nets/chans with same dst file [ {fn} ]')
+				p_xz, fn_files = chan_agg[fn]
+				fn_files.extend(agg_files); fn_files.sort()
 
 	xz_tuples = list() # (sources, tmp_xz, dst_xz) for final mv+rm
-	for (net, chan, yy, mm), agg_files in sorted(chan_agg.items()):
-		## Create "<chan>_YY-MM.log.xz" aggregated monthly log
-		p_tmp, p_xz = agg_logs_chan(
-			ctx, chan_paths[net, chan], net, chan, yy, mm )
-		xz_tuples.append((agg_files, p_tmp, p_xz))
+	for fn, (p_xz, agg_files) in sorted(chan_agg.items()):
+		log.debug(f'Aggregating channel [+ {len(agg_files)} log(s)]: {fn}')
+		with tempfile.NamedTemporaryFile(
+				dir=p_xz.parent, prefix=p_xz.name+'.', delete=False ) as tmp:
+			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
+			agg_logs_chan(tmp, p_xz, agg_files)
+			agg_files = sorted(set(p for ts, p in agg_files))
+			xz_tuples.append((agg_files, p_tmp, p_xz))
 	return xz_tuples
 
-def agg_logs_chan(ctx, p_chan, net, chan, yy, mm, bs=2 * 2**20):
+def agg_logs_chan(tmp, p_xz, agg_files, xz_bs=2 * 2**20):
 	'''Aggregate logs for one channel into
 		monthly xz file, reusing pre-existing part of it, if any.'''
-	fn_base = f'{chan}__{yy:02d}-{mm:02d}.log'
-	fn_sub_re = re.compile(
-		r'__(?P<yy>\d{2})-(?P<mm>\d{2})-(?P<dd>\d{2})\.log$' )
-	p_xz = p_chan / f'{fn_base}.xz'
-	log.debug(f'Aggregating channel [ {net} - {chan} ]: {rel_path(p_xz)}')
+	if p_xz.exists(): # copy old part first
+		with p_xz.open('rb') as src:
+			for chunk in iter(ft.partial(src.read, xz_bs), b''): tmp.write(chunk)
+		tmp.flush()
 
-	# Aggregate all logfiles to tmp file, prefixing each line with full timestamp
-	with tempfile.NamedTemporaryFile(
-			dir=p_chan, prefix=fn_base+'.', delete=False ) as tmp:
-		ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
-		for p in sorted(p_chan.glob(f'{chan}__{yy:02d}-{mm:02d}-[0-9][0-9].log')):
-			m = fn_sub_re.search(str(p))
-			ys, ms, ds = (int(m.group(k)) for k in ['yy', 'mm', 'dd'])
-			line_pat = re.compile(br'^(\s*\[)(\d{2}:\d{2}(:\d{2})?\]\s+)')
-			line_sub = fr'\g<1>{ys:02d}-{ms:02d}-{ds:02d} \g<2>'.encode()
-			with p.open('rb') as src:
-				for line in iter(src.readline, b''):
-					tmp.write(line_pat.sub(line_sub, line))
-	p_tmp.rename(p_dst := p_chan / fn_base) # plaintext *monthly* log *tail*
-	ctx.callback(p_dst.unlink, missing_ok=True)
+	xz = sp.Popen( # append compressed new files
+		['xz', '--compress', '--format=xz', '--check=sha256'],
+		stdin=sp.PIPE, stdout=tmp )
+	line_pat = re.compile(br'^(\s*\[)(\d{2}:\d{2}(:\d{2})?\]\s+)')
+	for ts, p in agg_files:
+		line, line_sub = b'', ( fr'\g<1>{ts.year%100:02d}'
+			fr'-{ts.month:02d}-{ts.day:02d} \g<2>' ).encode()
+		with p.open('rb') as src:
+			for line in iter(src.readline, b''):
+				xz.stdin.write(line_pat.sub(line_sub, line))
+		if line and not line.endswith(b'\n'): xz.stdin.write(b'\n')
+	xz.stdin.flush(); xz.stdin.close()
+	if xz.wait(): raise AssertionError(f'xz failed for [ {p_xz} ]')
 
-	# Compress and concatenate with the old xz file
-	with tempfile.NamedTemporaryFile(
-			dir=p_chan, prefix=p_xz.name+'.', delete=False ) as tmp:
-		ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
-		if p_xz.exists(): # copy old part first
-			with p_xz.open('rb') as src:
-				for chunk in iter(ft.partial(src.read, bs), b''): tmp.write(chunk)
-			tmp.flush()
-		with p_dst.open('rb') as src: # compress/append new part
-			sp.run(
-				['xz', '--compress', '--format=xz', '--check=sha256'],
-				check=True, stdin=src, stdout=tmp )
-		tmp.seek(0)
-		sp.run( # make sure decompression of the whole thing works
-			['xz', '--test', '--format=xz', '--check=sha256'],
-			check=True, stdin=tmp )
-
-	if p_xz.exists() and p_tmp.stat().st_size <= p_xz.stat().st_size:
-		raise AssertionError(p_dst, p_xz)
-	return p_tmp, p_xz
+	tmp.seek(0)
+	sp.run( # make sure decompression of the whole thing works
+		['xz', '--test', '--format=xz', '--check=sha256'],
+		check=True, stdin=tmp )
 
 
 def find_logs():
@@ -206,6 +174,14 @@ def main(args=None):
 	parser.add_argument('-d', '--log-dir', metavar='dir', default='~znc/logs',
 		help='Path to destination directory'
 			' to store aggregated logs to (default: %(default)s).')
+	parser.add_argument('-n', '--log-name',
+		metavar='fn', default='{chan}__{yy:02d}-{mm:02d}.log.xz', help=dd('''
+			Name template for xz-compressed log files created under -d/--log-dir.
+			Uses python str.format formatting - https://pyformat.info/
+			Available templating keys: net, chan, yy, mm.
+			Default: %(default)s
+			Note that default value ignores "net", to work with user/network renames,
+				but will append lines from multiple same-name channels on diff nets to same log file.'''))
 	parser.add_argument('--dry-run', action='store_true',
 		help='Do all the stuff, but dont actually create any non-tmp files.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -229,7 +205,7 @@ def main(args=None):
 	agg_files_set = set()
 	with cl.ExitStack() as ctx:
 		log.debug(f'Aggregating log data [ {p_logs} ]')
-		xz_tuples = agg_logs(ctx, p_logs, logs)
+		xz_tuples = agg_logs(ctx, p_logs, logs, opts.log_name)
 
 		log.debug(f'Moving new xz files into place ({len(xz_tuples):,d}){dry_run}')
 		for agg_files, p_xz_tmp, p_xz in xz_tuples:
@@ -242,7 +218,7 @@ def main(args=None):
 					agg_sz += (sz := p.stat().st_size)
 					agg_lines.append(f'    {rel_path(p)} [ {sz:,d} B]')
 				log.debug( f'      <- {p_xz_tmp.name}'
-					f' [+ {agg_sz:,d} -> {sz1-sz0:,d} B] (+ {len(agg_files)} file(s))' )
+					f' [+ {agg_sz:,d} -> {sz1-sz0:,d} B] [+ {len(agg_files)} log(s)]' )
 				for msg in agg_lines: log.debug(msg)
 			if not dry_run: p_xz_tmp.rename(p_xz)
 			agg_files_set.update(agg_files)
