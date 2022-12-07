@@ -27,38 +27,33 @@ def sort_logfiles(files):
 
 def agg_logs(ctx, p_logs, logs, fn_tpl):
 	'Read/compress all data to .xz tempfiles'
-	chat_prefixes = '#&' # chars that are not in user nicks
 	ts_now, chan_agg = dt.date.today(), dict() # {p_xz: [(ts, p), ...]}
+	log = logging.getLogger('zla.agg')
 
-	for net, chans in sorted(logs.items()):
-		p_chat, p_priv = p_logs / f'{net}/chat', p_logs / f'{net}/priv'
-		for p in [p_chat, p_priv]:
-			if not p.is_dir(): p.mkdir(parents=True)
+	for (net, chan), files in sorted(logs.items()):
+		if chat := chan[0] in '#&': # selects chan-type as well
+			# Strip/replace chan prefixes - don't work well with shells
+			if chan.startswith('#'): chan = chan[1:]
+			while chan.startswith('#'): chan = '_' + chan[1:]
+			while chan.startswith('&'): chan = '+' + chan[1:]
 
-		for chan, files in sorted(chans.items()):
-			if chat := any(chan[0] == c for c in chat_prefixes):
-				# "#" and "&" prefixes don't work well with shells, so strip these,
-				#  taking care that there are no duplicate names as a result
-				if chan.startswith('#'): chan = chan[1:]
-				while chan.startswith('#'): chan = '_' + chan[1:]
-				if chan.startswith('&'): chan = '+' + chan[1:]
-			p_chan = p_chat if chat else p_priv
+		agg_files = dict()
+		for ts, ps in sort_logfiles(files):
+			if ts == ts_now: continue # skip current log(s)
+			fn = fn_tpl.format(
+				net=net, type='chat' if chat else 'priv',
+				chan=chan, yy=ts.year % 100, mm=ts.month )
+			agg_files.setdefault(fn, list()).extend((ts, p) for p in ps)
 
-			agg_files = dict()
-			for ts, ps in sort_logfiles(files):
-				if ts == ts_now: continue # skip current log(s)
-				fn = fn_tpl.format( net=net,
-					chan=chan, yy=ts.year % 100, mm=ts.month )
-				agg_files.setdefault(fn, list()).extend((ts, p) for p in ps)
-
-			for fn, agg_files in agg_files.items():
-				if (p_xz := p_chan / fn) not in chan_agg: chan_agg[p_xz] = agg_files; continue
-				log.warning(f'Diff nets/chans with same dst file [ {p_xz.name} ]')
-				chan_agg[p_xz].extend(agg_files); chan_agg[p_xz].sort()
+		for fn, agg_files in agg_files.items():
+			if (p_xz := p_logs / fn) not in chan_agg: chan_agg[p_xz] = agg_files; continue
+			log.warning(f'Diff nets/chans with same dst file [ {p_xz.name} ]')
+			chan_agg[p_xz].extend(agg_files); chan_agg[p_xz].sort()
 
 	xz_tuples = list() # (sources, tmp_xz, dst_xz) for final mv+rm
 	for p_xz, agg_files in sorted(chan_agg.items()):
 		log.debug(f'Aggregating channel [+ {len(agg_files)} log(s)]: {p_xz.name}')
+		if not p_xz.parent.is_dir(): p.mkdir(parents=True)
 		with tempfile.NamedTemporaryFile(
 				dir=p_xz.parent, prefix=p_xz.name+'.', delete=False ) as tmp:
 			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
@@ -96,15 +91,13 @@ def agg_logs_chan(tmp, p_xz, agg_files, xz_bs=2 * 2**20):
 
 
 def find_logs():
-	p_logs, logs = pl.Path('.').resolve(), dict()
+	p_znc, logs = pl.Path('.').resolve(), dict()
 
 	def logs_append(net, chan, ts_str, p):
-		if net not in logs: logs[net] = dict()
-		if chan not in logs[net]: logs[net][chan] = list()
 		ts = dt.date(*map(int, [ts_str[:4], ts_str[4:6], ts_str[6:8]]))
 		if not (len(ts_str) == 8 and 2050 > ts.year >= 2000):
 			raise AssertionError(ts_str)
-		logs[net][chan].append((ts, p.resolve()))
+		logs.setdefault((net, chan), list()).append((ts, p.resolve()))
 
 	def re_chk(re_str, p, *groups):
 		if not (m := re.search(re_str, str(p))): raise AssertionError(re_str, p)
@@ -112,7 +105,7 @@ def find_logs():
 		return m
 
 	# Prehistoric logs
-	for p in p_logs.glob('users/*/moddata/log/*.log'):
+	for p in p_znc.glob('users/*/moddata/log/*.log'):
 		net, chan, ts = re_chk(
 			r'/users/(?P<net>[^/]+)/moddata/'
 				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
@@ -120,7 +113,7 @@ def find_logs():
 		logs_append(net, chan, ts, p)
 
 	# Logs for old-style setup with user=network, multi-network users
-	for p in p_logs.glob('moddata/log/*.log'):
+	for p in p_znc.glob('moddata/log/*.log'):
 		user, net, chan, ts = re_chk(
 			r'/moddata/log/(?P<user>[^/]+?)'
 				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
@@ -133,7 +126,7 @@ def find_logs():
 	# Can also be enabled by user: users/*/moddata/log/*/*/*.log
 	# Can also be enabled by network: users/*/networks/*/moddata/log/*/*.log
 	# All these are redundant with globally-enabled module, so not used here
-	for p in p_logs.glob('moddata/log/*/*/*/*.log'):
+	for p in p_znc.glob('moddata/log/*/*/*/*.log'):
 		user, net, chan, ts = re_chk(
 			r'/moddata/log/(?P<user>[^/]+?)/'
 				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$',
@@ -169,25 +162,22 @@ def main(args=None):
 	parser.add_argument('-d', '--log-dir', metavar='dir', default='~znc/logs',
 		help='Path to destination directory'
 			' to store aggregated logs to (default: %(default)s).')
-	parser.add_argument('-n', '--log-name',
-		metavar='fn', default='{chan}__{yy:02d}-{mm:02d}.log.xz', help=dd('''
+	parser.add_argument('-n', '--log-name', metavar='fn-tpl',
+		default='{net}/{type}/{chan}__{yy:02d}-{mm:02d}.log.xz', help=dd('''
 			Name template for xz-compressed log files created under -d/--log-dir.
 			Uses python str.format formatting - https://pyformat.info/
-			Available templating keys: net, chan, yy, mm.
-			Default: %(default)s
-			Note that default value ignores "net", to work with user/network renames,
-				but will append lines from multiple same-name channels on diff nets to same log file.'''))
+			Available templating keys: net, type ("chat" or "priv"), chan, yy, mm.
+			Default: %(default)s'''))
 	parser.add_argument('--dry-run', action='store_true',
 		help='Do all the stuff, but dont actually create any non-tmp files.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	global log
 	logging.basicConfig(
 		format='%(asctime)s :: %(name)s :: %(message)s',
 		datefmt='%Y-%m-%d %H:%M:%S',
 		level=logging.DEBUG if opts.debug else logging.INFO )
-	log = logging.getLogger('zla')
+	log = logging.getLogger('zla.main')
 
 	p_logs = pl.Path(opts.log_dir).expanduser().resolve()
 	p_logs.mkdir(exist_ok=True)
