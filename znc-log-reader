@@ -1,381 +1,394 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-from __future__ import print_function
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
-from subprocess import Popen, PIPE
-from collections import namedtuple
-from os.path import expanduser, realpath, join, isdir, exists
-from datetime import datetime, timedelta
-import os, sys, re, glob, types, tempfile, subprocess
+import subprocess as sp, contextlib as cl, datetime as dt, functools as ft
+import os, sys, io, re, time, logging, fnmatch, pathlib as pl, collections as cs
 
 
-class LogDate(namedtuple('LogDate', 'year month day')):
-	year_cutoff = 80
-
-	def __new__(cls, year_or_str, month=None, day=None):
-		if month == day == None and isinstance(year_or_str, types.StringTypes):
-			if re.search(r'^\d{2}-\d{2}$', year_or_str):
-				year, month, day = int(year_or_str[:2]), int(year_or_str[3:5]), 1
-				year += 1900 if year > cls.year_cutoff else 2000
-			else:
-				assert len(year_or_str) == 8, year_or_str
-				year, month, day = int(year_or_str[:4]), int(year_or_str[4:6]), int(year_or_str[6:8])
-		else: year = year_or_str
-		assert all(it.imap(lambda x: isinstance(x, int), [year, month, day])), [year, month, day]
-		assert 2100 > year >= 1900, year
-		year %= 100
-		return super(LogDate, cls).__new__(cls, year, month, day)
-
-	def to_datetime(self):
-		year = self.year + (2000 if self.year < self.year_cutoff else 1900)
-		return datetime(year, self.month, self.day)
-
-
-try: from dateutil import parser as dateutil_parser
-except ImportError: dateutil_parser = None
-
-_short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
-_short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
-
-def _short_ts_regexp():
-	'''Generates regexp for parsing of
-		shortened relative timestamps, as shown in the table.'''
-	ago_re = list('^-?')
-	for k in it.chain(_short_ts_days, _short_ts_s):
-		ago_re.append(r'(?P<{0}>\d+{0}\s*)?'.format(k))
-	ago_re.append(r'(\s+ago\b)?$')
-	return re.compile(''.join(ago_re), re.I | re.U)
-_short_ts_regexp = _short_ts_regexp()
-
-def parse_timestamp(ts_str):
-	'''Match time either in human-readable format (as accepted by dateutil),
-		or same time-offset format, as used in the table (e.g. "NdMh ago", or just "NdMh").'''
-	assert isinstance(ts_str, bytes), repr(ts_str)
-	ts_str = ts_str.replace('_', ' ')
-
-	# Try to parse time offset in short format, similar to how it's presented
-	match = _short_ts_regexp.search(ts_str)
-	if match:
-		delta = list()
-		parse_int = lambda v: int(''.join(c for c in v if c.isdigit()))
-		for units in [_short_ts_days, _short_ts_s]:
-			val = 0
-			for k, v in units.iteritems():
-				try:
-					if not match.group(k): continue
-					n = parse_int(match.group(k))
-				except IndexError: continue
-				val += n * v
-			delta.append(val)
-		return datetime.now() - timedelta(*delta)
-
-	# Fallback to other generic formats
-	ts = None
-	if not ts:
-		match = re.search( # BE format used in output
-			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
-			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )
-		if match:
-			tpl = 'y' if not match.group('Y') else 'Y'
-			tpl, ts_str = '%{}-%m-%d'.format(tpl), match.group('date')
-			if match.group('time'):
-				tpl_time = ['%H', '%M', '%S']
-				ts_str_time = match.group('time').split(':')
-				ts_str += ' ' + ':'.join(ts_str_time)
-				tpl += ' ' + ':'.join(tpl_time[:len(ts_str_time)])
-			try: ts = datetime.strptime(ts_str, tpl)
-			except ValueError: pass
-	if not ts and dateutil_parser: # try dateutil module, if available
-		# dateutil fails to parse textual dates like "yesterday"
-		try: ts = dateutil_parser.parse(ts_str)
-		except: pass # dateutil isn't very good and throws various random crap
-	if not ts:
-		# coreutils' "date" parses virtually everything, but is more expensive to use
-		with open(os.devnull, 'w') as devnull:
-			proc = Popen(['date', '+%s', '-d', ts_str], stdout=PIPE, stderr=devnull)
-			val = proc.stdout.read()
-			if not proc.wait(): ts = datetime.fromtimestamp(int(val.strip()))
-
-	if ts: return ts
-	raise ValueError('Unable to parse date/time string: {0}'.format(ts_str))
-
+def rel_path(p):
+	p0, p = pl.Path('.').resolve(), p.resolve()
+	return p.relative_to(p0) if p.is_relative_to(p0) else p
 
 def chan_name(name):
-	return name.lstrip('#').lower()
-
-def chan_match(name, chans, fuzzy=False):
-	if not chans: return True
-	name = chan_name(name)
-	if not fuzzy and name in chans: return True
-	if fuzzy:
-		for chan in chans:
-			if chan in name: return True
-	return False
+	return name.lstrip('#&').lower()
 
 
-class IterLines(object):
+_td_days = dict(
+	y=365.25, yr=365.25, year=365.25,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
 
-	def __init__(self, path, bs=2 * 2**20):
-		self.cache, self.path, self.bs = list(), path, bs
-		self._iter = self._get_iterator()
+def parse_timestamp(ts_str):
+	ts, ts_str = None, ts_str.replace('_', ' ')
+	if not ts and ( # short time offset
+			(m := _td_re.search(ts_str)) and any(m.groups()) ):
+		delta = list()
+		for units in _td_days, _td_s:
+			val = 0
+			for k, v in units.items():
+				if not m.group(k): continue
+				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+			delta.append(val)
+		ts = dt.datetime.now() - dt.timedelta(*delta)
+	if not ts and (m := re.search( # common BE format
+			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )):
+		tpl = 'y' if not m.group('Y') else 'Y'
+		tpl, tss = f'%{tpl}-%m-%d', m.group('date')
+		if m.group('time'):
+			tpl_time = ['%H', '%M', '%S']
+			tss += ' ' + ':'.join(tss_time := m.group('time').split(':'))
+			tpl += ' ' + ':'.join(tpl_time[:len(tss_time)])
+		try: ts = dt.datetime.strptime(tss, tpl)
+		except ValueError: pass
+	if not ts and (m := re.search( # just time without AM/PM - treat as 24h format
+			r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', ts_str )):
+		us, tpl = 0, ':'.join(['%H', '%M', '%S'][:len(ts_str.split(':'))])
+		if m.group('us'):
+			ts_str, us = ts_str.rsplit('.', 1)
+			us = us[:6] + '0'*max(0, 6 - len(us))
+		try: ts = dt.datetime.strptime(ts_str, tpl)
+		except ValueError: pass
+		else:
+			ts = dt.datetime.now().replace( hour=ts.hour,
+				minute=ts.minute, second=ts.second, microsecond=int(us) )
+	if not ts: # coreutils' "date" parses everything, but is more expensive to use
+		ts_now, ts_now_date = time.time(), dt.date.today()
+		while True:
+			res = sp.run( ['date', '+%s', '-d', ts_str],
+				stdout=sp.PIPE, stderr=sp.DEVNULL )
+			if res.returncode:
+				if ',' in ts_str: ts_str = ts_str.replace(',', ' '); continue
+			else: ts = dt.datetime.fromtimestamp(int(res.stdout.strip()))
+			break
+	if ts: return ts
+	raise ValueError(f'Failed to parse date/time string: {ts_str}')
+
+
+class IterLogError(Exception): pass
+
+class IterLogLine(str):
+	__slots__ = 'ts',
+	def __new__(cls, line, ts):
+		line = line.rstrip('\0\r\n')
+		(s := super().__new__(cls, line)).ts = ts
+		return s
+
+class IterLog:
+	xz_kill_timeout = 1.0
+	peek_bs = 100 * 2**10 # 100 KiB
+	src = xz = ts0 = ts1 = None
+
+	def __init__(self, p, p_ts, ts_a=None, ts_b=None):
+		self.p, self.date, self.ts_a, self.ts_b = p, p_ts, ts_a, ts_b
+		self.dt = dt.datetime(p_ts.year, p_ts.month, p_ts.day)
+		self.log = logging.getLogger('zlr.iter')
+
+	def open(self):
+		if self.src: return
+		self.src = self.p.open('rb')
+		if self.p.name.endswith('.xz'):
+			self.xz = sp.Popen(['xz', '-d'], stdin=self.src, stdout=sp.PIPE)
+			self.src = self.xz.stdout
+
+	def close(self):
+		if self.xz:
+			try:
+				if (err := self.xz.poll()) is None:
+					self.xz.terminate()
+					try: self.xz.wait(self.xz_kill_timeout)
+					except sp.TimeoutExpired: self.xz.kill()
+					err = self.xz.poll()
+			except ProcessLookupError: pass
+			finally:
+				self.xz = None
+				if err > 0:
+					self.log.warning(f'xz failed (exit={err}) for path [ {rel_path(self.p)} ]')
+		if self.src: self.src = self.src.close()
+
+	def __enter__(self): self.open(); return self
+	def __exit__(self, *err): self.close()
+	def __del__(self): self.close()
+
+	def get_iter(self):
+		'Return iterator for lines within time-range or None if there arent any'
+		proc, p_log = self.open(), rel_path(self.p)
+		try:
+			if not (d := self.date).monthly: # daily logs can have diff timestamps
+				self.ts0 = dt.datetime(d.year, d.month, d.day)
+				self.ts1 = self.ts0.replace(
+					hour=23, minute=59, second=59, microsecond=int(1e6-1) )
+			else:
+				self.ts0 = self.get_first_ts(
+					self.src.peek(self.peek_bs)[:self.peek_bs],
+					lambda buff: buff.split(b'\n', 1) )
+				if self.ts_b:
+					if not self.ts0: raise IterLogError(f'Failed to match BOF timestamp [ {p_log} ]')
+				if self.ts_a:
+					buff = self.src.read(sz := 512 * 2**20) # read/xzcat whole file into buffer
+					if len(buff) >= sz: raise IOError(f'File-peek failed - file too large [ {p_log} ]')
+					self.src.close()
+					self.src, buff = io.BytesIO(buff), buff[-self.peek_bs:]
+					self.ts1 = self.get_first_ts(
+						buff[-self.peek_bs:], lambda buff: reversed(buff.rsplit(b'\n', 1)) )
+					if not self.ts1: raise IterLogError(f'Failed to match EOF timestamp [ {p_log} ]')
+			skip = (
+				' skip' if (self.ts_b and self.ts0 > self.ts_b)
+				or (self.ts_a and self.ts1 < self.ts_a) else '' )
+			self.log.debug(f'File{skip} [ {p_log} ]: [ {self.ts0} ] - [ {self.ts1} ]')
+			if skip: return
+			proc = True
+		finally:
+			if not proc: self.close()
+		return iter(self)
+
+	def match_ts(self, line):
+		try: ts = re.search(r'^[\s\0]*\[([^]]+)\][\s\0]+', line).group(1)
+		except: return
+		try: return dt.datetime.strptime(ts, '%y-%m-%d %H:%M:%S')
+		except ValueError:
+			ts = dt.datetime.strptime(ts, '%H:%M:%S')
+			return self.dt.replace(hour=ts.hour, minute=ts.minute, second=ts.second)
+
+	def get_first_ts(self, buff, line_split_func):
+		while buff:
+			try: line, buff = line_split_func(buff)
+			except ValueError: break
+			line = line.strip(b'\0').decode()
+			if ts := self.match_ts(line): return ts
 
 	def __iter__(self):
-		for line in self.cache:
-			yield line
-		for line in self._iter:
-			self.cache.append(line)
-			yield line
+		self._proc_st = None # None -> True -> False
+		if not isinstance(self.src, io.TextIOWrapper):
+			self.src.seek(0)
+			self.src = io.TextIOWrapper(self.src)
+		return self
 
-	def _get_iterator(self):
-		if self.path.endswith('.xz'):
-			with tempfile.NamedTemporaryFile(prefix='.znc-log-reader.dec.') as tmp:
-				with open(self.path) as src:
-					err = subprocess.Popen(['xz', '-d'], stdin=src, stdout=tmp, close_fds=True).wait()
-					if err != 0: raise OSError('xz subprocess failed (code: {})'.format(err))
-				tmp.seek(0)
-				for line in tmp: yield line.strip('\0\n')
-		else:
-			for line in open(self.path): yield line.strip('\0\n')
+	def __next__(self):
+		if self._proc_st is False: raise StopIteration
+		try: line = self._next_line()
+		except StopIteration: self._proc_st = False; raise StopIteration
+		return line
 
-def match_line_ts(line):
-	match = re.search(r'^\s*\[([^]]+)\]\s+', line)
-	if not match: raise ValueError(line)
-	return datetime.strptime(match.group(1), '%y-%m-%d %H:%M:%S')
+	def _next_line(self):
+		if self._proc_st is None:
+			if self.ts_a:
+				for line in self.src:
+					if (ts := self.match_ts(line)) and ts >= self.ts_a: break
+				else: raise StopIteration
+			else: line = None
+			self._proc_st = True
+			if line is not None: return IterLogLine(line, ts)
+		ts = self.match_ts(line := next(self.src))
+		if self.ts_b and ts > self.ts_b: raise StopIteration
+		return IterLogLine(line, ts)
 
-def sort_logfiles(files):
-	'Order files with possible-duplicate LogDate.'
-	files_dup = dict()
 
-	for ts, path in files:
-		if ts not in files_dup: files_dup[ts] = list()
-		assert path not in files_dup[ts], path
-		files_dup[ts].append(path)
+class LogDate(dt.date): monthly = False
 
-	for ts, paths in sorted(files_dup.viewitems()):
-		assert len(paths) > 0, ts
-		if len(paths) == 1: yield ts, paths
-		else: yield ts, sorted(paths, key=lambda p: next(iter(IterLines(p))))
+def find_logs(p_znc, p_logs, log_fn_tpl):
+	logs = dict()
+
+	def logs_append(net, chan, ts_str, p):
+		if net not in logs: logs[net] = dict()
+		if chan not in logs[net]: logs[net][chan] = list()
+		ts = LogDate(*map(int, [
+			ts_str[:4], ts_str[4:6], (day := int(ts_str[6:8])) or 1 ]))
+		ts.monthly = not day
+		if not (len(ts_str) == 8 and 2050 > ts.year >= 2000):
+			raise AssertionError(ts_str)
+		logs[net][chan].append((ts, p.resolve()))
+
+	def re_chk(re_str, p, *groups):
+		if not (m := re.search(re_str, str(p))): raise AssertionError(re_str, p)
+		if groups: return (m.group(k) for k in groups)
+		return m
+
+	# Prehistoric logs
+	for p in p_znc.glob('users/*/moddata/log/*.log'):
+		net, chan, ts = re_chk(
+			r'/users/(?P<net>[^/]+)/moddata/'
+				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+			p, 'net', 'chan', 'ts' )
+		logs_append(net, chan, ts, p)
+
+	# Logs for old-style setup with user=network, multi-network users
+	for p in p_znc.glob('moddata/log/*.log'):
+		user, net, chan, ts = re_chk(
+			r'/moddata/log/(?P<user>[^/]+?)'
+				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+			p, 'user', 'net', 'chan', 'ts' )
+		if net == 'default': net = user
+		if '_' in f'{user}{net}': raise AssertionError(net, p)
+		logs_append(net, chan, ts, p)
+
+	# Modern logs enabled globally for multi-network users
+	# Can also be enabled by user: users/*/moddata/log/*/*/*.log
+	# Can also be enabled by network: users/*/networks/*/moddata/log/*/*.log
+	# All these are redundant with globally-enabled module, so not used here
+	for p in p_znc.glob('moddata/log/*/*/*/*.log'):
+		user, net, chan, ts = re_chk(
+			r'/moddata/log/(?P<user>[^/]+?)/'
+				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$',
+			p, 'user', 'net', 'chan', 'ts' )
+		if '_' in f'{user}{net}': raise AssertionError(net, p)
+		logs_append(net, chan, ts.replace('-', ''), p)
+
+	# Archived logs
+	log_fn_re = fnmatch.translate(log_fn_tpl).replace(r'\{', '{').replace(r'\}', '}')
+	log_fn_re = re.compile(log_fn_re.format( net=r'(?P<net>[^/]+?)',
+		chan=r'(?P<chan>[^/]+)', yy=r'(?P<yy>\d{2})', mm=r'(?P<mm>\d{2})' ))
+	log_fn_wc = log_fn_tpl.format(net='*', chan='*', yy='[0-9][0-9]', mm='[0-9][0-9]')
+	for p in p_logs.glob(log_fn_wc):
+		mg = log_fn_re.search(str(p.relative_to(p_logs))).groupdict()
+		net, chan, yy, mm = (mg.get(k) for k in ['net', 'chan', 'yy', 'mm'])
+		logs_append(net, chan, f'20{int(yy or 00):02d}{int(mm or 0):02d}00', p)
+
+	return logs
 
 
 def main(argv=None):
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
 		description='Concatenate and print ZNC logs for matching nets/chans to stdout.')
 
-	parser.add_argument('channels', nargs='*',
-		help='Channel(s) to harvest logs for (parts of names, see also -x option).'
-			' No names - all channels (see also -d option).')
-	parser.add_argument('-n', '--network',
+	parser.add_argument('channels', nargs='*', help=dd('''
+		Channel(s) to print logs for. Parts of names by default, without -x/--exact option.
+		No names - find/read logs for all channels (see also -d/--conf option).'''))
+
+	group = parser.add_argument_group('Selection options')
+	group.add_argument('-n', '--network', metavar='net',
 		help='IRC network to harvest logs for (only required on channel name conflicts).')
-	parser.add_argument('-d', '--conf', action='store_true',
-		help='Use/match only non-detached channels in znc.conf.')
-	parser.add_argument('-x', '--exact', action='store_true',
+	group.add_argument('-d', '--conf', action='store_true', help=dd('''
+		Use/match only non-detached channels in znc.conf
+		These are added to a list of channels specified as arguments, if any.'''))
+	group.add_argument('-x', '--exact', action='store_true',
 		help='Channel name must match given string(s) exactly.')
-	parser.add_argument('-s', '--service-msgs', action='store_true',
+	group.add_argument('-s', '--service-msgs', action='store_true',
 		help='Do not remove service messages (renames, joins/leaves, etc).')
 
-	parser.add_argument('-c', '--count', type=int,
+	group = parser.add_argument_group('Limits/ranges')
+	group.add_argument('-c', '--count', metavar='n', type=int,
 		help='Max number of latest lines to print per channel.')
-	parser.add_argument('-f', '--ts-from', default='-18h',
+	group.add_argument('-f', '--ts-from', metavar='date/time', default='18h',
 		help='Print lines since that time (can be relative, default: %(default)s).')
-	parser.add_argument('-t', '--ts-to', default='now',
+	group.add_argument('-t', '--ts-to', metavar='date/time',
 		help='Print lines until that time (can be relative, default: %(default)s).')
 
-	parser.add_argument('--znc-home', default='~znc',
+	group = parser.add_argument_group('Paths')
+	group.add_argument('--znc-home', metavar='dir', default='~znc',
 		help='Path to ZNC home directory (default: %(default)s).')
-	parser.add_argument('--log-dir', default='~znc/logs',
+	group.add_argument('--log-dir', metavar='dir', default='~znc/logs',
 		help='Path to destination directory to store aggregated logs to (default: %(default)s).')
+	group.add_argument('--log-dir-file-pat',
+		metavar='pat', default='{net}/*/{chan}__{yy}-{mm}.log.xz', help=dd('''
+			fnmatch/glob pattern for relative paths of archived files in --log-dir.
+			Should use following python str.format keys: net, chan, yy, mm.
+			Any missing keys will return values that won't match filtering opts for those.
+			Default: %(default)s'''))
+
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args()
 
-	global log
-	import logging
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.INFO)
-	log = logging.getLogger()
+	logging.basicConfig(
+		format='-- %(name)s %(levelname)s :: %(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		level=logging.DEBUG if opts.debug else logging.INFO )
+	log = logging.getLogger('zlr.main')
 
-	opts.znc_home = expanduser(opts.znc_home)
-	opts.log_dir = expanduser(opts.log_dir)
-	opts.channels = list(chan_name(name) for name in opts.channels)
-	chan_filter = ft.partial(chan_match, fuzzy=not opts.exact)
+	p_znc, p_logs = (
+		pl.Path(p).expanduser().resolve()
+		for p in [opts.znc_home, opts.log_dir] )
+	os.chdir(p_znc) # strips it for rel_path logging
 
-	for k in 'ts_from', 'ts_to':
-		val = getattr(opts, k)
-		if not val: continue
-		ts = parse_timestamp(val)
-		log.debug('Timestamp {} ({}) parsed as: {}'.format(val, k, ts))
-		setattr(opts, k, ts)
+	## Full net-chan-files mapping
+	log_map = find_logs(p_znc, p_logs, opts.log_dir_file_pat)
 
+	## Filter by network
+	if opts.network:
+		try: log_map = {opts.network: log_map[opts.network]}
+		except KeyError:
+			parser.error(f'No logs for specified network: {opts.network}')
 
-	## Find the subset of channels to work with, if necessary
-	if opts.conf:
-		conf_chans = set()
-		with open(join(opts.znc_home, 'configs', 'znc.conf')) as src:
-			for chan, conf in re.findall(r'<Chan (?P<name>\S+)>(.*?)</Chan>', src.read(), re.DOTALL):
-				if not re.search(r'\bDetached\s*=\s*true\b', conf): conf_chans.add(chan_name(chan))
-		for chan in list(conf_chans):
-			if not chan_filter(chan, opts.channels): conf_chans.remove(chan)
-		opts.channels = sorted(conf_chans)
-		log.debug('Channels: {}'.format(', '.join(opts.channels)))
+	## Filter channels
+	if not opts.channels: chans = None
+	else: chans = list(chan_name(name) for name in opts.channels)
+	if opts.conf: # find subset of channels to work with, if requested
+		chans, conf = chans or list(), pl.Path('configs/znc.conf').read_text()
+		for chan, conf in re.findall(r'<Chan (?P<name>\S+)>(.*?)</Chan>', conf, re.DOTALL):
+			if not re.search(r'\bDetached\s*=\s*true\b', conf): chans.append(chan_name(chan))
+	if chans:
+		chans = sorted(set(chans))
+		log.debug(f'Channels: {" ".join(chans)}')
+	if chans is not None:
+		for net, net_chans in log_map.items():
+			for chan in list(net_chans):
+				name = chan_name(chan)
+				if opts.exact:
+					if name not in chans: name = None
+				elif not any(pat in name for pat in chans): name = None
+				if not name: del net_chans[chan]
+	if not log_map: parser.error('No logs found matching channel/network filters')
 
+	def _parse_ts_arg(k, ts_str):
+		if not ts_str: return
+		ts = parse_timestamp(ts_str)
+		log.debug(f'Timestamp option {k} [ {ts_str} ] parsed to [ {ts} ]')
+		return ts
+	ts_a, ts_b = (_parse_ts_arg(k, getattr( opts, k.split('/', 1)[-1]
+		.strip('-').replace('-', '_') )) for k in ['-f/--ts-from', '-t/--ts-to'])
+	if ts_a and ts_b and ts_a > ts_b:
+		parser.error(f'Parsed -f/--ts-from [ {ts_a} ] value is after -t/--ts-to [ {ts_b} ]')
 
-	## Find all the relevant logs
-	## Aside: znc people sure do love to change how they store their logs!
-
-	log.debug('Finding and normalizing log sources')
-	os.chdir(opts.znc_home)
-	ts_now = datetime.now()
-
-	logs = dict()
-	def logs_append(net, chan, ts, path):
-		chan = chan_name(chan)
-		if net not in logs: logs[net] = dict()
-		if chan not in logs[net]: logs[net][chan] = list()
-		logs[net][chan].append((LogDate(ts), realpath(path)))
-
-	# Prehistoric logs
-	for path in glob.glob('users/*/moddata/log/*.log'):
-		match = re.search( r'^users/(?P<net>[^/]+)/'
-			'moddata/log/#?(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
-		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
-
-	# Logs for old-style setup with user=network
-	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( r'^moddata/log/(?P<net>[^/]+?)'
-			r'_default_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
-		assert '_' not in net, [net, path]
-		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
-
-	# Old (initial) logs for multi-network users
-	for path in glob.glob('moddata/log/*.log'):
-		match = re.search( r'^moddata/log/(?P<user>[^/]+?)'
-			r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$', path )
-		assert match, path
-		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
-		if net == 'default': continue
-		assert '_' not in user and '_' not in net, [user, net, path]
-		assert user not in logs, user
-		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
-
-	# Modern logs for multi-network users
-	for path in glob.glob('moddata/log/*/*/*/*.log'):
-		match = re.search( r'^moddata/log/(?P<user>[^/]+?)/'
-			r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$', path )
-		user, net, chan, ts = it.imap(match.group, ['user', 'net', 'chan', 'ts'])
-		assert '_' not in user and '_' not in net, [user, net, path]
-		if chan_filter(chan, opts.channels): logs_append(net, chan, ts.replace('-', ''), path)
-
-	# Archived logs
-	os.chdir(opts.log_dir)
-	for path in glob.glob('*/*/*.log.xz'):
-		match = re.search( r'^(?P<net>[^/]+?)/[^/]+/'
-			r'(?P<chan>[^/]+)__(?P<ts>\d{2}-\d{2})\.log\.xz$', path )
-		assert match, path
-		net, chan, ts = it.imap(match.group, ['net', 'chan', 'ts'])
-		assert '_' not in net, [net, path]
-		if chan_filter(chan, opts.channels): logs_append(net, chan, ts, path)
-
-	os.chdir('/')
-
-	# from pprint import pprint
-	# pprint(logs)
-
-	if not logs:
-		parser.error('No channel logs found matching: {}'.format(', '.join(opts.channels)))
-
-	## Read logs in reverse order, building "lines" buffer
-	lines, lines_chan, lines_net = list(), set(), set()
-
-	class Finished(Exception): pass
-
-	## -- chans for net
-	for net, chans in sorted(logs.viewitems()):
-		if opts.network and opts.network != net:
-			log.debug('Skipping network: {!r} (does not match {!r})'.format(net, opts.network))
-			continue
-
-		## -- month-paths for chan
-		for chan, files in sorted(chans.viewitems()):
-			log.debug('Processing channel: {}/{} ({} files)'.format(net, chan, len(files)))
-
-			count = opts.count
-			try:
-				## -- month-lists of paths
-				for ts, paths in reversed(list(sort_logfiles(files))):
-
-					# Discard all further way-too-old xz archives (they hold one month at most)
-					if opts.ts_from and (ts.to_datetime() + timedelta(63)) < opts.ts_from:
-						log.debug( 'Skipping too-old xz logs'
-							' from: {} (paths: {}, and beyond)'.format(ts, paths) )
+	with cl.ExitStack() as ctx:
+		## Build a list of file-iterators to print lines from, sort it
+		logs, log_nets, log_chans = list(), set(), set()
+		for net, chans in log_map.items():
+			for chan, files in chans.items():
+				chan = chan_name(chan)
+				for ts, p in reversed(sorted(files)): # newest-first
+					# Discard all further way-too-old xz archives (should hold one month at most)
+					if ts_a and (ts + dt.timedelta(63)) < ts_a:
+						log.debug(f'Skipping too-old logs: {ts} - [ {rel_path(p)} ] and older')
 						break
 					# Skip way-too-new xz archives
-					if opts.ts_to and (ts.to_datetime() - timedelta(63)) > opts.ts_to:
-						log.debug('Skipping too-new xz logs from: {} (paths: {})'.format(ts, paths))
+					if ts_b and (ts - dt.timedelta(63)) > ts_b:
+						log.debug(f'Skipping too-new logfile: {ts} [ {rel_path(p)} ]')
 						continue
+					# Create line-by-line iterators on file(s)
+					if not (line_iter := IterLog(p, ts, ts_a, ts_b).get_iter()): continue
+					ctx.enter_context(line_iter)
+					# id value is there to make sure sort never reaches iterators
+					logs.append((net, chan, line_iter.ts0, id(line_iter), line_iter))
+					log_nets.add(net); log_chans.add(chan)
+		logs.sort()
 
-					## -- paths
-					for path in reversed(paths):
-						log.debug('Processing path: {} ({}/{})'.format(path, net, chan))
-						path_lines = IterLines(path)
-
-						# Check that first/last line timestamps are within bounds we seek (if any)
-						if opts.ts_to or opts.ts_from:
-							path_skip = False
-							for path_lines_iter, ts_chk in [
-									( lambda: path_lines,
-										opts.ts_to and (lambda ts: ts > opts.ts_to) ), # should be first
-									( lambda: reversed(list(path_lines)),
-										opts.ts_from and (lambda ts: ts < opts.ts_from) ) ]:
-								if not ts_chk: continue
-								for line in it.islice(path_lines_iter(), 10):
-									try: line_ts = match_line_ts(line)
-									except ValueError: continue
-									if ts_chk(line_ts): path_skip = line_ts
-									break
-								if path_skip: break
-							if path_skip:
-								log.debug(( 'Skipping log (path: {}) due to first/last'
-									' line being ts out of bounds (too old/new): {}' ).format(path, ts))
-								continue
-
-						## -- lines
-						for line in reversed(list(path_lines)):
-							if not line.strip(): continue
-
-							# Skip service msgs
-							if not opts.service_msgs and re.search(r'^\s*\[[^]]+\]\s+[*]{3}\s+', line): continue
-							# Append full date, if missing
-							if not re.search(r'^\s*\[\d{2}-\d{2}-\d{2}\s+[^]]+\]\s+', line):
-								line = re.sub( r'^(\s*\[)([^]]+\]\s+)',
-									r'\g<1>{0.year:02}-{0.month:02}-{0.day:02} \g<2>'.format(ts), line )
-
-							# ts/count checks
-							if opts.ts_from or opts.ts_to:
-								try: line_ts = match_line_ts(line)
-								except:
-									log.warn('Failed to match line format, skipping: {!r}'.format(line))
-									continue
-								if opts.ts_from and line_ts < opts.ts_from: raise Finished # next ones are older
-								if opts.ts_to and line_ts > opts.ts_to: continue
-							if count is not None:
-								if count < 0: raise Finished
-								count -= 1
-
-							lines.append((line, chan, net))
-							lines_chan.add((net, chan)), lines_net.add(net)
-			except Finished: pass
-
-	## Print lines in ts-order, "[[net/]chan] line" format
-	lines_chan, lines_net = len(lines_chan) > 1, len(lines_net) > 1
-	for line, chan, net in reversed(lines):
-		if lines_chan:
-			if lines_net: print('{}/'.format(net), end='')
-			print('{} {}'.format(chan, line))
-		else: print(line)
-
+		## Print lines from iterators
+		print_net, print_chan = len(log_nets) > 1, len(log_chans) > 1
+		src, src_prefix, count = None, '', opts.count
+		for net, chan, ts0, iter_id, line_iter in logs:
+			if src != (net, chan) and (print_net or print_chan):
+				src_prefix = '/'.join([*[net]*print_net, *[chan]*print_chan]) + ' '
+			log.debug(f'Processing log-file [{net} {chan}]: {rel_path(line_iter.p)}')
+			sys.stderr.flush()
+			for line in line_iter:
+				if not isinstance(line, IterLogLine): raise ValueError
+				# Skip service msgs
+				if not opts.service_msgs and re.search(r'^\s*\[[^]]+\]\s+[*]{3}\s+', line): continue
+				# Append full date, if missing in timestamp
+				if not re.search(r'^\s*\[\d{2}-\d{2}-\d{2}\s+[^]]+\]\s+', line):
+					ts = line.ts
+					line = re.sub( r'^(\s*\[)([^]]+\]\s+)',
+						fr'\g<1>{ts.year%100:02}-{ts.month:02}-{ts.day:02} \g<2>', line )
+				print(f'{src_prefix}{line}')
+				if count and not (count := count - 1): break
+			sys.stdout.flush()
 
 if __name__ == '__main__': sys.exit(main())

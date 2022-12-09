@@ -803,7 +803,9 @@ znc-log-reader_
 
 Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
 or time range (with additional filtering by channel/nick and network) from all
-the current and aggregated logs.
+current and aggregated (via that aggregator script) ZNC logs.
+
+Mostly used to query/grep recent chat logs by approximate channel name from terminal easily.
 
 
 
