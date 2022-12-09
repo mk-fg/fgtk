@@ -372,7 +372,9 @@ def main(argv=None):
 
 		## Print lines from iterators
 		print_net, print_chan = len(log_nets) > 1, len(log_chans) > 1
-		src, src_prefix, count = None, '', opts.count
+		src, src_prefix = None, ''
+		if opts.count: # buffer "last N lines per channel" and print separately below
+			chan_buffs = cs.defaultdict(lambda: cs.deque(maxlen=opts.count))
 		for net, chan, ts0, iter_id, line_iter in logs:
 			if src != (net, chan) and (print_net or print_chan):
 				src_prefix = '/'.join([*[net]*print_net, *[chan]*print_chan]) + ' '
@@ -387,8 +389,12 @@ def main(argv=None):
 					ts = line.ts
 					line = re.sub( r'^(\s*\[)([^]]+\]\s+)',
 						fr'\g<1>{ts.year%100:02}-{ts.month:02}-{ts.day:02} \g<2>', line )
-				print(f'{src_prefix}{line}')
-				if count and not (count := count - 1): break
+				line = f'{src_prefix}{line}'
+				if not opts.count: print(line)
+				else: chan_buffs[net, chan].append(line)
 			sys.stdout.flush()
+		if opts.count:
+			for buff in chan_buffs.values():
+				for line in buff: print(line)
 
 if __name__ == '__main__': sys.exit(main())
