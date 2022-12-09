@@ -24,7 +24,7 @@ _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
 
 def parse_timestamp(ts_str):
 	ts, ts_str = None, ts_str.replace('_', ' ')
-	if not ts and ( # short time offset
+	if not ts and ( # short time offset like "3d 5h"
 			(m := _td_re.search(ts_str)) and any(m.groups()) ):
 		delta = list()
 		for units in _td_days, _td_s:
@@ -79,13 +79,14 @@ class IterLogLine(str):
 		return s
 
 class IterLog:
+	'Iterator for lines-within-time-range in maybe-compressed ZNC logs'
 	xz_kill_timeout = 1.0
 	peek_bs = 100 * 2**10 # 100 KiB
-	src = xz = ts0 = ts1 = None
+	src = xz = ts0 = ts1 = ts_line = None
 
-	def __init__(self, p, p_ts, ts_a=None, ts_b=None):
-		self.p, self.date, self.ts_a, self.ts_b = p, p_ts, ts_a, ts_b
-		self.dt = dt.datetime(p_ts.year, p_ts.month, p_ts.day)
+	def __init__(self, p, p_date, ts_a=None, ts_b=None):
+		self.p, self.date, self.ts_a, self.ts_b = p, p_date, ts_a, ts_b
+		self.dt = dt.datetime(self.date.year, self.date.month, self.date.day)
 		self.log = logging.getLogger('zlr.iter')
 
 	def open(self):
@@ -175,17 +176,21 @@ class IterLog:
 		return line
 
 	def _next_line(self):
+		line = None
 		if self._proc_st is None: # seek to first line within timespan
 			if self.ts_a:
 				for line in self.src:
 					if (ts := self.match_ts(line)) and ts >= self.ts_a: break
 				else: raise StopIteration
-			else: line = None
 			self._proc_st = True
-			if line is not None: return IterLogLine(line, ts)
-		ts = self.match_ts(line := next(self.src))
-		if self.ts_b and ts > self.ts_b: raise StopIteration
-		return IterLogLine(line, ts)
+			if line is not None: line = IterLogLine(line, ts)
+		if not line:
+			ts = self.match_ts(line := next(self.src))
+			if self.ts_b and ts > self.ts_b: raise StopIteration
+			line = IterLogLine(line, ts)
+		if not line.ts: line.ts = self.ts_line
+		self.ts_line = line.ts
+		return line
 
 
 class LogDate(dt.date): monthly = False
@@ -393,20 +398,22 @@ def main(argv=None):
 				src_prefix = '/'.join([*[net]*print_net, *[chan]*print_chan]) + ' '
 			log.debug(f'Processing log-file [{net} {chan}]: {rel_path(line_iter.p)}')
 			sys.stderr.flush()
+
 			for line in line_iter:
 				# Skip service msgs
 				if not opts.service_msgs and re.search(r'^\s*\[[^]]+\]\s+[*]{3}\s+', line): continue
-				# Append full date, if missing in timestamp
-				if not re.search(r'^\s*\[\d{2}-\d{2}-\d{2}\s+[^]]+\]\s+', line):
-					ts = line.ts
-					line = re.sub( r'^(\s*\[)([^]]+\]\s+)',
+				# Prepend full date, if missing in timestamp
+				if not re.search(r'^\s*\[\d{2}-\d{2}-\d{2}\s+[^]]+\]\s+', line) and (ts := line.ts):
+					line, n = re.subn( r'^(\s*\[)(\d{2}:\d{2}:\d{2}\]\s+)',
 						fr'\g<1>{ts.year%100:02}-{ts.month:02}-{ts.day:02} \g<2>', line )
+					if not n: line = f'[{ts.strftime("%y-%m-%d %H:%M:%S")}] {line}'
 				line = f'{src_prefix}{line}'
 				if not opts.count: print(line)
 				else: chan_buffs[net, chan].append(line)
 			sys.stdout.flush()
-		if opts.count:
-			for buff in chan_buffs.values():
-				for line in buff: print(line)
+
+	if opts.count:
+		for buff in chan_buffs.values():
+			for line in buff: print(line)
 
 if __name__ == '__main__': sys.exit(main())
