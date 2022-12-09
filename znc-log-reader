@@ -175,7 +175,7 @@ class IterLog:
 		return line
 
 	def _next_line(self):
-		if self._proc_st is None:
+		if self._proc_st is None: # seek to first line within timespan
 			if self.ts_a:
 				for line in self.src:
 					if (ts := self.match_ts(line)) and ts >= self.ts_a: break
@@ -249,6 +249,32 @@ def find_logs(p_znc, p_logs, log_fn_tpl):
 		logs_append(net, chan, f'20{int(yy or 00):02d}{int(mm or 0):02d}00', p)
 
 	return logs
+
+
+def open_log_iterators(ctx, log_map, ts_a, ts_b):
+	'''Filters/opens and returns a list of
+		(net, chan, line_iter) net/chan line-iterators, to print in that order.'''
+	log = logging.getLogger('zlr.open')
+	logs, log_nets, log_chans = list(), set(), set()
+	for net, chans in log_map.items():
+		for chan, files in chans.items():
+			chan = chan_name(chan)
+			for ts, p in reversed(sorted(files)): # newest-first
+				# Discard all further way-too-old xz archives (should hold one month at most)
+				if ts_a and (ts + dt.timedelta(63)) < ts_a:
+					log.debug(f'Skipping too-old logs: {ts} - [ {rel_path(p)} ] and older')
+					break
+				# Skip way-too-new xz archives
+				if ts_b and (ts - dt.timedelta(63)) > ts_b:
+					log.debug(f'Skipping too-new logfile: {ts} [ {rel_path(p)} ]')
+					continue
+				# Create line-by-line iterators on file(s)
+				if not (line_iter := IterLog(p, ts, ts_a, ts_b).get_iter()): continue
+				ctx.enter_context(line_iter)
+				# id value is there to make sure sort never reaches iterators
+				logs.append((net, chan, line_iter.ts0, id(line_iter), line_iter))
+	logs.sort()
+	return list((net, chan, line_iter) for net, chan, ts0, iter_id, line_iter in logs)
 
 
 def main(argv=None):
@@ -337,6 +363,7 @@ def main(argv=None):
 				if not name: del net_chans[chan]
 	if not log_map: parser.error('No logs found matching channel/network filters')
 
+	## Parse from/to timestamps
 	def _parse_ts_arg(k, ts_str):
 		if not ts_str: return
 		ts = parse_timestamp(ts_str)
@@ -348,40 +375,25 @@ def main(argv=None):
 		parser.error(f'Parsed -f/--ts-from [ {ts_a} ] value is after -t/--ts-to [ {ts_b} ]')
 
 	with cl.ExitStack() as ctx:
-		## Build a list of file-iterators to print lines from, sort it
-		logs, log_nets, log_chans = list(), set(), set()
-		for net, chans in log_map.items():
-			for chan, files in chans.items():
-				chan = chan_name(chan)
-				for ts, p in reversed(sorted(files)): # newest-first
-					# Discard all further way-too-old xz archives (should hold one month at most)
-					if ts_a and (ts + dt.timedelta(63)) < ts_a:
-						log.debug(f'Skipping too-old logs: {ts} - [ {rel_path(p)} ] and older')
-						break
-					# Skip way-too-new xz archives
-					if ts_b and (ts - dt.timedelta(63)) > ts_b:
-						log.debug(f'Skipping too-new logfile: {ts} [ {rel_path(p)} ]')
-						continue
-					# Create line-by-line iterators on file(s)
-					if not (line_iter := IterLog(p, ts, ts_a, ts_b).get_iter()): continue
-					ctx.enter_context(line_iter)
-					# id value is there to make sure sort never reaches iterators
-					logs.append((net, chan, line_iter.ts0, id(line_iter), line_iter))
-					log_nets.add(net); log_chans.add(chan)
-		logs.sort()
+		## Build a list of relevant net/chan line-iterators to print in order
+		logs = open_log_iterators(ctx, log_map, ts_a, ts_b)
+
+		## Check if net/chan prefix is needed
+		print_net, print_chan = set(), set()
+		for net, chan, log_iter in logs:
+			print_net.add(net); print_chan.add(chan)
+		print_net, print_chan = len(print_net) > 1, len(print_chan) > 1
 
 		## Print lines from iterators
-		print_net, print_chan = len(log_nets) > 1, len(log_chans) > 1
 		src, src_prefix = None, ''
 		if opts.count: # buffer "last N lines per channel" and print separately below
 			chan_buffs = cs.defaultdict(lambda: cs.deque(maxlen=opts.count))
-		for net, chan, ts0, iter_id, line_iter in logs:
+		for net, chan, line_iter in logs:
 			if src != (net, chan) and (print_net or print_chan):
 				src_prefix = '/'.join([*[net]*print_net, *[chan]*print_chan]) + ' '
 			log.debug(f'Processing log-file [{net} {chan}]: {rel_path(line_iter.p)}')
 			sys.stderr.flush()
 			for line in line_iter:
-				if not isinstance(line, IterLogLine): raise ValueError
 				# Skip service msgs
 				if not opts.service_msgs and re.search(r'^\s*\[[^]]+\]\s+[*]{3}\s+', line): continue
 				# Append full date, if missing in timestamp
