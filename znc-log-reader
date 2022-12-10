@@ -288,6 +288,7 @@ def main(argv=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] [channels...]',
 		description='Concatenate and print ZNC logs for matching nets/chans to stdout.')
 
 	parser.add_argument('channels', nargs='*', help=dd('''
@@ -296,7 +297,7 @@ def main(argv=None):
 
 	group = parser.add_argument_group('Selection options')
 	group.add_argument('-n', '--network', metavar='net',
-		help='IRC network to harvest logs for (only required on channel name conflicts).')
+		help='IRC network to filter logs by (only needed on channel name conflicts).')
 	group.add_argument('-d', '--conf', action='store_true', help=dd('''
 		Use/match only non-detached channels in znc.conf
 		These are added to a list of channels specified as arguments, if any.'''))
@@ -311,7 +312,7 @@ def main(argv=None):
 	group.add_argument('-f', '--ts-from', metavar='date/time', default='18h',
 		help='Print lines since that time (can be relative, default: %(default)s).')
 	group.add_argument('-t', '--ts-to', metavar='date/time',
-		help='Print lines until that time (can be relative, default: %(default)s).')
+		help='Print lines until that time (can be relative, default: now).')
 
 	group = parser.add_argument_group('Paths')
 	group.add_argument('--znc-home', metavar='dir', default='~znc',
