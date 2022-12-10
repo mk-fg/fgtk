@@ -84,25 +84,6 @@ Started as a `cfgit project`_ long time ago, evolved away into this more generic
 
 .. _cfgit project: http://fraggod.net/code/git/configit/
 
-fs_
-'''
-.. _fs: fs
-
-Complex tool for high-level fs operations. Reference is built-in.
-
-Copy files, setting mode and ownership for the destination::
-
-  fs -m600 -o root:wheel cp * /somepath
-
-Temporarily (1hr) change attributes (i.e. to edit file from user's
-editor)::
-
-  fs -t3600 -m600 -o someuser expose /path/to/file
-
-Copy ownership/mode from one file to another::
-
-  fs cps /file1 /file2
-
 fatrace-pipe_
 '''''''''''''
 .. _fatrace-pipe: fatrace-pipe
@@ -1397,44 +1378,6 @@ restarting it ad nauseum.
 Python/asyncio, requires python-systemd installed, use -h/--help and -d/--debug
 opts for more info.
 
-bt-pan_
-'''''''
-.. _bt-pan: bt-pan
-
-Note: you might want to look at "bneptest" tool that comes with bluez - might be
-a good replacement for this script, which I haven't seen at the moment of its
-writing (maybe wasn't there, maybe just missed it).
-
-Bluetooth Personal Area Network (PAN) client/server setup script.
-
-BlueZ does all the work here, script just sends it commands to enable/register
-appropriate services.
-
-Can probably be done with one of the shipped tools, but I haven't found it, and
-there's just too many of them to remember anyway.
-
-::
-
-  machine-1 # ./bt-pan --debug server bnep
-  machine-2 # ./bt-pan --debug client <machine-1-bdaddr>
-
-First line above will probably complain that "bnep" bridge is missing and list
-commands to bring it up (brctl, ip).
-
-Default mode for both "server" and "client" is NAP (AP mode, like with WiFi).
-
-Both commands make bluetoothd (that should be running) create "bnepX" network
-interfaces, connected to server/clients, and "server" also automatically (as
-clients are connecting) adds these to specified bridge.
-
-Not sure how PANU and GN "ad-hoc" modes are supposed to work - both BlueZ
-"NetworkServer" and "Network" (client) interfaces support these, so I suppose
-one might need to run both or either of server/client commands (with e.g. "-u
-panu" option).
-
-Couldn't get either one of ad-hoc modes to work myself, but didn't try
-particulary hard, and it might be hardware issue as well, I guess.
-
 
 
 Misc
@@ -2493,24 +2436,6 @@ contents from remote host for backup purposes.
 
 Passes bunch of common options to use ssh batch mode, disable non-key auth and
 enable keepalive in case of long-running remote commands.
-
-mikrotik-export_
-^^^^^^^^^^^^^^^^
-.. _mikrotik-export: backup/mikrotik-export
-
-Script to ssh into `mikrotik <http://mikrotik.com>`_ routers with really old
-DSA-only firmware via specified ("--auth-file" option) user/password and get the
-/export backup, optionally compressing it.
-
-| Can determine address of the router on its own (using "ip route get").
-| Can be used more generally to get/store output of any command(s) to the router.
-| Python script, uses "twisted.conch" for ssh.
-|
-
-Should not be needd for modern firmwares, where just using e.g. ``ssh
-admin@router /export`` with RSA keys works perfectly well.
-"ssh-dump" script above can be used to pass all necessary non-interactive
-mode options and compress/rotate resulting file with these.
 
 zfs-snapper_
 ^^^^^^^^^^^^
