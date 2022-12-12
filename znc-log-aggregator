@@ -53,7 +53,7 @@ def agg_logs(ctx, p_logs, logs, fn_tpl):
 	xz_tuples = list() # (sources, tmp_xz, dst_xz) for final mv+rm
 	for p_xz, agg_files in sorted(chan_agg.items()):
 		log.debug(f'Aggregating channel [+ {len(agg_files)} log(s)]: {p_xz.name}')
-		if not p_xz.parent.is_dir(): p.mkdir(parents=True)
+		if not p_xz.parent.is_dir(): p_xz.parent.mkdir(parents=True)
 		with tempfile.NamedTemporaryFile(
 				dir=p_xz.parent, prefix=p_xz.name+'.', delete=False ) as tmp:
 			ctx.callback((p_tmp := pl.Path(tmp.name)).unlink, missing_ok=True)
