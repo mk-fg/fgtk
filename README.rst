@@ -2821,7 +2821,7 @@ from multi-Mpx source like a phone camera and make it reasonably-sized instead
 of a giant multi-MiB file.
 
 Can be used as ``image-compact image.jpg`` for default "fit into 1600x square"
-mode, or with optional size argument to scale it differently, but always preserving
+mode, or with optional SZ= env-var to scale it differently, but always preserving
 the aspect ratio.
 
 
@@ -3051,7 +3051,7 @@ ff-cli_
 '''''''
 .. _ff-cli: desktop/ff-cli
 
-Command-line tools to interact with firefox-like browsers and their profile
+Command-line tool to interact with firefox-like browsers and their profile
 settings/data, like list currently open tabs/URLs or (de-)compress .mozlz4 files.
 
 Currently has following tools/commands implemented:

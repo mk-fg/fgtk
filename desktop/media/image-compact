@@ -5,9 +5,9 @@ sz=1600
 usage() {
 	local bin=$(basename $0)
 	[[ $1 -eq 0 ]] || exec 1>&2
-	echo "Usage: $bin /path/to/some/image.jpg [size=$sz]"
+	echo "Usage: [SZ=$sz] $bin /path/to/some/image.jpg ..."
 	echo
-	echo "Size arg can be a size for square to fit image into, or WxH spec"
+	echo "SZ env-var can be a size for square to fit image into, or WxH spec"
 	echo "  for rectangle with max width/height. Scaling is always proportional."
 	exit ${1:-1}; }
 [[ "$1" = -h || "$1" = --help ]] && usage 0
@@ -16,19 +16,22 @@ usage() {
 set -eo pipefail
 
 du_hs() {
-	local sz szp
-	read -ra sz szp < <(du -hs "$1" || kill -INT $$)
-	printf '%s' "$sz"; }
+	local du dup
+	read -ra du dup < <(du -hs "$1" || kill -INT $$)
+	printf '%s' "$du"; }
 
-p=$1
-[[ -e "$p" ]] || { echo >&2 "ERROR: nx input file - '$p'"; exit 1; }
-[[ ! -e "$p".fix.jpg ]] || {
-	echo >&2 "ERROR: temp-file from earlier bug - $p.fix.jpg"; exit 1; }
+[[ -z "$SZ" ]] || SZ=$sz
 [[ "$sz" == *x* ]] || sz="${sz}x${sz}"
 
-sz1=$(du_hs "$p")
-convert "$p" -resize "${sz}>" "$p".fix.jpg
-jpegoptim -q --strip-all --all-normal "$p".fix.jpg
-mv "$p".fix.jpg "$p"
-sz2=$(du_hs "$p")
-echo "$p :: $sz1 -> $sz2"
+for p in "$@"; do
+	[[ -e "$p" ]] || { echo >&2 "ERROR: nx input file - '$p'"; exit 1; }
+	[[ ! -e "$p".fix.jpg ]] || {
+		echo >&2 "ERROR: temp-file from earlier bug - $p.fix.jpg"; exit 1; }
+
+	du1=$(du_hs "$p")
+	convert "$p" -resize "${sz}>" "$p".fix.jpg
+	jpegoptim -q --strip-all --all-normal "$p".fix.jpg
+	mv "$p".fix.jpg "$p"
+	du2=$(du_hs "$p")
+	echo "$p :: $du1 -> $du2"
+done
