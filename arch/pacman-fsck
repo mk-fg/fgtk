@@ -5,8 +5,8 @@ import os, sys, enum, re, codecs
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
-p_err = lambda fmt,*a,**k: print( 'ERROR: ' +
-	(fmt.format(*a, **k) if a or k else fmt), file=sys.stderr )
+p_err = lambda fmt,*a,prefix='ERROR: ',**k: print(
+	prefix + (fmt.format(*a, **k) if a or k else fmt), file=sys.stderr )
 
 class adict(dict):
 	def __init__(self, *args, **kwargs):
@@ -105,17 +105,22 @@ def main(args=None):
 	parser.add_argument('-v', '--verbose', action='store_true',
 		help='Print alpha-sorted list of mtree files as they get processed'
 			' with sequence number to stdout, to get an idea on operation progress.')
+	parser.add_argument('-P', '--err-prefix', metavar='prefix',
+		help='Additional prefix to prepend to all error msgs to mark/identify specific run output.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	exit_code = 0
 	try: err_skip = set(errs[k] for k in ' '.join(opts.skip_err or list()).lower().split())
 	except KeyError as err:
 		parser.error(f'Unrecognized error type specified for -s/--skip-err option: {err}')
+
+	p_err_prefix = ( dict() if not opts.err_prefix
+		else dict(prefix=f'ERROR: {opts.err_prefix} :: ') )
 	def p_err_filter(t, fmt, *fmt_args, **fmt_kws):
 		nonlocal exit_code
 		if t not in err_skip:
 			exit_code = 37
-			p_err(fmt, *fmt_args, **fmt_kws)
+			p_err(fmt, *fmt_args, **fmt_kws, **p_err_prefix)
 
 	skip_res = set(re.compile(s) for s in ' '.join(opts.skip_re or list()).split())
 	for pre in ' '.join(opts.skip_prefix or list()).split():
