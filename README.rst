@@ -2113,6 +2113,8 @@ input, so running the tool on plaintext will return ciphertext and vice-versa::
 Only requirement is for each ciphertext to have unique "salt" value, so that they
 can only be decrypted separately, even if stored in one big plaintext file together.
 
+Named like that because it separates hmac-salt from stuff.
+
 See general docs on FIDO2/Webauthn for more info on how it all works.
 
 .. _8-attempts-lockout PIN: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs

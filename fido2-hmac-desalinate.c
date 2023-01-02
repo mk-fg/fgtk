@@ -68,23 +68,30 @@ int b64_decode(char *src, char **dst, int *dst_len) {
 	return 0;
 }
 
-void str_replace(char **s, char *src, char *dst) {
-	int s_alloc = strlen(*s) + 1, src_len = strlen(src), dst_len = strlen(dst);
+char *str_replace(char *s, char *src, char *dst) {
+	int s_alloc = strlen(s) + 1, src_len = strlen(src), dst_len = strlen(dst);
 	unsigned long n = 0, s_len = s_alloc - 1, len_diff = 0;
 	char *m, *res = malloc(s_len * (float) strlen(dst) / (float) strlen(src) + 1);
-	while ((m = strstr(*s, src))) {
-		memcpy(res + n, *s, m - *s);
-		n += m - *s;
-		s_len -= (m - *s) + src_len;
-		*s = m + src_len;
+	while (m = strstr(s, src)) {
+		memcpy(res + n, s, m - s);
+		n += m - s;
+		s_len -= (m - s) + src_len;
+		s = m + src_len;
 		len_diff += dst_len - src_len;
 		memcpy(res + n, dst, dst_len);
 		n += dst_len; }
-	strcpy(res + n, *s);
-	*s = realloc(res, s_alloc + len_diff);
+	strcpy(res + n, s);
+	n = (unsigned long) realloc(res, s_alloc + len_diff);
+	return res;
 }
 
 int main(int argc, char *argv[]) {
+	char *rp_id = STR(FHD_RPID); // MUST be defined via -D... for gcc
+	int dev_up = FIDO_YN(FHD_UP), dev_uv = FIDO_YN(FHD_UV);
+	int dev_timeout = FHD_TIMEOUT;
+	char *cred_b64 = STR(FHD_CID);
+	char *dev_spec = str_replace(STR(FHD_DEV), "#", "//");
+
 	if ( argc > 2 || (argc == 2 &&
 			(!memcmp(argv[1], "-h", 3) || !memcmp(argv[1], "--help", 7))) ) {
 		printf("Usage: %s [fido2-token-device]\n\n", argv[0]);
@@ -101,19 +108,15 @@ int main(int argc, char *argv[]) {
 			"Actual encryption/decryption is done using simple XOR, with HMAC"
 				"\n as PRF to make one-time pad, so it's same operation in both directions.\n\n"
 			"Uses static compiled-in rp-id hostname, and cred-id base64, if it's not resident.\n"
-			"Default device string is also compiled-in, can be like /dev/yubikey or pcsc://slot0\n"
+			"Default device spec is compiled-in [ %s ].\n"
 			"Non-empty FHD_DEBUG environment will enable libfido2 debug-logs to stderr.\n\n",
-			STR(FHD_UP), STR(FHD_UV), FHD_TIMEOUT );
+			dev_up, dev_uv, dev_timeout, dev_spec );
 		return argc > 2 ? 1 : 0; }
 
 	int r;
 
 	// Read/decode inputs
 
-	char *rp_id = STR(FHD_RPID); // MUST be defined via -D... for gcc
-	char *dev_spec = STR(FHD_DEV);
-	char *cred_b64 = STR(FHD_CID);
-	int dev_up = FIDO_YN(FHD_UP), dev_uv = FIDO_YN(FHD_UV);
 	char *salt, *data, *cred = NULL; int salt_len, data_len, cred_len;
 
 	if (argc == 2) dev_spec = argv[1];
@@ -122,15 +125,14 @@ int main(int argc, char *argv[]) {
 	if (memcmp(cred_b64, "", 1))
 		if (b64_decode(cred_b64, &cred, &cred_len))
 			errx(1, "ERROR: Failed to b64-decode compiled-in Credential ID value");
-	str_replace(&dev_spec, "#", "//");
 
 	char *s = NULL; size_t s_alloc; ssize_t s_len;
 	if ((s_len = (int) getdelim(&s, &s_alloc, ' ', stdin)) <= 0 || s_len != strlen(s))
-		{ free(s); errx(1, "ERROR: Failed to read hmac-salt base64 value from stdin"); }
+		errx(1, "ERROR: Failed to read hmac-salt base64 value from stdin");
 	if (b64_decode(s, &salt, &salt_len))
 		errx(1, "ERROR: Failed to b64-decode hmac-salt value from stdin");
 	if ((s_len = (int) getline(&s, &s_alloc, stdin)) <= 0 || s_len != strlen(s))
-		{ free(s); errx(1, "ERROR: Failed to read base64 data from stdin"); }
+		errx(1, "ERROR: Failed to read base64 data from stdin");
 	if (b64_decode(s, &data, &data_len))
 		errx(1, "ERROR: Failed to b64-decode data buffer from stdin");
 
@@ -177,11 +179,11 @@ int main(int argc, char *argv[]) {
 	fido_dev_t *dev = NULL;
 	if (!(dev = fido_dev_new())) errx(60, "fido_dev_new");
 
-	r = fido_dev_set_timeout(dev, FHD_TIMEOUT * 1000);
-	if (r != FIDO_OK) errx(50, "fido_dev_set_timeout: %s [%d]", fido_strerr(r), FHD_TIMEOUT);
+	r = fido_dev_set_timeout(dev, dev_timeout * 1000);
+	if (r != FIDO_OK) errx(50, "fido_dev_set_timeout: %s [%d]", fido_strerr(r), dev_timeout);
 
 	r = fido_dev_open(dev, dev_spec);
-	if (r != FIDO_OK) errx(60, "fido_dev_open: %s", fido_strerr(r));
+	if (r != FIDO_OK) errx(60, "fido_dev_open [ %s ]: %s", dev_spec, fido_strerr(r));
 
 	if ((r = fido_dev_get_assert(dev, assert, NULL)) != FIDO_OK) { // pin=NULL
 		fido_dev_cancel(dev);
@@ -189,7 +191,6 @@ int main(int argc, char *argv[]) {
 
 	r = fido_dev_close(dev);
 	if (r != FIDO_OK) errx(60, "fido_dev_close: %s", fido_strerr(r));
-
 	fido_dev_free(&dev);
 
 	if (fido_assert_count(assert) != 1)
@@ -198,6 +199,7 @@ int main(int argc, char *argv[]) {
 
 	const char *key = fido_assert_hmac_secret_ptr(assert, 0);
 	int key_len = (int) fido_assert_hmac_secret_len(assert, 0);
+	fido_assert_free(&assert);
 
 	/* char *key; int key_len; // quick testing w/o dev */
 	/* b64_decode("7OeuacOrbOsjJsrjMlIRSv9VsPIE9/dMBZkl/uXTzds=", &key, &key_len); */

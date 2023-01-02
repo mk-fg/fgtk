@@ -347,7 +347,7 @@ void str_replace(
 	unsigned long n = 0, len_s = *len, len_diff = 0;
 	char *m, *res = malloc(
 		len_s * (float) strlen(dst) / (float) strlen(src) + 1 );
-	while ((m = memmem(*s, len_s, src, len_src))) {
+	while (m = memmem(*s, len_s, src, len_src)) {
 		memcpy(res + n, *s, m - *s);
 		n += m - *s;
 		len_s -= (m - *s) + len_src;
