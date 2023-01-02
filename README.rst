@@ -2032,6 +2032,92 @@ but using pypy instead of cpython can speed that up a lot.
 .. _"i want hue": https://medialab.github.io/iwanthue/
 .. _colormath: https://python-colormath.readthedocs.io/
 
+fido2-hmac-desalinate.c_
+''''''''''''''''''''''''
+.. _fido2-hmac-desalinate.c: fido2-hmac-desalinate.c
+
+Small C tool to do short-string encryption and decryption, using hmac-secret
+extension of libfido2-supported devices, like any Yubikey FIDO2 tokens
+(though I think pretty much all modern FIDO2 devices support "hmac-secret").
+
+Gist is - given the input like this on stdin::
+
+  YXNk FEfi23suDGnj8XmU1uJBO8Kwcn3i/6V8op5esgnStsYNqmhTRxFvmKucppw=
+
+Decrypted version of that second string on the line gets printed to stdout::
+
+  The quick brown fox jumps over the lazy dog
+
+Using unique encryption key, derived from HMAC with specified "YXNk" salt value.
+
+For any unique salt, there will be an unique key, which cannot be guessed
+or derived without hardware token and the usual presence-check (e.g. touch,
+biometrics, PIN) that such devices implement and require.
+
+Use-case is instead of storing "my-long-password!" in some list of auth info
+and notes for day-to-day logins, "fhd-ABCD-YUMt43HY9CEUoaHEK8iMRkQ=" can be
+stored instead, and decoded only when it is needed, with a hardware token
+and that physical manipulation needed (e.g. touching button on token or
+putting it to an NFC pad, and maybe `8-attempts-lockout PIN`_ too, if set).
+
+Unique "salt" value makes it impossible to decrypt all stored secrets
+without touching yubikey for each one, so on a compromised machine,
+only passwords that were actually entered can be intercepted and extracted,
+while the rest are perfectly safe, even if attacker has every access except
+physical (+ PIN/biometrics, if token is setup to use these).
+
+At the same time, loosing authenticator is not an issue - its key is useless
+on its own, and there should be safe backup for plaintext data somewhere,
+as such small physical item is bound to break or be lost eventually.
+
+Tool should be compiled with at least Relying Party ID parameter, like this::
+
+  % gcc -O2 -lfido2 -lcrypto -DFHD_RPID=fhd.mysite.com fido2-hmac-desalinate.c -o fhd
+  % strip fhd
+  % ./fhd -h
+
+But there are more compiled-in parameters supported there::
+
+  -DFHD_RPID=<hostname> - Relying Party ID string, e.g. fhd.mysite.com
+  (optional) -DFHD_TIMEOUT=30 - timeout for user presence check (touch)
+  (optional) -DFHD_UP=<y/n> - user presence check (touch), left up to device by default
+  (optional) -DFHD_UV=<y/n> - user verification via PIN, up to device settings by default
+  (optional) -DFHD_CID=<base64-blob> - Credential ID base64 blob from fido2-cred
+  (optional) -DFHD_DEV=<device> - default device, e.g. "/dev/yubikey" or "pcsc:#slot0"
+    NOTE: "pcsc://slot0" value is not allowed by C macro system, hence # replacing //
+
+(they're all listed at the top of fido2-hmac-desalinate.c_ file)
+
+``-DFHD_CID=`` and ``-DFHD_DEV=`` are useful in particular - CID allows to embed
+wrapped key returned by fido2-cred_ into binary, without needing Resident/Discoverable
+Key for that RPID value stored on the device (space on these is limited).
+
+DEV value allows to set default device path, which can be easily made static by
+udev rule, e.g. to make ``/dev/yubikey`` symlink and give user access permissions::
+
+  KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
+    ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0402", \
+    TAG+="uaccess", MODE="660", GROUP="myuser", SYMLINK+="yubikey"
+
+``-DFHD_DEV=pcsc:#slot0`` should work for NFC-enabled tokens placed on the reader pad.
+
+Encryption uses HMAC as a PRF to produce uniformly-random stream to XOR with the
+input, so running the tool on plaintext will return ciphertext and vice-versa::
+
+  % fhd <<< "salt $(base64 <<< my-secret-password)" | base64
+  SbSP8MJPHBSDK+5eIQyvI7EENg==
+
+  % fhd <<< "salt SbSP8MJPHBSDK+5eIQyvI7EENg=="
+  my-secret-password
+
+Only requirement is for each ciphertext to have unique "salt" value, so that they
+can only be decrypted separately, even if stored in one big plaintext file together.
+
+See general docs on FIDO2/Webauthn for more info on how it all works.
+
+.. _8-attempts-lockout PIN: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
+.. _fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
+
 
 `[dev] Dev tools`_
 ~~~~~~~~~~~~~~~~~~
