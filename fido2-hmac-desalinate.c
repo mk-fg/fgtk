@@ -26,13 +26,6 @@
 #include <err.h>
 
 
-#define _STR(x) #x
-#define STR(x) _STR(x)
-
-#define FIDO_YN(x) ({ \
-	!memcmp(_STR(x), "y", 1) ? FIDO_OPT_TRUE : \
-	!memcmp(_STR(x), "n", 1) ? FIDO_OPT_FALSE : FIDO_OPT_OMIT; })
-
 #ifndef FHD_RPID
 #error -DFHD_RPID=... must be set to Replying Party ID (hostname) during compilation.
 #endif
@@ -51,6 +44,16 @@
 #ifndef FHD_UV
 #define FHD_UV
 #endif
+
+
+#define _STR(x) #x
+#define STR(x) _STR(x)
+
+#define FIDO_YN(x) ({ \
+	!memcmp(_STR(x), "y", 1) ? FIDO_OPT_TRUE : \
+	!memcmp(_STR(x), "n", 1) ? FIDO_OPT_FALSE : FIDO_OPT_OMIT; })
+
+#define FIDO_CHK(x) if ((r = x) != FIDO_OK) errx(39, #x " = %s", fido_strerr(r));
 
 // Challenge value has to be sent, but is not used here
 static const unsigned char client_data_hash[32] = "fido2-hmac-desalinate.cd-hash.1";
@@ -71,7 +74,9 @@ int b64_decode(char *src, char **dst, int *dst_len) {
 char *str_replace(char *s, char *src, char *dst) {
 	int s_alloc = strlen(s) + 1, src_len = strlen(src), dst_len = strlen(dst);
 	unsigned long n = 0, s_len = s_alloc - 1, len_diff = 0;
-	char *m, *res = malloc(s_len * (float) strlen(dst) / (float) strlen(src) + 1);
+	char *m, *res;
+	if (!(res = malloc(s_len * (float) strlen(dst) / (float) strlen(src) + 1)))
+		err(1, "malloc: str_replace");
 	while (m = strstr(s, src)) {
 		memcpy(res + n, s, m - s);
 		n += m - s;
@@ -86,6 +91,7 @@ char *str_replace(char *s, char *src, char *dst) {
 }
 
 int main(int argc, char *argv[]) {
+	int r;
 	char *rp_id = STR(FHD_RPID); // MUST be defined via -D... for gcc
 	int dev_up = FIDO_YN(FHD_UP), dev_uv = FIDO_YN(FHD_UV);
 	int dev_timeout = FHD_TIMEOUT;
@@ -112,8 +118,6 @@ int main(int argc, char *argv[]) {
 			"Non-empty FHD_DEBUG environment will enable libfido2 debug-logs to stderr.\n\n",
 			dev_up, dev_uv, dev_timeout, dev_spec );
 		return argc > 2 ? 1 : 0; }
-
-	int r;
 
 	// Read/decode inputs
 
@@ -146,79 +150,61 @@ int main(int argc, char *argv[]) {
 	// Create assertion
 
 	fido_assert_t *assert = NULL;
-	if (!(assert = fido_assert_new())) errx(50, "fido_assert_new");
+	if (!(assert = fido_assert_new())) errx(38, "fido_assert_new");
 
-	r = fido_assert_set_clientdata(assert, client_data_hash, sizeof(client_data_hash));
-	if (r != FIDO_OK) errx(50, "fido_assert_set_clientdata: %s", fido_strerr(r));
-
-	r = fido_assert_set_rp(assert, rp_id);
-	if (r != FIDO_OK) errx(50, "fido_assert_set_rp: %s", fido_strerr(r));
-
-	r = fido_assert_set_extensions(assert, FIDO_EXT_HMAC_SECRET);
-	if (r != FIDO_OK) errx(50, "fido_assert_set_extensions: %s", fido_strerr(r));
-
-	if (dev_up != FIDO_OPT_OMIT)
-		if ((r = fido_assert_set_up(assert, dev_up)) != FIDO_OK)
-			errx(50, "fido_assert_set_up: %s", fido_strerr(r));
-	if (dev_uv != FIDO_OPT_OMIT)
-		if ((r = fido_assert_set_uv(assert, dev_uv)) != FIDO_OK)
-			errx(50, "fido_assert_set_uv: %s", fido_strerr(r));
+	FIDO_CHK(fido_assert_set_clientdata(assert, client_data_hash, sizeof(client_data_hash)));
+	FIDO_CHK(fido_assert_set_rp(assert, rp_id));
+	FIDO_CHK(fido_assert_set_extensions(assert, FIDO_EXT_HMAC_SECRET));
+	if (dev_up != FIDO_OPT_OMIT) FIDO_CHK(fido_assert_set_up(assert, dev_up));
+	if (dev_uv != FIDO_OPT_OMIT) FIDO_CHK(fido_assert_set_uv(assert, dev_uv));
+	if (cred) FIDO_CHK(fido_assert_allow_cred(assert, cred, cred_len));
 
 	char salt_hash[32];
 	if (!EVP_Digest(salt, salt_len, salt_hash, &r, EVP_sha256(),
-		NULL) || r != sizeof(salt_hash)) errx(50, "openssl EVP_Digest failed");
-	r = fido_assert_set_hmac_salt(assert, salt_hash, sizeof(salt_hash));
-	if (r != FIDO_OK) errx(50, "fido_assert_set_hmac_salt: %s", fido_strerr(r));
-
-	if (cred) {
-		r = fido_assert_allow_cred(assert, cred, cred_len);
-		if (r != FIDO_OK) errx(50, "fido_assert_allow_cred: %s", fido_strerr(r)); }
+		NULL) || r != sizeof(salt_hash)) errx(38, "openssl EVP_Digest failed");
+	FIDO_CHK(fido_assert_set_hmac_salt(assert, salt_hash, sizeof(salt_hash)));
 
 	// Get hmac from device
 
 	fido_dev_t *dev = NULL;
-	if (!(dev = fido_dev_new())) errx(60, "fido_dev_new");
+	if (!(dev = fido_dev_new())) errx(38, "fido_dev_new");
 
-	r = fido_dev_set_timeout(dev, dev_timeout * 1000);
-	if (r != FIDO_OK) errx(50, "fido_dev_set_timeout: %s [%d]", fido_strerr(r), dev_timeout);
-
-	r = fido_dev_open(dev, dev_spec);
-	if (r != FIDO_OK) errx(60, "fido_dev_open [ %s ]: %s", dev_spec, fido_strerr(r));
+	FIDO_CHK(fido_dev_set_timeout(dev, dev_timeout * 1000));
+	FIDO_CHK(fido_dev_open(dev, dev_spec));
 
 	if ((r = fido_dev_get_assert(dev, assert, NULL)) != FIDO_OK) { // pin=NULL
-		fido_dev_cancel(dev);
-		errx(60, "fido_dev_get_assert: %s", fido_strerr(r)); }
+		fido_dev_cancel(dev); errx(38, "fido_dev_get_assert: %s", fido_strerr(r)); }
 
-	r = fido_dev_close(dev);
-	if (r != FIDO_OK) errx(60, "fido_dev_close: %s", fido_strerr(r));
+	FIDO_CHK(fido_dev_close(dev));
 	fido_dev_free(&dev);
 
 	if (fido_assert_count(assert) != 1)
-		errx( 60, "fido_assert_count: %d signatures"
+		errx( 38, "fido_assert_count: %d signatures"
 			" instead of expected one", (int) fido_assert_count(assert) );
 
-	const char *key = fido_assert_hmac_secret_ptr(assert, 0);
-	int key_len = (int) fido_assert_hmac_secret_len(assert, 0);
+	char *key; int key_len = (int) fido_assert_hmac_secret_len(assert, 0);
+	if (!(key = malloc(key_len))) err(38, "malloc: fido key");
+	memcpy(key, fido_assert_hmac_secret_ptr(assert, 0), key_len);
 	fido_assert_free(&assert);
 
-	/* char *key; int key_len; // quick testing w/o dev */
+	/* char *key; int key_len; // quick testing w/o device */
 	/* b64_decode("7OeuacOrbOsjJsrjMlIRSv9VsPIE9/dMBZkl/uXTzds=", &key, &key_len); */
 
 	// XOR operation
 
-	int seed_len = 5 + sizeof(int) + salt_len;
-	char *seed = malloc(seed_len);
+	char *seed; int seed_len = 5 + sizeof(int) + salt_len;
+	if (!(seed = malloc(seed_len))) err(38, "malloc: prf block seed");
 	memcpy(seed, "fhd1.", 5);
 	memcpy(seed + 5 + sizeof(int), salt, salt_len);
 
-	char otp[32];
+	char block[32];
 	int data_offset = 0, block_n = 0, n;
 	while (data_offset < data_len) {
 		memcpy(seed + 5, &block_n, sizeof(int));
 		block_n++;
-		if (!HMAC( EVP_sha256(), key, key_len,
-			seed, seed_len, otp, &r ) || r != sizeof(otp)) errx(70, "openssl HMAC failed");
-		for (n=0; n < r && data_offset < data_len; n++) data[data_offset++] ^= otp[n]; }
+		if (!HMAC( EVP_sha256(), key, key_len, seed, seed_len,
+			block, &r ) || r != sizeof(block)) errx(38, "openssl HMAC failed");
+		for (n=0; n < r && data_offset < data_len; n++) data[data_offset++] ^= block[n]; }
 
 	// Print resulting raw value
 
