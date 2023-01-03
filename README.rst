@@ -2048,17 +2048,19 @@ Decrypted version of that second string on the line gets printed to stdout::
 
   The quick brown fox jumps over the lazy dog
 
-Using unique encryption key, derived from HMAC with specified "YXNk" salt value.
+Using unique encryption key, from HMAC calculated on FIDO2 device, using specified
+"YXNk" salt value and unextractable key (barring side-channel hacks of the token).
 
 For any unique salt, there will be an unique key, which cannot be guessed
 or derived without hardware token and the usual presence-check (e.g. touch,
 biometrics, PIN) that such devices implement and require.
 
 Use-case is instead of storing "my-long-password!" in some list of auth info
-and notes for day-to-day logins, "fhd-ABCD-YUMt43HY9CEUoaHEK8iMRkQ=" can be
+and notes for day-to-day logins, "fhd.ABCD.YUMt43HY9CEUoaHEK8iMRkQ=" can be
 stored instead, and decoded only when it is needed, with a hardware token
-and that physical manipulation needed (e.g. touching button on token or
-putting it to an NFC pad, and maybe `8-attempts-lockout PIN`_ too, if set).
+and some physical confirmation (e.g. touching button on token or dropping
+it onto an NFC pad, and maybe `8-attempts-lockout PIN`_ too, if set).
+Usually activated by a `hotkey in an emacs buffer`_.
 
 Unique "salt" value makes it impossible to decrypt all stored secrets
 without touching yubikey for each one, so on a compromised machine,
@@ -2118,6 +2120,7 @@ Named like that because it separates hmac-salt from stuff.
 See general docs on FIDO2/Webauthn for more info on how it all works.
 
 .. _8-attempts-lockout PIN: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
+.. _hotkey in an emacs buffer: https://github.com/mk-fg/emacs-setup/blob/d74c5a5/core/fg_sec.el#L178-L282
 .. _fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
 
 
