@@ -2072,13 +2072,20 @@ At the same time, loosing authenticator is not an issue - its key is useless
 on its own, and there should be safe backup for plaintext data somewhere,
 as such small physical item is bound to break or be lost eventually.
 
-Tool should be compiled with at least Relying Party ID parameter, like this::
+Resident/discoverable credential can be generated/stored on the device like this::
+
+  % fido2-token -L
+  % fido2-cred -M -rh -i cred.req.txt -o cred.info.txt /dev/hidraw5 eddsa
+
+(or non-resident one without "-r", see `manpage for fido2-cred`_ for more info)
+
+Tool should be compiled with at least Relying Party ID parameter (-DFHD_RPID=)::
 
   % gcc -O2 -lfido2 -lcrypto -DFHD_RPID=fhd.mysite.com fido2-hmac-desalinate.c -o fhd
   % strip fhd
   % ./fhd -h
 
-But there are more compiled-in parameters supported there::
+But there are more compiled-in options supported there::
 
   -DFHD_RPID=<hostname> - Relying Party ID string, e.g. fhd.mysite.com
   (optional) -DFHD_TIMEOUT=30 - timeout for user presence check (touch)
@@ -2121,6 +2128,7 @@ See general docs on FIDO2/Webauthn for more info on how it all works.
 
 .. _8-attempts-lockout PIN: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
 .. _hotkey in an emacs buffer: https://github.com/mk-fg/emacs-setup/blob/d74c5a5/core/fg_sec.el#L178-L282
+.. _manpage for fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
 .. _fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
 
 
