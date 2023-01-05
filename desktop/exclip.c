@@ -1,7 +1,7 @@
 // Small standalone C binary based on xclip code to grab
 //   primary X11 selection text (utf-8) from terminal (or whatever else)
 //   and re-host it as primary/clipboard after some (optional) processing.
-// Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -o exclip && strip exclip
+// Build with: gcc -O2 -lX11 -lXmu -Wall exclip.c -Wall -o exclip && strip exclip
 // More info: ./exclip -h
 // More info on X11 selections:
 //   https://www.uninformativ.de/blog/postings/2017-04-02/0/POSTING-en.html
@@ -368,8 +368,8 @@ void str_replace(
 }
 
 void parse_opts( int argc, char *argv[],
-		int *opt_verbatim, int *opt_slashes_to_dots,
-		int *opt_tabs_to_spaces, int *opt_from_clip, float *opt_timeout ) {
+		int *opt_verbatim, int *opt_slashes_to_dots, int *opt_tabs_to_spaces,
+		int *opt_from_clip, int *opt_remove_prefix_byte, float *opt_timeout ) {
 	extern char *optarg;
 	extern int optind, opterr, optopt;
 
@@ -385,6 +385,7 @@ void parse_opts( int argc, char *argv[],
 "With -c/--from-clip option, clipboard selection will be used as a source instead.\n\n"
 "Extra flags (can be used with(-out)"
 	" -x/--verbatim to strip/keep other stuff):\n"
+"  -p/--remove-prefix-byte - removes first byte from source buffer.\n"
 "  -d/--slashes-to-dots - replaces all forward slashes [/] with dots [.].\n"
 "  -t/--tabs-to-spaces N - replaces each tab char with N spaces.\n"
 "    (default without -x/--verbatim is one space for each tab, overrides that)\n"
@@ -398,14 +399,16 @@ void parse_opts( int argc, char *argv[],
 		{"slashes-to-dots", no_argument, NULL, 3},
 		{"tabs-to-spaces", required_argument, NULL, 4},
 		{"from-clip", no_argument, NULL, 5},
-		{"timeout", required_argument, NULL, 6} };
-	while ((ch = getopt_long(argc, argv, ":hxdt:cb:", opt_list, NULL)) != -1)
+		{"remove-prefix-byte", no_argument, NULL, 6},
+		{"timeout", required_argument, NULL, 7} };
+	while ((ch = getopt_long(argc, argv, ":hxdt:cpb:", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
 			case 'd': case 3: *opt_slashes_to_dots = 1; break;
 			case 't': case 4: *opt_tabs_to_spaces = atoi(optarg); break;
 			case 'c': case 5: *opt_from_clip = 1; break;
-			case 'b': case 6: *opt_timeout = strtof(optarg, NULL); break;
+			case 'p': case 6: *opt_remove_prefix_byte = 1; break;
+			case 'b': case 7: *opt_timeout = strtof(optarg, NULL); break;
 			case 'h': case 1: usage(0);
 			case '?':
 				P(0, "unrecognized option - %s\n", argv[optind-1]);
@@ -422,10 +425,10 @@ void parse_opts( int argc, char *argv[],
 
 int main(int argc, char *argv[]) {
 	int opt_verbatim = 0, opt_slashes_to_dots = 0,
-		opt_tabs_to_spaces = -1, opt_from_clip = 0;
+		opt_tabs_to_spaces = -1, opt_from_clip = 0, opt_remove_prefix_byte = 0;
 	float opt_timeout = -1;
-	parse_opts( argc, argv, &opt_verbatim,
-		&opt_slashes_to_dots, &opt_tabs_to_spaces, &opt_from_clip, &opt_timeout );
+	parse_opts( argc, argv, &opt_verbatim, &opt_slashes_to_dots,
+		&opt_tabs_to_spaces, &opt_from_clip, &opt_remove_prefix_byte, &opt_timeout );
 
 	char *buff;
 	unsigned long buff_len;
@@ -443,6 +446,7 @@ int main(int argc, char *argv[]) {
 		str_subchar(buff, buff_len, '\t', ' ');
 		str_strip(&buff, &buff_len); }
 	if (opt_slashes_to_dots) str_subchar(buff, buff_len, '/', '.');
+	if (opt_remove_prefix_byte && buff_len > 0) { buff++; buff_len--; }
 
 	update_selection(buff, buff_len, 1, opt_timeout);
 	update_selection(buff, buff_len, 0, opt_timeout);
