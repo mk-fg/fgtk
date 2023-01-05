@@ -12,6 +12,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <signal.h>
+#include <sys/time.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -20,11 +22,9 @@
 #include <getopt.h>
 
 
-#define P(err, fmt, arg...)\
-	do {\
-		fprintf(stderr, "ERROR: " fmt "\n", ##arg);\
-		if (err) exit(err);\
-	} while (0)
+#define P(err, fmt, arg...) do {\
+	fprintf(stderr, "ERROR: " fmt "\n", ##arg);\
+	if (err) exit(err); } while (0)
 
 
 
@@ -282,7 +282,7 @@ static int read_selection( char **buff,
 }
 
 void update_selection(
-		char *buff, unsigned long buff_len, int sel_primary ) {
+		char *buff, unsigned long buff_len, int sel_primary, float timeout ) {
 	pid_t pid;
 	pid = fork(); // child will own and hold selection buffer
 	if (pid) return; // parent
@@ -294,6 +294,15 @@ void update_selection(
 	Atom target = XA_UTF8_STRING(dpy);
 	Atom sel_dst = sel_primary ? XA_PRIMARY : XA_CLIPBOARD(dpy);
 	XSetSelectionOwner(dpy, sel_dst, win, CurrentTime);
+
+	if (timeout > 0) {
+		struct itimerval interval;
+		interval.it_value.tv_sec = (int) timeout;
+		interval.it_value.tv_usec = (long) (timeout * 1000000.) % 1000000;
+		interval.it_interval = interval.it_value;
+		signal(SIGALRM, exit);
+		if (setitimer(ITIMER_REAL, &interval, NULL) < 0)
+			P(1, "setitimer(%.2f) failed", timeout); }
 
 	while (dloop < sloop || sloop < 1) {
 		while (1) {
@@ -310,8 +319,7 @@ void update_selection(
 
 			if (evt.type == SelectionClear) clear = 1;
 			if ((context == XCLIB_XCIN_NONE) && clear) goto exit; // no longer needed
-			if (finished) break;
-		}
+			if (finished) break; }
 		dloop++; }
 
 exit:
@@ -347,7 +355,7 @@ void str_replace(
 	unsigned long n = 0, len_s = *len, len_diff = 0;
 	char *m, *res = malloc(
 		len_s * (float) strlen(dst) / (float) strlen(src) + 1 );
-	while (m = memmem(*s, len_s, src, len_src)) {
+	while ((m = memmem(*s, len_s, src, len_src))) {
 		memcpy(res + n, *s, m - *s);
 		n += m - *s;
 		len_s -= (m - *s) + len_src;
@@ -361,7 +369,7 @@ void str_replace(
 
 void parse_opts( int argc, char *argv[],
 		int *opt_verbatim, int *opt_slashes_to_dots,
-		int *opt_tabs_to_spaces, int *opt_from_clip ) {
+		int *opt_tabs_to_spaces, int *opt_from_clip, float *opt_timeout ) {
 	extern char *optarg;
 	extern int optind, opterr, optopt;
 
@@ -379,8 +387,8 @@ void parse_opts( int argc, char *argv[],
 	" -x/--verbatim to strip/keep other stuff):\n"
 "  -d/--slashes-to-dots - replaces all forward slashes [/] with dots [.].\n"
 "  -t/--tabs-to-spaces N - replaces each tab char with N spaces.\n"
-"    (default without -x/--verbatim"
-	" is one space for each tab, overrides that)\n\n", argv[0] );
+"    (default without -x/--verbatim is one space for each tab, overrides that)\n"
+"  -b/--timeout S - drop selection after specified number of seconds.\n\n", argv[0] );
 		exit(err); }
 
 	int ch;
@@ -389,13 +397,15 @@ void parse_opts( int argc, char *argv[],
 		{"verbatim", no_argument, NULL, 2},
 		{"slashes-to-dots", no_argument, NULL, 3},
 		{"tabs-to-spaces", required_argument, NULL, 4},
-		{"from-clip", no_argument, NULL, 5} };
-	while ((ch = getopt_long(argc, argv, ":hxdt:c", opt_list, NULL)) != -1)
+		{"from-clip", no_argument, NULL, 5},
+		{"timeout", required_argument, NULL, 6} };
+	while ((ch = getopt_long(argc, argv, ":hxdt:cb:", opt_list, NULL)) != -1)
 		switch (ch) {
 			case 'x': case 2: *opt_verbatim = 1; break;
 			case 'd': case 3: *opt_slashes_to_dots = 1; break;
 			case 't': case 4: *opt_tabs_to_spaces = atoi(optarg); break;
 			case 'c': case 5: *opt_from_clip = 1; break;
+			case 'b': case 6: *opt_timeout = strtof(optarg, NULL); break;
 			case 'h': case 1: usage(0);
 			case '?':
 				P(0, "unrecognized option - %s\n", argv[optind-1]);
@@ -413,8 +423,9 @@ void parse_opts( int argc, char *argv[],
 int main(int argc, char *argv[]) {
 	int opt_verbatim = 0, opt_slashes_to_dots = 0,
 		opt_tabs_to_spaces = -1, opt_from_clip = 0;
+	float opt_timeout = -1;
 	parse_opts( argc, argv, &opt_verbatim,
-		&opt_slashes_to_dots, &opt_tabs_to_spaces, &opt_from_clip );
+		&opt_slashes_to_dots, &opt_tabs_to_spaces, &opt_from_clip, &opt_timeout );
 
 	char *buff;
 	unsigned long buff_len;
@@ -433,8 +444,8 @@ int main(int argc, char *argv[]) {
 		str_strip(&buff, &buff_len); }
 	if (opt_slashes_to_dots) str_subchar(buff, buff_len, '/', '.');
 
-	update_selection(buff, buff_len, 1);
-	update_selection(buff, buff_len, 0);
+	update_selection(buff, buff_len, 1, opt_timeout);
+	update_selection(buff, buff_len, 0, opt_timeout);
 
 	return 0;
 }
