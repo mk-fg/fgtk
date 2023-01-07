@@ -13,7 +13,7 @@ queue= queue_delay=7 queue_timeout= value= path= props=
 
 usage() {
 	bin=${0##*/}
-	echo >&2 "Usage: $bin [-x] [-r] { -l | -c | -p | -q [opts] } { -u unit | slice }"
+	echo >&2 "Usage: $bin [-x] [-r] { -l | -c | -p | ... } { -u unit | slice }"
 	echo >&2 "       $bin [-x] -v key[=value] { -u unit | slice }"
 	echo >&2 "       $bin [-x] -s { -u unit | slice | cgroup-path }"
 	echo >&2 "       $bin [-x] [run-opts] [-u unit] slice -- cmd [args...]"
@@ -29,6 +29,7 @@ usage() {
 	echo >&2 "   Starting scope with same unit name as already running one will fail."
 	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
 	echo >&2 "-o - same as -p/--property in systemd-run, to pass any unit parameters."
+	echo >&2 "-E - same as -E/--setenv for systemd-run, to pass any env vars."
 	echo >&2 "-q - wait for all pids in slice/scope to exit before start (if any)."
 	echo >&2 "   -i - delay between checks in seconds, default=${queue_delay}s."
 	echo >&2 "   -t - timeout for -q wait (default=none), exiting with code 36 afterwards."
@@ -59,7 +60,7 @@ usage() {
 	exit ${1:-1}
 }
 
-while getopts xhclqsrpi:t:u:o:v: a; do case $a in
+while getopts xhclqsrpi:t:u:o:E:v: a; do case $a in
 	h) usage 0 ;;
 	c) check=t ;;
 	l) list=t ;;
@@ -71,6 +72,7 @@ while getopts xhclqsrpi:t:u:o:v: a; do case $a in
 	t) queue_timeout=$OPTARG ;;
 	u) unit=$OPTARG ;;
 	o) props="$props -p $OPTARG" ;;
+	E) props="$props -E $OPTARG" ;;
 	v) value=$OPTARG ;;
 	x) set -x ;;
 	\?) usage ;;
