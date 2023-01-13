@@ -2036,11 +2036,11 @@ fido2-hmac-desalinate.c_
 ''''''''''''''''''''''''
 .. _fido2-hmac-desalinate.c: fido2-hmac-desalinate.c
 
-Small C tool to do short-string encryption and decryption, using hmac-secret
+Small C tool to do short-string encryption/decryption, using hmac-secret
 extension of libfido2-supported devices, like any Yubikey FIDO2 tokens
-(though I think pretty much all modern FIDO2 devices support "hmac-secret").
+or most other modern FIDO2 authenticators.
 
-Gist is - given the input like this on stdin::
+How it works - given the input like this on tool's stdin::
 
   YXNk FEfi23suDGnj8XmU1uJBO8Kwcn3i/6V8op5esgnStsYNqmhTRxFvmKucppw=
 
@@ -2048,10 +2048,11 @@ Decrypted version of that second string on the line gets printed to stdout::
 
   The quick brown fox jumps over the lazy dog
 
-Using unique encryption key, from HMAC calculated on FIDO2 device, using specified
-"YXNk" salt value and unextractable key (barring side-channel hacks of the token).
+It's decoded using unique encryption key, derived from HMAC calculated
+on FIDO2 device, using specified "YXNk" salt value and unextractable key
+(barring side-channel hacks of the token).
 
-For any unique salt, there will be an unique key, which cannot be guessed
+For any unique salt, there will be a single unique key, which can't be guessed
 or derived without hardware token and the usual presence-check (e.g. touch,
 biometrics, PIN) that such devices implement and require.
 
@@ -2063,14 +2064,8 @@ it onto an NFC pad, and maybe `8-attempts-lockout PIN`_ too, if set).
 Usually activated by a `hotkey in an emacs buffer`_.
 
 Unique "salt" value makes it impossible to decrypt all stored secrets
-without touching yubikey for each one, so on a compromised machine,
-only passwords that were actually entered can be intercepted and extracted,
-while the rest are perfectly safe, even if attacker has every access except
-physical (+ PIN/biometrics, if token is setup to use these).
-
-At the same time, loosing authenticator is not an issue - its key is useless
-on its own, and there should be safe backup for plaintext data somewhere,
-as such small physical item is bound to break or be lost eventually.
+immediately, without authenticator checks for each one, to better protect
+against common remote compromise.
 
 Resident/discoverable credential can be generated/stored on the device like this::
 
@@ -2094,6 +2089,7 @@ But there are more compiled-in options supported there::
   (optional) -DFHD_CID=<base64-blob> - Credential ID base64 blob from fido2-cred
   (optional) -DFHD_DEV=<device> - default device, e.g. "/dev/yubikey" or "pcsc:#slot0"
     NOTE: "pcsc://slot0" value is not allowed by C macro system, hence # replacing //
+  ...
 
 (they're all listed at the top of fido2-hmac-desalinate.c_ file)
 
@@ -2124,12 +2120,18 @@ can only be decrypted separately, even if stored in one big plaintext file toget
 
 Named like that because it separates hmac-salt from stuff.
 
-See general docs on FIDO2/Webauthn for more info on how it all works.
+See general docs on FIDO2/Webauthn for more info on how it all works,
+and a `"FIDO2 hardware password/secret management" blog post`_ for more
+usage info/examples of this small tool.
 
-.. _8-attempts-lockout PIN: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
-.. _hotkey in an emacs buffer: https://github.com/mk-fg/emacs-setup/blob/d74c5a5/core/fg_sec.el#L178-L282
+.. _8-attempts-lockout PIN:
+  https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
+.. _hotkey in an emacs buffer:
+  https://github.com/mk-fg/emacs-setup/blob/c2929a3/core/fg_sec.el#L178-L300
 .. _manpage for fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
 .. _fido2-cred: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
+.. _"FIDO2 hardware password/secret management" blog post:
+  https://blog.fraggod.net/2023/01/04/fido2-hardware-passwordsecret-management.html
 
 
 `[dev] Dev tools`_

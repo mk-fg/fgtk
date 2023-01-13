@@ -11,7 +11,7 @@
 //     NOTE: "pcsc://slot0" value is not allowed by C macro system, hence # replacing //
 // Defaults are to use resident key and require device arg, if latter two are not set.
 //
-// Build with: gcc -O2 -lfido2 -lcrypto -D... fido2-hmac-desalinate.c -o fhd && strip fhd
+// Build with: gcc -O2 -Wall -lfido2 -lcrypto -D... fido2-hmac-desalinate.c -o fhd && strip fhd
 // Usage info: ./fdh -h
 // Intended to complement libfido2 cli tools, like fido2-token and fido2-cred.
 
@@ -59,12 +59,12 @@
 static const unsigned char client_data_hash[32] = "fido2-hmac-desalinate.cd-hash.1";
 
 
-int b64_decode(char *src, char **dst, int *dst_len) {
+int b64_decode(unsigned char *src, unsigned char **dst, int *dst_len) {
 	EVP_ENCODE_CTX *ctx = EVP_ENCODE_CTX_new();
-	int src_len = strlen(src), dst_len_ext;
+	int dst_len_ext;
 	EVP_DecodeInit(ctx);
-	if ( !(*dst = malloc(3 * strlen(src) / 4 + 1))
-		|| EVP_DecodeUpdate(ctx, *dst, dst_len, src, strlen(src)) < 0
+	if ( !(*dst = malloc(3 * strlen((char*) src) / 4 + 1))
+		|| EVP_DecodeUpdate(ctx, *dst, dst_len, src, strlen((char*) src)) < 0
 		|| EVP_DecodeFinal(ctx, *dst, &dst_len_ext) < 0
 		|| (*dst_len += dst_len_ext) <= 0 ) return -1;
 	EVP_ENCODE_CTX_free(ctx);
@@ -77,7 +77,7 @@ char *str_replace(char *s, char *src, char *dst) {
 	char *m, *res;
 	if (!(res = malloc(s_len * (float) strlen(dst) / (float) strlen(src) + 1)))
 		err(1, "malloc: str_replace");
-	while (m = strstr(s, src)) {
+	while ((m = strstr(s, src))) {
 		memcpy(res + n, s, m - s);
 		n += m - s;
 		s_len -= (m - s) + src_len;
@@ -86,12 +86,11 @@ char *str_replace(char *s, char *src, char *dst) {
 		memcpy(res + n, dst, dst_len);
 		n += dst_len; }
 	strcpy(res + n, s);
-	n = (unsigned long) realloc(res, s_alloc + len_diff);
-	return res;
+	return realloc(res, s_alloc + len_diff);
 }
 
 int main(int argc, char *argv[]) {
-	int r;
+	int r; unsigned int ru;
 	char *rp_id = STR(FHD_RPID); // MUST be defined via -D... for gcc
 	int dev_up = FIDO_YN(FHD_UP), dev_uv = FIDO_YN(FHD_UV);
 	int dev_timeout = FHD_TIMEOUT;
@@ -106,7 +105,7 @@ int main(int argc, char *argv[]) {
 			"\n using hmac-secret extension of libfido2-supported devices.\n"
 			"Reads ( hmac-salt || '.' || string ) line from stdin, with hmac-salt"
 			"\n and string base64-encoded, prints raw encrypted/decrypted string to stdout.\n"
-			"User checks: presence=%s verify=%s (empty - token default), with %ds timeout.\n"
+			"User checks: presence=%d verify=%d (empty - token default), with %ds timeout.\n"
 			"fido2-token-device argument, if any, is same as fido2-token tool uses.\n"
 			"Does not print anything to stdout on errors, only stderr + non-zero exit code.\n\n"
 			"Symmetric key is produced by the device from hmac-salt value,"
@@ -121,23 +120,23 @@ int main(int argc, char *argv[]) {
 
 	// Read/decode inputs
 
-	char *salt, *data, *cred = NULL; int salt_len, data_len, cred_len;
+	unsigned char *salt, *data, *cred = NULL; int salt_len, data_len, cred_len;
 
 	if (argc == 2) dev_spec = argv[1];
 	if (!memcmp(dev_spec, "", 1)) errx(1, "ERROR: No device path built-in or specified.");
 	if (!memcmp(rp_id, "", 1)) errx(1, "ERROR: Empty FHD_RPID compiled into binary.");
 	if (memcmp(cred_b64, "", 1))
-		if (b64_decode(cred_b64, &cred, &cred_len))
+		if (b64_decode((unsigned char*) cred_b64, &cred, &cred_len))
 			errx(1, "ERROR: Failed to b64-decode compiled-in Credential ID value");
 
 	char *s = NULL; size_t s_alloc; ssize_t s_len;
-	if ((s_len = (int) getdelim(&s, &s_alloc, ' ', stdin)) <= 0 || s_len != strlen(s))
+	if ((s_len = (int) getdelim(&s, &s_alloc, ' ', stdin)) <= 0 || s_len != strlen((char*) s))
 		errx(1, "ERROR: Failed to read hmac-salt base64 value from stdin");
-	if (b64_decode(s, &salt, &salt_len))
+	if (b64_decode((unsigned char*) s, &salt, &salt_len))
 		errx(1, "ERROR: Failed to b64-decode hmac-salt value from stdin");
-	if ((s_len = (int) getline(&s, &s_alloc, stdin)) <= 0 || s_len != strlen(s))
+	if ((s_len = (int) getline(&s, &s_alloc, stdin)) <= 0 || s_len != strlen((char*) s))
 		errx(1, "ERROR: Failed to read base64 data from stdin");
-	if (b64_decode(s, &data, &data_len))
+	if (b64_decode((unsigned char*) s, &data, &data_len))
 		errx(1, "ERROR: Failed to b64-decode data buffer from stdin");
 
 	// libfido2 init
@@ -159,9 +158,9 @@ int main(int argc, char *argv[]) {
 	if (dev_uv != FIDO_OPT_OMIT) FIDO_CHK(fido_assert_set_uv(assert, dev_uv));
 	if (cred) FIDO_CHK(fido_assert_allow_cred(assert, cred, cred_len));
 
-	char salt_hash[32];
-	if (!EVP_Digest(salt, salt_len, salt_hash, &r, EVP_sha256(),
-		NULL) || r != sizeof(salt_hash)) errx(38, "openssl EVP_Digest failed");
+	unsigned char salt_hash[32];
+	if (!EVP_Digest(salt, salt_len, salt_hash, &ru, EVP_sha256(),
+		NULL) || ru != sizeof(salt_hash)) errx(38, "openssl EVP_Digest failed");
 	FIDO_CHK(fido_assert_set_hmac_salt(assert, salt_hash, sizeof(salt_hash)));
 
 	// Get hmac from device
@@ -192,19 +191,19 @@ int main(int argc, char *argv[]) {
 
 	// XOR operation
 
-	char *seed; int seed_len = 5 + sizeof(int) + salt_len;
+	unsigned char *seed; int seed_len = 5 + sizeof(int) + salt_len;
 	if (!(seed = malloc(seed_len))) err(38, "malloc: prf block seed");
 	memcpy(seed, "fhd1.", 5);
 	memcpy(seed + 5 + sizeof(int), salt, salt_len);
 
-	char block[32];
+	unsigned char block[32];
 	int data_offset = 0, block_n = 0, n;
 	while (data_offset < data_len) {
 		memcpy(seed + 5, &block_n, sizeof(int));
 		block_n++;
 		if (!HMAC( EVP_sha256(), key, key_len, seed, seed_len,
-			block, &r ) || r != sizeof(block)) errx(38, "openssl HMAC failed");
-		for (n=0; n < r && data_offset < data_len; n++) data[data_offset++] ^= block[n]; }
+			block, &ru ) || ru != sizeof(block)) errx(38, "openssl HMAC failed");
+		for (n=0; n < ru && data_offset < data_len; n++) data[data_offset++] ^= block[n]; }
 
 	// Print resulting raw value
 
