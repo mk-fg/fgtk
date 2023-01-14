@@ -2133,6 +2133,36 @@ usage info/examples of this small tool.
 .. _"FIDO2 hardware password/secret management" blog post:
   https://blog.fraggod.net/2023/01/04/fido2-hardware-passwordsecret-management.html
 
+fido2_hmac_boot.nim_
+''''''''''''''''''''
+.. _fido2_hmac_boot.nim: fido2_hmac_boot.nim
+
+Small tool similar to fido2-hmac-desalinate.c_ above, but intended to produce
+a file with a key derived from FIDO2 device, to use on early boot, e.g. unlock
+disk partitions with cryptsetup and such.
+
+Always prompts user on /dev/console, either for PIN or just to continue,
+assuming that it'd be accessible in that kind of early-boot scenario.
+
+Same as with fido2-hmac-desalinate.c, most options can be compiled-in,
+but can also be specified on the command-line here.
+
+Build with: ``nim c -w=on -d:production -o=fhb fido2_hmac_boot.nim && strip fhb``
+
+Simple usage: ``./fhb -r fhb.myhost.net -s ul0...5hA= --out-b64``
+
+CLI -h/--help option should print info on all compiled-in defaults,
+as well as runtime overrides.
+
+fido2-token_ and fido2-cred_ tools (part of libfido2) can be useful to
+initialize/manage the device and credentials for/on it.
+Written in Nim_ C-adjacent language, with no extra dependencies,
+builds and links against libfido2_.
+
+.. _fido2-token: https://developers.yubico.com/libfido2/Manuals/fido2-token.html
+.. _Nim: https://nim-lang.org/
+.. _libfido2: https://developers.yubico.com/libfido2/
+
 
 `[dev] Dev tools`_
 ~~~~~~~~~~~~~~~~~~
