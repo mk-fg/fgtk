@@ -6,12 +6,7 @@
 # Usage info: ./fhb -h
 # Intended to complement libfido2 cli tools, like fido2-token and fido2-cred.
 
-import std/strformat
-import std/macros
-import std/os
-import std/strutils
-import std/parseopt
-import std/base64
+import strformat, macros, os, strutils, parseopt, base64, posix
 
 
 {.passl: "-lfido2"}
@@ -20,6 +15,7 @@ const FHB_RPID {.strdefine.} = "" # Relying Party ID string, e.g. fhd.mysite.com
 const FHB_Salt {.strdefine.} = "" # 32B HMAC salt base64 that corresponds to same unique output
 const FHB_Dev {.strdefine.} = "" # default device, e.g. "/dev/yubikey" or "pcsc://slot0"
 const FHB_CID {.strdefine.} = "" # Credential ID base64 blob from fido2-cred
+const FHB_Ask_Cmd {.strdefine.} = "systemd-ask-password" # cmd + args to return password on stdout
 const FHB_Timeout {.intdefine.} = 30 # timeout for user presence check (touch)
 const FHB_UP {.booldefine.}: int = -1 # user presence check (touch), up to device by default
 const FHB_UV {.booldefine.}: int = -1 # user verification via PIN, up to device by default
@@ -66,6 +62,58 @@ template fido(call: untyped, args: varargs[untyped]) =
 		FidoError, "fido_" & astToStr(call) & " call failed = " & $fido_strerr(r) )
 
 
+type AskPassFail = object of CatchableError
+
+proc run_ask_pass(argv: openArray[string]): string =
+	var
+		cmd = argv[0]
+		proc_pipe: array[0..1, cint]
+		pid: Pid
+
+	block start_proc:
+		# XXX: use fork & clone from osproc instead
+		var
+			attr: Tposix_spawnattr
+			fops: Tposix_spawn_file_actions
+			mask: Sigset
+			flags = POSIX_SPAWN_USEVFORK or POSIX_SPAWN_SETSIGMASK
+			proc_args = allocCStringArray(argv)
+			proc_env = allocCStringArray( block:
+				var env = newSeq[string](0)
+				for key, val in envPairs(): env.add(&"{key}={val}")
+				env )
+		defer: deallocCStringArray(proc_args)
+		defer: deallocCStringArray(proc_env)
+		template chck(e: untyped) =
+			if e != 0'i32: raiseOSError(osLastError())
+		chck pipe(proc_pipe)
+		chck posix_spawn_file_actions_init(fops)
+		chck posix_spawnattr_init(attr)
+		chck sigemptyset(mask)
+		chck posix_spawnattr_setsigmask(attr, mask)
+		chck posix_spawnattr_setflags(attr, flags)
+		chck posix_spawn_file_actions_addclose(fops, proc_pipe[0])
+		chck posix_spawn_file_actions_adddup2(fops, proc_pipe[1], 1)
+		var r = posix_spawnp(pid, cmd.cstring, fops, attr, proc_args, proc_env)
+		discard posix_spawn_file_actions_destroy(fops)
+		discard posix_spawnattr_destroy(attr)
+		if r != 0'i32: raiseOSError(OSErrorCode(r), cmd)
+
+	block read_output:
+		var buff = newString(256)
+		let bs = read(proc_pipe[0], buff.cstring, buff.len)
+		if bs == 0: break
+		if bs < 0: raiseOSError(osLastError(), &"{cmd}: stdout read failed")
+		result.add(buff[0 ..< bs])
+
+	block check_exit_code:
+		var
+			st = 0.cint
+			ret = waitpid(pid, st, 0)
+		if ret < 0: raiseOSError(osLastError(), &"{cmd}: waitpid failed")
+		if st.int != 0:
+			raise newException(AskPassFail, &"{cmd}: exited with code {st.int}")
+
 proc main_help(err="") =
 	proc bool_val(v: int): string =
 		case v
@@ -104,6 +152,11 @@ proc main_help(err="") =
 					credential, if it's not Discoverable/Resident (in which case -r/--rpid will select it).
 				Compiled-in default: {FHB_CID=}
 
+			-a/--ask-cmd <command>
+				Command + args to ask for password/pin/etc somehow and print on its stdout.
+				systemd-ask-password can be used on systemd-enabled system/initramfs.
+				Compiled-in default: {FHB_Ask_Cmd=}
+
 			-t/--timeout <seconds>
 				Device presence/verification check timeout, in seconds.
 				Tool does not wait for device to be plugged-in, only for checks on one.
@@ -138,6 +191,7 @@ proc main(argv: seq[string]) =
 		fhb_salt = FHB_Salt
 		fhb_dev = FHB_Dev
 		fhb_cred = FHB_CID
+		fhb_ask_cmd = FHB_Ask_Cmd
 		fhb_timeout = FHB_Timeout
 		fhb_up = FHB_UP
 		fhb_uv = FHB_UV
@@ -155,20 +209,21 @@ proc main(argv: seq[string]) =
 			let opt = if k.len == 1: &"-{k}" else: &"--{k}"
 			main_help(&"Failed to parse {opt} to boolean value [ {v} ]")
 
+		proc opt_empty_check =
+			if opt_last == "": return
+			let opt = if opt_last.len == 1: &"-{opt_last}" else: &"--{opt_last}"
+			main_help(&"{opt} requires a value")
+
 		proc opt_set(k: string, v: string) =
 			if k in ["r", "rpid"]: fhb_rpid = v
 			elif k in ["s", "hmac-salt"]: fhb_salt = v
 			elif k in ["d", "dev"]: fhb_dev = v
 			elif k in ["c", "cred-id"]: fhb_cred = v
+			elif k in ["a", "ask-cmd"]: fhb_ask_cmd = v
 			elif k in ["t", "timeout"]: fhb_timeout = parseInt(v)
 			elif k == "up": fhb_up = opt_bool_int(k, v)
 			elif k == "uv": fhb_up = opt_bool_int(k, v)
 			else: quit(&"BUG: no type info for option [ {k} = {v} ]", 1)
-
-		proc opt_empty_check =
-			if opt_last == "": return
-			let opt = if opt_last.len == 1: &"-{opt_last}" else: &"--{opt_last}"
-			main_help(&"{opt} requires a value")
 
 		for t, opt, val in getopt(argv):
 			case t
@@ -192,41 +247,44 @@ proc main(argv: seq[string]) =
 			main_help( "-d:FHB_SALT=... must" &
 				" be set at build-time or via -s/--salt option" )
 
+	# XXX: handle AskPassFail
+	var pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
+	echo &"PIN: [ {pin} ]" # XXX
+
 	fido_init(if opt_debug: FIDO_DEBUG else: 0)
 	var a = fido_assert_new()
 	var r: cint
-	var pin: cstring = nil # XXX
 
 	block fido_assert_setup:
-		fido(assert_set_clientdata, a, client_data.cstring, cint(client_data.len))
+		fido(assert_set_clientdata, a, client_data.cstring, client_data.len.cint)
 		fido(assert_set_rp, a, fhb_rpid.cstring)
 		fido(assert_set_extensions, a, FIDO_EXT_HMAC_SECRET)
-		if fhb_up >= 0: fido(assert_set_up, a, cint(fhb_up))
-		if fhb_uv >= 0: fido(assert_set_uv, a, cint(fhb_uv))
+		if fhb_up >= 0: fido(assert_set_up, a, fhb_up.cint)
+		if fhb_uv >= 0: fido(assert_set_uv, a, fhb_uv.cint)
 		if fhb_cred != "":
 			fhb_cred = decode(fhb_cred)
-			fido(assert_allow_cred, a, fhb_cred.cstring, cint(fhb_cred.len))
+			fido(assert_allow_cred, a, fhb_cred.cstring, fhb_cred.len.cint)
 		fhb_salt = decode(fhb_salt)
-		fido(assert_set_hmac_salt, a, fhb_salt.cstring, cint(fhb_salt.len))
+		fido(assert_set_hmac_salt, a, fhb_salt.cstring, fhb_salt.len.cint)
 
 	block fido_assert_send:
 		var dev = fido_dev_new()
 		fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
 		if fhb_dev != "": fido(dev_open, dev, fhb_dev.cstring)
-		r = fido_dev_get_assert(dev, a, pin)
+		r = fido_dev_get_assert(dev, a, if fhb_uv <= 0: nil else: pin.cstring)
 		if r != FIDO_OK:
 			fido_dev_cancel(dev)
-			raise newException(FidoError, "fido-assert failed - " & $fido_strerr(cint(r)))
+			raise newException(FidoError, "fido-assert failed - " & $fido_strerr(r.cint))
 		fido(dev_close, dev)
 		fido_dev_free(addr(dev))
 
 	var hmac = block fido_get_hmac:
 		r = fido_assert_count(a)
-		if r != 1: raise newException(FidoError, &"fido-assert failed - multiple results [{int(r)}]")
+		if r != 1: raise newException(FidoError, &"fido-assert failed - multiple results [{r.int}]")
 		let
 			hmac_len = fido_assert_hmac_secret_len(a, 0)
 			hmac_ptr = fido_assert_hmac_secret_ptr(a, 0)
-			hmac = newString(hmac_len + 1)
+			hmac = newString(hmac_len)
 		copyMem(hmac.cstring, hmac_ptr, hmac_len)
 		hmac
 
