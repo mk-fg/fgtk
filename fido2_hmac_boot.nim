@@ -15,7 +15,9 @@ const FHB_RPID {.strdefine.} = "" # Relying Party ID string, e.g. fhd.mysite.com
 const FHB_Salt {.strdefine.} = "" # 32B HMAC salt base64 that corresponds to same unique output
 const FHB_Dev {.strdefine.} = "" # default device, e.g. "/dev/yubikey" or "pcsc://slot0"
 const FHB_CID {.strdefine.} = "" # Credential ID base64 blob from fido2-cred
-const FHB_Ask_Cmd {.strdefine.} = "systemd-ask-password" # cmd + args to return password on stdout
+const FHB_Ask_Cmd {.strdefine.} = "systemd-ask-password" # cmd + args to return pin on stdout
+const FHB_Ask_Attempts {.intdefine.} = 3 # number of pin-entry attempts
+const FHB_Ask_Bypass {.intdefine.} = "e end s skip x" # space-separated words to skip pin entry
 const FHB_Timeout {.intdefine.} = 30 # timeout for user presence check (touch)
 const FHB_UP {.booldefine.}: int = -1 # user presence check (touch), up to device by default
 const FHB_UV {.booldefine.}: int = -1 # user verification via PIN, up to device by default
@@ -70,8 +72,13 @@ proc run_ask_pass(argv: openArray[string]): string =
 		proc_pipe: array[0..1, cint]
 		pid: Pid
 
+  template chk(e: untyped) =
+    if e != 0'i32: raiseOSError(osLastError())
+	chk pipe(proc_pipe)
+  defer: chk close(proc_pipe[0])
+  defer: chk close(proc_pipe[1])
+
 	block start_proc:
-		# XXX: use fork & clone from osproc instead
 		var
 			attr: Tposix_spawnattr
 			fops: Tposix_spawn_file_actions
@@ -84,16 +91,13 @@ proc run_ask_pass(argv: openArray[string]): string =
 				env )
 		defer: deallocCStringArray(proc_args)
 		defer: deallocCStringArray(proc_env)
-		template chck(e: untyped) =
-			if e != 0'i32: raiseOSError(osLastError())
-		chck pipe(proc_pipe)
-		chck posix_spawn_file_actions_init(fops)
-		chck posix_spawnattr_init(attr)
-		chck sigemptyset(mask)
-		chck posix_spawnattr_setsigmask(attr, mask)
-		chck posix_spawnattr_setflags(attr, flags)
-		chck posix_spawn_file_actions_addclose(fops, proc_pipe[0])
-		chck posix_spawn_file_actions_adddup2(fops, proc_pipe[1], 1)
+		chk posix_spawn_file_actions_init(fops)
+		chk posix_spawnattr_init(attr)
+		chk sigemptyset(mask)
+		chk posix_spawnattr_setsigmask(attr, mask)
+		chk posix_spawnattr_setflags(attr, flags)
+		chk posix_spawn_file_actions_addclose(fops, proc_pipe[0])
+		chk posix_spawn_file_actions_adddup2(fops, proc_pipe[1], 1)
 		var r = posix_spawnp(pid, cmd.cstring, fops, attr, proc_args, proc_env)
 		discard posix_spawn_file_actions_destroy(fops)
 		discard posix_spawnattr_destroy(attr)
@@ -129,7 +133,7 @@ proc main_help(err="") =
 	print &"Usage: {app} [options] [file]"
 	if err != "":
 		print &"Run '{app} --help' for more information"
-		quit(1)
+		quit 0
 	print dedent(&"""
 
 		Wait for user input on /dev/console, and run HMAC operation on
@@ -155,7 +159,22 @@ proc main_help(err="") =
 			-a/--ask-cmd <command>
 				Command + args to ask for password/pin/etc somehow and print on its stdout.
 				systemd-ask-password can be used on systemd-enabled system/initramfs.
+				If this command is set to an empty string, no attempt to ask anything is made.
+				Otherwise, prompt is always presented, but if User Verification is not needed,
+					only to delay actual fido2 token operations, without using whatever is entered.
+				Any leading/trailing whitespace is always stripped from entered string.
 				Compiled-in default: {FHB_Ask_Cmd=}
+
+			-n/--ask-attempts <n>
+				Number of attempts to ask for pw/pin. 0 or less - disable prompting.
+				Empty entry can be used to skip it cleanly when User Verification
+					(--uv) is explicitly enabled, or -b/--ask-bypass words to give up.
+				Compiled-in default: {FHB_Ask_Attempts=}
+
+			-b/--ask-bypass <space-separated-words>
+				Space-separated list of words that can be entered to give up on trying to enter it.
+				If User Verification (--uv) is enabled, giving up on pin entry exits with an error.
+				Compiled-in default: {FHB_Ask_Bypass=}
 
 			-t/--timeout <seconds>
 				Device presence/verification check timeout, in seconds.
@@ -183,7 +202,7 @@ proc main_help(err="") =
 			--fido2-debug
 				Enable debug output from libfido2.
 		""")
-	quit(0)
+	quit 0
 
 proc main(argv: seq[string]) =
 	var
@@ -192,6 +211,8 @@ proc main(argv: seq[string]) =
 		fhb_dev = FHB_Dev
 		fhb_cred = FHB_CID
 		fhb_ask_cmd = FHB_Ask_Cmd
+		fhb_ask_attempts = FHB_Ask_Attempts
+		fhb_ask_bypass = FHB_Ask_Bypass
 		fhb_timeout = FHB_Timeout
 		fhb_up = FHB_UP
 		fhb_uv = FHB_UV
@@ -220,10 +241,12 @@ proc main(argv: seq[string]) =
 			elif k in ["d", "dev"]: fhb_dev = v
 			elif k in ["c", "cred-id"]: fhb_cred = v
 			elif k in ["a", "ask-cmd"]: fhb_ask_cmd = v
+			elif k in ["n", "ask-attempts"]: fhb_ask_attempts = parseInt(v)
+			elif k in ["b", "ask-bypass"]: fhb_ask_bypass = v
 			elif k in ["t", "timeout"]: fhb_timeout = parseInt(v)
 			elif k == "up": fhb_up = opt_bool_int(k, v)
 			elif k == "uv": fhb_up = opt_bool_int(k, v)
-			else: quit(&"BUG: no type info for option [ {k} = {v} ]", 1)
+			else: quit(&"BUG: no type info for option [ {k} = {v} ]")
 
 		for t, opt, val in getopt(argv):
 			case t
@@ -243,13 +266,12 @@ proc main(argv: seq[string]) =
 		if fhb_rpid == "":
 			main_help( "-d:FHB_RPID=some.host.name" &
 				" must be set at build-time or via -r/--rpid option" )
+		if fhb_dev == "":
+			main_help( "-d:FHB_DEV=<dev-node-or-spec>" &
+				" must be set at build-time or via -d/--dev option" )
 		if fhb_salt == "":
 			main_help( "-d:FHB_SALT=... must" &
 				" be set at build-time or via -s/--salt option" )
-
-	# XXX: handle AskPassFail
-	var pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
-	echo &"PIN: [ {pin} ]" # XXX
 
 	fido_init(if opt_debug: FIDO_DEBUG else: 0)
 	var a = fido_assert_new()
@@ -266,17 +288,45 @@ proc main(argv: seq[string]) =
 			fido(assert_allow_cred, a, fhb_cred.cstring, fhb_cred.len.cint)
 		fhb_salt = decode(fhb_salt)
 		fido(assert_set_hmac_salt, a, fhb_salt.cstring, fhb_salt.len.cint)
+	defer: fido_assert_free(addr(a))
 
-	block fido_assert_send:
-		var dev = fido_dev_new()
-		fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
-		if fhb_dev != "": fido(dev_open, dev, fhb_dev.cstring)
-		r = fido_dev_get_assert(dev, a, if fhb_uv <= 0: nil else: pin.cstring)
-		if r != FIDO_OK:
-			fido_dev_cancel(dev)
-			raise newException(FidoError, "fido-assert failed - " & $fido_strerr(r.cint))
-		fido(dev_close, dev)
-		fido_dev_free(addr(dev))
+	block fido_assert_attempts:
+		fhb_ask_cmd = fhb_ask_cmd.strip
+		if fhb_ask_cmd == "" or fhb_ask_attempts <= 0:
+			fhb_ask_cmd = ""; fhb_ask_attempts = 1
+		var
+			pin: string
+			fhb_ask_bypass_words = fhb_ask_bypass.splitWhitespace
+
+		for i in 1 .. fhb_ask_attempts:
+
+			if fhb_ask_cmd != "":
+				try: pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
+				except AskPassFail:
+					echo &"FAIL: Password/PIN entry command failed"
+					pin = "" # will proceed with assertion attempt, if it's not required
+				if pin in fhb_ask_bypass_words:
+					if fhb_uv > 0: quit("ERROR: UV PIN entry cancelled")
+					echo "EXIT: HMAC-secret generation cancelled"
+					quit 0
+				elif pin == "" and fhb_uv > 0: continue
+
+			block fido_assert_send:
+				var dev = fido_dev_new()
+				defer: fido_dev_free(addr(dev))
+				r = fido_dev_open(dev, fhb_dev.cstring)
+				if r != FIDO_OK:
+					echo &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
+					continue
+				defer: fido(dev_close, dev)
+				fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
+				r = fido_dev_get_assert(dev, a, if pin == "": nil else: pin.cstring)
+				if r != FIDO_OK:
+					fido_dev_cancel(dev)
+					echo &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
+				else: break fido_assert_attempts
+
+		quit("ERROR: Failed to get HMAC value from the device")
 
 	var hmac = block fido_get_hmac:
 		r = fido_assert_count(a)
@@ -287,8 +337,6 @@ proc main(argv: seq[string]) =
 			hmac = newString(hmac_len)
 		copyMem(hmac.cstring, hmac_ptr, hmac_len)
 		hmac
-
-	fido_assert_free(addr(a))
 
 	block output:
 		if opt_out_b64: hmac = encode(hmac)
