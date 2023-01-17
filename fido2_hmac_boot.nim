@@ -6,7 +6,7 @@
 # Usage info: ./fhb -h
 # Intended to complement libfido2 cli tools, like fido2-token and fido2-cred.
 
-import strformat, macros, os, strutils, parseopt, base64, posix
+import strformat, os, strutils, parseopt, base64, posix
 
 
 {.passl: "-lfido2"}
@@ -63,20 +63,23 @@ template fido(call: untyped, args: varargs[untyped]) =
 	if r != FIDO_OK: raise newException(
 		FidoError, "fido_" & astToStr(call) & " call failed = " & $fido_strerr(r) )
 
+proc p_err(s: string) = write(stderr, s); write(stderr, "\n")
+
 
 type AskPassFail = object of CatchableError
+var run_ask_pass_done: proc () # global needed for indirect call from sigaction
 
 proc run_ask_pass(argv: openArray[string]): string =
+	# osproc in nim doesn't allow to only pass stdin through, hence all this
 	var
 		cmd = argv[0]
 		proc_pipe: array[0..1, cint]
 		pid: Pid
-
-  template chk(e: untyped) =
-    if e != 0'i32: raiseOSError(osLastError())
+	template chk(e: untyped) =
+		if e != 0'i32: raiseOSError(osLastError())
 	chk pipe(proc_pipe)
-  defer: chk close(proc_pipe[0])
-  defer: chk close(proc_pipe[1])
+	let (pipe_r, pipe_w) = (proc_pipe[0], proc_pipe[1])
+  defer: chk (close(pipe_r) or close(pipe_w))
 
 	block start_proc:
 		var
@@ -84,39 +87,56 @@ proc run_ask_pass(argv: openArray[string]): string =
 			fops: Tposix_spawn_file_actions
 			mask: Sigset
 			flags = POSIX_SPAWN_USEVFORK or POSIX_SPAWN_SETSIGMASK
-			proc_args = allocCStringArray(argv)
-			proc_env = allocCStringArray( block:
+			args = allocCStringArray(argv)
+			env = allocCStringArray( block:
 				var env = newSeq[string](0)
 				for key, val in envPairs(): env.add(&"{key}={val}")
 				env )
-		defer: deallocCStringArray(proc_args)
-		defer: deallocCStringArray(proc_env)
+		defer: deallocCStringArray(args); deallocCStringArray(env)
 		chk posix_spawn_file_actions_init(fops)
+		defer: discard posix_spawn_file_actions_destroy(fops)
 		chk posix_spawnattr_init(attr)
+		defer: discard posix_spawnattr_destroy(attr)
 		chk sigemptyset(mask)
 		chk posix_spawnattr_setsigmask(attr, mask)
 		chk posix_spawnattr_setflags(attr, flags)
-		chk posix_spawn_file_actions_addclose(fops, proc_pipe[0])
-		chk posix_spawn_file_actions_adddup2(fops, proc_pipe[1], 1)
-		var r = posix_spawnp(pid, cmd.cstring, fops, attr, proc_args, proc_env)
-		discard posix_spawn_file_actions_destroy(fops)
-		discard posix_spawnattr_destroy(attr)
-		if r != 0'i32: raiseOSError(OSErrorCode(r), cmd)
+		chk posix_spawn_file_actions_addclose(fops, pipe_r)
+		chk posix_spawn_file_actions_adddup2(fops, pipe_w, 1)
+		chk posix_spawnp(pid, cmd.cstring, fops, attr, args, env)
+
+	run_ask_pass_done = proc =
+		run_ask_pass_done = nil
+		if write(pipe_w, "\0".cstring, 1) != 1:
+			raiseOSError(osLastError(), &"{cmd}: exit handler failure")
+	defer: (if run_ask_pass_done != nil: discard kill(pid, SIGKILL))
 
 	block read_output:
-		var buff = newString(256)
-		let bs = read(proc_pipe[0], buff.cstring, buff.len)
-		if bs == 0: break
-		if bs < 0: raiseOSError(osLastError(), &"{cmd}: stdout read failed")
-		result.add(buff[0 ..< bs])
+		var
+			bs: int
+			buff = newString(128)
+			buff_bs: string
+			sa = Sigaction( # should always be fired w/ SIGKILL
+				sa_flags: SA_RESETHAND or SA_NOCLDSTOP,
+				sa_handler: proc (sig: cint) {.noconv.} = run_ask_pass_done() )
+		chk sigemptyset(sa.sa_mask)
+		chk sigaddset(sa.sa_mask, SIGPIPE)
+		chk sigaction(SIGCHLD, sa, nil)
+		while true:
+			bs = read(pipe_r, buff.cstring, buff.len).int
+			if bs < 0:
+				let err = osLastError()
+				if err == OSErrorCode(EINTR): continue
+				raiseOSError(err, &"{cmd}: stdout read failed")
+			elif bs == 0: continue
+			buff_bs = buff[0 ..< bs].strip(leading=false, chars={'\0'})
+			result.add buff_bs
+			if buff_bs.len < bs: break
 
 	block check_exit_code:
-		var
-			st = 0.cint
-			ret = waitpid(pid, st, 0)
-		if ret < 0: raiseOSError(osLastError(), &"{cmd}: waitpid failed")
-		if st.int != 0:
-			raise newException(AskPassFail, &"{cmd}: exited with code {st.int}")
+		var st = 0.cint
+		if waitpid(pid, st, 0) < 0: raiseOSError(osLastError(), &"{cmd}: waitpid")
+		if st.int != 0: raise newException(AskPassFail, &"{cmd} = {st.int}")
+
 
 proc main_help(err="") =
 	proc bool_val(v: int): string =
@@ -303,11 +323,11 @@ proc main(argv: seq[string]) =
 			if fhb_ask_cmd != "":
 				try: pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
 				except AskPassFail:
-					echo &"FAIL: Password/PIN entry command failed"
+					p_err &"FAIL: Password/PIN entry command failed"
 					pin = "" # will proceed with assertion attempt, if it's not required
 				if pin in fhb_ask_bypass_words:
 					if fhb_uv > 0: quit("ERROR: UV PIN entry cancelled")
-					echo "EXIT: HMAC-secret generation cancelled"
+					p_err "EXIT: HMAC-secret generation cancelled"
 					quit 0
 				elif pin == "" and fhb_uv > 0: continue
 
@@ -316,14 +336,14 @@ proc main(argv: seq[string]) =
 				defer: fido_dev_free(addr(dev))
 				r = fido_dev_open(dev, fhb_dev.cstring)
 				if r != FIDO_OK:
-					echo &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
+					p_err &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
 					continue
 				defer: fido(dev_close, dev)
 				fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
 				r = fido_dev_get_assert(dev, a, if pin == "": nil else: pin.cstring)
 				if r != FIDO_OK:
 					fido_dev_cancel(dev)
-					echo &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
+					p_err &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
 				else: break fido_assert_attempts
 
 		quit("ERROR: Failed to get HMAC value from the device")
