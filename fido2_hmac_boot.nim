@@ -154,6 +154,8 @@ proc main_help(err="") =
 	if err != "":
 		print &"Run '{app} --help' for more information"
 		quit 0
+	let fhb_cid_info = if FHB_CID != "": &"<{FHB_CID.len}B-base64-value>" else: ""
+	let fhb_salt_info = if FHB_Salt != "": &"<{FHB_Salt.len}B-base64-value>" else: ""
 	print dedent(&"""
 
 		Wait for user input on /dev/console, and run HMAC operation on
@@ -174,7 +176,12 @@ proc main_help(err="") =
 			-c/--cred-id <base64-blob>
 				Credential ID value returned by fido2-cred or similar tool when creating FIDO2
 					credential, if it's not Discoverable/Resident (in which case -r/--rpid will select it).
-				Compiled-in default: {FHB_CID=}
+				Compiled-in default: FHB_CID={fhb_cid_info}
+
+			-s/--hmac-salt <base64-blob>
+				32B base64-encoded HMAC salt value.
+				Same unique output will always be produced for unique salt/credential combination.
+				Compiled-in default: FHB_Salt={fhb_salt_info}
 
 			-a/--ask-cmd <command>
 				Command + args to ask for password/pin/etc somehow and print on its stdout.
@@ -210,11 +217,6 @@ proc main_help(err="") =
 				Check for User Verification (UV), requiring a PIN to be entered correctly.
 				Default is leave it up to parameters set on device/credential.
 				Compiled-in default: FHB_UV={bool_val(FHB_UV)}
-
-			-s/--hmac-salt <base64-blob>
-				32B base64-encoded HMAC salt value.
-				Same unique output will always be produced for unique salt/credential combination.
-				Compiled-in default: {FHB_Salt=}
 
 			--out-b64
 				Output base64-encoded HMAC value instead of raw bytes.
