@@ -265,7 +265,7 @@ proc main(argv: seq[string]) =
 			elif k in ["b", "ask-bypass"]: fhb_ask_bypass = v
 			elif k in ["t", "timeout"]: fhb_timeout = parseInt(v)
 			elif k == "up": fhb_up = opt_bool_int(k, v)
-			elif k == "uv": fhb_up = opt_bool_int(k, v)
+			elif k == "uv": fhb_uv = opt_bool_int(k, v)
 			else: quit(&"BUG: no type info for option [ {k} = {v} ]")
 
 		for t, opt, val in getopt(argv):
@@ -330,6 +330,7 @@ proc main(argv: seq[string]) =
 					p_err "EXIT: HMAC-secret generation cancelled"
 					quit 0
 				elif pin == "" and fhb_uv > 0: continue
+				if fhb_uv == 0: pin = ""
 
 			block fido_assert_send:
 				var dev = fido_dev_new()
