@@ -119,7 +119,7 @@ class ListFile:
 
 class ChangeCount:
 	errs = meta = errs_fix = 0
-	errs_max = meta_max = 2**30
+	errs_max = meta_max = errs_fix_max = 2**30
 	def __init__(self, **limits):
 		for k, v in limits.items():
 			setattr(self, f'{k}_max', {None: 2**30}.get(v, v))
@@ -509,9 +509,9 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 						link_copy(src, dst, meta, root)
 				except OSError as err:
 					log_links.warning( 'Failed to create link dst [ %s'
-						' %s %s ]:%d: %s', n, node, LinkTypeSep[lt], dst, err )
+						' %s %s ]:%d: %s', node, LinkTypeSep[lt], dst, n, err )
 					if nnn.inc_errs_fix(): break
-				else: log_links.info('Corrected: %s %s %s', node, LinkTypeSep[lt], dst)
+				else: log_links.info('Corrected:%d: %s %s %s', n, node, LinkTypeSep[lt], dst)
 			if nnn.inc_errs(): break
 			continue # no dst prevents other checks, and fix here should correct everything
 
