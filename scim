@@ -570,18 +570,19 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 						dst, src_rsym, f' [ {src} ]' if src_rsym != src else '' )
 					uidgid_update = True
 				if nnn.inc_errs(): break
-			uid, gid = (st := src.stat(follow_symlinks=False)).st_uid, st.st_gid
-			luid, lgid = (st := dst.stat(follow_symlinks=False)).st_uid, st.st_gid
-			if (luid, lgid) != (uid, gid):
-				if not uidgid_update:
-					log_links.error( 'Symlink uid/gid mismatch [ %s ]:%d:'
-						' %s:%s should be %s:%s', dst, n, luid, lgid, uid, gid )
-				if fix:
-					os.chown(dst, uid, gid, follow_symlinks=False)
+			if meta:
+				uid, gid = (st := src.stat(follow_symlinks=False)).st_uid, st.st_gid
+				luid, lgid = (st := dst.stat(follow_symlinks=False)).st_uid, st.st_gid
+				if (luid, lgid) != (uid, gid):
 					if not uidgid_update:
-						log_links.info( 'Corrected symlink uid/gid'
-							' [ %s ]: %s:%s -> %s:%s', dst, luid, lgid, uid, gid )
-				if not uidgid_update and nnn.inc_errs(): break
+						log_links.error( 'Symlink uid/gid mismatch [ %s ]:%d:'
+							' %s:%s should be %s:%s', dst, n, luid, lgid, uid, gid )
+					if fix:
+						os.chown(dst, uid, gid, follow_symlinks=False)
+						if not uidgid_update:
+							log_links.info( 'Corrected symlink uid/gid'
+								' [ %s ]: %s:%s -> %s:%s', dst, luid, lgid, uid, gid )
+					if not uidgid_update and nnn.inc_errs(): break
 
 		## Copies - check permissions and content
 		elif lt & lt.cp:
