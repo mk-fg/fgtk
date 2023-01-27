@@ -2159,9 +2159,14 @@ initialize/manage the device and credentials for/on it.
 Written in Nim_ C-adjacent language, with no extra dependencies,
 builds and links against libfido2_.
 
+There is a `"More FIDO2 hw auth/key uses" post`_ with more info on how to use
+this binary with a typical dracut/systemd boot process.
+
 .. _fido2-token: https://developers.yubico.com/libfido2/Manuals/fido2-token.html
 .. _Nim: https://nim-lang.org/
 .. _libfido2: https://developers.yubico.com/libfido2/
+.. _"More FIDO2 hw auth/key uses" post:
+  https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
 
 `[dev] Dev tools`_
