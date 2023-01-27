@@ -9,7 +9,7 @@
 import strformat, os, strutils, parseopt, base64, posix
 
 
-{.passl: "-lfido2"}
+{.passl: "-lfido2 -lcrypto"}
 
 const FHB_RPID {.strdefine.} = "" # Relying Party ID string, e.g. fhd.mysite.com
 const FHB_Salt {.strdefine.} = "" # 32B HMAC salt base64 that corresponds to same unique output
@@ -24,7 +24,7 @@ const FHB_UV {.booldefine.}: int = -1 # user verification via PIN, up to device 
 const client_data = "fido2-hmac-boot.client-data.0001" # challenge value is not used here
 
 
-var
+let
 	FIDO_OK {.importc, nodecl.}: cint
 	FIDO_DEBUG {.importc, nodecl.}: cint
 	FIDO_EXT_HMAC_SECRET {.importc, nodecl.}: cint
@@ -62,6 +62,25 @@ template fido(call: untyped, args: varargs[untyped]) =
 	r = `fido call`(args)
 	if r != FIDO_OK: raise newException(
 		FidoError, "fido_" & astToStr(call) & " call failed = " & $fido_strerr(r) )
+
+
+type EVP_MD = distinct pointer
+proc EVP_sha256: EVP_MD {.importc, header: "<openssl/evp.h>".}
+proc HMAC( md: EVP_MD, key: cstring, key_len: cint, data: cstring, data_len: cint,
+	digest: cstring, digest_len: ptr cint ): cstring {.importc, header: "<openssl/hmac.h>".}
+
+type HMACError = object of CatchableError
+
+proc hmac_sha256(key: string, data: string): string =
+	var
+		hmac = newString(32)
+		hmac_len: cint
+		res = HMAC( EVP_sha256(), key.cstring, key.len.cint,
+			data.cstring, data.len.cint, hmac.cstring, hmac_len.addr )
+	if hmac_len != 32'i32 or res != hmac.cstring:
+		raise newException(HMACError, "HMAC call failed")
+	return hmac
+
 
 proc p_err(s: string) = write(stderr, s); write(stderr, "\n")
 
@@ -162,7 +181,7 @@ proc main_help(err="") =
 			FIDO2 device, outputting resulting data to specified file or stdout.
 		Most options can be set at build-time via -d:FHB_* to "nim c ..." command.
 
-		Options:
+		Input/output options:
 
 			-r/--rpid <relying-party-id>
 				Hostname-like Relying Party ID value, that was used with
@@ -223,6 +242,19 @@ proc main_help(err="") =
 
 			--fido2-debug
 				Enable debug output from libfido2.
+
+		Special usage modes:
+
+			{app} [options] {{ -h | --help }} ...
+				Print this usage information and exit.
+
+			{app} [--out-b64] --hmac key-file non-secret-string [output-file]
+				Run HMAC-SHA256 operation with secret key read from specified key-file,
+					and non-secret-string specifying the hashed input as a command-line argument.
+				Contents of key-file are used for HMAC key as-is without any processing.
+				Prints raw (binary) 32B hash output to stdout by default and exits.
+				Specifying --out-b64 option will wrap output into base64 encoding.
+				Adding output-file argument will write output to that file instead of stdout.
 		""")
 	quit 0
 
@@ -241,6 +273,9 @@ proc main(argv: seq[string]) =
 		opt_file = ""
 		opt_debug = false
 		opt_out_b64 = false
+		opt_hmac = false
+		opt_hmac_keyfile = ""
+		opt_hmac_data = ""
 
 	block cli_parser:
 		var opt_last = ""
@@ -277,89 +312,109 @@ proc main(argv: seq[string]) =
 				if opt in ["h", "help"]: main_help()
 				elif opt == "fido2-debug": opt_debug = true
 				elif opt == "out-b64": opt_out_b64 = true
+				elif opt == "hmac": opt_hmac = true
 				elif val == "": opt_empty_check(); opt_last = opt
 				else: opt_set(opt, val)
 			of cmdArgument:
 				if opt_last != "": opt_set(opt_last, opt); opt_last = ""
+				elif opt_hmac and opt_hmac_keyfile == "": opt_hmac_keyfile = opt
+				elif opt_hmac and opt_hmac_data == "": opt_hmac_data = opt
 				elif opt_file == "": opt_file = opt
 				else: main_help(&"Unrecognized argument: {opt}")
 		opt_empty_check()
 
-		if fhb_rpid == "":
-			main_help( "-d:FHB_RPID=some.host.name" &
-				" must be set at build-time or via -r/--rpid option" )
-		if fhb_dev == "":
-			main_help( "-d:FHB_DEV=<dev-node-or-spec>" &
-				" must be set at build-time or via -d/--dev option" )
-		if fhb_salt == "":
-			main_help( "-d:FHB_SALT=... must" &
-				" be set at build-time or via -s/--salt option" )
+		if not opt_hmac:
+			if fhb_rpid == "":
+				main_help( "-d:FHB_RPID=some.host.name" &
+					" must be set at build-time or via -r/--rpid option" )
+			if fhb_dev == "":
+				main_help( "-d:FHB_DEV=<dev-node-or-spec>" &
+					" must be set at build-time or via -d/--dev option" )
+			if fhb_salt == "":
+				main_help( "-d:FHB_SALT=... must" &
+					" be set at build-time or via -s/--salt option" )
 
-	fido_init(if opt_debug: FIDO_DEBUG else: 0)
-	var a = fido_assert_new()
-	var r: cint
+		else:
+			if opt_hmac_keyfile == "":
+				main_help("key-file argument is required when using --hmac mode")
+			if opt_hmac_data == "":
+				main_help("non-secret-string/data argument is required with --hmac mode")
 
-	block fido_assert_setup:
-		fido(assert_set_clientdata, a, client_data.cstring, client_data.len.cint)
-		fido(assert_set_rp, a, fhb_rpid.cstring)
-		fido(assert_set_extensions, a, FIDO_EXT_HMAC_SECRET)
-		if fhb_up >= 0: fido(assert_set_up, a, fhb_up.cint)
-		if fhb_uv >= 0: fido(assert_set_uv, a, fhb_uv.cint)
-		if fhb_cred != "":
-			fhb_cred = decode(fhb_cred)
-			fido(assert_allow_cred, a, fhb_cred.cstring, fhb_cred.len.cint)
-		fhb_salt = decode(fhb_salt)
-		fido(assert_set_hmac_salt, a, fhb_salt.cstring, fhb_salt.len.cint)
-	defer: fido_assert_free(addr(a))
 
-	block fido_assert_attempts:
-		fhb_ask_cmd = fhb_ask_cmd.strip
-		if fhb_ask_cmd == "" or fhb_ask_attempts <= 0:
-			fhb_ask_cmd = ""; fhb_ask_attempts = 1
-		var
-			pin: string
-			fhb_ask_bypass_words = fhb_ask_bypass.splitWhitespace
+	var hmac: string
 
-		for i in 1 .. fhb_ask_attempts:
+	if opt_hmac:
+		hmac = hmac_sha256(readFile(opt_hmac_keyfile), opt_hmac_data)
 
-			if fhb_ask_cmd != "":
-				try: pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
-				except AskPassFail:
-					p_err &"FAIL: Password/PIN entry command failed"
-					pin = "" # will proceed with assertion attempt, if it's not required
-				if pin in fhb_ask_bypass_words:
-					if fhb_uv > 0: quit("ERROR: UV PIN entry cancelled")
-					p_err "EXIT: HMAC-secret generation cancelled"
-					quit 0
-				elif pin == "" and fhb_uv > 0: continue
-				if fhb_uv == 0: pin = ""
+	block fido2_mode:
+		if opt_hmac: break fido2_mode
 
-			block fido_assert_send:
-				var dev = fido_dev_new()
-				defer: fido_dev_free(addr(dev))
-				r = fido_dev_open(dev, fhb_dev.cstring)
-				if r != FIDO_OK:
-					p_err &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
-					continue
-				defer: fido(dev_close, dev)
-				fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
-				r = fido_dev_get_assert(dev, a, if pin == "": nil else: pin.cstring)
-				if r != FIDO_OK:
-					fido_dev_cancel(dev)
-					p_err &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
-				else: break fido_assert_attempts
+		fido_init(if opt_debug: FIDO_DEBUG else: 0)
+		var a = fido_assert_new()
+		var r: cint
 
-		quit("ERROR: Failed to get HMAC value from the device")
+		block fido_assert_setup:
+			fido(assert_set_clientdata, a, client_data.cstring, client_data.len.cint)
+			fido(assert_set_rp, a, fhb_rpid.cstring)
+			fido(assert_set_extensions, a, FIDO_EXT_HMAC_SECRET)
+			if fhb_up >= 0: fido(assert_set_up, a, fhb_up.cint)
+			if fhb_uv >= 0: fido(assert_set_uv, a, fhb_uv.cint)
+			if fhb_cred != "":
+				fhb_cred = decode(fhb_cred)
+				fido(assert_allow_cred, a, fhb_cred.cstring, fhb_cred.len.cint)
+			fhb_salt = decode(fhb_salt)
+			fido(assert_set_hmac_salt, a, fhb_salt.cstring, fhb_salt.len.cint)
+		defer: fido_assert_free(addr(a))
 
-	var hmac = block fido_get_hmac:
-		r = fido_assert_count(a)
-		if r != 1: raise newException(FidoError, &"fido-assert failed - multiple results [{r.int}]")
-		let
-			hmac_len = fido_assert_hmac_secret_len(a, 0)
-			hmac_ptr = fido_assert_hmac_secret_ptr(a, 0)
-			hmac = newString(hmac_len)
-		copyMem(hmac.cstring, hmac_ptr, hmac_len)
-		hmac
+		block fido_assert_attempts:
+			fhb_ask_cmd = fhb_ask_cmd.strip
+			if fhb_ask_cmd == "" or fhb_ask_attempts <= 0:
+				fhb_ask_cmd = ""; fhb_ask_attempts = 1
+			var
+				pin: string
+				fhb_ask_bypass_words = fhb_ask_bypass.splitWhitespace
+
+			for i in 1 .. fhb_ask_attempts:
+
+				if fhb_ask_cmd != "":
+					try: pin = run_ask_pass(fhb_ask_cmd.split(' ')).strip
+					except AskPassFail:
+						p_err &"FAIL: Password/PIN entry command failed"
+						pin = "" # will proceed with assertion attempt, if it's not required
+					if pin in fhb_ask_bypass_words:
+						if fhb_uv > 0: quit("ERROR: UV PIN entry cancelled")
+						p_err "EXIT: HMAC-secret generation cancelled"
+						quit 0
+					elif pin == "" and fhb_uv > 0: continue
+					if fhb_uv == 0: pin = ""
+
+				block fido_assert_send:
+					var dev = fido_dev_new()
+					defer: fido_dev_free(addr(dev))
+					r = fido_dev_open(dev, fhb_dev.cstring)
+					if r != FIDO_OK:
+						p_err &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
+						continue
+					defer: fido(dev_close, dev)
+					fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
+					r = fido_dev_get_assert(dev, a, if pin == "": nil else: pin.cstring)
+					if r != FIDO_OK:
+						fido_dev_cancel(dev)
+						p_err &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
+					else: break fido_assert_attempts
+
+			quit("ERROR: Failed to get HMAC value from the device")
+
+		hmac = block fido_get_hmac:
+			r = fido_assert_count(a)
+			if r != 1: raise newException(FidoError, &"fido-assert failed - multiple results [{r.int}]")
+			let
+				hmac_len = fido_assert_hmac_secret_len(a, 0)
+				hmac_ptr = fido_assert_hmac_secret_ptr(a, 0)
+				hmac = newString(hmac_len)
+			copyMem(hmac.cstring, hmac_ptr, hmac_len)
+			hmac
+
 
 	block output:
 		if opt_out_b64: hmac = encode(hmac)
