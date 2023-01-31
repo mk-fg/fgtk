@@ -737,18 +737,24 @@ def main(args=None, conf=None):
 	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
 		help='Any number of extra urls or url/file_prefix pairs can be specified.')
 
-	group = parser.add_argument_group('Download slice options')
+	group = parser.add_argument_group(
+		'Download slice options',
+		description='If multiple url/prefix args are specified,'
+			' all these will be applied same to each one of them.')
 	group.add_argument('-s', '--start-pos',
 		type=parse_pos_spec, metavar='time', help=dd('''
 			Only download video chunks after specified start position.
 			Time can be formatted as "[[hours:]minutes:]seconds" or e.g. "XhYmZs",
-				with any h/m/s component being optional, and they all added together.
-			If multiple url/prefix args are specified, this option will be applied to all of them.'''))
+				with any h/m/s component being optional, and they all added together.'''))
 	group.add_argument('-l', '--length',
 		type=parse_pos_spec, metavar='time', help=dd('''
 			Only download specified length of the video (from specified start or beginning).
-			Same time string format as in -s/--start-pos option.
-			If multiple url/prefix args are specified, this option will be applied to all of them.'''))
+			Same time string format as in -s/--start-pos option.'''))
+	group.add_argument('-e', '--end-pos',
+		type=parse_pos_spec, metavar='time', help=dd('''
+			Only download video up to a specified timestamp,
+				would be same as -l/--length option if used without -s/--start-pos.
+			Same time string format as in -s/--start-pos option.'''))
 	group.add_argument('-x', '--scatter',
 		metavar='[[hh:]mm:]ss/[[hh:]mm:]ss', help=dd('''
 			Out of whole video (or a chunk specified by --start and --length),
@@ -803,7 +809,12 @@ def main(args=None, conf=None):
 	logging.getLogger('charset_normalizer').setLevel(logging.WARNING) # noisy aiohttp dep
 	log = get_logger('tvf.main')
 
+	if opts.length and opts.end_pos:
+		parser.error('Only one of -l/--length or -e/--end-pos can be specified, not both')
 	conf.slice_start, conf.slice_len = opts.start_pos or 0, opts.length
+	if opts.end_pos:
+		conf.slice_len = opts.end_pos - conf.slice_start
+		if conf.slice_len <= 0: parser.error('-e/--end-pos time must be after -s/--start-pos')
 	if opts.scatter:
 		scatter = opts.scatter.split('/', 1)
 		if len(scatter) != 2:
