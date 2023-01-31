@@ -95,7 +95,7 @@ proc run_ask_pass(argv: openArray[string]): string =
 		proc_pipe: array[0..1, cint]
 		pid: Pid
 	template chk(e: untyped) =
-		if e != 0'i32: raiseOSError(osLastError())
+		if e != 0: raiseOSError(osLastError())
 	chk pipe(proc_pipe)
 	let (pipe_r, pipe_w) = (proc_pipe[0], proc_pipe[1])
   defer: chk (close(pipe_r) or close(pipe_w))

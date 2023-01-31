@@ -702,75 +702,76 @@ class TVF:
 def main(args=None, conf=None):
 	if not conf: conf = TVFConfig()
 
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
 		usage='%(prog)s [options] { url-1 [url-2 ...] | url file_prefix [url-2 file_prefix-2 ...] }',
 		description='Download VoD (or a specified slice of it) from twitch.tv.')
-	parser.add_argument('url', nargs='?',
-		help='URL for a VoD to fetch.'
-			' Can be either followed by file_prefix argument'
-				' (and any number of such url/prefix pairs after that),'
-				' or any number of urls (detected by "http(s):" prefix)'
-				' to use simple sequential prefixes like "vod-001".'
-			' See also -o/--ytdl-output-format option wrt destination filenames for urls.')
-	parser.add_argument('file_prefix', nargs='?',
-		help='File prefix for destination file and temp dir.'
-			' Used even with -o/--ytdl-output-format while download is in progress.')
+	parser.add_argument('url', nargs='?', help=dd('''
+		URL for a VoD to fetch.
+		Can be either followed by file_prefix argument
+			(and any number of such url/prefix pairs after that),
+			or any number of urls (detected by "http(s):" prefix)
+			to use simple sequential prefixes like "vod-001".
+		See also -o/--ytdl-output-format option wrt destination filenames for urls.'''))
+	parser.add_argument('file_prefix', nargs='?', help=dd('''
+		File prefix for destination file and temp dir.
+		Used even with -o/--ytdl-output-format while download is in progress.'''))
 	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
 		help='Any number of extra urls or url/file_prefix pairs can be specified.')
 
 	group = parser.add_argument_group('Download slice options')
 	group.add_argument('-s', '--start-pos',
-		type=parse_pos_spec, metavar='[[hours:]minutes:]seconds',
-		help='Only download video chunks after specified start position.'
-			' If multiple url/prefix args are specified, this option will be applied to all of them.')
+		type=parse_pos_spec, metavar='[[hours:]minutes:]seconds', help=dd('''
+			Only download video chunks after specified start position.
+			If multiple url/prefix args are specified, this option will be applied to all of them.'''))
 	group.add_argument('-l', '--length',
-		type=parse_pos_spec, metavar='[[hours:]minutes:]seconds',
-		help='Only download specified length of the video (from specified start or beginning).'
-			' If multiple url/prefix args are specified, this option will be applied to all of them.')
+		type=parse_pos_spec, metavar='[[hours:]minutes:]seconds', help=dd('''
+			Only download specified length of the video (from specified start or beginning).
+			If multiple url/prefix args are specified, this option will be applied to all of them.'''))
 	group.add_argument('-x', '--scatter',
-		metavar='[[hours:]minutes:]seconds/[[hours:]minutes:]seconds',
-		help='Out of whole video (or a chunk specified by --start and --length),'
-				' download only every N seconds (or mins/hours) out of M.'
-			' E.g. "1:00/10:00" spec here will download 1 first min of video out of every 10.'
-			' Idea here is to produce something like preview of the video to allow'
-				' to easily narrow down which part of it is interesting and worth downloading in full.')
+		metavar='[[hours:]minutes:]seconds/[[hours:]minutes:]seconds', help=dd('''
+			Out of whole video (or a chunk specified by --start and --length),
+				download only every N seconds (or mins/hours) out of M.
+			E.g. "1:00/10:00" spec here will download 1 first min of video out of every 10.
+			Idea here is to produce something like preview of the video to allow
+				to easily narrow down which part of it is interesting and worth downloading in full.'''))
 
 	group = parser.add_argument_group('youtube-dl/aria2c options')
-	group.add_argument('-F', '--ytdl-list-formats',
-		action='store_true', help='Do not download anything,'
-			' just list formats available for each specified URL and exit.')
-	group.add_argument('-y', '--ytdl-opts',
-		action='append', metavar='opts',
-		help='Extra opts for youtube-dl --get-url/--get-filename commands.'
-			' Will be split on spaces, unless option is used multiple times.')
+	group.add_argument('-F', '--ytdl-list-formats', action='store_true', help=dd('''
+		Do not download anything,
+			just list formats available for each specified URL and exit.'''))
+	group.add_argument('-y', '--ytdl-opts', action='append', metavar='opts', help=dd('''
+		Extra opts for youtube-dl --get-url/--get-filename commands.
+		Will be split on spaces, unless option is used multiple times.'''))
 	group.add_argument('-o', '--ytdl-output-format',
-		metavar='ytdl-output-template', const=True, nargs='?',
-		help='Use youtube-dl output filename template.'
-			' Passed to youtube-dl --get-filename as the'
-				' --output argument to get the final file name for the video.'
-			' If option is used, but no format is specified, youtube-dl\'s default format will be used.')
+		metavar='ytdl-output-template', const=True, nargs='?', help=dd('''
+			Use youtube-dl output filename template.
+			Passed to youtube-dl --get-filename as the
+				--output argument to get the final file name for the video.
+			If option is used, but no format is specified, youtube-dl\s default format will be used.'''))
 	group.add_argument('-a', '--aria2c-opts',
-		action='append', metavar='opts',
-		help='Extra options to store in aria2c configuration file.'
-			' These are same as long-form command-line options, but without double-dash prefix.'
-			' Will be split on spaces, unless option is used multiple times.'
-			' Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"')
-	group.add_argument('--aria2c-opts-print', action='store_true',
-		help='Print template for aria2c configuration file'
-			' that will be used, with all options there. Short form: -ap')
+		action='append', metavar='opts', help=dd('''
+			Extra options to store in aria2c configuration file.
+			These are same as long-form command-line options, but without double-dash prefix.
+			Will be split on spaces, unless option is used multiple times.
+			Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"'''))
+	group.add_argument('--aria2c-opts-print', action='store_true', help=dd('''
+		Print template for aria2c configuration file
+			that will be used, with all options there. Short form: -ap'''))
 
 	group = parser.add_argument_group('Misc/debug options')
 	group.add_argument('-p', '--use-part-suffix',
 		action='store_true', help='Use .part suffix for'
 			' partial destination file until it is fully downloaded.')
-	group.add_argument('-n', '--no-temp-dirs',
-		action='store_true', help='Do not create temporary'
-			' directories for download parts, keep everything in the destination one.')
-	group.add_argument('-k', '--keep-tempfiles',
-		action='store_true', help='Do not remove all the'
-				' temporary files after successfully assembling resulting mp4.'
-			' Chunks in particular might be useful to download different but overlapping video slices.')
+	group.add_argument('-n', '--no-temp-dirs', action='store_true', help=dd('''
+		Do not create temporary directories for
+			download parts, keep everything in the destination one.'''))
+	group.add_argument('-k', '--keep-tempfiles', action='store_true', help=dd('''
+		Do not remove all the temporary files after successfully assembling resulting mp4.
+		Chunks in particular might be useful to download different but overlapping video slices.'''))
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
