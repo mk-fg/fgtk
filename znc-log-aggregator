@@ -93,7 +93,8 @@ def agg_logs_chan(tmp, p_xz, agg_files, xz_bs=2 * 2**20):
 def find_logs():
 	p_znc, logs = pl.Path('.').resolve(), dict()
 
-	def logs_append(net, chan, ts_str, p):
+	def logs_append(user, net, chan, ts_str, p):
+		if net == 'default' and user: net = user
 		ts = dt.date(*map(int, [ts_str[:4], ts_str[4:6], ts_str[6:8]]))
 		if not (len(ts_str) == 8 and 2050 > ts.year >= 2000):
 			raise AssertionError(ts_str)
@@ -110,7 +111,7 @@ def find_logs():
 			r'/users/(?P<net>[^/]+)/moddata/'
 				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
 			p, 'net', 'chan', 'ts' )
-		logs_append(net, chan, ts, p)
+		logs_append(None, net, chan, ts, p)
 
 	# Logs for old-style setup with user=network, multi-network users
 	for p in p_znc.glob('moddata/log/*.log'):
@@ -118,9 +119,8 @@ def find_logs():
 			r'/moddata/log/(?P<user>[^/]+?)'
 				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
 			p, 'user', 'net', 'chan', 'ts' )
-		if net == 'default': net = user
 		if '_' in f'{user}{net}': raise AssertionError(net, p)
-		logs_append(net, chan, ts, p)
+		logs_append(user, net, chan, ts, p)
 
 	# Modern logs enabled globally for multi-network users
 	# Can also be enabled by user: users/*/moddata/log/*/*/*.log
@@ -132,7 +132,7 @@ def find_logs():
 				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$',
 			p, 'user', 'net', 'chan', 'ts' )
 		if '_' in f'{user}{net}': raise AssertionError(net, p)
-		logs_append(net, chan, ts.replace('-', ''), p)
+		logs_append(user, net, chan, ts.replace('-', ''), p)
 
 	return logs
 
