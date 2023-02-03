@@ -161,7 +161,7 @@ mkdir -p "$vde_path"
 
 cgrc -rcu vde && {
 	rm -rf "$vde_path"/link.sock
-	cgrc -ru vde apps-vm -- vde_switch \
+	cgrc -ru vde vm -- vde_switch \
 		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &>/dev/null &
 	pid1=$!; }
 
@@ -172,7 +172,7 @@ done
 [[ $n -lt 50 ]] || { echo >&2 "ERROR: vde switch startup failed"; exit 1; }
 
 cgrc -rcu vde-tap && {
-	cgrc -ru vde-tap apps-vm -- \
+	cgrc -ru vde-tap vm -- \
 		sudo -n vde_plug2tap -s "$vde_path"/link.sock vde &>/dev/null &
 	pid2=$!; }
 
@@ -294,5 +294,5 @@ export QEMU_AUDIO_DRV=none NO_AT_BRIDGE=1
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
 
-exec cgrc -ru "qemu-linux@$ins" apps-vm \
+exec cgrc -ru "qemu-linux@$ins" vm \
 	-- qemu-system-x86_64 "${qemu_opts[@]}"
