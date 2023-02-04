@@ -289,7 +289,7 @@ qemu_opts=(
 	# -device usb-host,hostbus=1,hostaddr=3
 )
 
-ulimit -c 0
+ulimit -c 0 -s 1048576 -m 18874368 -v 25165824 # STACK=1G RSZ=18G VSZ=24G
 export QEMU_AUDIO_DRV=none NO_AT_BRIDGE=1
 
 [[ -n "$restore" ]] && qemu_opts+=( -incoming "exec:bsdcat $dst" )
