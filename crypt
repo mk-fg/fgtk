@@ -74,6 +74,7 @@ def main(args=None, conf=None):
 		help=dd(f'''
 			Key seed to use for encryption/decryption.
 			If prefixed by @ then first stripped line from a specified file will be used as key seed.
+			Number-filename is interpreted as a file descriptor to read a key-line from.
 			Use @@ prefix for @ as the first character of seed instead.
 			Always stretched via scrypt (n=2^{conf.scrypt_nx}, \
 				r={conf.scrypt_r}, p={conf.scrypt_p}) before use.'''))
@@ -95,8 +96,9 @@ def main(args=None, conf=None):
 	key_raw = opts.key
 	if key_raw.startswith('@@'): key_raw = ('@' + key_raw[2:]).encode()
 	elif key_raw[0] == '@':
-		with open(os.path.expanduser(key_raw[1:]), 'rb') as key_file:
-			key_raw = key_file.readline().strip()
+		src = os.path.expanduser(key_raw[1:])
+		if src.isdigit(): src = int(src)
+		with open(src, 'rb') as key_file: key_raw = key_file.readline().strip()
 	else: key_raw = key_raw.encode()
 	enc_key = hl.scrypt( key_raw, salt=conf.scrypt_salt,
 		n=2**conf.scrypt_nx, r=conf.scrypt_r, p=conf.scrypt_p,
