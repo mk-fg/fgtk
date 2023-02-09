@@ -134,8 +134,7 @@ class IterLog:
 					if len(buff) >= sz: raise IOError(f'File-peek failed - file too large [ {p_log} ]')
 					self.src.close()
 					self.src, buff = io.BytesIO(buff), buff[-self.peek_bs:]
-					self.ts1 = self.get_first_ts(
-						buff[-self.peek_bs:], lambda buff: reversed(buff.rsplit(b'\n', 1)) )
+					self.ts1 = self.get_first_ts(buff, lambda buff: buff.rsplit(b'\n', 1)[::-1])
 					if not self.ts1: raise IterLogError(f'Failed to match EOF timestamp [ {p_log} ]')
 			skip = (
 				' skip' if (self.ts_b and self.ts0 > self.ts_b)
@@ -157,10 +156,9 @@ class IterLog:
 
 	def get_first_ts(self, buff, line_split_func):
 		while buff:
-			try: line, buff = line_split_func(buff)
-			except ValueError: break
-			line = line.strip(b'\0').decode()
+			line = (split := line_split_func(buff))[0].strip(b'\0').decode()
 			if ts := self.match_ts(line): return ts
+			buff = split[1] if len(split) > 1 else b''
 
 	def __iter__(self):
 		self._proc_st = None # None -> True -> False
