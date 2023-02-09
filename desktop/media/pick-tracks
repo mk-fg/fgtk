@@ -95,7 +95,7 @@ def track_name( rename, p,
 
 	if ( rename.tags_check and
 		not all(list(tags.get(k) for k in rename.tags_check)) ): return name
-	name, ext = rename.fmt.format(tags), os.path.splitext(name)[-1]
+	name, ext = rename.fmt.format(**tags), os.path.splitext(name)[-1]
 	if rename.max_len > 0: name = name[:rename.max_len]
 	if rename.fmt_fs:
 		for sub_re, sub in _track_name_subs: name = sub_re.sub(sub, name)
@@ -271,11 +271,12 @@ def main(argv=None):
 	group.add_argument('-N', '--raw-names', action='store_true',
 		help='Do not rename tracks according to --name-format.')
 	group.add_argument('-f', '--name-format',
-		metavar='py_format_tpl', default='{0[title]}_[{0[tracknumber]}]_--_{0[artist]}', help=dd('''
+		metavar='py_format_tpl', default='{title}_[{tracknumber}]_--_{artist}', help=dd('''
 			Format to rename tracks to when copying to destination.
 			Same syntax as for python str.format, with keys
 				from mutagenwrapper (see docs for full list of these).
-			Will not be used if mutagenwrapper is not available.'''))
+			Will not be used if mutagenwrapper is not available.
+			Default: %(default)s'''))
 	group.add_argument('--name-format-check',
 		metavar='key1[,key2,...]', default='title', help=dd('''
 			Comma-separated list of keys to check before renaming file according to --name-format.
