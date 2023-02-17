@@ -522,14 +522,14 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 			# no_content skips replacing diff-content dst that needs to copy data from it first
 			if ( no_content and not dst_is_broken_link and
 				(match := link_match_data(src, dst_res)) is False ): continue
+
+			node_type_err = copy_dst_contents_to_src = False
 			if lt & lt.sym:
 				log_links.error('Not a symlink [ %s ]:%d: %s', node, n, dst)
-				if nnn.inc_errs(): break
+				node_type_err = True
 			elif lt & lt.cp:
 				log_links.error('Symlink in place of a copy [ %s ]:%d: %s', node, n, dst)
-				if nnn.inc_errs(): break
-
-			copy_dst_contents_to_src = False
+				node_type_err = True
 			if not (dst_is_broken_link or content_from_repo):
 				# if dst is replaced by symlink: can be a file, to copy contents from into repo
 				# if dst replaced by copy: can be symlink to file with diff contents, also diff/copy
@@ -556,6 +556,8 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 				elif lt & lt.cp: link_copy(src, dst, meta, root)
 				log_links.info( 'Corrected: %s %s %s %s',
 					node, '<>'[content_from_repo], LinkTypeSep[lt], dst )
+
+			if node_type_err and nnn.inc_errs(): break
 			continue # rest of the checks irrelevant here, or copy/link fixed everything
 
 		## Symlinks - check readlink() target and uid/gid
