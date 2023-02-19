@@ -25,7 +25,7 @@ class RenameConf:
 
 
 MiB = float(2**20)
-err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 log = logging.getLogger('pt')
 
 _size_units=list(
@@ -35,14 +35,14 @@ _size_units=list(
 def size_human(size):
 	for u, u1 in _size_units:
 		if size > u1: break
-	return '{:.1f}{}'.format(size / float(u1), u)
+	return f'{size / float(u1):.1f}{u}'
 
 def size_human_parse(size):
 	if not size or not isinstance(size, str): return size
 	if size[-1].isdigit(): return float(size)
 	for u, u1 in _size_units:
 		if size[-1] == u: break
-	else: raise ValueError('Unrecognized units: {} (value: {!r})'.format(size[-1], size))
+	else: raise ValueError(f'Unrecognized units: {size[-1]} (value: {size!r})')
 	return float(size[:-1]) * u1
 
 def time_diff_str( ts, ts0=None, now='now', ext=None,
@@ -55,7 +55,7 @@ def time_diff_str( ts, ts0=None, now='now', ext=None,
 	for unit, unit_s in sorted(_units.items(), key=lambda v: v[1], reverse=True):
 		val = math.floor(s / float(unit_s))
 		if not val: continue
-		res.append('{:.0f}{}'.format(val, unit))
+		res.append(f'{val:.0f}{unit}')
 		if len(res) >= 2: break
 		s -= val * unit_s
 	if not res: return now
