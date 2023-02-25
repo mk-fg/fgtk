@@ -16,7 +16,7 @@ git_delta_opts = [ 'delta', '-n', '--diff-highlight', '--paging=never',
 	'--file-style=omit', '--keep-plus-minus-markers', '--hunk-label=@@ ',
 	'--hunk-header-decoration-style=blue ul', '--hunk-header-style=line-number' ]
 
-def py_list_fmt(o, ind=' ', len_split=100, ind1=False):
+def py_list_fmt(o, ind=' ', len_split=80, ind1=False):
 	s, lines, line, line_len = str(o), list(), list(), 0
 	if isinstance(ind, int): ind *= '\t'
 	for sc in [*re.split(r'(?<=[\'"],) ', s), '']:
@@ -80,19 +80,16 @@ class PrettyYAMLDumper(yaml.dumper.SafeDumper):
 		if self.analysis and not self.analysis.allow_flow_plain:
 			if ' ' in s: return "'"
 
-	def ansible_str_format(self, data):
-		# Ansible vars use j2 templating, which is disabled via !unsafe tag
-		# Also uses nicer |-format for human-readable multiline strings
-		tag = 'tag:yaml.org,2002:str' if '{' not in data else '!unsafe'
+	def str_format(self, data):
 		style = None if '\n' not in data[:-1] else '|'
 		if style: data = '\n'.join(line.rstrip() for line in data.split('\n'))
-		return yaml.representer.ScalarNode(tag, data, style=style)
+		return yaml.representer.ScalarNode('tag:yaml.org,2002:str', data, style=style)
 
 PrettyYAMLDumper.add_representer( bool,
 	lambda s,o: s.represent_scalar('tag:yaml.org,2002:bool', ['no', 'yes'][o]) )
 PrettyYAMLDumper.add_representer( type(None),
 	lambda s,o: s.represent_scalar('tag:yaml.org,2002:null', '') )
-PrettyYAMLDumper.add_representer(str, PrettyYAMLDumper.ansible_str_format)
+PrettyYAMLDumper.add_representer(str, PrettyYAMLDumper.str_format)
 
 
 def yaml_add_vspacing(yaml_str, split_lines=40, split_count=2):
@@ -130,7 +127,7 @@ def yaml_load(p_or_src):
 		yaml_str = p_or_src.read()
 		if isinstance(yaml_str, bytes): yaml_str = yaml_str.decode()
 	else: yaml_str = pl.Path(p_or_src).read_text()
-	return yaml.safe_load(yaml_str.replace(' !unsafe ', ' '))
+	return yaml.safe_load(yaml_str.replace(' !unsafe ', ' ')) # hack for ansible YAMLs
 
 
 def path_names(*paths):
@@ -165,8 +162,8 @@ def main(argv=None):
 		epilog=dd(f'''
 			Options to "git diff" and "delta" tool (if used) can be controlled via env vars:
 
-				YD_GIT_DIFF={py_list_fmt(git_diff_opts, 5, 80)}
-				YD_DELTA={py_list_fmt(git_delta_opts, 5, 80)}
+				YD_GIT_DIFF={py_list_fmt(git_diff_opts, 5)}
+				YD_DELTA={py_list_fmt(git_delta_opts, 5)}
 
 			These should contain python lists-of-strings with
 				the command and arguments, like in defaults above.'''))
