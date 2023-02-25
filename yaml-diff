@@ -176,12 +176,21 @@ def main(argv=None):
 		Use "git diff ... --color" instead of "delta" formatter tool.
 		Delta tool URL: https://github.com/dandavison/delta'''))
 
+	parser.add_argument('-f', '--reformat', action='store_true', help=dd('''
+		Instead of running diff between A/B paths, copy YAML(s) from A to B,
+			normalizing format to the same "prettified" one that is used for diffs.
+		If A is dir, only yml/yaml files in there are processed,
+			and will be put into same subdirs in B as under A, created as necessary.
+		Existing B file(s) will be replaced (only ones that are under A, is it's a dir).'''))
+
 	opts = parser.parse_args()
 
 	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b])
 	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
-	if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
-	if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
+	if not (refmt := opts.reformat):
+		if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
+		if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
+	elif p_a.is_dir(): p_b.mkdir(exist_ok=True)
 
 	git_diff, git_delta = git_diff_opts.copy(), git_delta_opts.copy()
 	if any([
@@ -202,12 +211,12 @@ def main(argv=None):
 		n_a, n_b = path_names(p_a, p_b)
 		diff_pairs.append((diff_info(n_a, p_a), diff_info(n_b, p_b)))
 	else:
-		diff_names, yaml_re = set(), re.compile(r'\.ya?ml$')
+		diff_names, yaml_re = set(), re.compile(r'(?i)\.ya?ml$')
 		for root, dirs, files in os.walk(p_a):
 			for fn in files:
 				if not yaml_re.search(fn): continue
 				name = str((p_sa := pl.Path(root) / fn).relative_to(p_a))
-				if not (p_sb := p_b / name).exists(): p_sb = None
+				if not (p_sb := p_b / name).exists() and not refmt: p_sb = None
 				diff_pairs.append((
 					diff_info(f'a/{name}', p_sa),
 					p_sb and diff_info(f'b/{name}', p_sb) ))
@@ -220,6 +229,17 @@ def main(argv=None):
 				diff_pairs.append((None, diff_info(f'b/{name}', p_sb)))
 	diff_pairs.sort(key=lambda ab: (
 		str(ab[0] and ab[0].p or ''), str(ab[1] and ab[1].p or '') ))
+
+
+	### Reformat mode - create/replace files under B and exit
+
+	if refmt:
+		for a, b in diff_pairs:
+			if not a: continue
+			b.p.parent.mkdir(parents=True, exist_ok=True)
+			data = yaml_load(a.p)
+			b.p.write_text(yaml_dump_pretty(data))
+		return
 
 
 	### Load and dump YAMLs to /tmp, run git-diff/delta on those

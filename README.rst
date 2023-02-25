@@ -482,6 +482,11 @@ yaml-diff_
 Tool to normalize YAML files' ordering/formatting and run "git diff | delta_"
 on those to produce nicely-colorized and useful diffs to inspect in the terminal.
 
+Long YAMLs can be ordered and formatted in wildly different ways, and they often
+are, when produced by different tools or edited manually, hence the need for
+something to reformat them before running diff tools.
+Script has -f/--reformat option to pretty-print/normalize files without diff.
+
 Can also be run on two dirs to compare all yml/yaml files in those recursively
 (like "diff -r"), ignoring all other non-yaml files in there.
 
