@@ -475,6 +475,26 @@ and empty lists/dicts and such in a readable manner too.
 Output is intended for a human reader, to easily see value paths and such,
 and definitely can't be converted back to yaml or any kind of data safely.
 
+yaml-diff_
+''''''''''
+.. _yaml-diff: yaml-diff
+
+Tool to normalize YAML files' formatting and run "git diff | delta_" on those
+to produce nicely-colorized and useful diffs to inspect in the terminal.
+Can also be run on two dirs to compare all yml/yaml files in those recursively,
+instead of two specific one, ignoring all other files.
+
+Normalized YAMLs use various pretty-printing style tweaks for readability.
+
+"git diff" can be used without "delta" if -n/--no-delta option is set,
+using its own colors (as per gitconfig), but output from "delta" is usually nicer,
+has line numbers and highlights inline diffs as well.
+
+Binaries and opts to both "git diff" and "delta" tools and ANSI color used
+for other information/separators are hardcoded at the top of the script.
+
+.. _delta: https://github.com/dandavison/delta
+
 hz_
 '''
 .. _hz: hz

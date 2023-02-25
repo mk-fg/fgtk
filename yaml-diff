@@ -1,0 +1,242 @@
+#!/usr/bin/env python
+
+import pathlib as pl, subprocess as sp, collections as cs
+import os, sys, re, tempfile
+
+import yaml # https://pyyaml.org/
+
+
+# https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
+cl = cs.namedtuple('Colors', 'x lrm ladd sep asym err cap')(**dict(
+	(k, f'\033[{v}') for k,v in dict(
+		x='0m', lrm='1;31m', ladd='1;32m', sep='1;34m',
+		asym='1;93m', err='4;31m', cap='0;34m' ).items() ))
+
+git_diff_opts = 'git --no-pager diff -a --minimal --no-index -U8'.split()
+git_delta_opts = [ 'delta', '-n', '--diff-highlight', '--paging=never',
+	'--file-style=omit', '--keep-plus-minus-markers', '--hunk-label=@@ ',
+	'--hunk-header-decoration-style=blue ul', '--hunk-header-style=line-number' ]
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+
+def p_msg(s, c=None, ln_merge=False):
+	if p_msg.spaced: print()
+	if c: print(getattr(cl, c), end='')
+	p_msg.spaced = print(f'--- {s}')
+	if not ln_merge: p_msg.spaced = True
+	else: print()
+	if c: print(cl.x, end='')
+	sys.stdout.flush()
+p_msg.spaced = True
+
+def size_str(sz, _units=list(
+		reversed(list((u, 2 ** (i * 10))
+		for i, u in enumerate('BKMGT'))) )):
+	for u, u1 in _units:
+		if sz > u1: break
+	return f'{sz / float(u1):.1f}{u}'
+
+
+class PrettyYAMLDumper(yaml.dumper.SafeDumper):
+
+	def serialize_node(self, node, parent, index):
+		self.anchors[node] = self.serialized_nodes.clear()
+		return super().serialize_node(node, parent, index)
+
+	def expect_block_sequence(self):
+		self.increase_indent(flow=False, indentless=False)
+		self.state = self.expect_first_block_sequence_item
+
+	def expect_block_sequence_item(self, first=False):
+		if not first and isinstance(self.event, yaml.events.SequenceEndEvent):
+			self.indent = self.indents.pop()
+			self.state = self.states.pop()
+		else:
+			self.write_indent()
+			self.write_indicator('-', True, indention=True)
+			self.states.append(self.expect_block_sequence_item)
+			self.expect_node(sequence=True)
+
+	def check_simple_key(self):
+		res = super().check_simple_key()
+		self.analysis.allow_flow_plain = False
+		return res
+
+	def choose_scalar_style(self, _re1=re.compile(':(\s|$)')):
+		if self.event.style != 'plain': return super().choose_scalar_style()
+		if (s := self.event.value).startswith('- ') or _re1.search(s): return "'"
+		if self.analysis and not self.analysis.allow_flow_plain:
+			if ' ' in s: return "'"
+
+	def ansible_str_format(self, data):
+		# Ansible vars use j2 templating, which is disabled via !unsafe tag
+		# Also uses nicer |-format for human-readable multiline strings
+		tag = 'tag:yaml.org,2002:str' if '{' not in data else '!unsafe'
+		style = None if '\n' not in data[:-1] else '|'
+		if style: data = '\n'.join(line.rstrip() for line in data.split('\n'))
+		return yaml.representer.ScalarNode(tag, data, style=style)
+
+PrettyYAMLDumper.add_representer( bool,
+	lambda s,o: s.represent_scalar('tag:yaml.org,2002:bool', ['no', 'yes'][o]) )
+PrettyYAMLDumper.add_representer( type(None),
+	lambda s,o: s.represent_scalar('tag:yaml.org,2002:null', '') )
+PrettyYAMLDumper.add_representer(str, PrettyYAMLDumper.ansible_str_format)
+
+
+def yaml_add_vspacing(yaml_str, split_lines=40, split_count=2):
+	def _add_vspacing(lines):
+		a = ind_re = ind_item = None
+		blocks, item_lines = list(), list()
+		for n, line in enumerate(lines):
+			if ind_item is None and (m := re.match('( *)[^# ]', line)):
+				ind_item = m.group(1)
+				lines.append(f'{ind_item}.') # to run add_vspacing on last block
+			if ind_re:
+				if ind_re.match(line): continue
+				if n - a > split_lines: blocks.append((a, n, _add_vspacing(lines[a:n])))
+				ind_re = None
+			if re.match(fr'{ind_item}\S', line): item_lines.append(n)
+			if m := re.match(r'( *)\S.*:$', line):
+				a, ind_re = n+1, re.compile(m.group(1) + r' ')
+		if split_items := len(lines) > split_lines and len(item_lines) > split_count:
+			for n in item_lines: lines[n] = f'\n{lines[n]}'
+		for a, b, block in reversed(blocks): lines[a:b] = block
+		if ind_item is not None: lines.pop()
+		if split_items: lines.append('')
+		return lines
+	yaml_str = '\n'.join(_add_vspacing(yaml_str.splitlines()))
+	return re.sub(r'\n\n+', '\n\n', yaml_str.strip() + '\n')
+
+
+def yaml_dump_pretty(data):
+	yaml_str = yaml.dump( data,
+		Dumper=PrettyYAMLDumper, default_flow_style=False, allow_unicode=True )
+	return yaml_add_vspacing(yaml_str)
+
+def yaml_load(p_or_src):
+	if hasattr(p_or_src, 'read'):
+		yaml_str = p_or_src.read()
+		if isinstance(yaml_str, bytes): yaml_str = yaml_str.decode()
+	else: yaml_str = pl.Path(p_or_src).read_text()
+	return yaml.safe_load(yaml_str.replace(' !unsafe ', ' '))
+
+
+def path_names(*paths):
+	'Return short and distinct names from last path components, in the same order.'
+	names, paths = cs.Counter(p.name for p in paths), list(map(str, paths))
+	while True:
+		name, n = names.most_common(1)[0]
+		if n == 1: break
+		del names[name]
+		upd = sorted(
+			( '/'.join(p.rsplit('/', name.count('/')+2)[1:])
+				for p in paths if p.endswith(f'/{name}') ),
+			key=lambda name: name.count('/') )
+		if len(upd) <= 1: raise AssertionError(name, upd)
+		names.update(upd)
+	return list(next(n for n in names if p.endswith(f'/{n}')) for p in paths)
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] file/dir1 file/dir2',
+		description=dd('''
+			Convert input YAML files (or two dirs with such) to stable
+				normalized representation and run diff command to compare those.
+			Arguments must be either directories or files, not a mix of those.'''))
+
+	parser.add_argument('path_a', help='Path-A to use in comparison.')
+	parser.add_argument('path_b', help='Path-B to use in comparison.')
+
+	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
+		Use "git diff --color" instead of "delta" formatter tool.
+		Delta tool URL: https://github.com/dandavison/delta'''))
+
+	opts = parser.parse_args()
+
+	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b])
+	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
+	if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
+	if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
+
+
+	### Build a list of diff_pairs to compare
+
+	diff_pairs, diff_info = list(), cs.namedtuple('DiffInfo', 'name p')
+	if p_a.is_file():
+		n_a, n_b = path_names(p_a, p_b)
+		diff_pairs.append((diff_info(n_a, p_a), diff_info(n_b, p_b)))
+	else:
+		diff_names, yaml_re = set(), re.compile(r'\.ya?ml$')
+		for root, dirs, files in os.walk(p_a):
+			for fn in files:
+				if not yaml_re.search(fn): continue
+				name = str((p_sa := pl.Path(root) / fn).relative_to(p_a))
+				if not (p_sb := p_b / name).exists(): p_sb = None
+				diff_pairs.append((
+					diff_info(f'a/{name}', p_sa),
+					p_sb and diff_info(f'b/{name}', p_sb) ))
+				diff_names.add(name)
+		for root, dirs, files in os.walk(p_b):
+			for fn in files:
+				if not yaml_re.search(fn): continue
+				name = str((p_sb := pl.Path(root) / fn).relative_to(p_b))
+				if name in diff_names: continue
+				diff_pairs.append((None, diff_info(f'b/{name}', p_sb)))
+	diff_pairs.sort(key=lambda ab: (
+		str(ab[0] and ab[0].p or ''), str(ab[1] and ab[1].p or '') ))
+
+
+	### Load and dump YAMLs to /tmp, run git-diff/delta on those
+
+	git_diff, git_delta = git_diff_opts.copy(), git_delta_opts.copy()
+	if opts.no_delta:
+		git_diff.append('--color')
+		git_delta.clear()
+
+	p_msg('---------- Diff Start ----------', 'cap')
+
+	with tempfile.TemporaryDirectory(prefix=f'yaml-diff.{os.getpid()}.') as tmp_dir:
+		tmp_dir = pl.Path(tmp_dir)
+		for a, b in diff_pairs:
+
+			if not a: p_msg(f'Only in Path-B: {b.name}', 'asym', True)
+			if not b: p_msg(f'Only in Path-A: {a.name}', 'asym', True)
+			if not (a and b): continue
+
+			## Create same-format YAML files
+			ab = list()
+			for pn, pi in zip('AB', [a, b]):
+				(p := tmp_dir / pi.name).parent.mkdir(parents=True, exist_ok=True)
+				try:
+					with pi.p.open() as src:
+						sz = size_str(os.fstat(src.fileno()).st_size)
+						sz_lines = len(list(src))
+						src.seek(0); data = yaml_load(src)
+				except Exception as err:
+					p_msg(
+						f'Path-{pn} comparison fail-skip: {pi.name}\n'
+						f'ERROR [ {pi.p} ]: {err_fmt(err)}', 'err', space=True )
+					break
+				p.write_text(yaml_dump_pretty(data))
+				ab.append((p, sz, sz_lines))
+			if len(ab) != 2: continue # fail-skip
+
+			## Run git-diff/delta
+			(p1, sz1, sz_lines1), (p2, sz2, sz_lines2) = ab
+			p_msg('-'*30 + ' YAML File Diff ' + '-'*30, 'sep')
+			print(f'\n{cl.lrm}--- {a.name} [ {sz_lines1:,d} lines / {sz1} ]', flush=True)
+			print(f'{cl.ladd}+++ {b.name} [ {sz_lines2:,d} lines / {sz2} ]', flush=True)
+			if git_delta:
+				sp_diff = sp.Popen(git_diff + ['--', p1, p2], stdout=sp.PIPE)
+				sp.run(git_delta, stdin=sp_diff.stdout)
+				sp_diff.wait()
+			else: sp.run(git_diff + ['--', p1, p2])
+
+	p_msg('---------- Diff End ----------', 'cap')
+
+if __name__ == '__main__': sys.exit(main())
