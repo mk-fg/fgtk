@@ -485,15 +485,17 @@ on those to produce nicely-colorized and useful diffs to inspect in the terminal
 Long YAMLs can be ordered and formatted in wildly different ways, and they often
 are, when produced by different tools or edited manually, hence the need for
 something to reformat them before running diff tools.
-Script has -f/--reformat option to pretty-print/normalize files without diff.
 
-Can also be run on two dirs to compare all yml/yaml files in those recursively
-(like "diff -r"), ignoring all other non-yaml files in there.
+Script can be run on two dirs to compare all yml/yaml files in those recursively
+(like "diff -r"), ignoring all other non-yaml files in there, as well as two
+specific files.
 
-Normalized YAMLs use various pretty-printing style tweaks for human-readability.
+Also has -f/--reformat option to pretty-print/normalize file(s) without diff,
+which can be used to YAML-pretty-print JSON file(s) as well (incl. recursively,
+with --fn-re override to match them).
 
 "git diff" can be used without "delta" if -n/--no-delta option is set,
-using its own colors (as per gitconfig), but output from "delta" is usually nicer,
+using its own colors (as per gitconfig), but output from delta_ is usually nicer,
 has line numbers and highlights inline diffs.
 
 Binaries and opts to both "git diff" and "delta" tools can be controlled

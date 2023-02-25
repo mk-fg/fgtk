@@ -158,8 +158,10 @@ def main(argv=None):
 		usage='%(prog)s [opts] file/dir1 file/dir2',
 		description=dd('''
 			Convert input YAML files (or two dirs with such) to stable
-				normalized representation and run diff command to compare those.
-			Arguments must be either directories or files, not a mix of those.'''),
+				normalized/readable representation and run diff command to compare those.
+			Arguments must be either directories or files, not a mismatch of the two.
+			If specified paths are directories, YAML files are detected
+				(matching --fn-re) and compared recursively between the two.'''),
 		epilog=dd(f'''
 			Options to "git diff" and "delta" tool (if used) can be controlled via env vars:
 
@@ -169,12 +171,15 @@ def main(argv=None):
 			These should contain python lists-of-strings with
 				the command and arguments, like in defaults above.'''))
 
-	parser.add_argument('path_a', help='Path-A to use in comparison.')
-	parser.add_argument('path_b', help='Path-B to use in comparison.')
+	parser.add_argument('path_a', help='Path-A to use in comparison (file or dir).')
+	parser.add_argument('path_b', help='Path-B to use in comparison (file or dir).')
 
 	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
 		Use "git diff ... --color" instead of "delta" formatter tool.
 		Delta tool URL: https://github.com/dandavison/delta'''))
+	parser.add_argument('--fn-re', metavar='regexp', default=r'(?i)\.ya?ml$', help=dd('''
+		Regexp used to match filename of YAML files to process if dirs are specified.
+		Default: %(default)s'''))
 
 	parser.add_argument('-f', '--reformat', action='store_true', help=dd('''
 		Instead of running diff between A/B paths, copy YAML(s) from A to B,
@@ -211,7 +216,7 @@ def main(argv=None):
 		n_a, n_b = path_names(p_a, p_b)
 		diff_pairs.append((diff_info(n_a, p_a), diff_info(n_b, p_b)))
 	else:
-		diff_names, yaml_re = set(), re.compile(r'(?i)\.ya?ml$')
+		diff_names, yaml_re = set(), re.compile(opts.fn_re)
 		for root, dirs, files in os.walk(p_a):
 			for fn in files:
 				if not yaml_re.search(fn): continue
