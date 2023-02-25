@@ -479,19 +479,20 @@ yaml-diff_
 ''''''''''
 .. _yaml-diff: yaml-diff
 
-Tool to normalize YAML files' formatting and run "git diff | delta_" on those
-to produce nicely-colorized and useful diffs to inspect in the terminal.
-Can also be run on two dirs to compare all yml/yaml files in those recursively,
-instead of two specific one, ignoring all other files.
+Tool to normalize YAML files' ordering/formatting and run "git diff | delta_"
+on those to produce nicely-colorized and useful diffs to inspect in the terminal.
 
-Normalized YAMLs use various pretty-printing style tweaks for readability.
+Can also be run on two dirs to compare all yml/yaml files in those recursively
+(like "diff -r"), ignoring all other non-yaml files in there.
+
+Normalized YAMLs use various pretty-printing style tweaks for human-readability.
 
 "git diff" can be used without "delta" if -n/--no-delta option is set,
 using its own colors (as per gitconfig), but output from "delta" is usually nicer,
-has line numbers and highlights inline diffs as well.
+has line numbers and highlights inline diffs.
 
-Binaries and opts to both "git diff" and "delta" tools and ANSI color used
-for other information/separators are hardcoded at the top of the script.
+Binaries and opts to both "git diff" and "delta" tools can be controlled
+via env variables printed in -h/--help output.
 
 .. _delta: https://github.com/dandavison/delta
 

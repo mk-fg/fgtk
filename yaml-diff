@@ -7,15 +7,27 @@ import yaml # https://pyyaml.org/
 
 
 # https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
-cl = cs.namedtuple('Colors', 'x lrm ladd sep asym err cap')(**dict(
-	(k, f'\033[{v}') for k,v in dict(
-		x='0m', lrm='1;31m', ladd='1;32m', sep='1;34m',
-		asym='1;93m', err='4;31m', cap='0;34m' ).items() ))
+cl = type('Colors', (object,), dict((k, f'\033[{v}') for k,v in dict(
+	x='0m', lrm='1;31m', ladd='1;32m', sep='1;34m',
+	asym='1;93m', err='4;31m', cap='0;34m' ).items() ))
 
 git_diff_opts = 'git --no-pager diff -a --minimal --no-index -U8'.split()
 git_delta_opts = [ 'delta', '-n', '--diff-highlight', '--paging=never',
 	'--file-style=omit', '--keep-plus-minus-markers', '--hunk-label=@@ ',
 	'--hunk-header-decoration-style=blue ul', '--hunk-header-style=line-number' ]
+
+def py_list_fmt(o, ind=' ', len_split=100, ind1=False):
+	s, lines, line, line_len = str(o), list(), list(), 0
+	if isinstance(ind, int): ind *= '\t'
+	for sc in [*re.split(r'(?<=[\'"],) ', s), '']:
+		if not sc or (line_len := line_len + len(sc)) > len_split:
+			sl = ' '.join(line)
+			if not lines:
+				if ind1: sl = ind + sl
+			else: sl = ind + sl
+			lines.append(sl); line[:], line_len = [sc], len(sc)
+		else: line.append(sc)
+	return '\n'.join(lines)
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 
@@ -147,13 +159,21 @@ def main(argv=None):
 		description=dd('''
 			Convert input YAML files (or two dirs with such) to stable
 				normalized representation and run diff command to compare those.
-			Arguments must be either directories or files, not a mix of those.'''))
+			Arguments must be either directories or files, not a mix of those.'''),
+		epilog=dd(f'''
+			Options to "git diff" and "delta" tool (if used) can be controlled via env vars:
+
+				YD_GIT_DIFF={py_list_fmt(git_diff_opts, 5, 80)}
+				YD_DELTA={py_list_fmt(git_delta_opts, 5, 80)}
+
+			These should contain python lists-of-strings with
+				the command and arguments, like in defaults above.'''))
 
 	parser.add_argument('path_a', help='Path-A to use in comparison.')
 	parser.add_argument('path_b', help='Path-B to use in comparison.')
 
 	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
-		Use "git diff --color" instead of "delta" formatter tool.
+		Use "git diff ... --color" instead of "delta" formatter tool.
 		Delta tool URL: https://github.com/dandavison/delta'''))
 
 	opts = parser.parse_args()
@@ -162,6 +182,17 @@ def main(argv=None):
 	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
 	if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
 	if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
+
+	git_diff, git_delta = git_diff_opts.copy(), git_delta_opts.copy()
+	if any([
+			git_diff_env := os.environ.get('YD_GIT_DIFF'),
+			git_delta_env := os.environ.get('YD_GIT_DELTA') ]):
+		import ast
+		if git_diff_env: git_diff = list(ast.literal_eval(git_diff_env))
+		if git_delta_env: git_delta = list(ast.literal_eval(git_delta_env))
+	if opts.no_delta:
+		git_diff.append('--color')
+		git_delta.clear()
 
 
 	### Build a list of diff_pairs to compare
@@ -193,11 +224,6 @@ def main(argv=None):
 
 	### Load and dump YAMLs to /tmp, run git-diff/delta on those
 
-	git_diff, git_delta = git_diff_opts.copy(), git_delta_opts.copy()
-	if opts.no_delta:
-		git_diff.append('--color')
-		git_delta.clear()
-
 	p_msg('---------- Diff Start ----------', 'cap')
 
 	with tempfile.TemporaryDirectory(prefix=f'yaml-diff.{os.getpid()}.') as tmp_dir:
@@ -208,7 +234,7 @@ def main(argv=None):
 			if not b: p_msg(f'Only in Path-A: {a.name}', 'asym', True)
 			if not (a and b): continue
 
-			## Create same-format YAML files
+			## Create pretty/normalized YAML files
 			ab = list()
 			for pn, pi in zip('AB', [a, b]):
 				(p := tmp_dir / pi.name).parent.mkdir(parents=True, exist_ok=True)
