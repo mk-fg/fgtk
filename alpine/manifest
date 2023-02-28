@@ -11,13 +11,15 @@ set -e -o pipefail
 export LC_ALL=C
 
 [[ -e /etc/apk/world ]] || { echo >&2 "apk-world file is missing"; exit 1; }
+cd /etc/apk/
 
-apk list -I | awk '{print $1, $3}' | sort -u >/etc/apk/world.all
-apk list -O | awk '{print $1, $3}' | sort -u >/etc/apk/world.extras
-awk '/></ {split($0,a,">"); print a[1]}' /etc/apk/world | sort -u >/etc/apk/world.custom
+apk list -I | awk '{print $1, $3}' | sort -u >world.all
+awk 'sub(/-[^-]+-r[0-9]+$/,"",$1) {print $1; next} {print $1, "[pkg-name-match-err]"}' <world.all >world.set
+apk list -O | awk '{print $1, $3}' | sort -u >world.extras
+awk '/></ {split($0,a,">"); print a[1]}' world | sort -u >world.custom
 
-rc-update show -v | awk '{print ($3 ? $3 : "~") "." $1}' | sort -u >/etc/apk/site.rc
+rc-update show -v | awk '{print ($3 ? $3 : "~") "." $1}' | sort -u >site.rc
 
 updatedb
-locate -e --regex '\.apk-new$' >/etc/apk/site.conf-diffs ||:
-find /usr/local -xdev -mindepth 1 | sort >/etc/apk/site.local
+locate -e --regex '\.apk-new$' >site.conf-diffs ||:
+find /usr/local -xdev -mindepth 1 | sort >site.local

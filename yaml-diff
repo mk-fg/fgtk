@@ -105,7 +105,7 @@ def yaml_add_vspacing(yaml_str, split_lines=40, split_count=2):
 				if n - a > split_lines: blocks.append((a, n, _add_vspacing(lines[a:n])))
 				ind_re = None
 			if re.match(fr'{ind_item}\S', line): item_lines.append(n)
-			if m := re.match(r'( *)\S.*:$', line):
+			if m := re.match(r'( *)\S.*:\s*$', line):
 				a, ind_re = n+1, re.compile(m.group(1) + r' ')
 		if split_items := len(lines) > split_lines and len(item_lines) > split_count:
 			for n in item_lines: lines[n] = f'\n{lines[n]}'
