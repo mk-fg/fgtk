@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import pathlib as pl, subprocess as sp, collections as cs
-import os, sys, re, tempfile
+import pathlib as pl, subprocess as sp, collections as cs, hashlib as hl
+import os, sys, re, json, tempfile
 
 import yaml # https://pyyaml.org/
 
@@ -34,7 +34,7 @@ err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 def p_msg(s, c=None, ln_merge=False):
 	if p_msg.spaced: print()
 	if c: print(getattr(cl, c), end='')
-	p_msg.spaced = print(f'--- {s}')
+	p_msg.spaced = print(f'=== {s}')
 	if not ln_merge: p_msg.spaced = True
 	else: print()
 	if c: print(cl.x, end='')
@@ -47,6 +47,10 @@ def size_str(sz, _units=list(
 	for u, u1 in _units:
 		if sz > u1: break
 	return f'{sz / float(u1):.1f}{u}'
+
+def data_hash(data, person=b'yamldiff', **kws):
+	data_bs = json.dumps(data, sort_keys=True).encode()
+	return hl.blake2s(data_bs, person=person, **kws).digest()
 
 
 class PrettyYAMLDumper(yaml.dumper.SafeDumper):
@@ -143,7 +147,7 @@ def path_names(*paths):
 			key=lambda name: name.count('/') )
 		if len(upd) <= 1: raise AssertionError(name, upd)
 		names.update(upd)
-	return list(next(n for n in names if p.endswith(f'/{n}')) for p in paths)
+	return list(next(n for n in names if p == n or p.endswith(f'/{n}')) for p in paths)
 
 
 def main(argv=None):
@@ -209,9 +213,8 @@ def main(argv=None):
 	### Build a list of diff_pairs to compare
 
 	diff_pairs, diff_info = list(), cs.namedtuple('DiffInfo', 'name p')
-	if p_a.is_file():
-		n_a, n_b = path_names(p_a, p_b)
-		diff_pairs.append((diff_info(n_a, p_a), diff_info(n_b, p_b)))
+	pn_a, pn_b = path_names(p_a, p_b)
+	if p_a.is_file(): diff_pairs.append((diff_info(pn_a, p_a), diff_info(pn_b, p_b)))
 	else:
 		diff_names, yaml_re = set(), re.compile(opts.fn_re)
 		for root, dirs, files in os.walk(p_a):
@@ -246,14 +249,15 @@ def main(argv=None):
 
 	### Load and dump YAMLs to /tmp, run git-diff/delta on those
 
-	p_msg('---------- Diff Start ----------', 'cap')
+	p_msg( '---------- Diff Start ----------\n'
+		+ f'=== Path-A: {pn_a}\n' + f'=== Path-B: {pn_b}', 'cap' )
 
 	with tempfile.TemporaryDirectory(prefix=f'yaml-diff.{os.getpid()}.') as tmp_dir:
 		tmp_dir = pl.Path(tmp_dir)
 		for a, b in diff_pairs:
 
-			if not a: p_msg(f'Only in Path-B: {b.name}', 'asym', True)
-			if not b: p_msg(f'Only in Path-A: {a.name}', 'asym', True)
+			if not a: p_msg(f'Only in Path-B [ {pn_b} ]: {b.name}', 'asym', True)
+			if not b: p_msg(f'Only in Path-A [ {pn_a} ]: {a.name}', 'asym', True)
 			if not (a and b): continue
 
 			## Create pretty/normalized YAML files
@@ -271,11 +275,12 @@ def main(argv=None):
 						f'ERROR [ {pi.p} ]: {err_fmt(err)}', 'err', space=True )
 					break
 				p.write_text(yaml_dump_pretty(data))
-				ab.append((p, sz, sz_lines))
+				ab.append((p, sz, sz_lines, data_hash(data)))
 			if len(ab) != 2: continue # fail-skip
 
 			## Run git-diff/delta
-			(p1, sz1, sz_lines1), (p2, sz2, sz_lines2) = ab
+			(p1, sz1, sz_lines1, dh1), (p2, sz2, sz_lines2, dh2) = ab
+			if dh1 == dh2: continue
 			p_msg('-'*30 + ' YAML File Diff ' + '-'*30, 'sep')
 			print(f'\n{cl.lrm}--- {a.name} [ {sz_lines1:,d} lines / {sz1} ]', flush=True)
 			print(f'{cl.ladd}+++ {b.name} [ {sz_lines2:,d} lines / {sz2} ]', flush=True)
