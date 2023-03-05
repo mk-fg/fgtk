@@ -2,11 +2,12 @@
 # Small binary to be compiled with fido2 assertion parameters, to prompt for PIN
 #   on /dev/console and produce secret for something on early boot, like cryptsetup/dm-crypt.
 #
-# Build with: nim c -w=on --hints=on -o=fhb -r fido2_hmac_boot.nim -h && strip fhb
+# Debug build/run: nim c -w=on --hints=on -o=fhb -r fido2_hmac_boot.nim -h
+# Final build: nim c -d:release -o=fhb fido2_hmac_boot.nim && strip fhb
 # Usage info: ./fhb -h
 # Intended to complement libfido2 cli tools, like fido2-token and fido2-cred.
 
-import strformat, os, strutils, parseopt, base64, posix
+import strformat, strutils, parseopt, os, base64, posix
 
 
 {.passl: "-lfido2 -lcrypto"}

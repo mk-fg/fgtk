@@ -2175,7 +2175,7 @@ assuming that it'd be accessible in that kind of early-boot scenario.
 Same as with fido2-hmac-desalinate.c, most options can be compiled-in,
 but can also be specified on the command-line here.
 
-Build with: ``nim c -w=on -d:production -o=fhb fido2_hmac_boot.nim && strip fhb``
+Build with: ``nim c -w=on -d:release -o=fhb fido2_hmac_boot.nim && strip fhb``
 
 Simple usage: ``./fhb -r fhb.myhost.net -s ul0...5hA= --out-b64``
 
