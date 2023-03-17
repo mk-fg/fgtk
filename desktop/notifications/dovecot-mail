@@ -140,7 +140,7 @@ def mail_find(maildir, msgid, msgpath, ts, ts_diff_max=5*60):
 			try: ts_mail = mail.stat().st_mtime
 			except FileNotFoundError: continue
 			if abs(ts - ts_mail) > ts_diff_max: break # newest mails should be first
-			with mail.open() as src:
+			with mail.open(errors='surrogateescape') as src:
 				msg_id_line = False
 				for line in src:
 					line = line.strip()
