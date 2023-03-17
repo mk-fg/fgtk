@@ -72,21 +72,18 @@ def main(args=None):
 		formatter_class=argparse.RawTextHelpFormatter,
 		description='Script to create zfs snapshot and rotate/keep a number of earlier ones.')
 
-	parser.add_argument('target',
-		help=dd('''
-			Target volume/filesystem to create a snapshot of,
-				same as you'd specify for "zfs snapshot" command.'''))
+	parser.add_argument('target', help=dd('''
+		Target volume/filesystem to create a snapshot of,
+			same as you'd specify for "zfs snapshot" command.'''))
 
-	parser.add_argument('--prefix', default='zsm.',
-		help=dd('''
-			Prefix for all snapshots to create/match/handle in the tool. Default: "%(default)s".
-			All other snapshots not matching "prefix || datetime" exactly will be ignored.'''))
+	parser.add_argument('--prefix', default='zsm.', help=dd('''
+		Prefix for all snapshots to create/match/handle in the tool. Default: "%(default)s".
+		All other snapshots not matching "prefix || datetime" exactly will be ignored.'''))
 	parser.add_argument('-r', '--recursive', action='store_true',
 		help='Make recurisve snapshot of specified target with all its descendant datasets.')
 
 	parser.add_argument('-p', '--ret-policy',
-		default='5 5d 5w 10m *y', metavar='retention',
-		help=dd('''
+		default='5 5d 5w 10m *y', metavar='retention', help=dd('''
 			Retention settings for how many and which snapshots to keep.
 			Should be a line using following format:
 				[<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]

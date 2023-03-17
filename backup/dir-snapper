@@ -89,16 +89,14 @@ def main(args=None):
 
 	parser.add_argument('src', nargs='+', help='Dir(s) to rotate.')
 
-	parser.add_argument('-f', '--fmt', metavar='fmt', default='{src}.{dt}',
-		help=dd('''
-			Format for resulting dir basename. Default: "%(default)s".
-			Supported formatting (str.format) keywords: src - src dir basename,
-				dt - datetime in roughly iso8601 format with tz (e.g. 20210925_081451).
-			All other dirs not matching same pattern exactly will be ignored.'''))
+	parser.add_argument('-f', '--fmt', metavar='fmt', default='{src}.{dt}', help=dd('''
+		Format for resulting dir basename. Default: "%(default)s".
+		Supported formatting (str.format) keywords: src - src dir basename,
+			dt - datetime in roughly iso8601 format with tz (e.g. 20210925_081451).
+		All other dirs not matching same pattern exactly will be ignored.'''))
 
 	parser.add_argument('-p', '--ret-policy',
-		default='5 5d 5w 10m *y', metavar='retention',
-		help=dd('''
+		default='5 5d 5w 10m *y', metavar='retention', help=dd('''
 			Retention settings for how many and older directories to keep.
 			Should be a line using following format:
 				[<n>] [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
