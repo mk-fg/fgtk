@@ -113,6 +113,7 @@ def main(args=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [options] snap_dir subvol [subvol ...]',
 		description='Script to create new btrfs'
 			' ro-snapshot(s) and rotate/keep a number of earlier ones.')
 
@@ -126,10 +127,10 @@ def main(args=None):
 		Supported formatting (str.format) keywords: sv - subvolume basename,
 			dt - datetime in roughly iso8601 format with tz (e.g. 20210925_081451).
 		All other snapshots/dirs not matching same pattern exactly will be ignored.'''))
-	parser.add_argument('--subvol-aliases', action='store_true', help=dd('''
-		Parse subvolume arguments as "path=sv" (split on = from the right),
-			where "sv" part is used only for basename option in -f/--fmt name formatting.
-		This allows to use e.g. ".=root", with "root" as a name instead of a dot dirname.'''))
+	parser.add_argument('-a', '--subvol-aliases', action='store_true', help=dd('''
+		Parse subvolume arguments as "path=sv" (split on "=" from the right),
+			where "sv" part is used only for the key in -f/--fmt snapshot-name formatting.
+		This allows to use e.g. ".=root", with "root" as a name instead of a dot.'''))
 
 	parser.add_argument('-p', '--ret-policy',
 		default='5 5d 5w 10m *y', metavar='retention', help=dd('''
