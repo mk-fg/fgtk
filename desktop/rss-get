@@ -2,7 +2,7 @@
 
 import urllib.request as ul, urllib.error as ule, urllib.parse as ulp
 import pathlib as pl, datetime as dt, subprocess as sp
-import os, sys, socket, re, unicodedata, math, time
+import os, sys, socket, re, unicodedata, math, calendar
 
 import feedparser as fp
 
@@ -89,8 +89,7 @@ def feed_entry_ts(entry):
 	for k in 'published created modified'.split():
 		if not entry.get(k): continue
 		ts, ts_str = entry[f'{k}_parsed'], entry[k]
-		if ts: # not sure if timezone is discarded here, shouldn't matter
-			ts = dt.datetime.fromtimestamp(time.mktime(ts))
+		if ts: ts = dt.datetime.fromtimestamp(calendar.timegm(ts))
 		break
 	else: ts = ts_str = None
 	return ts_str, ts
