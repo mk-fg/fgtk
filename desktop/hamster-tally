@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import pathlib as pl, datetime as dt, subprocess as sp, collections as cs
-import os, sys, re, logging, math
+import os, sys, re, logging, math, csv
 
 
 class LogMessage:
@@ -265,10 +265,11 @@ def main(args=None):
 		(dt2 + dt.timedelta(days=1)).strftime('%Y-%m-%d %H:%M') )
 	log.debug('Hamster tsv-query: {} - {}', ts1, ts2)
 	res = sp.run(['hamster', 'export', 'tsv', ts1, ts2], check=True, stdout=sp.PIPE)
-	tsv = res.stdout.decode().splitlines()
+	tsv = list(csv.reader(res.stdout.decode().splitlines(), 'excel-tab'))
 	# Expected fields: activity, start, end, duration, category, description, tags
-	tsv_line = cs.namedtuple('EvTSV', list(k.split(' ', 1)[0] for k in tsv[0].split('\t')))
-	tsv = list(tsv_line(*map(str.strip, line.split('\t'))) for line in tsv[1:] if line.strip())
+	tsv_line = cs.namedtuple('EvTSV', list(k.split(' ', 1)[0] for k in tsv[0]))
+	tsv = list( tsv_line(*line) for line in
+		(list(s.strip() for s in line) for line in tsv[1:]) if any(line) )
 	log.debug('Processed hamster tsv events: {}', len(tsv))
 
 	# Convert TSV entries to new log-events
