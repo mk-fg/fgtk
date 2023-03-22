@@ -38,7 +38,10 @@ def p_msg(s, c=None, ln_merge=False):
 	if not ln_merge: p_msg.spaced = True
 	else: print()
 	if c: print(cl.x, end='')
-	sys.stdout.flush()
+	try: sys.stdout.flush()
+	except BrokenPipeError:
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
 p_msg.spaced = True
 
 def size_str(sz, _units=list(
@@ -173,7 +176,7 @@ def main(argv=None):
 				the command and arguments, like in defaults above.'''))
 
 	parser.add_argument('path_a', help='Path-A to use in comparison (file or dir).')
-	parser.add_argument('path_b', help='Path-B to use in comparison (file or dir).')
+	parser.add_argument('path_b', nargs='?', help='Path-B to use in comparison (file or dir).')
 
 	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
 		Use "git diff ... --color" instead of "delta" formatter tool.
@@ -184,17 +187,20 @@ def main(argv=None):
 
 	parser.add_argument('-f', '--reformat', action='store_true', help=dd('''
 		Instead of running diff between A/B paths, copy YAML(s) from A to B,
-			normalizing format to the same "prettified" one that is used for diffs.
+			normalizing format to the same "prettified" one that is used for diffs,
+		Pretty-prints A file(s) to stdout, if Path-B is omitted,
+			with Terminal256Formatter colors if pygments module is available.
 		If A is dir, only yml/yaml files in there are processed,
 			and will be put into same subdirs in B as under A, created as necessary.
 		Existing B file(s) will be replaced (only ones that are under A, is it's a dir).'''))
 
 	opts = parser.parse_args()
 
-	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b])
-	if str(p_a) == str(p_b): parser.error('Specified A/B paths are exactly same')
+	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b or opts.path_a])
 	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
 	if not (refmt := opts.reformat):
+		if not opts.path_b: parser.error('Both A and B paths must be specified for diff')
+		if str(p_a) == str(p_b): parser.error('Specified A/B paths are exactly same')
 		if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
 		if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
 	elif p_a.is_dir(): p_b.mkdir(exist_ok=True)
@@ -214,7 +220,7 @@ def main(argv=None):
 	### Build a list of diff_pairs to compare
 
 	diff_pairs, diff_info = list(), cs.namedtuple('DiffInfo', 'name p')
-	pn_a, pn_b = path_names(p_a, p_b)
+	pn_a, pn_b = path_names(p_a, p_b) if p_a != p_b else (p_a.name, p_b.name)
 	if p_a.is_file(): diff_pairs.append((diff_info(pn_a, p_a), diff_info(pn_b, p_b)))
 	else:
 		diff_names, yaml_re = set(), re.compile(opts.fn_re)
@@ -240,11 +246,22 @@ def main(argv=None):
 	### Reformat mode - create/replace files under B and exit
 
 	if refmt:
+		if to_stdout := p_a == p_b:
+			try: import pygments, pygments.lexers, pygments.formatters
+			except ImportError: pass # pygments module unavailable
 		for a, b in diff_pairs:
 			if not a: continue
-			b.p.parent.mkdir(parents=True, exist_ok=True)
+			if not to_stdout: b.p.parent.mkdir(parents=True, exist_ok=True)
 			data = yaml_load(a.p)
-			b.p.write_text(yaml_dump_pretty(data))
+			if to_stdout:
+				p_msg(f'File {a.name.removeprefix("a/")} [ {a.p} ]', 'cap', True)
+				data = yaml_dump_pretty(data)
+				if pygments:
+					data = pygments.highlight(
+						data, pygments.lexers.YamlLexer(),
+						pygments.formatters.Terminal256Formatter() )
+				print(data)
+			else: b.p.write_text(yaml_dump_pretty(data))
 		return
 
 
