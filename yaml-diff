@@ -141,8 +141,8 @@ def path_names(*paths):
 		name, n = names.most_common(1)[0]
 		if n == 1: break
 		del names[name]
-		upd = sorted(
-			( '/'.join(p.rsplit('/', name.count('/')+2)[1:])
+		upd = sorted((
+				'/'.join(filter(None, p.rsplit('/', name.count('/')+2)))
 				for p in paths if p.endswith(f'/{name}') ),
 			key=lambda name: name.count('/') )
 		if len(upd) <= 1: raise AssertionError(name, upd)
@@ -192,6 +192,7 @@ def main(argv=None):
 	opts = parser.parse_args()
 
 	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b])
+	if str(p_a) == str(p_b): parser.error('Specified A/B paths are exactly same')
 	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
 	if not (refmt := opts.reformat):
 		if not p_b.exists(): parser.error(f'Path-B does not exists: {p_b}')
