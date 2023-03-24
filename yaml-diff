@@ -38,10 +38,7 @@ def p_msg(s, c=None, ln_merge=False):
 	if not ln_merge: p_msg.spaced = True
 	else: print()
 	if c: print(cl.x, end='')
-	try: sys.stdout.flush()
-	except BrokenPipeError:
-		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-		sys.exit(1)
+	sys.stdout.flush()
 p_msg.spaced = True
 
 def size_str(sz, _units=list(
@@ -310,4 +307,8 @@ def main(argv=None):
 
 	p_msg('---------- Diff End ----------', 'cap')
 
-if __name__ == '__main__': sys.exit(main())
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
