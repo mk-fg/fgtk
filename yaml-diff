@@ -240,7 +240,7 @@ def main(argv=None):
 		str(ab[0] and ab[0].p or ''), str(ab[1] and ab[1].p or '') ))
 
 
-	### Reformat mode - create/replace files under B and exit
+	### Reformat mode - print or create/replace files under B and exit
 
 	if refmt:
 		if to_stdout := p_a == p_b:

@@ -492,7 +492,8 @@ specific files.
 
 Also has -f/--reformat option to pretty-print/normalize file(s) without diff,
 which can be used to YAML-pretty-print JSON file(s) as well (incl. recursively,
-with --fn-re override to match them).
+with --fn-re override to match them). Requires python pygments_ module to be
+installed for colorizing YAMLs printed to stdout with this option.
 
 "git diff" can be used without "delta" if -n/--no-delta option is set,
 using its own colors (as per gitconfig), but output from delta_ is usually nicer,
@@ -502,6 +503,7 @@ Binaries and opts to both "git diff" and "delta" tools can be controlled
 via env variables printed in -h/--help output.
 
 .. _delta: https://github.com/dandavison/delta
+.. _pygments: https://pygments.org/
 
 hz_
 '''
