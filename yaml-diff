@@ -142,7 +142,7 @@ def path_names(*paths):
 		if n == 1: break
 		del names[name]
 		upd = sorted((
-				'/'.join(filter(None, p.rsplit('/', name.count('/')+2)))
+				'/'.join(filter(None, p.rsplit('/', name.count('/')+2)[1:]))
 				for p in paths if p.endswith(f'/{name}') ),
 			key=lambda name: name.count('/') )
 		if len(upd) <= 1: raise AssertionError(name, upd)
