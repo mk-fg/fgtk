@@ -2763,19 +2763,15 @@ toogg_
 ''''''
 .. _toogg: desktop/media/toogg
 
-Any-media-to-ogg convertor, using ffmpeg and - optionally (with -l/--loudnorm) -
-its `loudnorm filter`_ (EBU R128 loudness normalization) in double-pass mode.
+Any-media-to-ogg convertor, using ffmpeg, encoding stuff in parallel,
+optionally cutting and splitting files, adding chapter-marks, using ffmpeg
+`loudnorm filter`_ (EBU R128 loudness normalization) in double-pass mode, etc.
 
-Main purpose is to turn anything that has audio track in it into podcast for an
-audio player.
+Main purpose is to turn anything that has audio track in it into a podcast for
+an audio player, and split N-hour-long audiobooks into easier to manage chunks
 
-Can process several source files or URLs (whatever youtube-dl accepts) in
-parallel, split large files into chunks (processed concurrently), displays
-progress (from ``ffmpeg -progress`` pipe), python/asyncio.
-
-loudnorm filter is fairly recent addition to ffmpeg (added in 3.1 release of
-2016-06-27, has libebur128 built-in in 3.2+), and might not be available in
-distros by default.
+Displays progress on its concurrent jobs (from ``ffmpeg -progress`` pipe),
+uses python/asyncio.
 
 Needs youtube-dl installed if URLs are specified instead of regular files.
 

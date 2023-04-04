@@ -665,74 +665,78 @@ def parse_pos_spec(pos):
 		zip([3600, 60, 1], map(float, [hrs, mins, secs])) )
 
 def main(args=None):
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Convert source file(s) to audio, normalize it and encode to ogg/vorbis.'
-			' Optionally uses ffmpeg "loudnorm" filter: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [options] src [src ...]', description=dd('''
+			Convert source file(s) to audio, normalize it and encode to ogg/vorbis.
+			Optionally splits files too, adds beeps
+				to split chunks, uses ffmpeg "loudnorm" filter, etc.'''))
 
 	group = parser.add_argument_group('Source/destination')
-	group.add_argument('src', nargs='+',
-		help='File(s) or URL(s) to convert.'
-			' Files that both dont exist and have ":" in the name'
-				' will be treated as URLs (to be processed with youtube-dl first).')
+	group.add_argument('src', nargs='+', help=dd('''
+		File(s) or URL(s) to convert.
+		Files that both dont exist and have ":" in the name
+			will be treated as URLs (to be processed with youtube-dl first).'''))
 	group.add_argument('-x', '--remove-src', action='store_true',
 		help='Remove source file(s) on success of the whole operation.')
-	group.add_argument('-i', '--inplace', action='store_true',
-		help='Recursively (following symlinks) replace source files'
-				' with .ogg ones in the same dir(s) where they are found.'
-			' All "src" args must be paths.'
-			' Does not imply --remove-src (creates copies next to src files), unless specified.')
-	group.add_argument('-f', '--inplace-name-filter', action='append', metavar='glob',
-		help='Case-insensitive (!!!) shell-style glob/fnmatch'
-				' pattern(s) to match against each file basename for --inplace conversion.'
-			' All files that do not match will be ignored.'
-			' Can be specified multiple times, combined via "any match" logic.'
-			' Remember to quote pattern(s) in shells. Example: toogg -i -f \'*.flac\' somedir')
-	group.add_argument('-t', '--dst-dir', metavar='path',
-		help='Existing path to store resulting files in. Defaults to current one (unless --inplace).'
-			' With --inplace also specified, full dst realpath (!!!) will be re-created under this dir.')
-	group.add_argument('-y', '--ytdl-opts',
-		action='append', metavar='opts',
-		help='Extra opts for youtube-dl command.'
-			' Will determine the name for resulting file from youtube-dl -o option.'
-			' Default is to override -f option for suitable audio formats,'
-				' but leave -o unspecified (i.e. use default or config file).'
-			' Will be split on spaces, unless option is used multiple times.')
-	group.add_argument('-n', '--name', metavar='tpl',
-		help='Template to rename resulting file(s), instead of default "{name}.ogg".'
-			' Substituted keys: "name" - source filename without extension.')
+	group.add_argument('-i', '--inplace', action='store_true', help=dd('''
+		Recursively (following symlinks) replace source files
+			with .ogg ones in the same dir(s) where they are found.
+		All "src" args must be paths.
+		Does not imply --remove-src (creates copies next to src files), unless specified.'''))
+	group.add_argument('-F', '--inplace-name-filter',
+		action='append', metavar='glob', help=dd('''
+			Case-insensitive (!!!) shell-style glob/fnmatch
+				pattern(s) to match against each file basename for --inplace conversion.
+			All files that do not match will be ignored.
+			Can be specified multiple times, combined via "any match" logic.
+			Remember to quote pattern(s) in shells. Example: toogg -i -F '*.flac' somedir'''))
+	group.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
+		Existing path to store resulting files in. Defaults to current one (unless --inplace).
+		With --inplace also specified, full dst realpath (!!!) will be re-created under this dir.'''))
+	group.add_argument('-y', '--ytdl-opts', action='append', metavar='opts', help=dd('''
+		Extra opts for youtube-dl command.
+		Will determine the name for resulting file from youtube-dl -o option.
+		Default is to override -f option for suitable audio formats,
+			but leave -o unspecified (i.e. use default or config file).
+		Will be split on spaces, unless option is used multiple times.'''))
+	group.add_argument('-n', '--name', metavar='tpl', help=dd('''
+		Template to rename resulting file(s), instead of default "{name}.ogg".
+		Substituted keys: "name" - source filename without extension.'''))
 
 	group = parser.add_argument_group('Volume normalization')
-	group.add_argument('--loudnorm', action='store_true',
-		help='Use ffmpeg "loudnorm" filter to have sane volume level.'
-			' It takes quite a while to process longer files with it.'
-			' Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.'
-			' ffmpeg docs link: https://ffmpeg.org/ffmpeg-all.html#loudnorm')
-	group.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts',
-		help='String of options to pass to loudnorm filter,'
-				' same as they would appear on ffmpeg command line.'
-			' Example: I=-16:TP=-1.5:LRA=11')
+	group.add_argument('--loudnorm', action='store_true', help=dd('''
+		Use ffmpeg "loudnorm" filter to have sane volume level.
+		It takes quite a while to process longer files with it.
+		Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.
+		ffmpeg docs link: https://ffmpeg.org/ffmpeg-all.html#loudnorm'''))
+	group.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts', help=dd('''
+		String of options to pass to loudnorm filter, same as they
+			would appear on ffmpeg command line. Example: I=-16:TP=-1.5:LRA=11'''))
 
 	group = parser.add_argument_group('Other ffmpeg options')
-	group.add_argument('-s', '--start', metavar='((hh:)mm:)ss(.ms)',
-		help='Convert only part of src file(s), starting from specified timestamp.'
-			' Passed to ffmpeg -ss option, see "Time duration" in ffmpeg-utils(1) manpage.')
-	group.add_argument('-l', '--length', metavar='((hh:)mm:)ss(.ms)',
-		help='Convert only specified length of src file(s). Can be combined with -s/--start.'
-			' Passed to ffmpeg -t option, see "Time duration" in ffmpeg-utils(1) manpage.')
+	group.add_argument('-s', '--start', metavar='[[hh:]mm:]ss[.ms]', help=dd('''
+		Convert only part of src file(s), starting from specified timestamp.
+		Passed to ffmpeg -ss option, see "Time duration" in ffmpeg-utils(1) manpage.'''))
+	group.add_argument('-l', '--length', metavar='[[hh:]mm:]ss[.ms]', help=dd('''
+		Convert only specified length of src file(s). Can be combined with -s/--start.
+		Passed to ffmpeg -t option, see "Time duration" in ffmpeg-utils(1) manpage.'''))
 	group.add_argument('-c', '--chunks',
-		nargs='?', metavar='((hh:)mm:)ss(.ms)', const='15:00',
-		help='Create dst directory instead of file with'
-				' output pre-split into chunks of specified length.'
-			' Can be used for enable faster parallel encoding.'
-			' Length argument is optional and defaults to 15:00 (15 min).')
+		nargs='?', metavar='[[hh:]mm:]ss[.ms]', const='15:00', help=dd('''
+			Create dst directory instead of file with
+				output pre-split into chunks of specified length.
+			Can be used to enable faster parallel encoding.
+			Length argument is optional and defaults to 15:00 (15 min).'''))
 	group.add_argument('-b', '--chunks-beep', action='store_true',
 		help='Prepend some static + beep sound to each chink-file, to make switch audible.')
 
 	group = parser.add_argument_group('Debug/misc')
-	group.add_argument('-j', '--max-parallel', type=int, metavar='n',
-		help='Max number of processing jobs to run in parallel.'
-			' Default or 0 will be set to number of available cpu threads.')
+	group.add_argument('-j', '--max-parallel', type=int, metavar='n', help=dd('''
+		Max number of processing jobs to run in parallel.
+		Default or 0 will be set to number of available cpu threads.'''))
 	group.add_argument('-p', '--probe', action='store_true',
 		help='Only probe and print length for each file, without converting anything.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
