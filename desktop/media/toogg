@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
+import datetime as dt, collections as cs, pathlib as pl
+import os, sys, re, logging, math, contextlib, asyncio, signal, json, tempfile, shutil
 from asyncio import subprocess as sp
-import math, datetime as dt, collections as cs
-import os, sys, re, logging, pathlib
-import contextlib, asyncio, signal, json, tempfile, shutil
 
 
 class LogMessage:
@@ -56,28 +55,26 @@ def parse_pos_spec(pos):
 					filter('.0123456789'.__contains__, m.group(k)) ) or 1)
 		return delta
 
-def naturaltime_diff( ts, ts0=None, ext=None,
+def td_repr( ts, ts0=None, units_max=2, units_res=None,
 		_units=dict( h=3600, m=60, s=1,
 			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
-	res, s = list(), abs( (ts - (ts0 or dt.datetime.now()))
-		if not isinstance(ts, (dt.timedelta, int, float)) else ts )
-	if isinstance(s, dt.timedelta): s = delta.total_seconds()
-	for unit, unit_s in sorted(_units.items(), key=op.itemgetter(1), reverse=True):
-		val = math.floor(s / float(unit_s))
-		if not val: continue
-		res.append('{:.0f}{}'.format(val, unit))
-		if len(res) >= 2: break
+	delta = ts if ts0 is None else (ts - ts0)
+	if isinstance(delta, dt.timedelta): delta = ts.total_seconds()
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
 		s -= val * unit_s
-	if not res: return 'now'
-	else:
-		if ext: res.append(ext)
-		return ' '.join(res)
+	return ' '.join(res) if res else '<1s'
 
-class Path(pathlib.PosixPath):
-	'PosixPath with a fix for resolving to "//stuff" nonsense.'
-	def resolve(self, strict=False):
-		p = super().resolve(strict=strict)
-		return Path('/' + str(p).strip('/'))
+class Path(pl.PosixPath): pass # subclassing pl.Path has issues
 
 
 
@@ -431,7 +428,7 @@ class AudioConv:
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
 				elif self.probe:
-					print(f'{src.label} [{src.codec}] :: {naturaltime_diff(src.duration)}')
+					print(f'{src.label} [{src.codec}] :: {td_repr(src.duration)}')
 					conv = None
 				elif self.chunks and not isinstance(src, AudioConvChunk):
 					if not src.duration:
@@ -455,7 +452,7 @@ class AudioConv:
 					self.chunk_dirs.add(dst_dir)
 					src_stack.extend(reversed(src_chunks))
 					print( f'Splitting {src.label!r}: {len(src_chunks)} chunks'
-						f' ({naturaltime_diff(chunk_len)} each), {naturaltime_diff(length_total)} total' )
+						f' ({td_repr(chunk_len)} each), {td_repr(length_total)} total' )
 					continue
 				else:
 					if isinstance(src, AudioConvChunk):
