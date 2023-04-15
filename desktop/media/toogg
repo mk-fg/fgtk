@@ -392,6 +392,10 @@ class AudioConv:
 
 	async def conv_list(self):
 		src_stack = list(reversed(self.src_list))
+		if len(src_set := set(src_stack)) != len(src_stack):
+			src_dup = '\n'.join(sorted(
+				f'  {src}' for src in src_set if src_stack.count(src) > 1 ))
+			raise AudioConvError(f'Duplicate source paths detected:\n{src_dup}')
 
 		dst_name_aliases = dict()
 		def dst_name_format(name):
