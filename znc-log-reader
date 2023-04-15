@@ -164,7 +164,7 @@ class IterLog:
 		self._proc_st = None # None -> True -> False
 		if not isinstance(self.src, io.TextIOWrapper):
 			self.src.seek(0)
-			self.src = io.TextIOWrapper(self.src)
+			self.src = io.TextIOWrapper(self.src, errors='surrogateescape')
 		return self
 
 	def __next__(self):

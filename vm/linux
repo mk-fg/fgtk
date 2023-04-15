@@ -150,7 +150,7 @@ err=0
 modprobe kvm || exit 1
 modprobe kvm-intel 2>/dev/null || (( err += 1 ))
 modprobe kvm-amd 2>/dev/null || (( err += 1 ))
-[[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to load kvm intel/amd modules"; exit 1; }
+[[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to probe intel/amd kvm modules"; exit 1; }
 
 
 ### VDE
