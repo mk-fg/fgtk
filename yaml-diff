@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import pathlib as pl, subprocess as sp, collections as cs, hashlib as hl
-import os, sys, re, json, tempfile
+import os, sys, re, json, tempfile, glob
 
 import yaml # https://pyyaml.org/
 
@@ -149,6 +149,26 @@ def path_names(*paths):
 		names.update(upd)
 	return list(next(n for n in names if p == n or p.endswith(f'/{n}')) for p in paths)
 
+def path_yaml(p, p_root=None, strict=False):
+	'''Return casemapped version of path, looked up from invariable p_root dir, if used.
+		yaml/yml extensions at the end are also matched interchangeably.
+		strict=True allows to bypass all that logic and simply return joined path.
+		In case of nx path, or any path conflicts, exact/strict path is returned.
+		Same as all path casemapping, this will always have a lot of caveats.'''
+	if strict: return (p_root / p) if p_root else p
+	p_opts, p_strict = [p := pl.Path(p)], p
+	if m := re.search(r'(?i)^(.*)(\.ya?ml)$', p.name):
+		ext = (ext := m[2])[:2] + ( ext[3:]
+			if len(ext) == 5 else (chr(ord(ext[1]) - 24) + ext[2:]) )
+		p_opts.append(p.parent / f'{m[1]}{ext}')
+	for n, p in enumerate(p_opts):
+		p = ''.join( f'[{c.upper()}{c.lower()}]'
+			if c.isalpha() else glob.escape(c) for c in str(p) )
+		p_opts[n] = (p_root / p) if p_root else pl.Path(p)
+	m = sum((glob.glob(str(p)) for p in p_opts), list())
+	return ( pl.Path(m[0]) if len(m) == 1
+		else (p_root / p_strict) if p_root else p_strict )
+
 
 def main(argv=None):
 	import argparse, textwrap
@@ -190,6 +210,10 @@ def main(argv=None):
 		If A is dir, only yml/yaml files in there are processed,
 			and will be put into same subdirs in B as under A, created as necessary.
 		Existing B file(s) will be replaced (only ones that are under A, is it's a dir).'''))
+	parser.add_argument('--strict-names', action='store_true', help=dd('''
+		Do not treat filenames with different capitalization and
+			yml/yaml extension differences as a same file between src/dst dirs.
+		Default is to normalize all that out for convenience.'''))
 
 	opts = parser.parse_args()
 
@@ -224,12 +248,14 @@ def main(argv=None):
 		for root, dirs, files in os.walk(p_a):
 			for fn in files:
 				if not yaml_re.search(fn): continue
-				name = str((p_sa := pl.Path(root) / fn).relative_to(p_a))
-				if not (p_sb := p_b / name).exists() and not refmt: p_sb = None
+				name_a = str((p_sa := pl.Path(root) / fn).relative_to(p_a))
+				p_sb = path_yaml(name_a, p_b, opts.strict_names)
+				if not p_sb.exists() and not refmt: p_sb = None
+				name_b = name_a if not p_sb else str(p_sb.relative_to(p_b))
 				diff_pairs.append((
-					diff_info(f'a/{name}', p_sa),
-					p_sb and diff_info(f'b/{name}', p_sb) ))
-				diff_names.add(name)
+					diff_info(f'a/{name_a}', p_sa),
+					p_sb and diff_info(f'b/{name_b}', p_sb) ))
+				diff_names.add(name_b)
 		for root, dirs, files in os.walk(p_b):
 			for fn in files:
 				if not yaml_re.search(fn): continue
