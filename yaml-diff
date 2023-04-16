@@ -121,17 +121,28 @@ def yaml_add_vspacing(yaml_str, split_lines=40, split_count=2):
 	return re.sub(r'\n\n+', '\n\n', yaml_str.strip() + '\n')
 
 
+def yaml_sort_lists(data):
+	if isinstance(data, dict):
+		for k, v in data.items(): data[k] = yaml_sort_lists(v)
+	elif isinstance(data, list):
+		data = sorted(
+			(yaml_sort_lists(d) for d in data),
+			key=lambda d: json.dumps(d, sort_keys=True) )
+	return data
+
 def yaml_dump_pretty(data):
 	yaml_str = yaml.dump( data,
 		Dumper=PrettyYAMLDumper, default_flow_style=False, allow_unicode=True )
 	return yaml_add_vspacing(yaml_str)
 
-def yaml_load(p_or_src):
+def yaml_load(p_or_src, sort_lists=False):
 	if hasattr(p_or_src, 'read'):
 		yaml_str = p_or_src.read()
 		if isinstance(yaml_str, bytes): yaml_str = yaml_str.decode()
 	else: yaml_str = pl.Path(p_or_src).read_text()
-	return yaml.safe_load(yaml_str.replace(' !unsafe ', ' ')) # hack for ansible YAMLs
+	data = yaml.safe_load(yaml_str.replace(' !unsafe ', ' ')) # hack for ansible YAMLs
+	if sort_lists: data = yaml_sort_lists(data)
+	return data
 
 
 def path_names(*paths):
@@ -186,14 +197,18 @@ def main(argv=None):
 		epilog=dd(f'''
 			Options to "git diff" and "delta" tool (if used) can be controlled via env vars:
 
-				YD_GIT_DIFF={py_list_fmt(git_diff_opts, 5)}
-				YD_DELTA={py_list_fmt(git_delta_opts, 5)}
+				YD_GIT_DIFF="{py_list_fmt(git_diff_opts, 5)}"
+				YD_DELTA="{py_list_fmt(git_delta_opts, 5)}"
 
 			These should contain python lists-of-strings with
 				the command and arguments, like in defaults above.'''))
 
 	parser.add_argument('path_a', help='Path-A to use in comparison (file or dir).')
 	parser.add_argument('path_b', nargs='?', help='Path-B to use in comparison (file or dir).')
+
+	parser.add_argument('-s', '--sort-lists', action='store_true', help=dd('''
+		Sort all lists (by their json) in YAML data,
+			to diff elements in those regardless of their ordering.'''))
 
 	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
 		Use "git diff ... --color" instead of "delta" formatter tool.
@@ -275,7 +290,7 @@ def main(argv=None):
 		for a, b in diff_pairs:
 			if not a: continue
 			if not to_stdout: b.p.parent.mkdir(parents=True, exist_ok=True)
-			data = yaml_load(a.p)
+			data = yaml_load(a.p, opts.sort_lists)
 			if to_stdout:
 				p_msg(f'File {a.name.removeprefix("a/")} [ {a.p} ]', 'cap', True)
 				data = yaml_dump_pretty(data)
@@ -309,11 +324,11 @@ def main(argv=None):
 					with pi.p.open() as src:
 						sz = size_str(os.fstat(src.fileno()).st_size)
 						sz_lines = len(list(src))
-						src.seek(0); data = yaml_load(src)
+						src.seek(0); data = yaml_load(src, opts.sort_lists)
 				except Exception as err:
 					p_msg(
 						f'Path-{pn} comparison fail-skip: {pi.name}\n'
-						f'ERROR [ {pi.p} ]: {err_fmt(err)}', 'err', space=True )
+						f'ERROR [ {pi.p} ]: {err_fmt(err)}', 'err', True )
 					break
 				p.write_text(yaml_dump_pretty(data))
 				ab.append((p, sz, sz_lines, data_hash(data)))
