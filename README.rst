@@ -495,7 +495,7 @@ which can be used to YAML-pretty-print JSON file(s) as well (incl. recursively,
 with --fn-re override to match them). Requires python pygments_ module to be
 installed for colorizing YAMLs printed to stdout with this option.
 
-"git diff" can be used without "delta" if -n/--no-delta option is set,
+"git diff" can be used without "delta" if --no-delta option is set,
 using its own colors (as per gitconfig), but output from delta_ is usually nicer,
 has line numbers and highlights inline diffs.
 

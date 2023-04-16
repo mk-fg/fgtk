@@ -209,8 +209,10 @@ def main(argv=None):
 	parser.add_argument('-s', '--sort-lists', action='store_true', help=dd('''
 		Sort all lists (by their json) in YAML data,
 			to diff elements in those regardless of their ordering.'''))
+	parser.add_argument('-n', '--limit', type=int, help=dd('''
+		Stop after processing specified number of files with non-empty diffs.'''))
 
-	parser.add_argument('-n', '--no-delta', action='store_true', help=dd('''
+	parser.add_argument('--no-delta', action='store_true', help=dd('''
 		Use "git diff ... --color" instead of "delta" formatter tool.
 		Delta tool URL: https://github.com/dandavison/delta'''))
 	parser.add_argument('--fn-re', metavar='regexp', default=r'(?i)\.ya?ml$', help=dd('''
@@ -307,11 +309,13 @@ def main(argv=None):
 
 	p_msg( '---------- Diff Start ----------\n'
 		+ f'=== Path-A: {pn_a}\n' + f'=== Path-B: {pn_b}', 'cap' )
+	diff_n, diff_n_max = 0, max(0, opts.limit or 0)
+	diff_n_done = lambda: diff_n_max and diff_n >= diff_n_max
 
 	with tempfile.TemporaryDirectory(prefix=f'yaml-diff.{os.getpid()}.') as tmp_dir:
 		tmp_dir = pl.Path(tmp_dir)
 		for a, b in diff_pairs:
-
+			diff_n += 1
 			if not a: p_msg(f'Only in Path-B [ {pn_b} ]: {b.name}', 'asym', True)
 			if not b: p_msg(f'Only in Path-A [ {pn_a} ]: {a.name}', 'asym', True)
 			if not (a and b): continue
@@ -332,7 +336,9 @@ def main(argv=None):
 					break
 				p.write_text(yaml_dump_pretty(data))
 				ab.append((p, sz, sz_lines, data_hash(data)))
-			if len(ab) != 2: continue # fail-skip
+			if len(ab) != 2:
+				if diff_n_done(): break
+				continue # fail-skip
 
 			## Run git-diff/delta
 			(p1, sz1, sz_lines1, dh1), (p2, sz2, sz_lines2, dh2) = ab
@@ -345,8 +351,10 @@ def main(argv=None):
 				sp.run(git_delta, stdin=sp_diff.stdout)
 				sp_diff.wait()
 			else: sp.run(git_diff + ['--', p1, p2])
+			if diff_n_done(): break
 
-	p_msg('---------- Diff End ----------', 'cap')
+	msg = 'Diff End' if not diff_n_done() else f'Diff Stop (diff-limit={diff_n})'
+	p_msg(f'---------- {msg} ----------', 'cap')
 
 if __name__ == '__main__':
 	try: sys.exit(main())
