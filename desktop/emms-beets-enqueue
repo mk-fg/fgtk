@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+
+import os, sys, re, json, shlex, subprocess as sp, pathlib as pl
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] [beet-ls-query | <<<beet-ls-query]',
+		description='Enqueue tracks in emacs emms player from "beet ls" (beets project) output.')
+	parser.add_argument('beet_ls_args', nargs='*', help=dd('''
+		Filtering/query parameters to pass to a "beet ls" command.
+		If none specified as args - will be read from stdin, stripping newlines.'''))
+	parser.add_argument('-a', '--album', action='store_true',
+		help='Query/enqueue album dir(s), same as -a/--album "beet ls" option would do.')
+	parser.add_argument('-r', '--remote', metavar='[user@]host[:path]', help=dd('''
+		Remote [user@]host[:path] spec to run beets on
+			using ssh instead of locally, or space-separated list of such.
+		[user@]host part will be used as-is in "ssh -nT ... beet ls ..." command.
+		Path from [:path] part of each spec will be prepended to each
+				returned path, i.e. as a mountpoint path for that specific host.
+			If path is not specified, returned path-lines will be used as-is.'''))
+	parser.add_argument('-n', '--dry-run',
+		action='store_true', help='Do not run emacsclient and enqueue paths to emms.')
+	parser.add_argument('-v', '--verbose',
+		action='store_true', help='Dump list of queried paths to stdout, one per line.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	filter_list = lambda vs: list(filter(None, vs))
+
+	cmd = ['beet', 'ls', '-f', r'\$path']
+	if opts.album: cmd.append('-a')
+	cmd.append('--')
+	cmd.extend(map( shlex.quote,
+		opts.beet_ls_args or re.sub(r'[\r\n]', '', sys.stdin.read()) ))
+
+	if not opts.remote:
+		paths = sp.run(cmd, check=True, stdout=sp.PIPE)
+		paths = filter_list(p.strip() for p in paths.stdout.decode().splitlines())
+	elif ssh_hosts := filter_list(opts.remote.split()):
+		paths = list()
+		for ep in ssh_hosts:
+			if ':' in ep: ep, pre = ep.rsplit(':', 1)
+			else: pre = None
+			ssh = sp.run(['ssh', '-tT', ep, '--'] + cmd, check=True, stdout=sp.PIPE)
+			paths.extend( ((pre / p.lstrip('/')) if pre else p) for p in
+				filter_list(p.strip() for p in ssh.stdout.decode().splitlines()) )
+
+	add_type = 'file' if not opts.album else 'directory'
+	for p in paths:
+		if opts.verbose: print(p)
+		if not pl.Path(p).exists():
+			print(f'ERROR: Returned path does not exists [ {p} ]', file=sys.stderr)
+			continue
+		if not opts.dry_run:
+			out = sp.run([ 'emacsclient', '-e',
+				f'(emms-add-{add_type} {json.dumps(p)})' ], stdout=sp.PIPE)
+			if (out := out.stdout.decode().strip()) != 'nil':
+				print(f'ERROR: emms-add failed for [ {p} ]: {out}', file=sys.stderr)
+
+if __name__ == '__main__': sys.exit(main())
