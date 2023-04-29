@@ -209,7 +209,7 @@ def main(argv=None):
 	parser.add_argument('-s', '--sort-lists', action='store_true', help=dd('''
 		Sort all lists (by their json) in YAML data,
 			to diff elements in those regardless of their ordering.'''))
-	parser.add_argument('-n', '--limit', type=int, help=dd('''
+	parser.add_argument('-n', '--limit', type=int, metavar='n', help=dd('''
 		Stop after processing specified number of files with non-empty diffs.'''))
 
 	parser.add_argument('--no-delta', action='store_true', help=dd('''
