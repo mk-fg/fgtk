@@ -78,7 +78,7 @@ class PrettyYAMLDumper(yaml.dumper.SafeDumper):
 		self.analysis.allow_flow_plain = False
 		return res
 
-	def choose_scalar_style(self, _re1=re.compile(':(\s|$)')):
+	def choose_scalar_style(self, _re1=re.compile(r':(\s|$)')):
 		if self.event.style != 'plain': return super().choose_scalar_style()
 		if (s := self.event.value).startswith('- ') or _re1.search(s): return "'"
 		if self.analysis and not self.analysis.allow_flow_plain:
