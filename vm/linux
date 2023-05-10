@@ -234,8 +234,9 @@ done
 n=0 root_opts=()
 
 add_disk() {
+	[[ "$2" = /dev/* ]] && cache=none || cache=writethrough
 	root_opts+=(
-		-drive file="$1",id=vio-disk.$n,if=none,cache=none,aio=io_uring,"$2"
+		-drive file="$1",id=vio-disk.$n,if=none,cache="$cache",aio=io_uring,"$2"
 		-device virtio-blk,drive=vio-disk.$n,logical_block_size=512,physical_block_size=4096 )
 	((n+=1)); }
 
