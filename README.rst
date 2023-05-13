@@ -191,7 +191,7 @@ container runtime, and script needs a re-run to update these too.
 
 fast-disk-wipe_
 '''''''''''''''
-.. _fast-disk-wipe: fast-disk-wipe
+.. _fast-disk-wipe: fast-disk-wipe.c
 
 Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
 device in a hurry.
@@ -3373,7 +3373,7 @@ read access to specified evdev(s) and rw to /dev/uinput.
 
 exclip_
 '''''''
-.. _exclip: desktop/exclip
+.. _exclip: desktop/exclip.c
 
 Small standalone C binary based on xclip_ code to copy primary X11 selection
 text (utf-8) from terminal (or whatever else) to clipboard as a single line,
@@ -3398,7 +3398,7 @@ various ways - see -h/--help output for more info.
 
 xdpms_
 ''''''
-.. _xdpms: desktop/xdpms
+.. _xdpms: desktop/xdpms.c
 
 Small 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
 many seconds are left until dpms will turn off display(s) or waits until then
@@ -3414,6 +3414,17 @@ queried from compositor somehow, or ideally it might even emit on/off events
 somewhere, instead of needing this kind of polling.
 
 .. _xprintidle: https://github.com/g0hl1n/xprintidle
+
+xiwait_
+'''''''
+.. _xiwait: desktop/xiwait.c
+
+Kinda opposite of xdpms_ tool above - trivial binary to detect when X user is
+doing anything, by catching first XInput event and exiting immediately.
+
+Build with: ``gcc -O2 -lX11 -lXi -Wall xiwait.c -o xiwait && strip xiwait``
+
+Also same as xdpms - should probably only work on Xorg systems, not wayland.
 
 rss-get_
 ''''''''
@@ -4355,12 +4366,12 @@ process_vm_writev part.
 
 gpm-track_
 ^^^^^^^^^^
-.. _gpm-track: scraps/gpm-track
+.. _gpm-track: scraps/gpm-track.py
 
 Python script to capture and print mouse events from GPM_ (as in libgpm)
 in specified tty.
 
-Main event receiver is gpm-track.c (build with ``gcc -O2 gpm-track.c -o
+Main event receiver is `gpm-track.c`_ (build with ``gcc -O2 gpm-track.c -o
 gpm-track -lgpm -lrt``) proxy-binary though, which writes latest mouse position
 to mmap'ed shared memory file (under /dev/shm) and sends SIGRT* signals to main
 process on mouse clicks.
@@ -4377,10 +4388,11 @@ Note that GPM tracks x/y in row/column format, not pixels, which isn't very
 useful for GUIs, alas.
 
 .. _GPM: https://github.com/telmich/gpm
+.. _gpm-track.c: scraps/gpm-track.c
 
 rsyslogs_
 ^^^^^^^^^
-.. _rsyslogs: scraps/rsyslogs
+.. _rsyslogs: scraps/rsyslogs.c
 
 Wrappers to test tools that tend to spam /dev/log regardless of their settings.
 
@@ -4410,7 +4422,7 @@ where such uncommon spam to syslog gets delivered via desktop notifications
 
 relp-test_
 ^^^^^^^^^^
-.. _relp-test: scraps/relp-test
+.. _relp-test: scraps/relp-test.c
 
 Small .c binary around librelp_ to build and send syslog message over RELP
 protocol to daemons like rsyslog_ with specified timeout.

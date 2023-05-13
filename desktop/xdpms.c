@@ -15,25 +15,27 @@
 #include <X11/extensions/scrnsaver.h>
 
 int main(int argc, char *argv[]) {
-	int mode_check = argc == 1;
+	int mode_print = argc == 1;
+	int mode_check = argc == 2 && !strcmp(argv[1], "check");
 	int mode_wait = argc == 2 && !strcmp(argv[1], "wait");
 
-	if (!mode_check && !mode_wait) {
-		printf("Usage: %s [-h/--help] [wait]\n", argv[0]);
+	if (!(mode_print || mode_check || mode_wait)) {
+		printf("Usage: %s [-h/--help] [ check | wait ]\n", argv[0]);
 		printf(
 			"\nWithout arguments:\n"
 			"  Prints seconds from now until dpms-off is supposed to happen to stdout.\n"
 			"  '0' means that monitor is already off.\n"
 			"  Dash ('-') is printed if there's no such timeout, e.g. dpms-off is disabled.\n"
 			"  Does not print anything to stdout and exits with error in case of any issues.\n"
-			"\nWith 'wait' argument - wait-until-idle mode:\n"
+			"\ncheck - exit with 0 if seconds to dpms-off is >0, 1 otherwise.\n"
+			"\nwait - wait-until-idle mode:\n"
 			"  Sleeps until system is idle, making checks proportional to dpms timeouts.\n"
 			"  Exits with status=0 upon detecting dpms-off state.\n"
 			"  Intended use is like a 'sleep' command to delay until desktop idleness.\n"
 			"  Will exit with error if dpms-off delay is <1min (assuming disabled).\n" );
 		return 1; }
 
-	char *err = NULL;
+	char *err = NULL; int ret = 0;
 	Display *dpy = NULL;
 	XScreenSaverInfo *ssi = NULL;
 	int dummy;
@@ -59,9 +61,13 @@ int main(int argc, char *argv[]) {
 				seconds = state == DPMSModeOff ? 0 :
 					delay_off > 0 ? delay_off - ssi->idle / 1000 : -1; }
 
-		if (mode_check) {
+		if (mode_print) {
 			if (seconds >= 0) printf("%ld\n", seconds);
 			else printf("-\n");
+			break; }
+
+		if (mode_check) {
+			if (seconds < 0) ret = 1;
 			break; }
 
 		if (mode_wait) {
@@ -76,5 +82,5 @@ int main(int argc, char *argv[]) {
 	if (ssi) XFree(ssi);
 	if (dpy) XCloseDisplay(dpy);
 	if (err) { fprintf(stderr, "ERROR: %s\n", err); return 1; }
-	return 0;
+	return ret;
 }
