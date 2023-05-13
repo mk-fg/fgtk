@@ -3400,12 +3400,12 @@ xdpms_
 ''''''
 .. _xdpms: desktop/xdpms
 
-Tiny 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
-many seconds are left until dpms will turn off display(s) (dpms as in ``xset q``),
-or "0" if it already happened.
+Small 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
+many seconds are left until dpms will turn off display(s) or waits until then
+(dpms as in ``xset q``).
 
 Purpose is to check whether some "display is disabled" action should be taken,
-or otherwise get the countdown until the next check.
+wait for it, or get the countdown until the next check.
 
 Build with: ``gcc -O2 -lX11 -lXss -lXext xdpms.c -o xdpms && strip xdpms``
 
