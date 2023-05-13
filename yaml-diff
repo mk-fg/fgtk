@@ -292,23 +292,22 @@ def main(argv=None):
 	### Reformat mode - print or create/replace files under B and exit
 
 	if refmt:
-		pygments = None
 		if (to_stdout := p_a == p_b) and not opts.no_color:
 			try: import pygments, pygments.lexers, pygments.formatters
-			except ImportError: pass # pygments module unavailable
+			except ImportError: pygments = None # pygments module unavailable
 		for a, b in diff_pairs:
 			if not a: continue
 			if not to_stdout: b.p.parent.mkdir(parents=True, exist_ok=True)
-			data = yaml_load(a.p, opts.sort_lists)
+			data = yaml_dump_pretty(yaml_load(a.p, opts.sort_lists))
 			if to_stdout:
-				p_msg(f'File {a.name.removeprefix("a/")} [ {a.p} ]', 'cap', True)
-				data = yaml_dump_pretty(data)
+				if len(diff_pairs) > 1:
+					p_msg(f'File {a.name.removeprefix("a/")} [ {a.p} ]', 'cap', True)
 				if pygments:
 					data = pygments.highlight(
 						data, pygments.lexers.YamlLexer(),
 						pygments.formatters.Terminal256Formatter() )
 				print(data)
-			else: b.p.write_text(yaml_dump_pretty(data))
+			else: b.p.write_text(data)
 		return
 
 
