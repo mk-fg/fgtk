@@ -9,7 +9,7 @@ import yaml # https://pyyaml.org/
 # https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
 cl = type('Colors', (object,), dict((k, f'\033[{v}') for k,v in dict(
 	x='0m', lrm='1;31m', ladd='1;32m', sep='1;34m',
-	asym='1;93m', err='4;31m', cap='0;34m' ).items() ))
+	asym='1;93m', err='4;31m', cap='0;34m' ).items()))
 
 git_diff_opts = 'git --no-pager diff -a --minimal --no-index -U8'.split()
 git_delta_opts = [ 'delta', '-n', '--diff-highlight', '--paging=never',
@@ -231,6 +231,8 @@ def main(argv=None):
 		Do not treat filenames with different capitalization and
 			yml/yaml extension differences as a same file between src/dst dirs.
 		Default is to normalize all that out for convenience.'''))
+	parser.add_argument('-C', '--no-color', action='store_true',
+		help='Disable colors. Implies --no-delta - not using "delta" tool.')
 
 	opts = parser.parse_args()
 
@@ -243,6 +245,7 @@ def main(argv=None):
 		if p_a.is_file() ^ p_b.is_file(): parser.error(f'Path file/dir types mismatch')
 	elif p_a.is_dir(): p_b.mkdir(exist_ok=True)
 
+	global cl
 	git_diff, git_delta = git_diff_opts.copy(), git_delta_opts.copy()
 	if any([
 			git_diff_env := os.environ.get('YD_GIT_DIFF'),
@@ -250,9 +253,12 @@ def main(argv=None):
 		import ast
 		if git_diff_env: git_diff = list(ast.literal_eval(git_diff_env))
 		if git_delta_env: git_delta = list(ast.literal_eval(git_delta_env))
-	if opts.no_delta:
-		git_diff.append('--color')
+	if opts.no_color:
 		git_delta.clear()
+		cl = type('NoColors', (object,), dict((k, '') for k in cl.__dict__ if k[0] != '_'))
+	elif opts.no_delta:
+		git_delta.clear()
+		git_diff.append('--color')
 
 
 	### Build a list of diff_pairs to compare
@@ -286,7 +292,8 @@ def main(argv=None):
 	### Reformat mode - print or create/replace files under B and exit
 
 	if refmt:
-		if to_stdout := p_a == p_b:
+		pygments = None
+		if (to_stdout := p_a == p_b) and not opts.no_color:
 			try: import pygments, pygments.lexers, pygments.formatters
 			except ImportError: pass # pygments module unavailable
 		for a, b in diff_pairs:
