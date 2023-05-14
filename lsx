@@ -5,6 +5,73 @@ import os, sys, stat, re, pathlib as pl, collections as cs
 p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=stderr, flush=True)
 
 
+def list_adjacent(paths, specs, files_only=False):
+	p_dirs, stats, p_out = dict(), dict(), dict()
+	op_out_sort = None
+
+	for p in paths:
+		try: st = stats[p] = p.stat()
+		except OSError: p_err(f'path inaccessible [ {p} ]'); continue
+		ps = set(p.parent.iterdir())
+		if files_only:
+			if not stat.S_ISREG(st.st_mode): continue # arg path discarded
+			for pa in list(ps):
+				try: st = stats[pa] = pa.stat()
+				except OSError: ps.remove(pa)
+				if not stat.S_ISREG(st.st_mode): ps.remove(pa)
+		p_out[p], p_dirs[p] = {p}, tuple(ps)
+
+	for opt in (opt.lower() for opt in specs):
+		if n := re.findall(r'(\d+)', opt): n = max(map(int, n))
+		else: n = 10
+		ops = set(opt).difference('1234567890')
+		if ops.difference('bants'):
+			parser.error(f'Unrecognized letters in -a/--adjacent spec: {opt!r}')
+		if ('a' in ops) ^ ('b' in ops) == 0: na = nb = n
+		elif 'a' in ops: na, nb = n, 0
+		elif 'b' in ops: na, nb = 0, n
+		ops.difference_update('ab')
+		if not ops: ops.add('n')
+		elif not op_out_sort:
+			op_out_sort = sorted(ops, key=lambda k: opt.find(k))[0]
+
+		p_lists = cs.defaultdict(set) # {p: set(ps_sorted, ...), ...}
+		for p, ps in p_dirs.items():
+			if 'n' in ops:
+				p_lists[p].add(tuple(sorted(ps, key=lambda pa: pa.name)))
+			if ops.intersection('ts'):
+				for pa in ps:
+					if pa in stats: continue
+					try: stats[pa] = pa.stat()
+					except OSError: pass
+				for k, sk in ('t', 'st_mtime'), ('s', 'st_size'):
+					if k not in ops: continue
+					p_lists[p].add(tuple(sorted( ps,
+						key=lambda pa: getattr(stats[pa], sk) )))
+
+		for p, pss in p_lists.items():
+			for ps in pss:
+				try: n = ps.index(p)
+				except ValueError: p_err(f'path vanished [ {p} ]'); continue
+				p_out[p].update(ps[max(0, n-nb):n])
+				p_out[p].update(ps[n+1:n+na+1])
+
+	ps_seen, sort_func = set(), dict(
+		n=lambda p: p.name,
+		t=lambda p: stats[p].st_mtime,
+		s=lambda p: stats[p].st_size )[op_out_sort or 'n']
+	for p, ps in p_out.items():
+		p_out[p] = sorted(ps, key=sort_func)
+	for ps in p_out.values():
+		for p in ps:
+			if p in ps_seen: continue
+			if not (st := stats.get(p)):
+				try: st = stats[p] = p.stat()
+				except OSError: continue
+			print(p)
+			ps_seen.add(p)
+
+
 def main(argv=None):
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
@@ -44,70 +111,9 @@ def main(argv=None):
 	paths = list(pl.Path(p) for p in opts.paths)
 
 	if opts.adjacent:
-		p_dirs, stats, p_out = dict(), dict(), dict()
-		op_out_sort = None
+		list_adjacent(paths, opts.adjacent, opts.files)
 
-		for p in paths:
-			try: st = stats[p] = p.stat()
-			except OSError: p_err(f'path inaccessible [ {p} ]'); continue
-			ps = set(p.parent.iterdir())
-			if opts.files:
-				if not stat.S_ISREG(st.st_mode): continue # arg path discarded
-				for pa in list(ps):
-					try: st = stats[pa] = pa.stat()
-					except OSError: ps.remove(pa)
-					if not stat.S_ISREG(st.st_mode): ps.remove(pa)
-			p_out[p], p_dirs[p] = {p}, tuple(ps)
-
-		for opt in (opt.lower() for opt in opts.adjacent):
-			if n := re.findall(r'(\d+)', opt): n = max(map(int, n))
-			else: n = 10
-			ops = set(opt).difference('1234567890')
-			if ops.difference('bants'):
-				parser.error(f'Unrecognized letters in -a/--adjacent spec: {opt!r}')
-			if ('a' in ops) ^ ('b' in ops) == 0: na = nb = n
-			elif 'a' in ops: na, nb = n, 0
-			elif 'b' in ops: na, nb = 0, n
-			ops.difference_update('ab')
-			if not ops: ops.add('n')
-			elif not op_out_sort:
-				op_out_sort = sorted(ops, key=lambda k: opt.find(k))[0]
-
-			p_lists = cs.defaultdict(set) # {p: set(ps_sorted, ...), ...}
-			for p, ps in p_dirs.items():
-				if 'n' in ops:
-					p_lists[p].add(tuple(sorted(ps, key=lambda pa: pa.name)))
-				if ops.intersection('ts'):
-					for pa in ps:
-						if pa in stats: continue
-						try: stats[pa] = pa.stat()
-						except OSError: pass
-					for k, sk in ('t', 'st_mtime'), ('s', 'st_size'):
-						if k not in ops: continue
-						p_lists[p].add(tuple(sorted( ps,
-							key=lambda pa: getattr(stats[pa], sk) )))
-
-			for p, pss in p_lists.items():
-				for ps in pss:
-					try: n = ps.index(p)
-					except ValueError: p_err(f'path vanished [ {p} ]'); continue
-					p_out[p].update(ps[max(0, n-nb):n])
-					p_out[p].update(ps[n+1:n+na+1])
-
-		ps_seen, sort_func = set(), dict( n=lambda p: p.name,
-			t=lambda p: stats[p].st_mtime, s=lambda p: stats[p].st_size )[op_out_sort or 'n']
-		for p, ps in p_out.items():
-			p_out[p] = sorted(ps, key=sort_func)
-		for ps in p_out.values():
-			for p in ps:
-				if p in ps_seen: continue
-				if not (st := stats.get(p)):
-					try: st = stats[p] = p.stat()
-					except OSError: continue
-				print(p)
-				ps_seen.add(p)
-
-	else: # print filtered input paths back
+	else: # no options - print filtered input paths back
 		for p in paths:
 			if p.exists():
 				if opts.files and not p.is_file(): continue
