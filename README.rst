@@ -2198,6 +2198,23 @@ this binary with a typical dracut/systemd boot process.
 .. _"More FIDO2 hw auth/key uses" post:
   https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
+lsx_
+''''
+.. _lsx: lsx
+
+More functionality similar to common "ls" tool, to list files in some specific
+ways that are occasionally useful. All those are available via various options -
+see ``-h/--help`` for a full list of those.
+
+For example, to print ``-a/--adjacent`` files (w/ some ordering)::
+
+  % lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
+  % lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
+  % lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
+  % lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+
+Simple python script with no extra dependencies.
+
 
 `[dev] Dev tools`_
 ~~~~~~~~~~~~~~~~~~

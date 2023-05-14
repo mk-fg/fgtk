@@ -200,8 +200,7 @@ def main(argv=None):
 				YD_GIT_DIFF="{py_list_fmt(git_diff_opts, 5)}"
 				YD_DELTA="{py_list_fmt(git_delta_opts, 5)}"
 
-			These should contain python lists-of-strings with
-				the command and arguments, like in defaults above.'''))
+			These should contain python lists-of-strings with the cmd/args, like in defaults above.'''))
 
 	parser.add_argument('path_a', help='Path-A to use in comparison (file or dir).')
 	parser.add_argument('path_b', nargs='?', help='Path-B to use in comparison (file or dir).')
