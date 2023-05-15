@@ -56,8 +56,9 @@ int main(int argc, char *argv[]) {
 		err_unless(XScreenSaverQueryInfo(dpy, DefaultRootWindow(dpy), ssi));
 		err_unless(DPMSGetTimeouts(dpy, &delay_standby, &delay_suspend, &delay_off));
 		err_unless(DPMSInfo(dpy, &state, &dpms_enabled));
-		if (!dpms_enabled || state == DPMSModeOff) delay_off = 0;
-		seconds = delay_off > 0 ? delay_off - ssi->idle / 1000 : 0;
+		if (!dpms_enabled) delay_off = 0;
+		if (state == DPMSModeOff || delay_off <= 0) seconds = 0;
+		else seconds = delay_off - ssi->idle / 1000;
 
 		if (mode_print) {
 			if (delay_off <= 0) printf("-\n");
@@ -71,7 +72,7 @@ int main(int argc, char *argv[]) {
 
 		if (mode_wait) {
 			if (delay_off < 60) { err = "dpms-off delay is <1min"; goto cleanup; }
-			if (seconds < 0) break;
+			if (seconds <= 0) break;
 			timeout = MIN(seconds, delay_off / 2) + 3;
 			while (timeout > 1) timeout = sleep(timeout); }
 	}
