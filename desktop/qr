@@ -24,7 +24,7 @@ usage() {
 	echo >&2
 	echo >&2 "Examples:"
 	echo >&2 "  Create QR from stdin to display: qr <somefile"
-	echo >&2 "    From raw string: qr -r a-raw-line-of-data"
+	echo >&2 "    From raw string (arg or stdin): qr -r line-of-text"
 	echo >&2 "    WiFi AP: qr -v -s myssid -p some-long-passphrase"
 	echo >&2 "  Decode QR from image to stdout: qr image.png"
 	echo >&2
@@ -44,8 +44,7 @@ while [[ -n "$1" ]]; do
 		-o|--out-file) shift; out=$1; shift ;;
 		--opts) shift; opts=$1; shift ;;
 
-		-r|--raw-line) shift; raw=$1; shift ;;
-
+		-r|--raw-text) shift; raw=$1; shift || raw=$(</dev/stdin) ;;
 		-s|--ssid) shift; wifi=t; wifi_ssid=$1; shift ;;
 		-p|--pass) shift; wifi=t; wifi_pass=$1; shift ;;
 		-i|--image) shift; image+=( "$1" ); shift ;;
