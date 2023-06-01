@@ -386,6 +386,11 @@ def meta_map_update(root, meta_map, path_res, nnn, uidgid, fix, update_list):
 LinkType = enum.IntEnum('LT', dict(sym=1, rsym=3, cp=4))
 LinkTypeSep = {LinkType.sym: '->', LinkType.rsym: '+>', LinkType.cp: '>'}
 
+def link_sym_with_uidgid(p, p_link, meta):
+	if meta: uid, gid = (st := p_link.stat()).st_uid, st.st_gid
+	p.symlink_to(p_link)
+	if meta: os.chown(p, uid, gid, follow_symlinks=False)
+
 def link_relative_path(src, dst):
 	'''Returns relative path from dst to src, including .. where necessary,
 		i.e. what os.readlink(dst) should return for this src path.'''
@@ -463,6 +468,7 @@ def link_list_hash(lines):
 def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 		uidgid, fix, meta, content_from_repo, meta_to_repo, no_content ):
 	linked_nodes, err_fail_check = set(), None
+	link_sym = lambda p, p_link: link_sym_with_uidgid(p, p_link, meta=meta)
 
 	for n, line in enumerate(lines, 1):
 		if err_fail_check is not None and nnn.errs > err_fail_check:
@@ -499,7 +505,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 			log_links.error('No link destination [ %s ]:%d: %s', node, n, dst)
 			if fix:
 				try:
-					if lt & lt.sym: dst.symlink_to(src_rsym)
+					if lt & lt.sym: link_sym(dst, src_rsym)
 					elif lt & lt.cp:
 						if dst.is_dir():
 							log_links.error( 'Cannot copy to link dst - is'
@@ -549,10 +555,7 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 			else:
 				if copy_dst_contents_to_src: link_copy(dst_res, src)
 				dst.unlink()
-				if lt & lt.sym:
-					dst.symlink_to(src_rsym)
-					uid, gid = (st := src.stat()).st_uid, st.st_gid
-					os.chown(dst, uid, gid, follow_symlinks=False)
+				if lt & lt.sym: link_sym(dst, src_rsym)
 				elif lt & lt.cp: link_copy(src, dst, meta, root)
 				log_links.info( 'Corrected: %s %s %s %s',
 					node, '<>'[content_from_repo], LinkTypeSep[lt], dst )
@@ -567,7 +570,8 @@ def link_list_enforce( root, lines, exc, diff_cmd_list, path_res, nnn,
 				log_links.error( 'Wrong symlink:%d: %s ->'
 					' [ %s -should-be-> %s ]', n, dst, dst_targets[0], src_rsym )
 				if fix:
-					dst.unlink(); dst.symlink_to(src_rsym)
+					dst.unlink()
+					link_sym(dst, src_rsym)
 					log_links.info( 'Corrected: %s -link-to-> %s%s',
 						dst, src_rsym, f' [ {src} ]' if src_rsym != src else '' )
 					uidgid_update = True
@@ -673,7 +677,7 @@ def link_copy_new(root, src, dst_list, links_hash, lt, meta, dst_home):
 			ext = base64.urlsafe_b64encode(os.urandom(3)).decode()
 			if not (tmp := dst.with_name(dst.name + f'.tmp.{ext}')).exists(): break
 		else: raise RuntimeError(f'Failed to find tmp-path for: {dst}')
-		tmp.symlink_to(link)
+		link_sym_with_uidgid(tmp, link, meta)
 		if not tmp.samefile(src):
 			tmp.unlink()
 			raise RuntimeError(f'Symlink samefile-check failed: {tmp} [ {link} ] != {src}')
