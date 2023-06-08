@@ -2,7 +2,7 @@
 
 import os, sys, stat, re, pathlib as pl, collections as cs
 
-p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=stderr, flush=True)
+p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True)
 
 
 def list_adjacent(paths, specs, files_only=False):
