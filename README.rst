@@ -1429,6 +1429,22 @@ Replacement for standard unix'ish "atd" daemon in the form of a bash script.
   Usage: ./at [ -h | -v ] when < sh_script
   With -v flag ./at mails script output if it's not empty even if exit code is zero.
 
+sleepc_
+'''''''
+.. _sleepc: sleepc
+
+Python script that works like a verbose "sleep" tool - prints countdown until
+specified time to terminal, and also parses more wide variety of relative/absolute
+timestamp formats::
+
+  % ./sleepc 3h2m
+  Parsed time-spec '3h2m' as 2023-06-11 23:10:12.459720 [in 3h 2m]
+  Countdown: 3:01:59 [in 3h 2m]
+
+Useful for running something with a known delay in interactive consoles, to
+avoid needing to calculate time offset, and be able to check back on it later.
+
+
 wgets_
 ''''''
 .. _wgets: wgets

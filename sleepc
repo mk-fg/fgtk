@@ -1,0 +1,141 @@
+#!/usr/bin/env python
+
+import os, sys, re, math, time, datetime as dt
+
+
+_td_days = dict(
+	y=365.25, yr=365.25, year=365.25,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+
+def ts_parse(ts_str, ts_now=None):
+	ts, ts_str = None, ts_str.replace('_', ' ')
+	if ts_now is None: ts_now = dt.datetime.now()
+	if not ts and ( # short time offset like "3d 5h"
+			(m := _td_re.search(ts_str)) and any(m.groups()) ):
+		delta = list()
+		for units in _td_days, _td_s:
+			val = 0
+			for k, v in units.items():
+				if not m.group(k): continue
+				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+			delta.append(val)
+		ts = ts_now + dt.timedelta(*delta)
+	if not ts and (m := re.search( # common BE format
+			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )):
+		tpl = 'y' if not m.group('Y') else 'Y'
+		tpl, tss = f'%{tpl}-%m-%d', m.group('date')
+		if m.group('time'):
+			tpl_time = ['%H', '%M', '%S']
+			tss += ' ' + ':'.join(tss_time := m.group('time').split(':'))
+			tpl += ' ' + ':'.join(tpl_time[:len(tss_time)])
+		try: ts = dt.datetime.strptime(tss, tpl)
+		except ValueError: pass
+	if not ts and (m := re.search( # just time without AM/PM - treat as 24h format
+			r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', ts_str )):
+		us, tpl = 0, ':'.join(['%H', '%M', '%S'][:len(ts_str.split(':'))])
+		if m.group('us'):
+			ts_str, us = ts_str.rsplit('.', 1)
+			us = us[:6] + '0'*max(0, 6 - len(us))
+		try: ts = dt.datetime.strptime(ts_str, tpl)
+		except ValueError: pass
+		else:
+			ts = ts_now.replace( hour=ts.hour,
+				minute=ts.minute, second=ts.second, microsecond=int(us) )
+			if ts < ts_now: ts += dt.timedelta(1)
+	if not ts: # coreutils' "date" parses everything, but is more expensive to use
+		import subprocess as sp
+		while True:
+			res = sp.run( ['date', '+%s', '-d', ts_str],
+				stdout=sp.PIPE, stderr=sp.DEVNULL )
+			if res.returncode:
+				if ',' in ts_str: ts_str = ts_str.replace(',', ' '); continue
+			else:
+				ts = dt.datetime.fromtimestamp(int(res.stdout.strip()))
+				if 0 < (ts_now - ts).total_seconds() <= 24*3600 and re.search(
+						r'(?i)^[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?$', ts_str.strip() ):
+					ts += dt.timedelta(1)
+			break
+	if ts: return ts
+	raise ValueError(f'Failed to parse date/time string: {ts_str}')
+
+def ts_repr( ts, ts0=None, units_max=2, units_res=None, printf=None,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	if ts0 is None and isinstance(ts, dt.datetime): ts0 = dt.datetime.now()
+	delta = ts if ts0 is None else (ts - ts0)
+	if isinstance(delta, dt.timedelta): delta = delta.total_seconds()
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	if not res: return 'now'
+	res = ' '.join(res)
+	if printf: res = printf % res
+	return res
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] time-spec',
+		description=dd('''
+			Verbose "sleep" tool. Waits for/until time-spec, printing countdown to stdout.
+			Exits with code 0 upon reaching the time, non-0 if interrupted.
+			Intended for running something with known delay in interactive consoles,
+				to avoid needing to calculate time offset, and be able to check back on it later.'''))
+	parser.add_argument('time_spec', nargs='+', help=dd('''
+		Absolute or relative time until exiting.
+		Parses timestamps as relative short times (e.g. "30s", "10min", "1h 20m", etc),
+			iso8601-ish times/dates or falls back to just using "date" binary,
+			which parses a lot of different other absolute/relative formats.'''))
+	parser.add_argument('-q', '--quiet', action='store_true',
+		help='Print parsed time, but suppress countdown, acting more like "sleep" binary.')
+	parser.add_argument('-i', '--update-interval', type=float, metavar='sec', default=3,
+		help='Countdown timer update interval, in seconds. Default: %(default)ss')
+	opts = parser.parse_args()
+
+	ts_str = ' '.join(opts.time_spec)
+	ts = ts_parse(ts_str, ts_now := dt.datetime.now())
+	if ts < ts_now:
+		parser.error(
+			'Specified time-spec argument(s) cannot be in the past:\n'
+			f'  {ts_str!r} - parsed as {ts} [{ts_repr(ts, printf="%s ago")}]' )
+
+	p = lambda s: print(s, flush=True)
+	p(f'Parsed time-spec {ts_str!r} as {ts} [{ts_repr(ts, printf="in %s")}]')
+
+	tsx, tdx_str, esc = ts.timestamp(), '', chr(27)
+	while (tsx_now := time.time()) < tsx:
+		if opts.quiet: time.sleep(max(tdx - 1, 0.1)); continue
+		tdx, tdx_str_pad = tsx - tsx_now, len(tdx_str)
+		tdx_str = f'{dt.timedelta(seconds=int(tdx))} [{ts_repr(tdx, printf="in %s")}]'
+		sys.stdout.write(f'{esc}[2K{esc}[\rbCountdown: {tdx_str}')
+		if (tdx_str_len := len(tdx_str)) < tdx_str_pad:
+			sys.stdout.write(' '*(tdx_str_pad - tdx_str_len))
+		sys.stdout.flush()
+		time.sleep(min(tdx, opts.update_interval))
+
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except KeyboardInterrupt: sys.exit(1)
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
