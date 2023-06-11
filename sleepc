@@ -74,15 +74,15 @@ def ts_repr( ts, ts0=None, units_max=2, units_res=None, printf=None,
 	res, s, n_last = list(), abs(delta), units_max - 1
 	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
 	for unit, unit_s in units:
-		val = math.floor(s / unit_s)
-		if not val:
+		if not (val := math.floor(val_raw := s / unit_s)):
 			if units_res == unit: break
 			continue
+		elif val_raw - val > 0.98: val += 1
 		if len(res) == n_last or units_res == unit:
 			val, n_last = round(s / unit_s), True
 		res.append(f'{val:.0f}{unit}')
 		if n_last is True: break
-		s -= val * unit_s
+		if (s := s - val * unit_s) < 1: break
 	if not res: return 'now'
 	res = ' '.join(res)
 	if printf: res = printf % res
@@ -118,9 +118,7 @@ def main(argv=None):
 		parser.error(
 			'Specified time-spec argument(s) cannot be in the past:\n'
 			f'  {ts_str!r} - parsed as {ts} [{ts_repr(ts, printf="%s ago")}]' )
-
-	p = lambda s: print(s, flush=True)
-	p(f'Parsed time-spec {ts_str!r} as {ts} [{ts_repr(ts, printf="in %s")}]')
+	print(f'Parsed time-spec {ts_str!r} as {ts} [{ts_repr(ts, printf="in %s")}]', flush=True)
 
 	tsx, tdx_str, esc = ts.timestamp(), '', chr(27)
 	while (tsx_now := time.time()) < tsx:

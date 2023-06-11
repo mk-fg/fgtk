@@ -1441,8 +1441,8 @@ timestamp formats::
   Parsed time-spec '3h2m' as 2023-06-11 23:10:12.459720 [in 3h 2m]
   Countdown: 3:01:59 [in 3h 2m]
 
-Useful for running something with a known delay in interactive consoles, to
-avoid needing to calculate time offset, and be able to check back on it later.
+Useful for waiting with a known time or delay in interactive consoles, to avoid
+needing to calculate offset for "sleep", and be able to check back on it later.
 
 
 wgets_
