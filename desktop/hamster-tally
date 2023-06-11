@@ -68,7 +68,7 @@ def td_repr( ts, ts0=None, units_max=2, units_res=None,
 		_units=dict( h=3600, m=60, s=1,
 			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	delta = ts if ts0 is None else (ts - ts0)
-	if isinstance(delta, dt.timedelta): delta = ts.total_seconds()
+	if isinstance(delta, dt.timedelta): delta = delta.total_seconds()
 	res, s, n_last = list(), abs(delta), units_max - 1
 	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
 	for unit, unit_s in units:

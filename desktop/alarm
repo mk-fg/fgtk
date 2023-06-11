@@ -113,9 +113,8 @@ def naturaltime_diff( ts, ts0=None, ext=None,
 		s -= val * unit_s
 
 	if not res: return 'now'
-	else:
-		if ext: res.append(ext)
-		return ' '.join(res)
+	if ext: res.append(ext)
+	return ' '.join(res)
 
 
 @contextlib.contextmanager
@@ -222,11 +221,6 @@ def main(args=None):
 			' (making sure it is the right pid) or all of the ones that would be printed by --list,'
 			' (i.e. for which --pid-file option was specified), and exit.'
 			' Can be used multiple times. All other options except --list are ignored with this one.')
-
-	# parser.add_argument('-?', '--lock', nargs='?', const=True, metavar='name_or_path',
-	# 	help='Create temporary file on tmpfs upon notification and do not act if it exists already.'
-	# 		' File is not removed, but will probably be cleaned-up eventually'
-	# 			' by systemd-tmpfiles or reboot, unless some persistent path is specified.')
 
 	parser.add_argument('-x', '--notification-non-critical', action='store_true',
 		help='Default is to issue notifications with'

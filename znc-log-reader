@@ -57,7 +57,6 @@ def parse_timestamp(ts_str):
 			ts = dt.datetime.now().replace( hour=ts.hour,
 				minute=ts.minute, second=ts.second, microsecond=int(us) )
 	if not ts: # coreutils' "date" parses everything, but is more expensive to use
-		ts_now, ts_now_date = time.time(), dt.date.today()
 		while True:
 			res = sp.run( ['date', '+%s', '-d', ts_str],
 				stdout=sp.PIPE, stderr=sp.DEVNULL )
