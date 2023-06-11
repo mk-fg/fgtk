@@ -123,17 +123,21 @@ def main(argv=None):
 	tsx, tdx_str, esc = ts.timestamp(), '', chr(27)
 	while (tsx_now := time.time()) < tsx:
 		if opts.quiet: time.sleep(max(tdx - 1, 0.1)); continue
-		tdx, tdx_str_pad = tsx - tsx_now, len(tdx_str)
+		tdx, tdx_pad = tsx - tsx_now, len(tdx_str)
 		tdx_str = f'{dt.timedelta(seconds=int(tdx))} [{ts_repr(tdx, printf="in %s")}]'
 		sys.stdout.write(f'{esc}[2K{esc}[\rbCountdown: {tdx_str}')
-		if (tdx_str_len := len(tdx_str)) < tdx_str_pad:
-			sys.stdout.write(' '*(tdx_str_pad - tdx_str_len))
+		if (tdx_pad := tdx_pad - len(tdx_str)) > 0: sys.stdout.write(' '*tdx_pad)
 		sys.stdout.flush()
 		time.sleep(min(tdx, opts.update_interval))
 
+	if not opts.quiet:
+		done_str = 'finished.'
+		if (tdx_pad := len(tdx_str) - len(done_str) + 1) > 0: done_str += ' '*tdx_pad
+		sys.stdout.write(f'{esc}[2K{esc}[\rbCountdown {done_str}\n')
+
 if __name__ == '__main__':
 	try: sys.exit(main())
-	except KeyboardInterrupt: sys.exit(1)
+	except KeyboardInterrupt: print()
 	except BrokenPipeError: # stdout pipe closed
 		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-		sys.exit(1)
+	sys.exit(1)
