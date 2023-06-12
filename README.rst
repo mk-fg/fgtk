@@ -2991,19 +2991,25 @@ streamdump_
 .. _streamdump: desktop/media/streamdump
 
 Bash wrapper for streamlink_ to make dumping stream to a file more reliable,
-auto-restarting the process with new filename after any "stream ended" events
-or streamlink app exits.
+auto-restarting the process with new filename on any "stream ended" events
+or network/streamlink fails, as these seem to often be bogus.
 
-Example use::
+Example uses::
 
-  % streamdump --retry-streams 60 --retry-open 99999 \
-    --twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns \
-    twitch.tv/user 720p -fo dump
+  % streamdump twitch.tv/user dump
+  % streamdump --hls-live-edge=8 -- 720p,best youtube.com/... dump
 
 Will create "dump.000.mp4", "dump.001.mp4" and so on for each stream restart.
 
+Automatically waits for streams and uses a bunch of other options that are
+generally good defaults, printed in -h/--help output.
+Detects (via youtube-dl, and exits on) "stream ended" live_status values
+for YouTube streams to avoid dumping whole stream from the beginning
+(e.g. on retries), as streamlink seem to do in these cases.
+
 Intended use is for unreliable streams which go down and back up again in a
-minute or few, or working around streamlink quirks and fatal errors.
+minute or few, or working around whatever streamlink quirks and fatal errors.
+Should never stop trying on its own, unless failing to start immediately.
 
 .. _streamlink: https://github.com/streamlink/streamlink
 

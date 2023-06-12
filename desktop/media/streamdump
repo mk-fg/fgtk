@@ -1,28 +1,45 @@
 #!/bin/bash
 
+slink_opts=(
+	--retry-streams 120 --retry-open 99999
+	--twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns )
+slink_fmt=720p,720p60,480p,best
+yt_check_interval=3m
+
 bin=$(basename $0)
 usage() {
-	echo >&2 "Usage: $bin <streamlink-opts> dump.mp4"
-	echo >&2 "Example:"
-	echo >&2 "  $bin --retry-streams 60 --retry-open 99999 \\"
-	echo >&2 "    --twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns \\"
-	echo >&2 "    twitch.tv/user 720p -fo dump"
+	echo >&2 "Usage: $bin [-x|--dry-run] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
 	echo >&2
-	echo >&2 "Wrapper for 'streamlink ... -fo dump.mp4' to restart it endlessly"
-	echo >&2 "  with new (indexed) filename when it quits for whatever reason."
+	echo >&2 "Examples:"
+	echo >&2 "  $bin twitch.tv/userX userX-stream1"
+	echo >&2 "  $bin --hls-live-edge=8 -- 720p,720p60,480p,best youtube.com/... vid.mp4"
+	echo >&2 "  $bin -x youtube.com/... somevideo"
+	echo >&2
+	echo >&2 "Wrapper for 'streamlink ... url fmt -fo dump.mp4' to retry it endlessly"
+	echo >&2 "  with new (indexed) filename when/if it quits for whatever reason."
+	echo >&2 "Creates sequential filenames like: dump.000.mp4 dump.001.mp4 dump.002.mp4 ..."
+	echo >&2 "Detects YT links and runs youtube-dl to check/abort on post_live/was_live status."
 	echo >&2 "Example use-case: stream that ends 'cleanly' due to tech issues and restarts in 1min."
+	echo >&2
+	echo >&2 "Default formats (overidden via cli): $slink_fmt"
+	echo >&2 -e "Default streamlink options (always added to ones on cli):\n  ${slink_opts[@]}"
+	echo >&2
 	exit ${1:-0}
 }
 [[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
+grep -Pq '(^| -)(h|-help)( |$)' <<< "$*" && usage
+set -eo pipefail
 
-arg= arg_next= args=( streamlink )
-for arg_next in "$@"; do
-	[[ -z "$arg" ]] || args+=( "$arg" )
-	arg=$arg_next
+[[ "$1" != -x && "$1" != --dry-run ]] && dry_run= || { dry_run=t; shift; }
+
+fmt=$slink_fmt cmd=( streamlink "${slink_opts[@]}" )
+while [[ "$#" -gt 2 ]]; do
+	arg=$1; shift
+	[[ "$arg" != -- ]] && cmd+=( "$arg" ) || { fmt=$1; shift ||:; break; }
 done
-[[ -n "$arg_next" ]] || usage
+[[ "$#" -eq 2 ]] || usage
+url=$1 fn=$2
 
-fn=$arg_next
 [[ "$fn" =~ ^(.*)\.([^.]+)$ ]] \
 	&& { fn_base=${BASH_REMATCH[1]}; fn_ext=${BASH_REMATCH[2]}; } \
 	|| { fn_base=$fn; fn_ext=mp4; }
@@ -30,8 +47,29 @@ fn=$arg_next
 n=0
 while :; do
 	fn="$fn_base.$(printf %03d $n).$fn_ext"
-	echo "[$bin] using dump name: $fn"
-	eval -- "${args[@]}" "$fn"
+	fn_cmd=( "${cmd[@]}" "$url" "$fmt" -fo "$fn" )
+	[[ -z "$dry_run" ]] || { echo "${fn_cmd[@]}"; exit; }
+	echo "[$bin] --- dump [$n]: $url -> $fn $fmt"
+
+	[[ ! "${url,,}" =~ ^(https?://)?((www\.|m\.)?youtube\.com|youtu\.be)/ ]] || {
+		echo "[$bin] Detecting/waiting-for youtube stream-live status ($yt_check_interval checks)..."
+		while :; do
+			{ out= out_err= err=
+					IFS=$'\n' read -r -d '' out_err; IFS=$'\n' read -r -d '' out
+					IFS=$'\n' read -r -d '' err; } < <(( printf '\0%s\0%d\0' \
+				"$(youtube-dl -O live_status "$url")" "$?" 1>&2 ) 2>&1)
+			[[ "$err" -eq 0 ]] || {
+				[[ ! "$out_err" =~ 'This live event will begin in' ]] || {
+					echo "[$bin] Running streamlink to wait for stream: $out_err"; break; }
+				echo "[$bin] Failed to get live-status, will retry in $yt_check_interval: $out_err"
+				sleep "$yt_check_interval"; continue; }
+			[[ "$out" != post_live && "$out" != was_live ]] || {
+				# YT streams with this status get re-downloaded from the start - must be skipped
+				sleep "$yt_check_interval"; continue; }
+			break # not an ended stream - all-good to dump
+		done; }
+
+	eval -- "${fn_cmd[@]}" ||:
 	n=$(( $n + 1 ))
 	sleep 1
 done
