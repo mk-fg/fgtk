@@ -120,20 +120,23 @@ def main(argv=None):
 			f'  {ts_str!r} - parsed as {ts} [{ts_repr(ts, printf="%s ago")}]' )
 	print(f'Parsed time-spec {ts_str!r} as {ts} [{ts_repr(ts, printf="in %s")}]', flush=True)
 
-	tsx, tdx_str, esc = ts.timestamp(), '', chr(27)
+	delay_min, line_wipe = 0.1, '\x1b[2K\x1b[\rb'
+	tsx, tdx_str = ts.timestamp(), ''
+
 	while (tsx_now := time.time()) < tsx:
-		if opts.quiet: time.sleep(max(tdx - 1, 0.1)); continue
 		tdx, tdx_pad = tsx - tsx_now, len(tdx_str)
-		tdx_str = f'{dt.timedelta(seconds=int(tdx))} [{ts_repr(tdx, printf="in %s")}]'
-		sys.stdout.write(f'{esc}[2K{esc}[\rbCountdown: {tdx_str}')
+		delay = max(tdx, delay_min)
+		if opts.quiet: time.sleep(delay); continue
+		tdx_str = f'{dt.timedelta(seconds=int(tdx))} [{ts_repr(tdx, printf="%s left")}]'
+		sys.stdout.write(f'{line_wipe}Countdown: {tdx_str}')
 		if (tdx_pad := tdx_pad - len(tdx_str)) > 0: sys.stdout.write(' '*tdx_pad)
 		sys.stdout.flush()
-		time.sleep(min(tdx, opts.update_interval))
+		time.sleep(min(delay, opts.update_interval))
 
 	if not opts.quiet:
-		done_str = 'finished.'
-		if (tdx_pad := len(tdx_str) - len(done_str) + 1) > 0: done_str += ' '*tdx_pad
-		sys.stdout.write(f'{esc}[2K{esc}[\rbCountdown {done_str}\n')
+		done_str = 'finished'
+		if (tdx_pad := len(tdx_str) - len(done_str)) > 0: done_str += ' '*tdx_pad
+		sys.stdout.write(f'{line_wipe}Countdown: {done_str}\n')
 
 if __name__ == '__main__':
 	try: sys.exit(main())
