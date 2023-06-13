@@ -11,8 +11,7 @@ usage() {
 	echo "  for rectangle with max width/height. Scaling is always proportional."
 	exit ${1:-1}; }
 [[ "$1" = -h || "$1" = --help ]] && usage 0
-
-[[ -n "$1" && "$#" -le 2 ]] || usage 1
+[[ "$#" -ge 1 ]] || usage 1
 set -eo pipefail
 
 du_hs() {
