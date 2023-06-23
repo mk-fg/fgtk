@@ -3952,7 +3952,8 @@ outputs or data array with axii, grid, mouseover datapoint tooltips and such.
 
 Useful when for a quick chart to figure out some data or function output,
 or make it into a useful non-static link to someone,
-and don't want to deal with d3-v3/coding-style/JS diffs from bl.ocks.org.
+and don't want to deal with d3-version/coding-style/JS diffs of bl.ocks.org
+or observablehq.com snippets.
 
 Direct gh-pages link: `d3-line-chart-boilerplate.html`_
 

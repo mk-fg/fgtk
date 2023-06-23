@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<meta charset='utf-8'>
+<meta charset=utf-8>
 <style>
 
 body {
@@ -22,37 +22,29 @@ svg text { font: 15px 'Liberation Sans', 'Luxi Sans', sans-serif; }
 </style>
 <body>
 
-<!-- Always use local d3 copy -->
-<!-- <script src='https://d3js.org/d3.v5.min.js'></script> -->
-<script src='d3.v5.min.js'></script>
 <script>
-
-let d3js_url = 'https://d3js.org/d3.v5.min.js',
-	d3js_loaded = new Promise((resolve, reject) => {
-		if (window.d3) return resolve(window.d3)
-		let include = (url) => {
-			let req = new XMLHttpRequest()
-			req.open('GET', url)
-			req.onreadystatechange = d => {
-				if (req.readyState != 4) return
-				if (req.status == 200) {
-					eval(req.responseText)
-					resolve(window.d3) }
-				else reject(`${req.status} - ${req.statusText}`) }
-			req.send() }
-		console.log(`WARNING: loading d3 from ${d3js_url}`)
-		include(d3js_url) })
-
-window.onload = () => d3js_loaded.catch(err => null).then((d3) => {
 'use strict'
 
-if (!d3) {
-	document.body.innerHTML = `
-		<h2>ERROR: failed to load d3.js library</h2>
-		<p>Check uMatrix/NoScript/adblocker setttings or download
-			<a href='${d3js_url}'>d3.v4.min.js</a> into same dir as this html.</p>`
-	return
-}
+let d3js_ver = 7,
+	d3js_local_url = `d3.v${d3js_ver}.min.js`,
+	d3js_remote_load = true, // false = always use local copy
+	d3js_remote_url = `https://d3js.org/d3.v${d3js_ver}.min.js`,
+	d3js_remote_import = `https://cdn.jsdelivr.net/npm/d3@${d3js_ver}/+esm`,
+	d3js_loader = async () => {
+		if (window.d3) return window.d3
+		let res = await fetch(d3js_local_url).catch(res => res)
+		if (res.ok) { eval(await res.text()); return window.d3 }
+		if (!d3js_remote_load) return console.log(
+			`WARNING: Failed to load local d3.js`
+			+ ` [ ${d3js_local_url} ]: ${res.status} - ${res.statusText}` )
+		console.log(`WARNING: importing d3 from ${d3js_remote_import}`)
+		return await import(d3js_remote_import) }
+
+window.onload = () => d3js_loader().then(d3 => {
+if (!d3) return document.body.innerHTML = `
+	<h2>ERROR: failed to load d3.js library</h2>
+	<p>Check uMatrix/NoScript/adblocker setttings or download
+		<a href='${d3js_remote_url}'>${d3js_local_url}</a> into same dir as this html.</p>`
 
 
 // Data
@@ -88,11 +80,11 @@ let vis = d3.select('body')
 
 let kx = 'offset', ky = 'state',
 	line = d3.line().x(d => x(d[kx])).y(d => y(d[ky]))
-let attrs = (vals) => (s) => { // set bunch of attributes from dict
+let attrs = vals => s => { // set bunch of attributes from dict
 	Object.entries(vals).forEach(([k,v]) => s.attr(k, v)) }
 
 x.domain(d3.extent(data, d => d[kx]))
-y.domain([0, 1])
+y.domain(d3.extent(data, d => d[ky]))
 
 vis
 	.call(s => {
@@ -138,10 +130,10 @@ let format_n = d3.format(',.3f'),
 
 vis.append('rect')
 	.attr('class', 'overlay').attr('width', width).attr('height', height)
-	.on('mouseover', (d, n, ns) => focus.style('display', null))
-	.on('mouseout', (d, n, ns) => focus.style('display', 'none'))
-	.on('mousemove', (d, n, ns) => {
-		let x0 = x.invert(d3.mouse(ns[n])[0]),
+	.on('mouseover', (ev, d) => focus.style('display', null))
+	.on('mouseout', (ev, d) => focus.style('display', 'none'))
+	.on('mousemove', (ev, d) => {
+		let x0 = x.invert(d3.pointer(ev)[0]),
 			i = x_bisect(data, x0, 1), d0 = data[i-1], d1 = data[i]
 		d = x0 - d0[kx] > d1[kx] - x0 ? d1 : d0
 		focus.attr('transform', `translate(${x(d[kx])},${y(d[ky])})`)
