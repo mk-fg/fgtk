@@ -139,8 +139,9 @@ vis.append('rect')
 		focus.attr('transform', `translate(${x(d[kx])},${y(d[ky])})`)
 		focus_label.selectAll('tspan').call( s => s
 			.data(Object.entries(d).map(([k, v]) => `${k}: ${format(k, v)}`).sort())
-			.call(s => s.exit().remove())
-			.enter().append('tspan').attr('dy', '1.5em').attr('x', `${side}em`).merge(s).text(d => d) ) })
+			.join(
+				en => en.append('tspan').attr('dy', '1.5em').attr('x', `${side}em`),
+				upd => upd.text(d => d), ex => ex.remove() ) ) })
 
 
 })

@@ -113,7 +113,8 @@ def main(argv=None):
 	opts = parser.parse_args()
 
 	ts_str = ' '.join(opts.time_spec)
-	ts = ts_parse(ts_str, ts_now := dt.datetime.now())
+	ts_now = dt.datetime.now().replace(microsecond=0)
+	ts = ts_parse(ts_str, ts_now)
 	if ts < ts_now:
 		parser.error(
 			'Specified time-spec argument(s) cannot be in the past:\n'
