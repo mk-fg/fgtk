@@ -3135,8 +3135,10 @@ might also support realtime notifications like these via IDLE and NOTIFY IMAP
 protocol commands, but `claws-mail doesn't seem to support those yet`_,
 and that's the one I have here.
 
-.. _as implemented in notification-thing daemon: https://github.com/mk-fg/notification-thing/#network-broadcasting
-.. _claws-mail doesn't seem to support those yet: https://www.thewildbeast.co.uk/claws-mail/bugzilla/show_bug.cgi?id=1408
+.. _as implemented in notification-thing daemon:
+  https://github.com/mk-fg/notification-thing/#network-broadcasting
+.. _claws-mail doesn't seem to support those yet:
+  https://www.thewildbeast.co.uk/claws-mail/bugzilla/show_bug.cgi?id=1408
 
 icon_
 '''''
@@ -3160,6 +3162,24 @@ If file/icon cannot be found, ``Error: {icon-name}`` replacement text
 will be displayed in a semi-transparent box instead.
 
 Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
+
+aqm-alert_
+''''''''''
+.. _aqm-alert: desktop/notifications/aqm-alert
+
+Receiver for UDP alert packets from `RP2040 SEN5x Air Quality Monitor`_ device,
+to format and dispatch those as desktop notifications via zeromq pub/sub sockets
+used in `notification-thing daemon`_.
+
+Uses fancy pango formatting, allows to pass various display hints,
+sends UDP replies to suppress alerts from being sent as necessary.
+
+Only useful for that AQM tool and its ``[alerts]`` configuration.
+
+.. _RP2040 SEN5x Air Quality Monitor:
+  https://github.com/mk-fg/rp2040-sen5x-air-quality-webui-monitor
+.. _notification-thing daemon:
+  https://github.com/mk-fg/notification-thing/#network-broadcasting
 
 
 `[desktop] others`_

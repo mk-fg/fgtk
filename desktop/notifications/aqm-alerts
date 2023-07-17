@@ -1,0 +1,216 @@
+#!/usr/bin/env python
+
+import datetime as dt, contextlib as cl, collections as cs
+import os, sys, re, time, socket, struct, logging, json
+
+import zmq # pyzmq
+
+
+_td_days = dict(
+	y=365.25, yr=365.25, year=365.25,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+
+def td_parse_sec(td_str):
+	if not ((m := _td_re.search(td_str)) and any(m.groups())):
+		h, m, s = (v.strip(': ') for v in ('::' + td_str).rsplit(':', 2))
+		return float(s or 0) + float(m or 0) * 60 + float(h or 0) * 3600
+	delta = list()
+	for units in _td_days, _td_s:
+		val = 0
+		for k, v in units.items():
+			if not m.group(k): continue
+			val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+		delta.append(val)
+	return dt.timedelta(*delta).total_seconds()
+
+
+def pkt_crc16(s, crc=0):
+	# CRC-16F/5 CRC-16-OpenSafety-A {241,241,241,35,10,8,3}
+	# See https://users.ece.cmu.edu/~koopman/crc/crc16.html
+	for c in s:
+		m = 0x100
+		while m := m >> 1:
+			bit = bool(crc & 0x8000) ^ bool(c & m)
+			crc <<= 1
+			if bit: crc ^= 0x5935
+		crc &= 0xffff
+	return crc & 0xffff
+
+# pm10, pm25, pm40, pm100, rh, t, voc, nox = data
+pkt_sample = ( lambda rx,
+		_ks=(10, 10, 10, 10, 100, 200, 10, 10),
+		_nx=(0xffff, 0xffff, 0xffff, 0xffff, 0x7fff, 0x7fff, 0x7fff, 0x7fff):
+	tuple( (v / k if v != nx else None) for v, k, nx in
+		zip(struct.unpack('>HHHHhhhh', rx), _ks, _nx) ) )
+
+pkt_fake_src = '[src-ip-addr]'
+
+
+def run_proxy_loop(sock, zmq_send, td_snooze, pkt_queue=None):
+	log = logging.getLogger('net')
+
+	sample_keys = 'PM1 PM2.5 PM4 PM10 RH% T°C VOC NOx'.split()
+	sample_keys_alert = ['pm']*4 + 'rh t voc nox'.split()
+	sample_keys_fmt = ['{:.1f}']*4 + ['{:.0f}', '{:.1f}', '{:.0f}', '{:.0f}']
+
+	while True:
+		if pkt_queue: pkt, addr = pkt_queue.pop()
+		else: pkt, addr = sock.recvfrom(2048)
+
+		log.debug(f'Packet from {addr} [ {len(pkt):,d} B]')
+		try:
+			if pkt_crc16(s := pkt[:-2]) != int.from_bytes(pkt[-2:], 'big'):
+				log.debug(' - dropped: crc mismatch')
+				continue
+			sample, errs = pkt_sample(s[:16]), s[16:].decode()
+		except:
+			raise
+			log.debug(' - dropped: length/format mismatch')
+			continue
+		log.debug(' - parsed [ %s ]: %s', errs, sample)
+
+		summary = f'AQM Threshold Alert [ <b>{errs.upper()}</b> ]'
+		errs_set, vals, body = errs.split(), cs.defaultdict(list), [
+			f'Over-threshold parameter(s): <b>{errs.upper()}</b>',
+			f'Date/time [local]: <tt>{dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</tt>',
+			f'Device address: {addr[0]}:{addr[1]}', 'Last sample:' ]
+		for k, k_err, fmt, v in zip(sample_keys, sample_keys_alert, sample_keys_fmt, sample):
+			if v is None: continue
+			v = f'{k}=[ {fmt.format(v)} ]'
+			if k_err == 'pm': vals[k_err].append(v)
+			else:
+				if k_err in errs_set: v = f'<b>{v}</b>'
+				vals['other'].append(v)
+		if v := ', '.join(vals['pm']):
+			if 'pm' in errs_set: v = f'<b>{v}</b>'
+			body.append(f'  {v}')
+		if v := vals['other']: body.append('  ' + ', '.join(v))
+		body = '\n'.join(body)
+
+		log.debug('Dispatching notification')
+		zmq_send(summary, body)
+
+		pkt = struct.pack('>d', td_snooze) + errs.encode()
+		pkt += pkt_crc16(pkt).to_bytes(2, 'big')
+		log.debug( 'Sending snooze-packet backto %s:%s'
+			f' [for {td_snooze:,.0f}s, {len(pkt):,d} B]', addr[0], addr[1] )
+		if addr[0] != pkt_fake_src: sock.sendto(pkt, addr)
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s -u/--udp [listen-ip:]port -z/--zmq-sock dst-ip:port [opts]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Receiver for UDP notifications from AQM device
+				to send those to some notification-thing daemon over zmq pub/sub sockets.
+			AQM project: https://github.com/mk-fg/rp2040-sen5x-air-quality-webui-monitor
+			notification-thing daemon: https://github.com/mk-fg/notification-thing'''))
+
+	parser.add_argument('-u', '--udp',
+		required=True, metavar='[ip:]port', help=dd('''
+			UDP socket to bind/listen on for incoming notifications. Required.'''))
+	parser.add_argument('-s', '--udp-snooze',
+		metavar='duration', default='1h', help=dd('''
+			Snooze-interval to send in response to alerts,
+				suppressing repeated ones with same thresholds for that duration.
+			Can be a human duration spec like "30s", "10min", "1h 20m", or [[HH:]MM:]SS.
+			Use 0 value to disable this. Default: %(default)s'''))
+
+	parser.add_argument('-z', '--zmq-sock',
+		required=True, action='append', metavar='ip:port', help=dd('''
+			Notification-thing (desktop notification daemon) zmq sub socket address -
+				can be either ip:port (assumed to be tcp socket, e.g. 1.2.3.4:5678),
+				or a full zmq url (e.g. tcp://1.2.3.4:5678).
+			Can be specified multiple times to deliver message to more than one peer.
+			Must be specified at least once.'''))
+
+	parser.add_argument('-n', '--hostname',
+		metavar='name', default=os.uname()[1],
+		help='Source name to use for dispatched message. Default: local hostname [%(default)s]')
+	parser.add_argument('-w', '--wait-connect',
+		type=float, metavar='seconds', default=0.5, help=dd('''
+			Timeout to wait for peer connections to establish
+				and unsent messages to linger. Default: %(default)ss'''))
+
+	parser.add_argument('-U', '--urgency', metavar='low/normal/critical', help=dd('''
+		Urgency hint to use for the message - can be either integer
+			in 0-2 range (level id) or symbolic level name - low/normal/critical.'''))
+	parser.add_argument('-t', '--expire-time', type=float, metavar='seconds',
+		help='Timeout (in seconds) at which to expire the notification.')
+	parser.add_argument('-a', '--app-name', metavar='name', default='notify-net',
+		help='App name for the icon. Default: %(default)s')
+	parser.add_argument('-i', '--icon', action='append', metavar='icon', default=list(),
+		help='Icon name, path or alias. Can be specified multiple times (for fallback icon names).')
+
+	parser.add_argument('-T', '--test',
+		action='store_true', help='Dispatch fake test-alert notification on startup.')
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = logging.getLogger('main')
+
+	note_opts = dict()
+	if opts.urgency:
+		try: urgency = int(opts.urgency)
+		except ValueError:
+			try: urgency = ['low', 'normal', 'critical'].index(opts.urgency.lower())
+			except IndexError:
+				parser.error(f'Unrecognized urgency level name: {opts.urgency}')
+		else:
+			if not 0 <= urgency <= 2:
+				parser.error(f'Urgency level id must be in 0-2 range: {opts.urgency}')
+		note_opts['urgency'] = urgency
+	note_opts = dict( hints=note_opts,
+		app_name=opts.app_name, icon=','.join(opts.icon or list()),
+		timeout=opts.expire_time and int(opts.expire_time * 1000) )
+
+	td_snooze = td_parse_sec(opts.udp_snooze)
+
+	pkt_test = list()
+	if opts.test: # generate test-packet
+		pkt = struct.pack( '>HHHHhhhh',
+			*map(int, '23 28 31 32 3604 4643 2500 32767'.split()) )
+		pkt += b'pm voc'
+		pkt += pkt_crc16(pkt).to_bytes(2, 'big')
+		pkt_test.append((pkt, (pkt_fake_src, 1234)))
+
+	zmq_ctx, zmq_addr = zmq.Context(), lambda addr: (
+		f'tcp://{addr}' if not re.search(r'^\w+://', addr) else addr )
+	with cl.closing(zmq_ctx.socket(zmq.PUB)) as pub, \
+			socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+
+		if hasattr(zmq, 'IPV4ONLY'): pub.setsockopt(zmq.IPV4ONLY, False)
+		pub.setsockopt(zmq.RECONNECT_IVL_MAX, int(300 * 1000))
+		pub.setsockopt(zmq.LINGER, int(opts.wait_connect * 1000))
+		pub.setsockopt(zmq.SNDHWM, 50)
+
+		def zmq_send(summary, body):
+			msg = dict(note_opts, summary=summary, body=body)
+			msg = '\1' + json.dumps([opts.hostname, time.time(), msg])
+			try: pub.send_string(msg, zmq.DONTWAIT)
+			except zmq.ZMQError as err:
+				if err.errno != zmq.EAGAIN: raise
+
+		host, _, port = opts.udp.rpartition(':')
+		addr = socket.getaddrinfo( host or '0.0.0.0', int(port),
+			proto=socket.IPPROTO_UDP, type=socket.SOCK_DGRAM )[0][-1]
+		log.debug('Binding listening UDP socket to %s:%s', *addr[:2])
+		sock.bind(addr)
+
+		log.debug('Connecting to %s peer(s)', len(opts.zmq_sock))
+		for addr in opts.zmq_sock: pub.connect(zmq_addr(addr))
+		time.sleep(opts.wait_connect)
+
+		run_proxy_loop(sock, zmq_send, td_snooze, pkt_test)
+
+if __name__ == '__main__': sys.exit(main())
