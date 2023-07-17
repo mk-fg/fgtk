@@ -83,7 +83,7 @@ run() {
 	[[ -n "$ip_base" ]] || ip_base=10.67.35
 
 	[[ -n "$ap_band" ]] || ap_band=g
-	[[ -n "$ap_chan" ]] || ap_chan=2
+	[[ -n "$ap_chan" ]] || ap_chan=11
 	[[ -z "$ap_ht" ]] || ap_ht="ieee80211n=1"
 	[[ -z "$ap_vht" ]] || ap_vht=$'ieee80211ac=1\nvht_oper_centr_freq_seg0_idx='"$ap_vht"
 	[[ -n "$ap_mtu" ]] || ap_mtu=1400
