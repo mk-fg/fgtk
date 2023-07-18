@@ -3163,9 +3163,9 @@ will be displayed in a semi-transparent box instead.
 
 Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 
-aqm-alert_
-''''''''''
-.. _aqm-alert: desktop/notifications/aqm-alert
+aqm-alerts_
+'''''''''''
+.. _aqm-alerts: desktop/notifications/aqm-alerts
 
 Receiver for UDP alert packets from `RP2040 SEN5x Air Quality Monitor`_ device,
 to format and dispatch those as desktop notifications via zeromq pub/sub sockets
@@ -3174,7 +3174,7 @@ used in `notification-thing daemon`_.
 Uses fancy pango formatting, allows to pass various display hints,
 sends UDP replies to suppress alerts from being sent as necessary.
 
-Only useful for that AQM tool and its ``[alerts]`` configuration.
+Likely only useful for that AQM tool and its ``[alerts]`` configuration.
 
 .. _RP2040 SEN5x Air Quality Monitor:
   https://github.com/mk-fg/rp2040-sen5x-air-quality-webui-monitor
