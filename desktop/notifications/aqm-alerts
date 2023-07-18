@@ -109,7 +109,11 @@ def run_proxy_loop(sock, zmq_send, td_snooze, td_exit=0, pkt_queue=None):
 		pkt += pkt_crc16(pkt).to_bytes(2, 'big')
 		log.debug( ' - snooze-packet back to %s:%s'
 			f' [for {td_snooze:,.0f}s, {len(pkt):,d} B]', addr[0], addr[1] )
-		if addr[0] != pkt_fake_src: sock.sendto(pkt, addr)
+		if addr[0] != pkt_fake_src:
+			try: sock.sendto(pkt, addr)
+			except OSError as err:
+				log.error( 'Failed to send reply packet to'
+					' %s:%s - %s', addr[0], addr[1], err_fmt(err) )
 
 
 def main(args=None):
