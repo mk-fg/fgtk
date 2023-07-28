@@ -2852,6 +2852,16 @@ be controlled with --name-format, default is ``{n:03d}__{title}.aac``).
 Doesn't do any transcoding, which can easily be performed later to e.g.  convert
 resulting aac files to mp3 or ogg, if necessary.
 
+video-concat-xfade_
+'''''''''''''''''''
+.. _video-concat-xfade: desktop/media/video-concat-xfade
+
+Wrapper around ffmpeg to create (and run) a list of filters to merge video from
+pieces, scale them to same size, and apply some crossfade effect in-between.
+
+Useful to merge cut-out pieces of some longer video back together for a kind
+of highlights/demo reel, without needing to go into full video editing suite.
+
 pick-tracks_
 ''''''''''''
 .. _pick-tracks: desktop/media/pick-tracks

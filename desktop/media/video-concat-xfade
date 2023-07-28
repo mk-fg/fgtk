@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+
+import os, sys, json, subprocess as sp
+
+
+def ffmpeg_concat_cmd(
+		files, out_file, enc_opts,
+		xfade='fade', xfade_td=1.0, video_size=None ):
+	files_len, (w, h) = list(), video_size or (0, 0)
+	for p in files:
+		probe = json.loads(sp.run([
+			'ffprobe', '-v', 'error', '-select_streams', 'v',
+			'-show_entries', 'stream=width,height,duration:format=duration',
+			'-print_format', 'json', p ], check=True, stdout=sp.PIPE).stdout)
+		if not w: w = int(probe['streams'][0]['width'])
+		if not h: h = int(probe['streams'][0]['height'])
+		files_len.append(float(probe['format']['duration']))
+
+	video_fades, audio_fades, normalize = list(), list(), list()
+	fade_out, audio_out, video_len = '0v', '0:a', 0
+	scale_filter = ( f',scale=w={w}:h={h}:'
+		f'force_original_aspect_ratio=1,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2' )
+
+	for n in range(len(files)):
+		scale = scale_filter if n else ""
+		normalize.append(f'[{n}:v]settb=AVTB,setsar=sar=1,fps=30{scale}[{n}v];')
+		if not n: continue
+		video_len += files_len[n - 1] - xfade_td # xfades get cut from next video
+		fade_out_last, fade_out = fade_out, f'v{n-1}{n}'
+		video_fades.append(
+			f'[{fade_out_last}][{n}v]xfade=transition={xfade}:'
+			f'duration={xfade_td}:offset={video_len:.3f}[{fade_out}];' )
+		audio_out_last, audio_out = audio_out, f'a{n-1}{n}'
+		audio_fades.append(
+			f'[{audio_out_last}][{n}:a]acrossfade=d={xfade_td}[{audio_out}];' )
+	video_fades.append(f'[{fade_out}]format=pix_fmts=yuv420p[final];')
+	video_fades, audio_fades, normalize = (
+		''.join(v) for v in [video_fades, audio_fades, normalize] )
+
+	ffmpeg_args = list()
+	for p in files: ffmpeg_args.extend(['-i', p])
+	return [ 'ffmpeg', *ffmpeg_args,
+		'-filter_complex', normalize + video_fades + audio_fades[:-1],
+		'-map', '[final]', '-map', f'[{audio_out}]', *enc_opts, out_file ]
+
+
+def main(args=None):
+	enc_opts = '-c:a aac -c:v libx264 -movflags +faststart -preset slow -f mp4 -y'
+
+	import argparse, textwrap, re
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Concatenate multiple video files with crossfade using ffmpeg.')
+
+	parser.add_argument('files', nargs='+', help=dd('''
+		List of files to concatenate (merge) together, in the same order as specified.
+		Video width/height will be determined by the first one, rest will be aspect-scaled.'''))
+	parser.add_argument('-o', '--out-file', metavar='file',
+		help='Output file to create. Must be set, unless --dry-run option is used.')
+
+	parser.add_argument('-e', '--enc-params',
+		action='append', metavar='ffmpeg-opts', help=dd(f'''
+			ffmpeg output encoding parameters, i.e. codecs and such.
+			Will be split on spaces, unless option is used multiple times.
+			Default: {enc_opts}'''))
+	parser.add_argument('-s', '--video-size', metavar='WxH', help=dd('''
+		Resulting output video size, in pixels. For example: 1280x720
+		Default is to ffprobe first specified file and use its video dimensions.'''))
+	parser.add_argument('-x', '--xfade-time',
+		metavar='seconds', type=float, default=1.0,
+		help='Audio/video crossfade duration, in seconds. Default: %(default)s')
+	parser.add_argument('-X', '--xfade-effect',
+		metavar='transition', default='fade', help=dd('''
+			"tranistion" parameter value for ffmpeg "xfade" filter. Default: %(default)s
+			See https://ffmpeg.org/ffmpeg-filters.html#xfade for the full list of those.'''))
+
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Print final ffmpeg command that will be used, but do not run it.')
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if len(opts.files) < 2: parser.error('Need more than one file to merge together')
+	if not opts.out_file:
+		if opts.dry_run: opts.out_file = 'out.mp4'
+		else: parser.error('Output file path must be specified')
+	video_size = opts.video_size and tuple(map(int, opts.video_size.split('x')))
+
+	enc_opts = opts.enc_params or [enc_opts]
+	if len(enc_opts) == 1: enc_opts = enc_opts[0].split()
+
+	cmd = ffmpeg_concat_cmd( opts.files, opts.out_file, enc_opts,
+		video_size=video_size, xfade_td=opts.xfade_time, xfade=opts.xfade_effect )
+	if opts.dry_run: print(' '.join(cmd))
+	else: os.execvp(cmd[0], cmd)
+
+if __name__ == '__main__': sys.exit(main())
