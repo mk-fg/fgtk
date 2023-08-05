@@ -6,6 +6,8 @@ import os, sys, re, time, socket, struct, logging, json, base64, signal
 import zmq # pyzmq
 
 
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+
 _td_days = dict(
 	y=365.25, yr=365.25, year=365.25,
 	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
@@ -30,8 +32,17 @@ def td_parse_sec(td):
 		delta.append(val)
 	return dt.timedelta(*delta).total_seconds()
 
-
-err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+def rate_limit_iter(spec):
+	'''This is not token-bucket, i.e. tokens don't
+			accumulate within timespan in-between checks.
+		spec = N / M[smhd], e.g. 10 / 15m(inutes)
+		Usage: while next(err_rate_limit): try: ...'''
+	burst, span = map(str.strip, spec.split('/', 1))
+	span = float(span[:-1]) * {'s': 1, 'm': 60, 'h': 3600, 'd': 24*3600}[span[-1]]
+	n, tokens = 0, [-span] * (burst := int(burst) + 1)
+	while True:
+		ts = tokens[n] = time.monotonic()
+		yield ts - tokens[n := (n + 1) % burst] > span
 
 def pkt_enc(s):
 	s = base64.urlsafe_b64encode(s).decode()
@@ -60,7 +71,8 @@ pkt_sample = ( lambda rx,
 pkt_fake_src = '[src-ip-addr]'
 
 
-def run_proxy_loop(sock, zmq_send, td_snooze, td_exit=0, pkt_queue=None):
+def run_proxy_loop( sock, zmq_send, td_snooze,
+		rate_iter=None, td_exit=0, pkt_queue=None ):
 	log = logging.getLogger('net')
 
 	sample_keys = 'PM1 PM2.5 PM4 PM10 RH% T°C VOC NOx'.split()
@@ -82,7 +94,11 @@ def run_proxy_loop(sock, zmq_send, td_snooze, td_exit=0, pkt_queue=None):
 		except Exception as err:
 			log.debug(' - dropped: format mismatch - %s :: %s', err_fmt(err), pkt_enc(pkt))
 			continue
-		log.debug(' - parsed [ %s ]: %s', errs, sample)
+
+		if rate_iter and next(rate_iter):
+			log.debug(' - recv-count-rate skipped [ %s ]: %s', errs, sample)
+			continue
+		else: log.debug(' - parsed [ %s ]: %s', errs, sample)
 
 		summary = f'AQM Threshold Alert [ <b>{errs.upper()}</b> ]'
 		errs_set, vals, body = errs.split(), cs.defaultdict(list), [
@@ -128,49 +144,60 @@ def main(args=None):
 			AQM project: https://github.com/mk-fg/rp2040-sen5x-air-quality-webui-monitor
 			notification-thing daemon: https://github.com/mk-fg/notification-thing'''))
 
-	parser.add_argument('-u', '--udp',
+	group = parser.add_argument_group('Alert receive/filter/snooze UDP-source options')
+	group.add_argument('-u', '--udp',
 		metavar='[ip:]port', help=dd('''
 			UDP socket to bind/listen on for incoming notifications.
 			Required, unless socket is received from systemd via LISTEN_FDS mechanism.'''))
-	parser.add_argument('-s', '--udp-snooze',
+	group.add_argument('-s', '--udp-snooze',
 		metavar='duration', default='1h', help=dd('''
 			Snooze-interval to send in response to alerts,
 				suppressing repeated ones with same thresholds for that duration.
 			Can be a human duration spec like "30s", "10min", "1h 20m", or [[HH:]MM:]SS.
 			Use 0 value to disable this. Default: %(default)s'''))
+	group.add_argument('-c', '--recv-rate-threshold', metavar='N/M[smhd]', help=dd('''
+		Rate-limiting filter specification (N within timespan) for alert count
+			that must be exceeded in order for alert to be passed through as notification.
+		Can be used to skip one-off alerts due to e.g. someone smoking near the sensor.
+		Filter should be specified as "N / M[smhd]", for example
+			"3 / 10m" to only react to >3 alert packets within last 10 minutes.
+		Disabled by default - every received alert will generate notification.'''))
 
-	parser.add_argument('-z', '--zmq-sock',
+	group = parser.add_argument_group('ZMQ destination')
+	group.add_argument('-z', '--zmq-sock',
 		required=True, action='append', metavar='ip:port', help=dd('''
 			Notification-thing (desktop notification daemon) zmq sub socket address -
 				can be either ip:port (assumed to be tcp socket, e.g. 1.2.3.4:5678),
 				or a full zmq url (e.g. tcp://1.2.3.4:5678).
 			Can be specified multiple times to deliver message to more than one peer.
 			Must be specified at least once.'''))
+	group.add_argument('-w', '--wait-connect',
+		type=float, metavar='seconds', default=0.5, help=dd('''
+			Timeout to wait for peer connections to
+				establish and unsent messages to linger. Default: %(default)ss'''))
 
-	parser.add_argument('-n', '--hostname',
+	group = parser.add_argument_group('Notification object attributes')
+	group.add_argument('-n', '--hostname',
 		metavar='name', default=os.uname()[1],
 		help='Source name to use for dispatched message. Default: local hostname [%(default)s]')
-	parser.add_argument('-w', '--wait-connect',
-		type=float, metavar='seconds', default=0.5, help=dd('''
-			Timeout to wait for peer connections to establish
-				and unsent messages to linger. Default: %(default)ss'''))
-
-	parser.add_argument('-U', '--urgency', metavar='low/normal/critical', help=dd('''
+	group.add_argument('-U', '--urgency', metavar='low/normal/critical', help=dd('''
 		Urgency hint to use for the message - can be either integer
 			in 0-2 range (level id) or symbolic level name - low/normal/critical.'''))
-	parser.add_argument('-t', '--expire-time', metavar='duration',
+	group.add_argument('-t', '--expire-time', metavar='duration',
 		help='Timeout (same format as -s/--udp-snooze) to hide generated notification bubbles.')
-	parser.add_argument('-a', '--app-name', metavar='name', default='notify-net',
+	group.add_argument('-a', '--app-name', metavar='name', default='notify-net',
 		help='App name for the icon. Default: %(default)s')
-	parser.add_argument('-i', '--icon', action='append', metavar='icon', default=list(),
+	group.add_argument('-i', '--icon', action='append', metavar='icon', default=list(),
 		help='Icon name, path or alias. Can be specified multiple times (for fallback icon names).')
 
-	parser.add_argument('-x', '--exit-inactivity-timeout', metavar='duration', default=0, help=dd('''
+	group = parser.add_argument_group('Misc daemon settings')
+	group.add_argument('-x', '--exit-inactivity-timeout', metavar='duration', default=0, help=dd('''
 		Exit after specified timeout of inactivity (same format as -s/--udp-snooze).
 		Useful when starting the script from systemd socket unit file.'''))
-	parser.add_argument('-T', '--test',
+	group.add_argument('-T', '--test',
 		action='store_true', help='Dispatch fake test-alert notification on startup.')
-	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -242,6 +269,8 @@ def main(args=None):
 		for addr in opts.zmq_sock: pub.connect(zmq_addr(addr))
 		time.sleep(opts.wait_connect)
 
-		run_proxy_loop(sock, zmq_send, td_snooze, round(td_exit), pkt_test)
+		rate_iter = opts.recv_rate_threshold and rate_limit_iter(opts.recv_rate_threshold)
+		run_proxy_loop( sock, zmq_send, td_snooze,
+			rate_iter=rate_iter, td_exit=round(td_exit), pkt_queue=pkt_test )
 
 if __name__ == '__main__': sys.exit(main())
