@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import datetime as dt, contextlib as cl, collections as cs
+import datetime as dt, contextlib as cl, collections as cs, functools as ft
 import os, sys, re, time, socket, struct, logging, json, base64, signal
 
 import zmq # pyzmq
@@ -72,13 +72,17 @@ pkt_fake_src = '[src-ip-addr]'
 
 
 def run_proxy_loop( sock, zmq_send, td_snooze,
-		rate_iter=None, td_exit=0, pkt_queue=None ):
+		rate_threshold=None, rate_threshold_addrs=32, td_exit=0, pkt_queue=None ):
 	log = logging.getLogger('net')
 
 	sample_keys = 'PM1 PM2.5 PM4 PM10 RH% T°C VOC NOx'.split()
 	sample_keys_alert = ['pm']*4 + 'rh t voc nox'.split()
 	sample_keys_fmt = ['{:.1f}']*4 + ['{:.0f}', '{:.1f}', '{:.0f}', '{:.0f}']
 	signal.signal(signal.SIGALRM, lambda sig, frm: sys.exit(0))
+
+	if rate_threshold:
+		rate_threshold = ft.lru_cache(maxsize=rate_threshold_addrs)(
+			lambda addr,_spec=rate_threshold: rate_limit_iter(_spec) )
 
 	while True:
 		if td_exit > 0: signal.alarm(td_exit)
@@ -95,7 +99,7 @@ def run_proxy_loop( sock, zmq_send, td_snooze,
 			log.debug(' - dropped: format mismatch - %s :: %s', err_fmt(err), pkt_enc(pkt))
 			continue
 
-		if rate_iter and next(rate_iter):
+		if rate_threshold and next(rate_threshold(addr[0])):
 			log.debug(' - recv-count-rate skipped [ %s ]: %s', errs, sample)
 			continue
 		else: log.debug(' - parsed [ %s ]: %s', errs, sample)
@@ -193,7 +197,8 @@ def main(args=None):
 	group = parser.add_argument_group('Misc daemon settings')
 	group.add_argument('-x', '--exit-inactivity-timeout', metavar='duration', default=0, help=dd('''
 		Exit after specified timeout of inactivity (same format as -s/--udp-snooze).
-		Useful when starting the script from systemd socket unit file.'''))
+		Useful when starting the script from systemd socket unit file.
+		Should be higher than -c/--recv-rate-threshold timespan (if any) to track it correctly.'''))
 	group.add_argument('-T', '--test',
 		action='store_true', help='Dispatch fake test-alert notification on startup.')
 	group.add_argument('-X', '--test-send', metavar='host:port',
@@ -278,8 +283,7 @@ def main(args=None):
 		for addr in opts.zmq_sock: pub.connect(zmq_addr(addr))
 		time.sleep(opts.wait_connect)
 
-		rate_iter = opts.recv_rate_threshold and rate_limit_iter(opts.recv_rate_threshold)
 		run_proxy_loop( sock, zmq_send, td_snooze,
-			rate_iter=rate_iter, td_exit=round(td_exit), pkt_queue=pkt_test )
+			rate_threshold=opts.recv_rate_threshold, td_exit=round(td_exit), pkt_queue=pkt_test )
 
 if __name__ == '__main__': sys.exit(main())
