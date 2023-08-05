@@ -165,12 +165,12 @@ def main(args=None):
 
 	group = parser.add_argument_group('ZMQ destination')
 	group.add_argument('-z', '--zmq-sock',
-		required=True, action='append', metavar='ip:port', help=dd('''
+		action='append', metavar='host:port', help=dd('''
 			Notification-thing (desktop notification daemon) zmq sub socket address -
-				can be either ip:port (assumed to be tcp socket, e.g. 1.2.3.4:5678),
+				can be either host:port (assumed to be tcp socket, e.g. 1.2.3.4:5678),
 				or a full zmq url (e.g. tcp://1.2.3.4:5678).
 			Can be specified multiple times to deliver message to more than one peer.
-			Must be specified at least once.'''))
+			Must be specified at least once, unless running in some kind of test-mode.'''))
 	group.add_argument('-w', '--wait-connect',
 		type=float, metavar='seconds', default=0.5, help=dd('''
 			Timeout to wait for peer connections to
@@ -196,6 +196,8 @@ def main(args=None):
 		Useful when starting the script from systemd socket unit file.'''))
 	group.add_argument('-T', '--test',
 		action='store_true', help='Dispatch fake test-alert notification on startup.')
+	group.add_argument('-X', '--test-send', metavar='host:port',
+		help='Generate/send single alert packet to specified UDP socket and exit.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -222,13 +224,20 @@ def main(args=None):
 	td_exit = td_parse_sec(opts.exit_inactivity_timeout)
 
 	pkt_test = list()
-	if opts.test: # generate test-packet
+	if opts.test or opts.test_send: # generate test-packet
 		pkt = struct.pack( '>HHHHhhhh',
 			*map(int, '23 28 31 32 3604 4643 2500 32767'.split()) )
 		pkt += b'pm voc'
 		pkt += pkt_crc16(pkt).to_bytes(2, 'big')
-		pkt_test.append((pkt, (pkt_fake_src, 1234)))
+		if not opts.test_send: pkt_test.append((pkt, (pkt_fake_src, 1234)))
+		else:
+			host, port = opts.test_send.split(':')
+			dst = socket.getaddrinfo( host, int(port),
+				proto=socket.IPPROTO_UDP, type=socket.SOCK_DGRAM )[0][-1]
+			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s: s.sendto(pkt, dst)
+			return log.debug('Dispatched %sB packet to address: %s', len(pkt), dst)
 
+	if not opts.zmq_sock: parser.error('At least one -z/--zmq-sock option must be specified')
 	zmq_ctx, zmq_addr = zmq.Context(), lambda addr: (
 		f'tcp://{addr}' if not re.search(r'^\w+://', addr) else addr )
 
