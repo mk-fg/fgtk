@@ -19,6 +19,7 @@ _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
 	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
 
 def td_parse_sec(td):
+	'Parse [[HH:]MM:]SS or e.g. 5h30m and such time-deltas to seconds'
 	if isinstance(td, (int, float)): return td
 	if not ((m := _td_re.search(td)) and any(m.groups())):
 		h, m, s = (v.strip(': ') for v in ('::' + td).rsplit(':', 2))
@@ -33,12 +34,10 @@ def td_parse_sec(td):
 	return dt.timedelta(*delta).total_seconds()
 
 def rate_limit_iter(spec):
-	'''This is not token-bucket, i.e. tokens don't
-			accumulate within timespan in-between checks.
-		spec = N / M[smhd], e.g. 10 / 15m(inutes)
-		Usage: while next(err_rate_limit): try: ...'''
+	'''This is not token-bucket, i.e. tokens don't pile-up in-between checks.
+		spec = N / M[smhd], e.g. 10 / 15m(inutes). while next(err_rate_limit): try: ...'''
 	burst, span = map(str.strip, spec.split('/', 1))
-	span = float(span[:-1]) * {'s': 1, 'm': 60, 'h': 3600, 'd': 24*3600}[span[-1]]
+	span = td_parse_sec(span)
 	n, tokens = 0, [-span] * (burst := int(burst) + 1)
 	while True:
 		ts = tokens[n] = time.monotonic()
@@ -160,8 +159,8 @@ def main(args=None):
 			Can be a human duration spec like "30s", "10min", "1h 20m", or [[HH:]MM:]SS.
 			Use 0 value to disable this. Default: %(default)s'''))
 	group.add_argument('-c', '--recv-rate-threshold', metavar='N/M[smhd]', help=dd('''
-		Rate-limiting filter specification (N within timespan) for alert count
-			that must be exceeded in order for alert to be passed through as notification.
+		Rate-limiting filter specification (N within timespan) for alert count that must be
+			exceeded (for each source IP), in order for alert to be passed through as notification.
 		Can be used to skip one-off alerts due to e.g. someone smoking near the sensor.
 		Filter should be specified as "N / M[smhd]", for example
 			"3 / 10m" to only react to >3 alert packets within last 10 minutes.
