@@ -262,7 +262,8 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, src_list, dst_name_tpl=None,
-			start=None, length=None, chunks=None, chunks_beep=False,
+			start=None, length=None,
+			chunks=None, chunks_beep=False, chunks_fn_tpl=None,
 			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop = asyncio.get_running_loop()
@@ -270,6 +271,7 @@ class AudioConv:
 		self.max_parallel = max_parallel or os.cpu_count()
 		self.start, self.length, self.probe = start, length, probe
 		self.chunks, self.chunks_beep = chunks, chunks_beep
+		self.chunks_fn_tpl = chunks_fn_tpl or '{n:03d}__{name}.ogg'
 		self.inplace, self.remove_src = inplace, remove_src
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
@@ -448,7 +450,7 @@ class AudioConv:
 					dst_dir.mkdir(parents=True, exist_ok=True)
 					while length > 0:
 						n = len(src_chunks) + 1
-						dst_file = f'{n:03d}__{dst_name}.ogg'
+						dst_file = self.chunks_fn_tpl.format(n=n, name=dst_name)
 						src_chunks.append(AudioConvChunk(
 							src, dst_dir / dst_file, start, min(chunk_len, length), src.codec, dst_file ))
 						start += chunk_len; length -= chunk_len
@@ -756,8 +758,10 @@ def main(args=None):
 				output pre-split into chunks of specified length.
 			Can be used to enable faster parallel encoding.
 			Length argument is optional and defaults to 15:00 (15min).'''))
+	group.add_argument('-C', '--chunks-fn', metavar='tpl', default='{n:03d}__{name}.ogg',
+		help='Filename template of each chunk-file. Default: %(default)s')
 	group.add_argument('-b', '--chunks-beep', action='store_true',
-		help='Prepend some static + beep sound to each chink-file, to make switch audible.')
+		help='Prepend some static + beep sound to each chink-file, to make track-switching audible.')
 
 	group = parser.add_argument_group('Debug/misc')
 	group.add_argument('-j', '--max-parallel', type=int, metavar='n', help=dd('''
@@ -808,7 +812,8 @@ def main(args=None):
 
 	success = asyncio.run(AudioConv.run_async(
 		src_list, dst_name_tpl=opts.name, start=start, length=length,
-		chunks=chunks, chunks_beep=bool(chunks and opts.chunks_beep),
+		chunks=chunks, chunks_fn_tpl=opts.chunks_fn,
+		chunks_beep=bool(chunks and opts.chunks_beep),
 		max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
 		remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
 		loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ))
