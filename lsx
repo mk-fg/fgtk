@@ -106,7 +106,7 @@ def main(argv=None):
 			in which case they will be returned sorted by the first
 			parameter that's explicitly specified (or default alpha-sorted otherwise).'''))
 
-	opts = parser.parse_args()
+	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
 	paths = list(pl.Path(p) for p in opts.paths)
 

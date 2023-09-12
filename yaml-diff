@@ -29,7 +29,7 @@ def py_list_fmt(o, ind=' ', len_split=80, ind1=False):
 		else: line.append(sc)
 	return '\n'.join(lines)
 
-err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
 def p_msg(s, c=None, ln_merge=False):
 	if p_msg.spaced: print()

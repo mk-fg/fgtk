@@ -1,0 +1,74 @@
+#!/usr/bin/env python
+
+import os, sys, re, signal, tempfile, time, subprocess as sp
+
+feh_cmd_default = (
+	'feh-ext -ZNxsrd. --on-last-slide hold -B checks'.split()
+	+ ['--info', 'echo -e " [ %t %wx%h %Ppx %SB %z%% ]\\n"'] )
+
+
+def run_feh_loop(feh_cmd, min_interval=0, debug=False):
+	p_log = debug and (lambda *a: print('[loop]', *a, file=sys.stderr, flush=True))
+	p_log and p_log('Starting readline-loop...')
+	feh = img_list = None
+	while image := sys.stdin.buffer.readline():
+		image = image.strip().decode()
+		if not img_list: img_list = open('queue.list', 'w')
+		if debug: p_log and p_log(f'New image (delay={min_interval:.1f}): {image}')
+		img_list.write(f'{image}\n'); img_list.flush()
+		if not feh:
+			feh = sp.Popen(feh_cmd + ['-f', img_list.name])
+			signal.signal(signal.SIGCHLD, lambda sig,frm: sys.exit(0)) # feh exited = done
+		else: feh.send_signal(signal.SIGQUIT)
+		time.sleep(min_interval)
+	p_log and p_log(f'FIFO closed, waiting for feh to exit...')
+	feh.wait()
+	p_log and p_log('Finished')
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] < image-queue.fifo', description=dd('''
+			Tool to open images in a persistent feh image-viewer window.
+			It's a wrapper script to run instead of "feh" that'd receive images
+				from stdin FIFO socket, start feh and manage dynamic file-list for it.
+			Intended as a way to display image paths/URLs in the background
+				somewhere (e.g. second screen), sent to it by apps non-interactively.
+			Requires custom "feh" build that reloads its file-list on SIGQUIT:
+				https://github.com/mk-fg/archlinux-pkgbuilds/tree/master/feh-ext'''))
+
+	parser.add_argument('-f', '--feh-cmd',
+		action='append', metavar='opts', help=dd(f'''
+			feh command with all needed options, except the last "-f ..." that'll be auto-added.
+			Arguments will be split on spaces, unless option is used multiple times.
+			Default: {str(feh_cmd_default[:-4])[1:-1]}
+				{str(feh_cmd_default[-4:])[1:-1].replace('%', '%%')}'''))
+	parser.add_argument('-F', '--feh-cmd-ext',
+		action='append', metavar='opts', help=dd(f'''
+			Same as -f/--feh-cmd, but does not override default
+				(or specified) command/options, adding to them instead.
+			For example, to add window offset/geometry: -F=-g=1920x1080+1920'''))
+
+	parser.add_argument('-t', '--min-interval',
+		type=float, metavar='seconds', default=1.0,
+		help='Min interval between feh file-list updates/reloads. Default: %(default)ss')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+
+	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+	feh_cmd = opts.feh_cmd or feh_cmd_default
+	if len(feh_cmd) == 1: feh_cmd = feh_cmd[0].strip().split()
+	if ext := opts.feh_cmd_ext:
+		if len(ext) == 1: ext = ext[0].strip().split()
+		feh_cmd.extend(ext)
+
+	signal.signal(signal.SIGINT, lambda sig,frm: sys.exit(0))
+	with tempfile.TemporaryDirectory(prefix='.feh-screen.') as p_tmp:
+		os.chdir(p_tmp)
+		run_feh_loop(feh_cmd, opts.min_interval, debug=opts.debug)
+
+if __name__ == '__main__': sys.exit(main())

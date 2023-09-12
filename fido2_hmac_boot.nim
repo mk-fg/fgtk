@@ -140,7 +140,7 @@ proc run_ask_pass(argv: openArray[string]): string =
 				sa_handler: proc (sig: cint) {.noconv.} = run_ask_pass_done() )
 		chk sigemptyset(sa.sa_mask)
 		chk sigaddset(sa.sa_mask, SIGPIPE)
-		chk sigaction(SIGCHLD, sa, nil)
+		chk sigaction(SIGCHLD, sa)
 		while true:
 			bs = read(pipe_r, buff.cstring, buff.len).int
 			if bs < 0:

@@ -3585,6 +3585,54 @@ allowed through follow-up commits.
 
 .. _Project Hamster: https://github.com/projecthamster
 
+feh-screen_
+'''''''''''
+.. _feh-screen: desktop/feh-screen
+
+Tool to open images in a persistent `feh image viewer`_ window.
+
+Runs feh with a dynamic file-list, created from paths/URLs sent to a FIFO socket.
+Kinda like running ``xdg-open <URL>`` opens/sends URL in/to a (running-)browser,
+except here it sends that to an image viewer, or starts one up, if not running already.
+
+Intended to be used with FIFO socket passed to stdin via systemd, for example::
+
+  # feh.socket
+  [Socket]
+  SocketMode=0600
+  ListenFIFO=%h/.config/feh/screen.sock
+
+  [Install]
+  WantedBy=sockets.target
+
+  # feh.service
+  [Service]
+  Type=oneshot
+  StandardInput=socket
+  StandardOutput=journal
+  ExecStart=feh-screen -F=-g=1920x1080+1920
+
+feh-screen options can be used to pre-configure feh to start with specific
+image-processing and window-geometry parameters (e.g. on a second screen).
+
+feh itself is very configurable wrt image processing, uses curl to fetch/cache
+images to ``/tmp/feh_*`` and/or memory by default (can be disabled), can be used
+to overlay any info or add custom command-actions, fully controllable with kb, etc.
+
+Since feh can open image URLs, it's useful for opening images from terminals,
+IRC clients and similar text-based interfaces, running ``echo URL >fifo``
+from those or via xdg-open for all matching stuff (instead of a browser).
+
+One caveat - requires patched feh, with added "reload file-list and switch to
+last image on SIGQUIT" functionality, since at least current feh 3.1.0 does not
+seem to have support for reloading file-lists on any kind of signal/command.
+Patch can be found in `mk-fg/archlinux-pkgbuilds/feh-ext`_ (on github, codeberg
+or other code mirrors listed at the top somewhere).
+
+.. _feh image viewer: https://feh.finalrewind.org/
+.. _mk-fg/archlinux-pkgbuilds/feh-ext:
+  https://github.com/mk-fg/archlinux-pkgbuilds/tree/master/feh-ext
+
 
 
 `[vm] VM scripts`_
