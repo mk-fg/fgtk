@@ -230,10 +230,14 @@ def main(argv=None):
 		Do not treat filenames with different capitalization and
 			yml/yaml extension differences as a same file between src/dst dirs.
 		Default is to normalize all that out for convenience.'''))
-	parser.add_argument('-C', '--no-color', action='store_true',
-		help='Disable colors. Implies --no-delta - not using "delta" tool.')
+	parser.add_argument('-C', '--no-color', action='store_true', help=dd('''
+		Disable colors. Implies --no-delta - using "git diff"
+			(with colors disabled via env) instead of "delta" tool.
+		Setting NO_COLOR env variable has the same effect.'''))
 
 	opts = parser.parse_args()
+
+	if os.environ.get('NO_COLOR'): opts.no_color = True
 
 	p_a, p_b = (pl.Path(p) for p in [opts.path_a, opts.path_b or opts.path_a])
 	if not p_a.exists(): parser.error(f'Path-A does not exists: {p_a}')
@@ -255,6 +259,9 @@ def main(argv=None):
 	if opts.no_color:
 		git_delta.clear()
 		cl = type('NoColors', (object,), dict((k, '') for k in cl.__dict__ if k[0] != '_'))
+		os.environ['GIT_CONFIG_COUNT'] = '1'
+		os.environ['GIT_CONFIG_KEY_0'] = 'color.diff'
+		os.environ['GIT_CONFIG_VALUE_0'] = 'never'
 	elif opts.no_delta:
 		git_delta.clear()
 		git_diff.append('--color')
