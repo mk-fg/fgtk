@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# For use in shebang of ./vm.* wrapper-scripts, e.g.: #!./vm.linux -i 123 -m 4G -d vm.img
+[[ "$1" = *\ * && "$2" = ./vm.* ]] && {
+	cmd=( "$0" $1 ); shift; shift; cmd+=( "$@" ); exec "${cmd[@]}"; }
+
 script_info='Generic linux distro VM with grub and partitioned disk img.'
 ins=1 smp=4 mem=4G nets=1 root_opts_file=()
 img=() dev_ro=() dev=() vfs= efi= iso=
