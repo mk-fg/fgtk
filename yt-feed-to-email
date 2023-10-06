@@ -337,7 +337,8 @@ def main(args=None):
 		rss_list = pl.Path(opts.rss_list)
 		if rss_list.exists():
 			with rss_list.open() as src:
-				feeds_rss = list(YTFeed.from_line(line) for line in src)
+				feeds_rss = list( YTFeed.from_line(line)
+					for line in src if line.strip() and not line.lstrip().startswith('#') )
 			log.debug('Parsed RSS-list: feeds={}', len(feeds_rss))
 	feeds_rss = YTFeedIndex(feeds_rss)
 
