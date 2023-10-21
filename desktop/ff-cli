@@ -31,7 +31,8 @@ def get_profile_dir(profile, ff_home):
 		if profile in p.name.lower(): return p
 
 
-def pick_bookmarks(bms_json, filters, shuffle, limit, js, cycle_file):
+def pick_bookmarks( bms_json,
+		filters_inc, filters_exc, shuffle, limit, js, cycle_file ):
 	def _bm_recurse(bm, p=pl.Path('')):
 		bms, title = list(), bm.get('title', '')
 		if bms_sub := bm.get('children'):
@@ -43,9 +44,9 @@ def pick_bookmarks(bms_json, filters, shuffle, limit, js, cycle_file):
 		return bms
 
 	bms = _bm_recurse(bms_json)
-	if filters:
-		bms = list( bm for bm in bms
-			if (bs := bm.lower()) and all(s in bs for s in filters) )
+	bms = list( bm for bm in bms if (bs := bm.lower())
+		and (not filters_inc or all(s in bs for s in filters_inc))
+		and (not filters_exc or all(s not in bs for s in filters_exc)) )
 	if shuffle: import random; random.shuffle(bms)
 
 	if cycle_file:
@@ -155,8 +156,11 @@ def main(args=None):
 			browser.bookmarks.autoExportHTML also looks like a good option for these, not supported.
 			Arguments are simple "must contain all strings" filters, opts can limit/shuffle/open.'''))
 	cmd.add_argument('filter', nargs='*', help=dd('''
-		Filter strings, all of which must be included in either bookmark path, title or URL.
-		CI-matched against strings like this: some/bookmark/dirs :: bm-title :: the-url'''))
+		Filter strings to limit resulting list of bookmarks, kinda like "grep"
+			would, all of which must be included (AND logic) in either bookmark path, title or URL.
+		Matched against strings like (case-insensitive): some/bookmark/dirs :: bm-title :: bm-url
+		Can include special "+++" argument (3 pluses) followed by negative matches
+			to exclude from retured results matched by expressions preceding it (if any).'''))
 	cmd.add_argument('-r', '--shuffle',
 		action='store_true', help='Shuffle resulting list randomly.')
 	cmd.add_argument('-n', '--limit', type=int, metavar='N',
@@ -165,9 +169,9 @@ def main(args=None):
 		help='Open URLs in addition to printing them, using "firefox" binary in PATH.')
 	cmd.add_argument('--js', action='store_true',
 		help='Include "javascript:..." bookmarklets in addition to URLs.')
-	cmd.add_argument('-f', '--fmt', metavar='fmt', default='{s}', help=dd('''
-		Format for output lines, using following vars: n, s, s.path, s.title, s.url
-		Example: [{n}] {s.title} - {s.url}'''))
+	cmd.add_argument('-f', '--fmt', metavar='fmt', default='{bm}', help=dd('''
+		Format for output lines, using following vars: n, bm, bm.path, bm.title, bm.url
+		Example: [{n}] {bm.title} - {bm.url}'''))
 	cmd.add_argument('-c', '--cycle', action='store_true', help=dd('''
 		Cycle filtered bookmarks in last-returned order, refreshing the queue when it's empty.
 		-r/--shuffle option affects order of how items get updated in queue.
@@ -220,14 +224,19 @@ def main(args=None):
 		try:
 			if not (ps := list((_profile_path() / 'bookmarkbackups').iterdir())): return
 		except OSError: return
+		fexc, finc = list(), list(s.lower() for s in opts.filter if s)
+		try:
+			n = finc.index('+++')
+			finc, fexc = finc[:n], finc[n+1:]
+		except ValueError: pass
 		bms = pick_bookmarks(
 			jsonlz4_read(sorted(ps, key=lambda p: p.name)[-1]),
-			filters=list(s.lower() for s in opts.filter if s),
+			filters_inc=finc, filters_exc=fexc,
 			shuffle=opts.shuffle, limit=opts.limit, js=opts.js,
 			cycle_file=opts.cycle and pl.Path(opts.cycle_queue_file).expanduser() )
 		if open_chk := opts.open: import subprocess as sp
 		for n, bm in enumerate(bms, 1):
-			print(opts.fmt.format(n=n, s=bm))
+			print(opts.fmt.format(n=n, bm=bm))
 			if open_chk and sp.run(['firefox', bm.url]).returncode: open_chk = bm
 		if open_chk and open_chk is not True:
 			print(f'Firefox URL-open command failed for: {open_chk.url}', file=sys.stderr)
