@@ -13,10 +13,11 @@ queue= queue_delay=7 queue_timeout= value= path= props=
 
 usage() {
 	bin=${0##*/}
-	echo >&2 "Usage: $bin [-x] [-r] { -l | -c | -p | ... } { -u unit | slice }"
+	echo >&2
+	echo >&2 "Usage: $bin [-x] [-r] { -l | -c | -p | ... } { [-u unit] [slice] }"
+	echo >&2 "       $bin [-x] [run-opts] [-u unit] slice -- cmd [args...]"
 	echo >&2 "       $bin [-x] -v key[=value] { -u unit | slice }"
 	echo >&2 "       $bin [-x] -s { -u unit | slice | cgroup-path }"
-	echo >&2 "       $bin [-x] [run-opts] [-u unit] slice -- cmd [args...]"
 	echo >&2 "Run-opts: [-s] [-r] [-q [-i N] [-t N]] [-v key[=value]]"
 	echo >&2
 	echo >&2 "Run command via 'systemd-run --scope'"
@@ -25,7 +26,7 @@ usage() {
 	echo >&2 "--system/--user mode detected from uid (--system for root, --user otherwise)."
 	echo >&2
 	echo >&2 "Options:"
-	echo >&2 "-u name - scope unit name, with $basename.$pid from command by default."
+	echo >&2 "-u name - scope unit name, with \$basename.\$pid from command by default."
 	echo >&2 "   Starting scope with same unit name as already running one will fail."
 	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
 	echo >&2 "-o - same as -p/--property in systemd-run, to pass any unit parameters."

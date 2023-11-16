@@ -107,10 +107,13 @@ run() {
 	echo "iptables -I INPUT -i ${dev} -p udp --dport 67 -j ACCEPT"
 	echo '--------------------'
 
-	exec > >(gawk '{print strftime("[%Y-%m-%dT%H:%M:%S]"), $0; fflush()}') 2>&1
-
-	conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
-	trap "pkill -g 0; sleep 0.3; rm -rf '$conf'" EXIT
+	exec > >(setsid gawk '{print strftime("[%FT%T]"), $0; fflush()}') 2>&1
+	pids=() conf=$(mktemp -d /tmp/adhocapd.XXXXXX)
+	exit_cleanup() {
+		set +e
+		[[ ${#pids[@]} -eq 0 ]] || kill ${pids[@]} 2>/dev/null
+		wait ${pids[@]} 2>/dev/null; ip link set $dev down; rm -rf "$conf"; }
+	trap exit_cleanup EXIT
 	set -e
 
 	echo 'Starting...'
@@ -168,9 +171,9 @@ EOF
 
 	ip link set $dev up
 	ip addr add "${ip_gw}/${ip_cidr}" dev $dev ||:
-	hostapd "$hostapd_conf" &
+	hostapd "$hostapd_conf" & pids+=( $! )
 	touch "$udhcpd_leases"
-	busybox udhcpd -f "$udhcpd_conf" &
+	busybox udhcpd -f "$udhcpd_conf" & pids+=( $! )
 	wait
 }
 
