@@ -16,6 +16,6 @@ read uid_src gid_src < <(stat --format='%u %g' "$src")
 read uid_dst gid_dst < <(stat --format='%u %g' "$dst")
 shift; shift
 
-exec bindfs\
-	--map="$uid_src"/"$uid_dst" --create-for-user="$uid_src" --create-for-group="$gid_src"\
+exec bindfs --map="$uid_src"/"$uid_dst" \
+	--create-for-user="$uid_src" --create-for-group="$gid_src" \
 	"$@" "$src" "$dst"
