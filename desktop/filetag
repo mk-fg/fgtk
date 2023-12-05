@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import pathlib as pl, collections as cs, contextlib as cl
-import os, sys, re, math, configparser, tempfile, time
+import os, sys, stat, re, math, configparser, tempfile, time
 
 p_err = lambda msg,*a,**k: print(msg, *a, **k, file=sys.stderr, flush=True)
 
@@ -236,6 +236,7 @@ class FileTreeTagger:
 				if rx.search(p_str): tagset.update(tags)
 		if not tagset: # code shebang
 			try:
+				if not stat.S_ISREG(p.stat().st_mode): raise OSError
 				with p.open('rb', 255) as src:
 					os.posix_fadvise(src.fileno(), 0, 256, os.POSIX_FADV_NOREUSE)
 					shebang = src.readline(200).decode().strip()
