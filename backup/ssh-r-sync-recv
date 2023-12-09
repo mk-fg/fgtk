@@ -303,7 +303,7 @@ def main(args=None):
 	rsync_opts = ['--delete', '--delete-excluded', '--zl=1']
 	if rsync_info.opts.get('one_file_system'): rsync_opts.append('-x')
 	if su_mode: rsync_opts.extend(['-HaAXS', '--super', '--numeric-ids'])
-	else: rsync_opts.append('-rltHE')
+	else: rsync_opts.append('-rltHES')
 	if su_fake: rsync_opts.append('--fake-super')
 
 	hook = bak_hooks.run( 'rsync.pre',

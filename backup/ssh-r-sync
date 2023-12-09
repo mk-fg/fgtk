@@ -258,7 +258,7 @@ def main(args=None):
 	group.add_argument('-r', '--rsync', metavar='path',
 		help='''
 			Path to custom rsync binary, e.g. one with all necessary posix caps enabled.
-			If specified, elevated privileges for rsync are assumed, and parameters like -HaAX are used.
+			If specified, elevated privileges for rsync are assumed, and parameters like -HaAXS are used.
 			Passing -u/--rsync-user option allows to disable this
 				behavior and only copy stuff that regular users can access.''')
 	group.add_argument('-u', '--rsync-user', action='store_true',
@@ -290,6 +290,7 @@ def main(args=None):
 	group = parser.add_argument_group('SSH options')
 	group.add_argument('-p', '--port', metavar='port',
 		help='Alternative way to specify port, similar to ssh binary.')
+	group.add_argument('-k', '--ssh-key', metavar='path', help='Path to ssh key file to use.')
 	group.add_argument('--no-ssh-opts', action='store_true',
 		help='''
 			Do not pass any advanced -o<stuff> ssh options which script does by default.
@@ -363,6 +364,7 @@ def main(args=None):
 			name = re.sub(sub_re, sub, name)
 	else: name = opts.name or os.uname().nodename
 	if opts.no_ssh_opts: conf.ssh_opts.clear()
+	if opts.ssh_key: conf.ssh_opts.extend(['-i', opts.ssh_key])
 
 	if opts.debug: p(f'----- sync name={name} dst={ssh_dst}:{ssh_port or 22}')
 	with contextlib.ExitStack() as ctx:
