@@ -46,7 +46,7 @@ def size_str(sz, _units=list(
 		for i, u in enumerate('BKMGT'))) )):
 	for u, u1 in _units:
 		if sz > u1: break
-	return f'{sz / float(u1):.1f}{u}'
+	return f'{sz / u1:.1f}{u}'
 
 def data_hash(data, person=b'yamldiff', **kws):
 	data_bs = json.dumps(data, sort_keys=True).encode()

@@ -180,14 +180,13 @@ def main(args=None):
 			sshd_config snippet to set this script for backup-user command:
 
 				Match User backup
-					# GatewayPorts yes
-					PasswordAuthentication no
 					X11Forwarding no
 					AllowAgentForwarding no
-					PermitTTY no
 					PermitTunnel no
 					AllowStreamLocalForwarding no
 					AllowTcpForwarding remote
+					PasswordAuthentication no
+					PermitTTY no
 					ForceCommand ~/ssh-r-sync-recv -- /mnt/backups
 
 			Any cli opts of this script should be added to ForceCommand (string for shell).
