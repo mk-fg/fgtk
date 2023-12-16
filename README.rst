@@ -3191,6 +3191,29 @@ Likely only useful for that AQM tool and its ``[alerts]`` configuration.
 .. _notification-thing daemon:
   https://github.com/mk-fg/notification-thing/#network-broadcasting
 
+dev-nodes_
+''''''''''
+.. _dev-nodes: desktop/notifications/dev-nodes
+
+Trivial script to read ~/.dev-nodes.monitor.list with
+``<dev> <check> <dev name...>`` lines like::
+
+  /dev/disk/by-id/wwn-0x... unplug some external hdd
+  usb_wifi net-cut wifi temp usb ap
+
+...and issue persistent deduplicated desktop notifications if device needs to be
+unplugged, network interface removed, and such physical-manipulation reminders,
+to fix common "always forget about this thing" errors that are easily detectable
+and avoidable.
+
+Looks up either specific paths with "plug"/"unplug" checks, or network
+interfaces with "net-cut" or "net-connect".
+
+Avoids creating duplicate notifications while one is already on-screen via
+-w/--wait option of notify-send (to monitor "notification closed" signals)
+bundled with libnotify, and transient systemd-run units to keep these
+notification-bubble monitor pids around.
+
 
 `[desktop] others`_
 ^^^^^^^^^^^^^^^^^^^

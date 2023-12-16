@@ -1,0 +1,28 @@
+#!/bin/dash
+set -e
+err=0
+
+[ -n "$DBUS_SESSION_BUS_ADDRESS" ] || \
+	export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+
+check_dev() {
+	dev=$1 act=$2; shift 2
+	case "$act" in
+		plug) [ ! -e "$dev" ] || return 0 ;; unplug) [ -e "$dev" ] || return 0 ;;
+		net-cut) ip -br link show "$dev" >/dev/null 2>&1 || return 0 ;;
+		net-connect) ip -br link show "$dev" >/dev/null 2>&1 && return 0 ||: ;;
+		*) echo >&2 "ERROR: Unrecognized action '$dev $act ...'"; err=1; return
+	esac
+	u=cron-notify-$(echo -n "$dev" | b2sum -l32 | cut -f1 -d\ )
+	systemctl -q --user is-active "$u" && return ||:
+	systemd-run --user --no-block -qG -u "$u" -- \
+		notify-send -w -u critical -t 0 -i circuit \
+			"[dev-check] <span color=\"red\" text_transform=\"uppercase\">$act</span> device: $@" \
+			"Detected dev to <big>$act</big>: <b><big>$@</big></b>"`
+			`"\nMachine: $(uname -n) // Date-time: $(date +'%F %R')"; }
+
+while read dev act name; do
+	case "$dev" in ''|\#*) continue; esac
+	check_dev "$dev" "$act" "$name"
+done < "$HOME"/.dev-nodes.monitor.list
+exit $err
