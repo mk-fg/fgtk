@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import contextlib as cl, collections as cs, multiprocessing as mp
-import os, sys, random, time, secrets
+import os, sys, random, time, secrets, pathlib as pl
 
 
 class TestDB:
@@ -42,10 +42,11 @@ class TestDB:
 			c.execute('select id from data order by id desc limit 1')
 			if not ((rows := c.fetchall()) and (id_max := rows[0][0])): return
 			stats['id_max'] = id_max
-			for n in range(id_max): # run query roughly all IDs, in random order
+			for n in range(id_max): # query roughly all IDs, in random order
 				n = random.randint(0, id_max)
 				c.execute('select datapoint, some_text from data where id = ?', (n,))
-				if row := c.fetchall(): stats['select'] += 1
+				stats['select'] += 1
+				if not (rows := c.fetchall()): stats['select_miss'] += 1
 		return stats
 
 	def test_writes(self, stats, update_chance=0.2):
@@ -56,7 +57,7 @@ class TestDB:
 			if random.random() < update_chance:
 				c.execute('select id from data order by id desc limit 1')
 				if not ((rows := c.fetchall()) and (id_max := rows[0][0])): return
-				stats['id_max'] = id_max; stats['update'] += 1
+				stats['update'] += 1; stats['id_max'] = id_max
 				try:
 					c.execute( 'update data set datapoint = ?, some_text = ?'
 						' where id = ? ', (data_n, data_text, random.randint(0, id_max)) )
@@ -107,12 +108,15 @@ def main(argv=None):
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [opts] db.sqlite',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
-			Tool to test for various sqlite db and its python wrapper pathologies.
+			Tool to test various sqlite db options and its python wrapper pathologies.
 			Creates db file at specified argument path and runs requested tests.'''))
 	parser.add_argument('db_file', help=dd('''
 		SQLite database file to create/use. Will be reused as-is, if exists already.'''))
 	parser.add_argument('-c', '--create-db', action='store_true', help=dd('''
 		Create fresh db file, removing the old one, if necessary.'''))
+	parser.add_argument('-r', '--rm-db', action='store_true', help=dd('''
+		Remove specified sqlite db file after test finishes
+			successfully, i.e. unless interrupted by Ctrl-C or whatever errors.'''))
 
 	group = parser.add_argument_group('Test-run limits/parameters')
 	group.add_argument('-t', '--test-duration', type=float, metavar='sec', default=10, help=dd('''
@@ -152,21 +156,20 @@ def main(argv=None):
 
 	test_opts = adict(
 		db=adict(
-			path=opts.db_file, autocommit=opts.sqlite_autocommit,
+			path=pl.Path(opts.db_file), autocommit=opts.sqlite_autocommit,
 			isolation_level=opts.sqlite_isolation_level.upper(),
 			journal_mode=(jm := opts.sqlite_journal_mode) and jm.upper(),
 			timeout=opts.sqlite_lock_timeout ),
-		ts_max=time.monotonic() + opts.test_duration, r_loops=opts.reader_loops )
+		ts_max=0, r_loops=opts.reader_loops )
 	if test_opts.db.isolation_level == 'NONE': test_opts.db.isolation_level = None
 	if v := test_opts.db.autocommit: test_opts.db.autocommit = bool(['off', 'on'].index(v))
 
-	if opts.create_db:
-		try: os.unlink(test_opts.db.path)
-		except FileNotFoundError: pass
+	if opts.create_db: test_opts.db.path.unlink(missing_ok=True)
 	with TestDB(test_opts.db) as db: pass # check access/options
 
 	pipe, pipe_send = mp.Pipe()
 	procs, totals, ts0 = list(), cs.Counter(), time.monotonic()
+	test_opts.ts_max = time.monotonic() + opts.test_duration
 	for (func, name_tpl, n_proc) in [
 			(test_writer, 'writer.{}', pm), (test_reader, 'reader.{}', pn) ]:
 		for n in range(n_proc):
@@ -193,5 +196,7 @@ def main(argv=None):
 	for st_t in 'reader writer'.split():
 		totals[f'median_runtime_{st_t}'] = totals[f'median_runtime_{st_t}'] / totals[f'n_{st_t}']
 	print('Totals:', ' '.join(fmt_vals(totals)))
+
+	if opts.rm_db: test_opts.db.path.unlink(missing_ok=True)
 
 if __name__ == '__main__': sys.exit(main())
