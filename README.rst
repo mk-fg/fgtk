@@ -4607,6 +4607,31 @@ exec.c_
 Can be used to act as an unique wrapper for AppArmor profiles bound to
 executable path, or whatever trivial suid-root hacks.
 
+sqlite-python-concurrency-test_
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. _sqlite-python-concurrency-test: scraps/sqlite-python-concurrency-test
+
+Script to test various `python "sqlite3" module`_ locking/concurrency options
+and SQLite_ `journal_mode pragma values`_.
+
+SQLite notoriously had locking issues in the past, but afaik with modern (2010+)
+`journal_mode=wal (Write-Ahead Logging)`_, that's less of an issue, if an issue at all.
+
+That being non-default, and with extra python db-api module behaviors,
+makes it non-trivial to guess how sqlite will end up working with multiple processes,
+so this script is a simple way to test such guesses - create sqlite db, spawn many
+concurrent reader/writer pids accessing it, and see what happens, what's the rough
+performance impact of using different options and operations, etc.
+
+This is not a serious benchmarking suite, but should be easy to adapt for
+various specific needs, due to being a very simple concurrent script.
+Results from it might not generalize well to using sqlite with other (python or
+non-python) API wrappers, so probably useful for stdlib "sqlite3" module, as mentioned.
+
+.. _python "sqlite3" module: https://docs.python.org/3/library/sqlite3.html
+.. _SQLite: https://www.sqlite.org/
+.. _journal_mode pragma values: https://www.sqlite.org/pragma.html#pragma_journal_mode
+.. _journal_mode=wal (Write-Ahead Logging): https://www.sqlite.org/wal.html
 
 
 License (WTFPL)
