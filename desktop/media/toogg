@@ -182,7 +182,8 @@ class FFProc:
 				k, v = line.split('=', 1)
 				report[k] = v
 				if k != 'progress': continue
-				pos = int(report.get('out_time_ms', 0)) / 1000000
+				try: pos = int(report.get('out_time_ms', 0)) / 1_000_000
+				except: pos = -1 # assuming "N/A" value is "seek"
 				if not pos: continue
 				elif pos < 0: msg = 'seek'
 				else:
