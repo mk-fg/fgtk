@@ -4633,6 +4633,80 @@ non-python) API wrappers, so probably useful for stdlib "sqlite3" module, as men
 .. _journal_mode pragma values: https://www.sqlite.org/pragma.html#pragma_journal_mode
 .. _journal_mode=wal (Write-Ahead Logging): https://www.sqlite.org/wal.html
 
+numfmt.awk_
+^^^^^^^^^^^
+.. _numfmt.awk: scraps/numfmt.awk
+
+`GNU AWK`_ library (file with functions to use with -i/--include option)
+to convert long and confusing numbers into a more human-readable form easily.
+
+For example, this is pretty much unreadable to my eye::
+
+  % cat /proc/meminfo
+
+  MemTotal:       32788680 kB
+  MemFree:         2631140 kB
+  MemAvailable:   14960380 kB
+  Buffers:         1517168 kB
+  Cached:         10751784 kB
+  SwapCached:        15192 kB
+  Active:          2429096 kB
+  Inactive:       11556084 kB
+  Active(anon):    1665840 kB
+  Inactive(anon):   188476 kB
+  Active(file):     763256 kB
+  Inactive(file): 11367608 kB
+  Unevictable:       63276 kB
+  Mlocked:           13648 kB
+  SwapTotal:      25165820 kB
+  SwapFree:       24618492 kB
+  Zswap:            167584 kB
+  PageTables:        25152 kB
+  CommitLimit:    41560160 kB
+  Committed_AS:    5213288 kB
+  VmallocTotal:   34359738367 kB
+  VmallocUsed:      179392 kB
+
+But it makes a lot more sense when processed like this::
+
+  % gawk -i numfmt.awk '{printf("%-15s %s\n", $1, numfmt($2, 2))}' /proc/meminfo
+
+  MemTotal:       32G
+  MemFree:        2G
+  MemAvailable:   14G
+  Buffers:        1G
+  Cached:         10G
+  SwapCached:     15M
+  Active:         2G
+  Inactive:       11G
+  Active(anon):   1G
+  Inactive(anon): 188M
+  Active(file):   763M
+  Inactive(file): 11G
+  Unevictable:    63M
+  Mlocked:        13M
+  SwapTotal:      25G
+  SwapFree:       24G
+  Zswap:          167M
+  PageTables:     25M
+  CommitLimit:    41G
+  Committed_AS:   5G
+  VmallocTotal:   34T
+  VmallocUsed:    179M
+
+coreutils_ also has numfmt_ tool, which works for fields in the output,
+but awk one-liners can be easier to use on a less structured data,
+with regexp, conditions, formatting and whatever other logic also added in there.
+
+`AWK script to convert long integers to human-readable number format and back`_
+blog post also has these funcs as 3-liners to embed into shell scripts more easily.
+
+.. _GNU AWK: https://www.gnu.org/software/gawk/manual/gawk.html
+.. _coreutils: https://www.gnu.org/software/coreutils/
+.. _numfmt: https://man.archlinux.org/man/numfmt.1
+.. _AWK script to convert long integers to human-readable number format and back:
+  https://blog.fraggod.net/2022/11/18/awk-script-to-convert-long-integers-to-human-readable-number-format-and-back.html
+
 
 License (WTFPL)
 ---------------
