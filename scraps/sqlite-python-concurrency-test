@@ -191,10 +191,10 @@ def main(argv=None):
 	for stats in procs:
 		st_pid, st_t = (stats.pop(k) for k in 'pid type'.split())
 		totals.update(dict((k, stats.get(k, 0)) for k in 'select insert update'.split()))
-		totals[f'median_runtime_{st_t}'] += stats['runtime']; totals[f'n_{st_t}'] += 1
+		totals[f'mean_runtime_{st_t}'] += stats['runtime']; totals[f'n_{st_t}'] += 1
 		print(f'- pid {st_pid} {st_t} ::', ' '.join(fmt_vals(stats)))
 	for st_t in 'reader writer'.split():
-		totals[f'median_runtime_{st_t}'] = totals[f'median_runtime_{st_t}'] / totals[f'n_{st_t}']
+		totals[f'mean_runtime_{st_t}'] = totals[f'mean_runtime_{st_t}'] / totals[f'n_{st_t}']
 	print('Totals:', ' '.join(fmt_vals(totals)))
 
 	if opts.rm_db: test_opts.db.path.unlink(missing_ok=True)

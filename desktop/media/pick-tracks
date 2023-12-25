@@ -222,7 +222,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 			return log.info('Aborted: %s', stats()) or 1
 
 	### Success
-	rate = (df0 - (df := free())) / (time.monotonic() - ts0) # median rate
+	rate = (df0 - (df := free())) / (time.monotonic() - ts0) # mean rate
 	log.info( 'Finished%s: %s, df-after: %s',
 		' [dry-run]' if dry_run else '', stats(), size_human(df) )
 
