@@ -210,6 +210,23 @@ on some extendable file will result in it eating up all space available to it.
 
 See head of the file for build and usage info.
 
+lsx_
+''''
+.. _lsx: lsx
+
+More functionality similar to common "ls" tool, to list files in some specific
+ways that are occasionally useful. All those are available via various options -
+see ``-h/--help`` for a full list of those.
+
+For example, to print ``-a/--adjacent`` files (w/ some ordering)::
+
+  % lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
+  % lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
+  % lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
+  % lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+
+Simple python script with no extra dependencies.
+
 
 
 Various file-data processing tools
@@ -2214,22 +2231,58 @@ this binary with a typical dracut/systemd boot process.
 .. _"More FIDO2 hw auth/key uses" post:
   https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
-lsx_
-''''
-.. _lsx: lsx
+ca-certs-apply-whitelist_
+'''''''''''''''''''''''''
+.. _ca-certs-apply-whitelist: ca-certs-apply-whitelist
 
-More functionality similar to common "ls" tool, to list files in some specific
-ways that are occasionally useful. All those are available via various options -
-see ``-h/--help`` for a full list of those.
+Script to process p11-kit_ Certificate Authority bundles for "ca-certificates"
+package in linux distros, and only leave explicitly whitelisted certs there,
+removing the rest.
 
-For example, to print ``-a/--adjacent`` files (w/ some ordering)::
+Modern Web PKI only requires about 6-7 CAs for 99% of the sites (as of 2023),
+and other CAs on that list are opaque garbage, unlikely to ever be used
+non-maliciously, so nothing beyond those few CAs is realistically worth "trusting".
+p11-kit only allows blacklisting CAs, which doesn't work for "these few and nothing
+else" approach, and is not safe against junk-CAs added upstream in the future.
 
-  % lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
-  % lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
-  % lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
-  % lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+Whitelist for CAs filters by "label:" from p11-kit bundles, which can be listed along
+with X.509 cert attributes (if cryptography_ module is installed) using ``-l/--list``
+or ``-L/--list-all`` script options, allows using shell-glob wildcards, and can look
+something like this::
 
-Simple python script with no extra dependencies.
+  ISRG Root X*
+  DigiCert *
+  Sectigo *
+  GTS Root *
+  Go Daddy *
+  Microsoft *
+  USERTrust *
+
+Script makes a backup of the original CA bundles, and can be re-run without
+clobbering anything, to further filter remaining CAs.
+
+Intended to be run automatically on a linux setup from package manager hook
+like this::
+
+  [Trigger]
+  Operation = Install
+  Operation = Upgrade
+  Operation = Remove
+  Type = Path
+  Target = usr/share/ca-certificates/trust-source/*
+
+  [Action]
+  Description = Filtering ca-certificates...
+  When = PostTransaction
+  Exec = /usr/local/bin/ca-certs-apply-whitelist -w /etc/ca-certificates/whitelist.txt
+
+Such hook should ideally be run before bundle is used in any way,
+e.g. before other hooks generating /etc/ssl/cert.pem for OpenSSL and such.
+Browsers like firefox tend to use this bundle directly, so should apply
+any changes this script makes immediately in new tabs.
+
+.. _p11-kit: https://p11-glue.github.io/p11-glue/
+.. _cryptography: https://cryptography.io
 
 
 `[dev] Dev tools`_
