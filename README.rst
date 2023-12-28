@@ -2247,14 +2247,14 @@ else" approach, and is not safe against junk-CAs added upstream in the future.
 
 Whitelist for CAs filters by "label:" from p11-kit bundles, which can be listed along
 with X.509 cert attributes (if cryptography_ module is installed) using ``-l/--list``
-or ``-L/--list-all`` script options, allows using shell-glob wildcards, and can look
-something like this::
+or ``-L/--list-all`` script options, allows using shell-glob wildcards, #-comments,
+and can look something like this::
 
-  Baltimore CyberTrust Root
-  ISRG Root X*
+  Baltimore CyberTrust Root # CloudFlare
+  ISRG Root X* # Let's Encrypt
+  GlobalSign * # Google
   DigiCert *
   Sectigo *
-  GlobalSign *
   Go Daddy *
   Microsoft *
   USERTrust *
@@ -2275,7 +2275,7 @@ like this::
   [Action]
   Description = Filtering ca-certificates...
   When = PostTransaction
-  Exec = /usr/local/bin/ca-certs-apply-whitelist -w /etc/ca-certificates/whitelist.txt
+  Exec = /usr/local/bin/ca-certs-apply-whitelist -w /etc/ca-certificates/whitelist.conf
 
 Such hook should ideally be run before bundle is used in any way,
 e.g. before other hooks generating /etc/ssl/cert.pem for OpenSSL and such.

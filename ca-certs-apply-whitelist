@@ -9,7 +9,7 @@ try:
 except ImportError: c_x509 = None
 
 
-p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True)
+p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True)
 
 class adict(dict):
 	def __init__(self, *args, **kws):
@@ -42,7 +42,7 @@ def b64_hash(data, n=10, person=b'cacertsw', **b2_kws):
 
 
 def parse_ca_conf(src, name=None):
-	p_err_sec = lambda s: p_err(f'{src_pre} {s}')
+	p_err_sec = lambda s: p_err(f'ERROR: {src_pre} {s}')
 	sec, props, pem, pem_str = None, dict(), list(), None
 	ca_conf_list = cs.defaultdict(list)
 	for n, line in enumerate(it.chain(src, ['[end]']), 1):
@@ -85,7 +85,6 @@ def print_ca_conf_list(ca_conf_list):
 				fp = cert.fingerprint(getattr(c_hashes, alg)()).hex(':').upper()
 				print(f'   {pre}{alg:<6s} = {fp}')
 			for a in cert.subject: print(f'   {pre}{a.oid._name}: {a.value}')
-			print(f'   {pre}{a.oid._name}: {a.value}')
 			print()
 
 def print_ca_conf_p11k(ca_conf_list, file=sys.stdout):
@@ -118,8 +117,10 @@ def main(argv=None):
 			Default: %(default)s'''))
 	parser.add_argument('-w', '--whitelist', nargs='?', help=dd('''
 		List of p11-kit object labels to include in resulting CA bundle, ignoring all others.
-		One per line, can include shell-glob/fnmatch wildcards.
+		One per line, case-sensitive, can use shell-glob/fnmatch wildcards.
 		Must be specified for normal filtering mode, but not required for --list-all.'''))
+	parser.add_argument('-q', '--quiet', action='store_true', help=dd('''
+		Do not print warnings, like when patterns in a whitelist file don't match anything.'''))
 
 	group = parser.add_argument_group('Non-essential file/dir names')
 	group.add_argument('-b', '--backup-dir', default='bak', metavar='dir', help=dd('''
@@ -148,8 +149,10 @@ def main(argv=None):
 	dry_run = opts.dry_run or list_mode
 	if not opts.list_all:
 		if not opts.whitelist: parser.error('-w/--whitelist file must be specified')
-		whitelist = list(filter( None,
-			pl.Path(opts.whitelist).read_text().splitlines() ))
+		whitelist, whitelist_used = list(), set()
+		for line in pl.Path(opts.whitelist).read_text().splitlines():
+			if m := re.search(r'(^|\s)#', line): line = line[:m.start()]
+			if pat := line.strip(): whitelist.append(pat)
 
 	ca_lists = list(p for p in pl.Path(opts.trust_dir).iterdir() if p.is_file())
 	bak_dir = pl.Path(opts.trust_dir) / opts.backup_dir
@@ -171,8 +174,9 @@ def main(argv=None):
 					src_ca_list.update(parse_ca_conf(lines, p.name))
 					if not opts.list_all:
 						for label in list(src_ca_list):
-							if not any(fnmatch.fnmatchcase(label, pat) for pat in whitelist):
-								del src_ca_list[label]
+							try: pat = next(pat for pat in whitelist if fnmatch.fnmatchcase(label, pat))
+							except StopIteration: del src_ca_list[label]
+							else: whitelist_used.add(pat)
 					if list_mode:
 						for label, cas in src_ca_list.items(): ca_conf_list[label].extend(cas)
 
@@ -202,9 +206,13 @@ def main(argv=None):
 				tmp.seek(pos_data); src_hash = b64_hash(tmp.read())
 				tmp.seek(pos_hash); tmp.write(src_hash)
 
+		if not (opts.list_all or opts.quiet):
+			for pat in set(whitelist).difference(whitelist_used):
+				p_err(f'WARNING: Whitelist-pattern did not match anything [ {pat} ]')
+
 		if list_mode: print_ca_conf_list(ca_conf_list)
 
-		if not dry_run: # put all new/backup files into place
+		if not dry_run: # move all new/backup files into place
 			while tmp_files:
 				p_tmp, p = tmp_files.pop()
 				p_tmp.rename(p)
