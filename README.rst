@@ -2239,9 +2239,9 @@ Script to process p11-kit_ Certificate Authority bundles for "ca-certificates"
 package in linux distros, and only leave explicitly whitelisted certs there,
 removing the rest.
 
-Modern Web PKI only requires about 6-7 CAs for 99% of the sites (as of 2023),
-and other CAs on that list are opaque garbage, unlikely to ever be used
-non-maliciously, so nothing beyond those few CAs is realistically worth "trusting".
+Modern Web PKI requires only a few CAs for 99% of the websites (as of 2023),
+and others on that list are unlikely to be used in non-bogus ways, so nothing
+beyond few top CAs is realistically worth "trusting" for every TLS connection.
 p11-kit only allows blacklisting CAs, which doesn't work for "these few and nothing
 else" approach, and is not safe against junk-CAs added upstream in the future.
 
@@ -2250,10 +2250,11 @@ with X.509 cert attributes (if cryptography_ module is installed) using ``-l/--l
 or ``-L/--list-all`` script options, allows using shell-glob wildcards, and can look
 something like this::
 
+  Baltimore CyberTrust Root
   ISRG Root X*
   DigiCert *
   Sectigo *
-  GTS Root *
+  GlobalSign *
   Go Daddy *
   Microsoft *
   USERTrust *

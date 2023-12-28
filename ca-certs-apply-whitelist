@@ -3,7 +3,9 @@
 import itertools as it, collections as cs, hashlib as hl, pathlib as pl
 import os, sys, re, shutil, fnmatch, base64
 
-try: import cryptography.x509 as c_x509
+try:
+	import cryptography.x509 as c_x509
+	import cryptography.hazmat.primitives.hashes as c_hashes
 except ImportError: c_x509 = None
 
 
@@ -79,7 +81,11 @@ def print_ca_conf_list(ca_conf_list):
 		for pem, conf in certs:
 			pre = f'{conf} ' if len(certs) > 1 else ''
 			cert = c_x509.load_pem_x509_certificate(pem.encode())
+			for alg in 'SHA1', 'SHA256':
+				fp = cert.fingerprint(getattr(c_hashes, alg)()).hex(':').upper()
+				print(f'   {pre}{alg:<6s} = {fp}')
 			for a in cert.subject: print(f'   {pre}{a.oid._name}: {a.value}')
+			print(f'   {pre}{a.oid._name}: {a.value}')
 			print()
 
 def print_ca_conf_p11k(ca_conf_list, file=sys.stdout):
@@ -102,10 +108,6 @@ def main(argv=None):
 			Unlike built-in p11-kit tools, which use blacklist logic, this script does the
 				opposite - picks couple useful CAs according to whitelist, discards all others.
 			Intended to be run when contents of trust-dir change, e.g. via package manager hook.
-
-			Idea is that modern Web PKI only requires about 6-7 CAs for 99% of the sites, and
-				other CAs on that list are opaque garbage, unlikely to ever be used non-maliciously.
-			Blacklisting whack-a-mole does not work for this purposes, hence this script.
 			Tested to work with Mozilla's set of CA certs in p11-kit format.'''))
 
 	parser.add_argument('trust_dir', nargs='?',
