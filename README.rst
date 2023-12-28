@@ -2231,60 +2231,6 @@ this binary with a typical dracut/systemd boot process.
 .. _"More FIDO2 hw auth/key uses" post:
   https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
-ca-certs-apply-whitelist_
-'''''''''''''''''''''''''
-.. _ca-certs-apply-whitelist: ca-certs-apply-whitelist
-
-Script to process p11-kit_ Certificate Authority bundles for "ca-certificates"
-package in linux distros, and only leave explicitly whitelisted certs there,
-removing the rest.
-
-Modern Web PKI requires only a few CAs for 99% of the websites (as of 2023),
-and others on that list are unlikely to be used in non-bogus ways, so nothing
-beyond few top CAs is realistically worth "trusting" for every TLS connection.
-p11-kit only allows blacklisting CAs, which doesn't work for "these few and nothing
-else" approach, and is not safe against junk-CAs added upstream in the future.
-
-Whitelist for CAs filters by "label:" from p11-kit bundles, which can be listed along
-with X.509 cert attributes (if cryptography_ module is installed) using ``-l/--list``
-or ``-L/--list-all`` script options, allows using shell-glob wildcards, #-comments,
-and can look something like this::
-
-  Baltimore CyberTrust Root # CloudFlare
-  ISRG Root X* # Let's Encrypt
-  GlobalSign * # Google
-  DigiCert *
-  Sectigo *
-  Go Daddy *
-  Microsoft *
-  USERTrust *
-
-Script makes a backup of the original CA bundles, and can be re-run without
-clobbering anything, to further filter remaining CAs.
-
-Intended to be run automatically on a linux setup from package manager hook
-like this::
-
-  [Trigger]
-  Operation = Install
-  Operation = Upgrade
-  Operation = Remove
-  Type = Path
-  Target = usr/share/ca-certificates/trust-source/*
-
-  [Action]
-  Description = Filtering ca-certificates...
-  When = PostTransaction
-  Exec = /usr/local/bin/ca-certs-apply-whitelist -w /etc/ca-certificates/whitelist.conf
-
-Such hook should ideally be run before bundle is used in any way,
-e.g. before other hooks generating /etc/ssl/cert.pem for OpenSSL and such.
-Browsers like firefox tend to use this bundle directly, so should apply
-any changes this script makes immediately in new tabs.
-
-.. _p11-kit: https://p11-glue.github.io/p11-glue/
-.. _cryptography: https://cryptography.io
-
 
 `[dev] Dev tools`_
 ~~~~~~~~~~~~~~~~~~
