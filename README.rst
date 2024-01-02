@@ -105,7 +105,7 @@ Example - run "make" on any change to ``~user/hatch/project`` files::
   (root) ~# fatrace-pipe ~user/hatch/project
   (user) project% xargs -in1 </tmp/fatrace.fifo make
 
-.. _fatrace: https://launchpad.net/fatrace
+.. _fatrace: https://github.com/martinpitt/fatrace
 .. _fanotify: http://lwn.net/Articles/339253/
 
 fatrace-run_
@@ -2230,6 +2230,40 @@ this binary with a typical dracut/systemd boot process.
 .. _libfido2: https://developers.yubico.com/libfido2/
 .. _"More FIDO2 hw auth/key uses" post:
   https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
+
+run_cmd_pipe.nim_
+'''''''''''''''''
+.. _run_cmd_pipe.nim: run_cmd_pipe.nim
+
+Small tool to match lines from stdin according to ini config file
+and run commands for any matching regexps specified there.
+Intended as a long-running handler for monitoring some process' output,
+e.g. monitor some log via ``tail -F file.log``, or react to fanotify
+filesystem updates from fatrace_ efficiently.
+
+For example, with ``myapp-changes.conf`` file like this::
+
+  # Add 10s delay for changes to settle before running commands
+  delay = 10_000
+
+  [data-file-updates]
+  regexp = : \S*[WD+<>]\S* */srv/myapp/data-files(/[^/]+)?$
+  run = myapp process-new-data /srv/myapp/data-files
+  # regexp-env-var = RCP_MATCH -- "run" command will get this in env by default
+  # regexp-env-group = 1 -- regexp group to put into regexp-env-var, 0 - full match
+
+  [config-updates]
+  regexp = : \S*[WD+<>]\S* */srv/myapp/config(/.*)?$
+  run = pkill -x HUP myapp
+
+...tool can be run as ``fatrace | run_cmd_pipe myapp-changes.conf``, to process
+any file-change events and run relevant commands to react to those in a daemon loop.
+
+Can have cooldown and debouncing delay for rules, reloads config-file on SIGHUP,
+runs only one process per rule at a time, has small mem footprint, etc etc.
+``-h/--help`` output has more info on configuration format and cli opts.
+
+Build with: ``nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe``
 
 
 `[dev] Dev tools`_

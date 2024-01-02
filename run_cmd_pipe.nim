@@ -1,0 +1,300 @@
+#? replace(sub = "\t", by = "  ")
+#
+# Debug build/run: nim c -w=on --hints=on -r run_cmd_pipe.nim -h
+# Final build: nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe
+# Usage info: ./run_cmd_pipe -h
+
+import std/[ parseopt, os, posix, logging, osproc, strtabs,
+	strformat, strutils, sequtils, re, times, monotimes, tables, selectors ]
+
+template nfmt(v: untyped): string = ($v).insertSep # format integer with digit groups
+
+
+type
+	Conf = tuple[
+		mtime: times.Time,
+		delay: int,
+		cooldown: int,
+		rules: Table[string, Rule] ]
+	Rule = tuple[
+		name: string,
+		regexp: Regex,
+		regexp_env_var: string,
+		regexp_env_group: int,
+		run: seq[string] ]
+const regexp_env_group_max = 19
+
+proc parse_conf(conf_path: string): Conf =
+	var
+		mtime: times.Time
+		delay = -1
+		cooldown = -1
+		rules = initTable[string, Rule]()
+		re_comm = re"^\s*([#;].*)?$"
+		re_name = re"^\[(.*)\]$"
+		re_name_internal = re"^--[^-]"
+		re_var = re"^\s*(\S.*?)\s*(=\s*(\S.*?)?\s*)?$"
+		line_n = 0
+		name = ""
+		regexp: Regex
+		run: seq[string]
+		regexp_env_var = "RCP_MATCH"
+		regexp_env_group = 0
+	mtime = getLastModificationTime(conf_path)
+	for line in (readFile(conf_path) & "\n[end]").splitLines:
+		line_n += 1
+		if line =~ re_comm: continue
+		elif line =~ re_name:
+			if name != "":
+				if regexp == nil: warn(&"Ignoring rule with missing regexp: {name}")
+				else: rules[name] = (name, regexp, regexp_env_var, regexp_env_group, run)
+			name = matches[0]; regexp = nil; run = @[]
+			regexp_env_var = "RCP_MATCH"; regexp_env_group = 0
+			if name =~ re_name_internal: name = "-" & name
+		elif line =~ re_var:
+			if name == "":
+				try:
+					if matches[0] == "cooldown": cooldown = matches[2].parseInt
+					elif matches[0] == "delay": delay = matches[2].parseInt
+					else: warn(&"Ignoring unrecognized config-option line {line_n} [ {line} ]")
+				except ValueError as err:
+					warn(&"Failed to parse config value on line {line_n} [ {line} ] :: {err.msg}")
+			else:
+				try:
+					if matches[0] == "regexp": regexp = re(&"({matches[2]})")
+					elif matches[0] == "regexp-ci":
+						regexp = re(&"({matches[2]})", {reIgnoreCase, reStudy})
+					elif matches[0] == "regexp-env-var": regexp_env_var = matches[2].strip
+					elif matches[0] == "regexp-env-group":
+						regexp_env_group = matches[2].parseInt
+						if regexp_env_group > regexp_env_group_max:
+							raise newException( ValueError,
+								&"Regexp match-group N must be < {regexp_env_group_max+1}" )
+					elif matches[0] == "run": run = matches[2].strip.split
+					else: warn(&"Ignoring unrecognized rule-option line {line_n} [ {line} ]")
+				except Exception as err:
+					warn(&"Failed to parse config value on line {line_n} [ {line} ] :: {err.msg}")
+	return (mtime, delay, cooldown, rules)
+
+
+proc main_help(err="") =
+	proc print(s: string) =
+		let dst = if err == "": stdout else: stderr
+		write(dst, s); write(dst, "\n")
+	let app = getAppFilename().lastPathPart
+	if err != "": print &"ERROR: {err}"
+	print &"\nUsage: {app} [opts] rcp.conf"
+	if err != "":
+		print &"Run '{app} --help' for more information"
+		quit 0
+	print dedent(&"""
+
+		{app} is a small tool to parse pairs of regexp-command from conf-file,
+			then read input lines from stdin (or from specified subprocess' stdout),
+			match those against regexps (PCRE), and run corresponding command(s).
+		Commands are excepted to finish quickly and exit, use
+			systemctl or systemd-run with --no-block to start long-running tasks instead.
+		All numeric parameters can be set at the top of the config file too,
+			before any rules, but command-line values always override those, if specified.
+		SIGHUP can be used to reload all options and rules from the configuration file.
+
+		Configuration file example (basic ini format):
+
+			# Global opts can be set before rules. Comment lines can start with "#" or ";".
+			delay = 1_000
+
+			# All rule opts are listed below. Defaults: re-var=RCP_MATCH re-group=0
+			[my-rule]
+			regexp = ^(.*)$
+			regexp-env-var = MY_MATCH
+			regexp-env-group = 1
+			run = env
+			# ...plus any more such rule blocks, any number of which can match each line.
+
+		 -c / --cooldown milliseconds
+			Min interval between running commands on events (default=300ms).
+			If multiple events to trigger same command are detected, it will run after delay.
+
+		 -d / --delay milliseconds
+			Add fixed time delay (in ms) from event to running a corresponding command.
+			Can be used for debouncing events - e.g. if multiple events to trigger
+				some shared action are common in rapid succession, delaying command
+				by 1s can avoid running it multiple times for each of them needlessly.
+
+		 --debug -- Verbose operation mode.
+		""")
+	quit 0
+
+proc main(argv: seq[string]) =
+	var
+		opt_debug = false
+		opt_conf = ""
+		opt_cooldown = -1
+		opt_delay = -1
+		# XXX: option to run stdin-command via ... -- cmd [args]
+
+	block cli_parser:
+		var opt_last = ""
+		proc opt_fmt(opt: string): string =
+			if opt.len == 1: &"-{opt}" else: &"--{opt}"
+		proc opt_empty_check =
+			if opt_last == "": return
+			main_help &"{opt_fmt(opt_last)} option unrecognized or requires a value"
+		proc opt_set(k: string, v: string) =
+			if k in ["c", "cooldown"]: opt_cooldown = v.parseInt
+			if k in ["d", "delay"]: opt_delay = v.parseInt
+			else: main_help &"Unrecognized option [ {opt_fmt(k)} = {v} ]"
+		for t, opt, val in getopt(argv):
+			case t
+			of cmdEnd: break
+			of cmdShortOption, cmdLongOption:
+				if opt in ["h", "help"]: main_help()
+				elif opt in ["debug"]: opt_debug = true
+				elif val == "": opt_empty_check(); opt_last = opt
+				else: opt_set(opt, val)
+			of cmdArgument:
+				if opt_last != "": opt_set(opt_last, opt); opt_last = ""
+				elif opt_conf != "": main_help &"Unrecognized argument: {opt}"
+				else: opt_conf = opt
+		opt_empty_check()
+		if opt_conf == "": main_help &"Missing required config-file argument"
+
+	var logger = newConsoleLogger(
+		fmtStr="$levelid $datetime :: ", useStderr=true,
+		levelThreshold=if opt_debug: lvlAll else: lvlInfo )
+	addHandler(logger)
+
+	var
+		stream = stdin
+		rules: Table[string, Rule]
+    s = newSelector[string]()
+		rule_last_ts = initTable[string, MonoTime]()
+		rule_last_match = initTable[string, string]()
+		rule_procs = initTable[string, Process]()
+		rule_matches: array[regexp_env_group_max + 1, string]
+		td_cooldown: Duration
+		td_delay: Duration
+
+	proc conf_load() =
+		debug("(Re-)Loading config file: ", opt_conf)
+		let conf = parse_conf(opt_conf)
+		td_cooldown = initDuration(milliseconds=(
+			if opt_cooldown > 0: opt_cooldown
+			elif conf.cooldown >= 0: conf.cooldown else: 300 ))
+		td_delay = initDuration(milliseconds=(
+			if opt_delay > 0: opt_delay elif conf.delay >= 0: conf.delay else: 0 ))
+		rules = conf.rules
+		for name in toSeq(rule_last_ts.keys):
+			if not rules.contains(name): continue
+			rule_last_ts.del(name); rule_last_match.del(name); rule_procs.del(name)
+	conf_load()
+
+	s.registerHandle(getOsFileHandle(stream), {Event.Read}, "--line")
+	s.registerSignal(SIGHUP, "--reload")
+	s.registerSignal(SIGINT, "--exit")
+	s.registerSignal(SIGTERM, "--exit")
+	defer: s.close
+
+	debug("Starting main loop...")
+	var
+		stream_eof = false
+		line: string
+	while not stream_eof:
+
+		### Build run_rules list to start commands
+		var run_rules = newSeq[string]()
+		for rk in s.select(-1):
+			if Event.Error in rk.events:
+				debug(&"-- close/err: [{rk.errorCode}] {osErrorMsg(rk.errorCode)}")
+				stream_eof = true; break
+			s.withData(rk.fd, ev_ptr):
+				let ev = ev_ptr[]
+
+				block non_input_evs:
+					if ev == "--line": break non_input_evs
+					debug("-- event [ ", ev, " ]")
+					if ev == "--reload": conf_load()
+					elif ev == "--exit": debug("Exiting on signal"); quit()
+					elif ev.startswith("--proc "):
+						let name = ev[7..<ev.len]
+						rule_procs.withValue(name, pr_ptr):
+							debug("++ process exited [ ", name, " ] code=", pr_ptr[].peekExitCode)
+							rule_procs.del(name)
+						do: debug("++ process exited [ ", name, " ] untracked")
+					else: run_rules.add(ev) # delay timer
+					continue
+
+				try: line = stream.readLine.strip
+				except EOFError: debug("-- end-of-file"); stream_eof = true; break
+				debug("-- input line: ", line)
+
+				for name, rule in rules.pairs:
+					if not line.contains(rule.regexp, rule_matches): continue
+					debug("Rule match [ ", rule.name, " ]")
+					let ts_now = getMonoTime()
+					rule_last_match[rule.name] = rule_matches[rule.regexp_env_group]
+
+					rule_last_ts.withValue(rule.name, ts_last_ptr):
+						let ts_last = ts_last_ptr[]
+						if ts_last > ts_now:
+							debug("Rule already scheduled [ ", rule.name, " ]")
+							continue
+						let delay = td_cooldown - (ts_now - ts_last)
+						if delay > DurationZero:
+							debug("Rule cooldown-delay [ ", rule.name, " ] ms=", delay.inMilliseconds.nfmt)
+							rule_last_ts[rule.name] = ts_last + td_cooldown
+							s.registerTimer(delay.inMilliseconds, true, rule.name)
+							continue
+
+					if td_delay > DurationZero:
+						rule_last_ts[rule.name] = ts_now + td_delay
+						debug("Rule fixed-delay [ ", rule.name, " ] ms=", td_delay.inMilliseconds.nfmt)
+						s.registerTimer(td_delay.inMilliseconds, true, rule.name)
+
+					else:
+						rule_last_ts[rule.name] = ts_now
+						run_rules.add(rule.name)
+
+			do: warn("Event-poller unexpected ev={rk.events} fd={rk.fd}")
+
+		### Check/start run_rules commands
+		var
+			rule: Rule
+			env: StringTableRef
+			pr: Process
+			pid: int
+			exit_code: int
+		for name in run_rules:
+			debug("Rule run [ ", name, " ]")
+			if not rules.contains(name): continue
+			rule = rules[name]
+			if rule.run.len == 0: continue
+
+			rule_procs.withValue(name, pr_ptr):
+				pr = pr_ptr[]; exit_code = pr.peekExitCode
+				if exit_code < 0:
+					debug("++ process already running [ ", name, " ] pid=[", pr.processID, " ]")
+					continue
+				else:
+					debug("++ earlier process collected [ ", name, " ] code=", exit_code)
+					pr.close
+
+			rule_last_match.withValue(name, m_ptr):
+				env = newStringTable(modeCaseSensitive)
+				for k, v in envPairs(): env[k] = v
+				env[rule.regexp_env_var] = m_ptr[]
+			do: env = nil
+			try:
+				pr = startProcess( rule.run[0], env=env,
+					args=rule.run[1..<rule.run.len], options={poUsePath, poParentStreams} )
+				pid = pr.processID
+			except OSError as err:
+				warn(&"Failed to run rule command [ {name} ] :: {err.msg}")
+				continue
+			debug("++ started process [ ", name, " ] pid=[ ", pid, " ]")
+			rule_procs[name] = pr
+			s.registerProcess(pid, &"--proc {name}")
+
+	debug("Finished")
+
+when is_main_module: main(commandLineParams())
