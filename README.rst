@@ -2256,11 +2256,12 @@ For example, with ``myapp-changes.conf`` file like this::
   regexp = : \S*[WD+<>]\S* */srv/myapp/config(/.*)?$
   run = pkill -x HUP myapp
 
-...tool can be run as ``fatrace | run_cmd_pipe myapp-changes.conf``, to process
+...tool can be run as ``fatrace | run_cmd_pipe myapp-changes.conf`` (or exec
+input-command without shell via ``... -- cmd args...`` by itself), to process
 any file-change events and run relevant commands to react to those in a daemon loop.
 
 Can have cooldown and debouncing delay for rules, reloads config-file on SIGHUP,
-runs only one process per rule at a time, has small mem footprint, etc etc.
+runs only one process per rule at a time, has small mem footprint, no deps, etc etc.
 ``-h/--help`` output has more info on configuration format and cli opts.
 
 Build with: ``nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe``

@@ -4,8 +4,8 @@
 # Final build: nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe
 # Usage info: ./run_cmd_pipe -h
 
-import std/[ parseopt, os, posix, logging, osproc, strtabs,
-	strformat, strutils, sequtils, re, times, monotimes, tables, selectors ]
+import std/[ parseopt, os, posix, logging, re, osproc, strtabs,
+	strformat, strutils, sequtils, times, monotimes, tables, selectors ]
 
 template nfmt(v: untyped): string = ($v).insertSep # format integer with digit groups
 
@@ -77,13 +77,53 @@ proc parse_conf(conf_path: string): Conf =
 	return (mtime, delay, cooldown, rules)
 
 
+proc start_input_proc(argv: openArray[string]): (File, Pid) =
+	# osproc in nim doesn't allow good-enough control to remap stdin/stdout correctly
+	var
+		cmd = argv[0]
+		proc_pipe: array[0..1, cint]
+		pid: Pid
+		stream: File
+	template chk(e: untyped) =
+		if e != 0: raiseOSError(osLastError())
+	chk pipe(proc_pipe)
+	let (pipe_r, pipe_w) = (proc_pipe[0], proc_pipe[1])
+	block start_proc:
+		var
+			attr: Tposix_spawnattr
+			fops: Tposix_spawn_file_actions
+			mask: Sigset
+			flags = POSIX_SPAWN_USEVFORK or POSIX_SPAWN_SETSIGMASK
+			args = allocCStringArray(argv)
+			env = allocCStringArray( block:
+				var env = newSeq[string]()
+				for key, val in envPairs(): env.add(&"{key}={val}")
+				env )
+		defer: deallocCStringArray(args); deallocCStringArray(env)
+		chk posix_spawn_file_actions_init(fops)
+		defer: discard posix_spawn_file_actions_destroy(fops)
+		chk posix_spawnattr_init(attr)
+		defer: discard posix_spawnattr_destroy(attr)
+		chk sigemptyset(mask)
+		chk posix_spawnattr_setsigmask(attr, mask)
+		chk posix_spawnattr_setflags(attr, flags)
+		chk posix_spawn_file_actions_addclose(fops, pipe_r)
+		chk posix_spawn_file_actions_adddup2(fops, pipe_w, 1)
+		chk posix_spawnp(pid, cmd.cstring, fops, attr, args, env)
+	chk close(pipe_w)
+	if not stream.open(pipe_r): raiseOSError(osLastError())
+	return (stream, pid)
+
+
+var stream_pid: Pid = 0 # global for noconv from signal handlers
+
 proc main_help(err="") =
 	proc print(s: string) =
 		let dst = if err == "": stdout else: stderr
 		write(dst, s); write(dst, "\n")
 	let app = getAppFilename().lastPathPart
 	if err != "": print &"ERROR: {err}"
-	print &"\nUsage: {app} [opts] rcp.conf"
+	print &"\nUsage: {app} [opts] rcp.conf [-- cmd [args...]]"
 	if err != "":
 		print &"Run '{app} --help' for more information"
 		quit 0
@@ -91,9 +131,9 @@ proc main_help(err="") =
 
 		{app} is a small tool to parse pairs of regexp-command from conf-file,
 			then read input lines from stdin (or from specified subprocess' stdout),
-			match those against regexps (PCRE), and run corresponding command(s).
-		Commands are excepted to finish quickly and exit, use
-			systemctl or systemd-run with --no-block to start long-running tasks instead.
+			match those against regexps (PCRE), and run corresponding command(s) for them.
+		Commands are expected to finish quickly and exit, use systemctl
+			or systemd-run with --no-block to start long-running tasks instead.
 		All numeric parameters can be set at the top of the config file too,
 			before any rules, but command-line values always override those, if specified.
 		SIGHUP can be used to reload all options and rules from the configuration file.
@@ -105,8 +145,9 @@ proc main_help(err="") =
 
 			# All rule opts are listed below. Defaults: re-var=RCP_MATCH re-group=0
 			[my-rule]
-			regexp = ^(.*)$
-			regexp-env-var = MY_MATCH
+			regexp = systemd\[1\]: (.*)$
+			# regexp-ci = ... -- same as regexp, but case-insensitive
+			regexp-env-var = SD_LOG_MSG
 			regexp-env-group = 1
 			run = env
 			# ...plus any more such rule blocks, any number of which can match each line.
@@ -125,13 +166,17 @@ proc main_help(err="") =
 		""")
 	quit 0
 
-proc main(argv: seq[string]) =
+proc main(argv_full: seq[string]) =
 	var
+		argv = argv_full
 		opt_debug = false
 		opt_conf = ""
 		opt_cooldown = -1
 		opt_delay = -1
-		# XXX: option to run stdin-command via ... -- cmd [args]
+		opt_cmd: seq[string]
+
+	let n = argv.find("--")
+	if n != -1: opt_cmd = argv[n+1..<argv.len]; argv = argv[0..<n]
 
 	block cli_parser:
 		var opt_last = ""
@@ -167,7 +212,7 @@ proc main(argv: seq[string]) =
 	var
 		stream = stdin
 		rules: Table[string, Rule]
-    s = newSelector[string]()
+		s = newSelector[string]()
 		rule_last_ts = initTable[string, MonoTime]()
 		rule_last_match = initTable[string, string]()
 		rule_procs = initTable[string, Process]()
@@ -188,6 +233,17 @@ proc main(argv: seq[string]) =
 			if not rules.contains(name): continue
 			rule_last_ts.del(name); rule_last_match.del(name); rule_procs.del(name)
 	conf_load()
+
+	if opt_cmd.len > 0:
+		debug("Running input-command: ", opt_cmd.join(" "))
+		(stream, stream_pid) = start_input_proc(opt_cmd)
+	defer:
+		if stream_pid <= 0: return
+		stream.close
+		if kill(stream_pid, SIGTERM) != 0'i32: raiseOSError(osLastError())
+		onSignal(SIGALRM): discard kill(stream_pid, SIGKILL)
+		var st = 0'i32; discard alarm(2'i32)
+		if waitpid(stream_pid, st, 0) < 0: raiseOSError(osLastError())
 
 	s.registerHandle(getOsFileHandle(stream), {Event.Read}, "--line")
 	s.registerSignal(SIGHUP, "--reload")
@@ -275,7 +331,7 @@ proc main(argv: seq[string]) =
 				if exit_code < 0:
 					debug("++ process already running [ ", name, " ] pid=[", pr.processID, " ]")
 					continue
-				else:
+				else: # should normally be handled in selector loop
 					debug("++ earlier process collected [ ", name, " ] code=", exit_code)
 					pr.close
 
