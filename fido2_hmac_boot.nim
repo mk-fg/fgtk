@@ -12,7 +12,7 @@ import strformat, strutils, parseopt, os, base64, posix
 
 {.passl: "-lfido2 -lcrypto"}
 
-const FHB_RPID {.strdefine.} = "" # Relying Party ID string, e.g. fhd.mysite.com
+const FHB_RPID {.strdefine.} = "" # Relying Party ID string, e.g. fhb.mysite.com
 const FHB_Salt {.strdefine.} = "" # 32B HMAC salt base64 that corresponds to same unique output
 const FHB_Dev {.strdefine.} = "" # default device, e.g. "/dev/yubikey" or "pcsc://slot0"
 const FHB_CID {.strdefine.} = "" # Credential ID base64 blob from fido2-cred
@@ -109,7 +109,7 @@ proc run_ask_pass(argv: openArray[string]): string =
 			flags = POSIX_SPAWN_USEVFORK or POSIX_SPAWN_SETSIGMASK
 			args = allocCStringArray(argv)
 			env = allocCStringArray( block:
-				var env = newSeq[string](0)
+				var env = newSeq[string]()
 				for key, val in envPairs(): env.add(&"{key}={val}")
 				env )
 		defer: deallocCStringArray(args); deallocCStringArray(env)
@@ -180,6 +180,8 @@ proc main_help(err="") =
 
 		Wait for user input on /dev/console, and run HMAC operation on
 			FIDO2 device, outputting resulting data to specified file or stdout.
+		Device is only checked/opened/used after successful passphrase input.
+		There is a separate --hmac mode to do a simple HMAC(key-file, string) operation.
 		Most options can be set at build-time via -d:FHB_* to "nim c ..." command.
 
 		Input/output options:
@@ -191,6 +193,8 @@ proc main_help(err="") =
 
 			-d/--dev <dev-spec>
 				FIDO2 device path or URL-like spec like pcsc://slot0 that libfido2 supports.
+				Multiple dev paths can be specified with this option,
+					to check and use the first one that exists, or first one that is an URL.
 				Compiled-in default: {FHB_Dev=}
 
 			-c/--cred-id <base64-blob>
@@ -263,7 +267,7 @@ proc main(argv: seq[string]) =
 	var
 		fhb_rpid = FHB_RPID
 		fhb_salt = FHB_Salt
-		fhb_dev = FHB_Dev
+		fhb_dev_list = newSeq[string]()
 		fhb_cred = FHB_CID
 		fhb_ask_cmd = FHB_Ask_Cmd
 		fhb_ask_attempts = FHB_Ask_Attempts
@@ -296,12 +300,12 @@ proc main(argv: seq[string]) =
 		proc opt_set(k: string, v: string) =
 			if k in ["r", "rpid"]: fhb_rpid = v
 			elif k in ["s", "hmac-salt"]: fhb_salt = v
-			elif k in ["d", "dev"]: fhb_dev = v
+			elif k in ["d", "dev"]: fhb_dev_list.add(v)
 			elif k in ["c", "cred-id"]: fhb_cred = v
 			elif k in ["a", "ask-cmd"]: fhb_ask_cmd = v
-			elif k in ["n", "ask-attempts"]: fhb_ask_attempts = parseInt(v)
+			elif k in ["n", "ask-attempts"]: fhb_ask_attempts = v.parseInt
 			elif k in ["b", "ask-bypass"]: fhb_ask_bypass = v
-			elif k in ["t", "timeout"]: fhb_timeout = parseInt(v)
+			elif k in ["t", "timeout"]: fhb_timeout = v.parseInt
 			elif k == "up": fhb_up = opt_bool_int(k, v)
 			elif k == "uv": fhb_uv = opt_bool_int(k, v)
 			else: quit(&"BUG: no type info for option [ {k} = {v} ]")
@@ -324,13 +328,15 @@ proc main(argv: seq[string]) =
 				else: main_help(&"Unrecognized argument: {opt}")
 		opt_empty_check()
 
+
 		if not opt_hmac:
+			if fhb_dev_list.len == 0:
+				if FHB_Dev != "": fhb_dev_list.add(FHB_Dev)
+				else: main_help( "-d:FHB_DEV=<dev-node-or-spec>" &
+					" must be set at build-time or via -d/--dev option" )
 			if fhb_rpid == "":
 				main_help( "-d:FHB_RPID=some.host.name" &
 					" must be set at build-time or via -r/--rpid option" )
-			if fhb_dev == "":
-				main_help( "-d:FHB_DEV=<dev-node-or-spec>" &
-					" must be set at build-time or via -d/--dev option" )
 			if fhb_salt == "":
 				main_help( "-d:FHB_SALT=... must" &
 					" be set at build-time or via -s/--salt option" )
@@ -390,18 +396,28 @@ proc main(argv: seq[string]) =
 					if fhb_uv == 0: pin = ""
 
 				block fido_assert_send:
-					var dev = fido_dev_new()
+					var
+						dev_st: Stat
+						dev_path = ""
+						dev = fido_dev_new()
 					defer: fido_dev_free(addr(dev))
-					r = fido_dev_open(dev, fhb_dev.cstring)
+					for fhb_dev in fhb_dev_list:
+						if fhb_dev.contains("://") or (
+								stat(fhb_dev, dev_st) >= 0'i32 and S_ISCHR(dev_st.st_mode) ):
+							dev_path = fhb_dev; break
+					if dev_path == "":
+						p_err &"FAIL: fido-open failed - no existing dev paths or URLs to use"
+						continue
+					r = fido_dev_open(dev, dev_path.cstring)
 					if r != FIDO_OK:
-						p_err &"FAIL: fido-open failed [ {fhb_dev} ] - {fido_strerr(r.cint)}"
+						p_err &"FAIL: fido-open failed [ {dev_path} ] - {fido_strerr(r.cint)}"
 						continue
 					defer: fido(dev_close, dev)
 					fido(dev_set_timeout, dev, cint(fhb_timeout * 1000))
 					r = fido_dev_get_assert(dev, a, if pin == "": nil else: pin.cstring)
 					if r != FIDO_OK:
 						fido_dev_cancel(dev)
-						p_err &"FAIL: fido-assert failed - {fido_strerr(r.cint)}"
+						p_err &"FAIL: fido-assert failed [ {dev_path} ] - {fido_strerr(r.cint)}"
 					else: break fido_assert_attempts
 
 			quit("ERROR: Failed to get HMAC value from the device")
