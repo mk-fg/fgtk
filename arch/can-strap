@@ -38,7 +38,7 @@ export LC_ALL=C
 cd /var/lib/machines
 
 mkdir -p "$can"
-pacstrap "$@" -c -C "$pacman_conf" -d "$can" "${can_sets[@]}"
+pacstrap "$@" -c -C "$pacman_conf" "$can" "${can_sets[@]}"
 
 for conf in \
 	/etc/{localtime,profile,locale.gen,locale.conf} \
