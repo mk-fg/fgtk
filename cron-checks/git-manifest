@@ -157,6 +157,10 @@ def main(args=None):
 				c - capabilities, a - POSIX ACLs (access/default, if exist), x - xattrs,
 				n - skip printing non-root paths for which resulting permission-string is empty.
 			Default: print everything that is there.'''))
+	group.add_argument('-p', '--print-full-path', action='store_true', help=dd('''
+		Always print full path on every line, instead of splitting
+			output into indented chunks started by a git repo-path header.
+		This is useful for diffs or to otherwise use/handle output lines individually.'''))
 
 	group = parser.add_argument_group('uid/gid options')
 	group.add_argument('-n', '--ids-numeric', action='store_true',
@@ -178,8 +182,7 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	git_dirs = getattr(opts, 'git-dirs')
-	if not git_dirs:
+	if not (git_dirs := getattr(opts, 'git-dirs')):
 		git_dirs = [pl.Path('.')]
 		if not (git_dirs[0] / '.git').is_dir():
 			parser.error('No git-dirs specified and current dir is not a repository')
@@ -216,6 +219,7 @@ def main(args=None):
 	out = dict.fromkeys(parser.get_default('output'))
 	out.update(dict.fromkeys(opts.output, True))
 	out = type('Output', (object,), out)
+	print_noctx = opts.print_full_path
 
 	git_paths = dict()
 	for n, p_git in enumerate(git_dirs):
@@ -236,9 +240,13 @@ def main(args=None):
 	for p, p_str in git_paths.items():
 		p_root = p_str in git_dirs
 		if p_root:
-			if p_git: print()
-			p = p_git = p_str
-		else: p = p_git / p_str
+			p_git_newline = bool(p_git)
+			p = p_git = p_repr = p_str
+			if print_noctx: p_repr = None
+			elif p_git_newline: p_repr = f'\n{p_repr}'
+		else:
+			p = p_git / p_str
+			p_repr = f'  {p_str}' if not print_noctx else p
 		perm = ''
 
 		if out.u or out.g or out.t or out.m:
@@ -285,6 +293,6 @@ def main(args=None):
 
 		if out.n and not (p_root or perm): continue
 		if perm: perm = ' ' + perm
-		print((str(p_str) if p_root else f'  {p_str}') + perm)
+		if p_repr: print(str(p_repr) + perm)
 
 if __name__ == '__main__': sys.exit(main())
