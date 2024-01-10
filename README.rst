@@ -2691,7 +2691,7 @@ retention policy string.
 
 See built-in -h/--help output for more info and all the options.
 
-Similar to sanoid_, but much simplier and in python instead of perl.
+Similar to sanoid_, but much simpler and in python instead of perl.
 
 .. _retention policy, similar to how btrbk tool does it: https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
 .. _sanoid: https://github.com/jimsalterjrs/sanoid
@@ -2704,7 +2704,7 @@ Same as zfs-snapper script above, but for making and managing
 read-only snapshots of btrfs subvolumes in a specific directory for those,
 according to same retention policy string.
 
-Similar to btrbk_, but much simplier and more reliable/predictable,
+Similar to btrbk_, but much simpler and more reliable/predictable,
 without a ton of extra features that's been piled-on there over time.
 
 .. _btrbk: https://digint.ch/btrbk/
@@ -3608,7 +3608,7 @@ filetag_
 Command-line python script to scan files for tagging based on paths or filename
 extensions (e.g. tag \*.py with "py"), script shebangs or magic bytes (binary header).
 
-Simplier and easiler-to-use replacement for tools like codetag_ and tmsu_.
+Simpler and easiler-to-use replacement for tools like codetag_ and tmsu_.
 
 Allows for fast "sum of products" DNF queries, i.e. fairly arbitrary tag
 combinations, just convert them to DNF from whatever algebraic notation
@@ -3826,7 +3826,7 @@ changes stuff at the very end, if all commands worked, all checks pass and
 confirmation received.
 
 Bash script, requires git and perl (as "git-add--interactive" is a perl script).
-Shorter and simplier than most scripts for same purpose, as git does most of the
+Shorter and simpler than most scripts for same purpose, as git does most of the
 work in this case, less wheels re-invented, less interfaces to learn/remember.
 
 pacman-fsck_
@@ -4583,7 +4583,7 @@ Example use (see also top of rsyslogs.c itself)::
   % cp scraps/rsyslogs.conf rsyslog.conf
   % ./rsyslogs
 
-rsyslogs.ldpreload.c is an LD_PRELOAD wrapper suitable for simplier
+rsyslogs.ldpreload.c is an LD_PRELOAD wrapper suitable for simpler
 single-process tools (e.g. "logger") where it's enough to override
 connect/sendto/sendmsg and such::
 
