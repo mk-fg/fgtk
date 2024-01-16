@@ -10,6 +10,7 @@ checks_all = dict(
 	link_files_weird='Relative links that start with non-letter/digit.',
 	link_files_git='If .md file is in a git repo, warn if linked files are not under git control.',
 	link_dups='Multiple same-title links with URLs.',
+	rx_in_code='Command-line-specified regexp (if any) detected inside code block(s).',
 	tabs='Make sure md file contains no tab characters.',
 	syntax='Any kind of incorrect syntax, e.g. blocks opened and not closed and such.' )
 
@@ -35,9 +36,10 @@ def extract_toplevel(s, ab, strict=True):
 	if n and strict: raise UnbalancedTokens
 
 
-def md_clean(md, errs):
+def md_clean(md, code_re, errs):
 	'Return markdown with all code-blocks stripped'
-	st = adict(code=None, code_inline=None, code_prefix=None, sep=None)
+	st = adict( list_level=0, sep=None,
+		code=None, code_inline=None, code_prefix=None )
 	lines_cut, lines = list(), f'\n{md}'.splitlines() # \n to skip line-number=0 easily
 
 	def _find_code_start(n, line):
@@ -60,34 +62,52 @@ def md_clean(md, errs):
 				st.code, st.code_inline = n, lines_cut.append((st.code, n))
 				return # still in the code block, just a different one
 			st.code = st.code_inline = lines_cut.append((st.code, n))
-			line = lines[n] = line[c:]
+			line = lines[n] = line[c+3:]
+			if line.strip():
+				errs.append(adict( n=n, t='syntax',
+					s=f'Junk after ``` ending of the code block: {line!r}' ))
 		elif st.code_inline and (c := line.find(st.code_inline)) != -1:
+			line = lines[n] = line[c + len(st.code_inline):]
 			st.code = st.code_inline = lines_cut.append((st.code, n))
-			line = lines[n] = line[c:]
 		elif st.code_prefix and not line.startswith(st.code_prefix):
 			if not st.sep:
 				errs.append(adict( n=n, t='syntax',
 					s='End of indented code block without empty-line separator' ))
-			line = st.code = st.code_prefix = lines_cut.append((st.code, n))
+			st.code = st.code_prefix = lines_cut.append((st.code, n))
 		if not st.code and line: _find_code_start(n, line) # leftover line part might have stuff
 
 	for n, line in enumerate(lines):
 		if not line.strip(): st.sep = True; continue
-		if '\t' in line: errs.append(adict(n=n, t='tabs', s='Tab character'))
-		if not st.code: _find_code_start(n, line)
-		else: _find_code_end(n, line)
+		if '\t' in line: errs.append(adict(n=n, t='tabs', s='Tab character(s)'))
+
+		if not st.code:
+			if st.list_level > 0:
+				level = st.list_level
+				while level and line.startswith(' '*4): line = line[4:]; level -= 1
+				st.list_level -= level
+			if line.startswith('- '): st.list_level += 1
+			_find_code_start(n, line)
+
+		else:
+			_find_code_end(n, line)
+			if st.code and code_re and code_re.search(line):
+				errs.append(adict( n=n, t='rx_in_code',
+					s=f'Command-line --code-rx line-match inside code block: {line!r}' ))
+
 		st.sep = False
 
+	for n, line in enumerate(lines):
+		lines[n] = n, lines[n] # preserve numbers before removing chunks
 	for a, b in reversed(lines_cut): lines[a:b] = list()
 	if st.code and not st.code_prefix: errs.append(adict( n=n,
 		t='syntax', s=f'Unclosed code-block started at line-{st.code}' ))
-	return '\n'.join(lines[1:])
+	return lines
 
 
-def md_check_links(md, errs):
-	'''Parse/check links in a cleaned-up md without code blocks.
+def md_check_links(md_lines, errs):
+	'''Parse/check links in a cleaned-up/numbered md lines without code blocks.
 		Returns {target: [links...]} to run file/path/url/git and such checks on.'''
-	links, link_urls = dict(), dict()
+	links, link_urls, st = dict(), dict(), adict(indented_url=None)
 
 	esc_pats = list( (p, chr(0xf010+n))
 		for n, p in enumerate(['\\\\', *r'\[ \] \( \)'.split()]) )
@@ -96,14 +116,17 @@ def md_check_links(md, errs):
 		return s
 	_unesc = lambda s: _esc(s, True)
 
-	for n, line in enumerate(f'\n{md}'.splitlines()):
-		if not (line := _esc(line.strip())): continue
+	for n, line_raw in md_lines:
+		if not (line := _esc(line_raw.strip())): continue
 
-		if m := re.fullmatch(r'\[(.*?)\]:\s+(\S.*)', line):
+		if (link := st.indented_url) and line_raw.startswith(' '):
+			link.url, st.indented_url = line, None
+		elif m := re.fullmatch(r'\[(.*?)\]:(\s+(\S.*))?', line):
 			if link_chk := link_urls.get(title := _unesc(m[1])):
 				errs.append(adict( n=n, t='link_refs',
 					s=f'Duplicate URL for [{title}], matching earlier one on line-{link_chk.n}' ))
-			link_urls[title] = adict(n=n, title=title, url=_unesc(m[2]))
+			link = link_urls[title] = adict(n=n, title=title, url=_unesc(m[3] or ''))
+			if not m[2]: st.indented_url = link
 		elif '[' not in line: continue
 
 		try: titles = list(extract_toplevel(line, '[]'))
@@ -111,14 +134,15 @@ def md_check_links(md, errs):
 			errs.append(adict(n=n, t='syntax', s='Unbalanced [link]-brackets')); continue
 
 		for a, b, title in titles:
+			if not title: continue # [] after image-links and such
 			if title != title.strip(): continue
 			link = adict(n=n, title=(title := _unesc(title)), url=None, dups=0)
-			if urls := list(extract_toplevel(ls := line[b:].strip(), '()', False)):
+			if urls := list(extract_toplevel(ls := line[b:], '()', False)):
 				ua, ub, url = urls[0]
 				if not ua: link.url = _unesc(url)
 			if (link_chk := links.get(title)) and (link_chk.url or link.url or link_chk.dups):
 				errs.append(adict( n=n, t='link_dups',
-					s=f'Duplicate link [{link.title}], matching earlier one on line-{link_chk.n}' ))
+					s=f'Duplicate non-uniform link [{link.title}], matching one on line-{link_chk.n}' ))
 				link.dups = link_chk.dups + 1
 				if not link_chk.url: link.url = None # one of them needs an url
 			links[title] = link
@@ -217,6 +241,11 @@ def main(argv=None):
 		If specified along with -c/--checks option, disables checks from a list filtered by it.'''))
 	parser.add_argument('--checks-list', action='store_true',
 		help='List of all checks that script supports and exit. All of them are enabled by default.')
+	parser.add_argument('--code-rx', metavar='regexp', help=dd('''
+		Python re-module regexp to look for in code-blocks' lines and warn about, if found.
+		Intended for detecting when/where specific known-markdown parts get into
+			code-blocks unintentionally (by accident), e.g. through unbalanced ```...```,
+			as a kind of sanity-check that opening/closing block-quotes haven't been inverted.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
@@ -234,17 +263,19 @@ def main(argv=None):
 			if k not in checks_all: parser.error(f'Unsupported -c/--checks-disable value: {k}')
 			if k in checks: del checks[k]
 
-	err_code = 0
+	err_code, code_re = 0, (rx := opts.code_rx) and re.compile(rx)
 	if not opts.md_files: parser.error('At least one markdown file argument must be specified.')
 	for p, name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
-		md = md_clean((p := pl.Path(p)).read_text(), errs := list())
-		link_map = md_check_links(md, errs)
+		md_lines = md_clean((p := pl.Path(p)).read_text(), code_re, errs := list())
+		link_map = md_check_links(md_lines, errs)
 		p_git, git_files = get_git_repo_files(p)
 		if p_git and not git_files:
 			errs.append(adict( n=0, t='link_files_git',
 				s=f'Detected git repository [ {p_git} ] appears to be empty' ))
 		if git_files: md_check_files(p.resolve().parent, p_git, git_files, link_map, errs)
-		for err in errs: print(f'{name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
+		for err in errs:
+			if err.t not in checks: continue
+			print(f'{name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
 	return err_code
 
 if __name__ == '__main__':
