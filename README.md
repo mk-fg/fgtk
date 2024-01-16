@@ -5,46 +5,44 @@ A set of a misc tools to work with files and processes.
 Various oldish helper scripts/binaries I wrote to help myself with
 day-to-day tasks.
 
-License for all scripts is [WTFPL] (public domain-ish), feel free to
-just copy and use these in whatever way you like.
+License for all scripts is WTFPL (public domain-ish - included below),
+feel free to just copy and use these in whatever way you like.
 
-  [WTFPL]: http://www.wtfpl.net/txt/copying/
-
-::: {.contents backlinks="none"}
-:::
+XXX: restore contents section here
 
 Repository URLs:
 
--   <https://github.com/mk-fg/fgtk>
--   <https://codeberg.org/mk-fg/fgtk>
--   <https://fraggod.net/code/git/fgtk>
+ - <https://github.com/mk-fg/fgtk>
+ - <https://codeberg.org/mk-fg/fgtk>
+ - <https://fraggod.net/code/git/fgtk>
+
+
 
 ## Scripts
 
+
+
 ### \[-root-\] Various CLI/system things
+
 
 #### File/dir/fs management
 
 File/link/dir and filesystem structure manipulation tools.
 
-##### [scim]
+##### [scim](scim)
 
-  [scim]: scim
+Non-interactive CLI tool to keep a list of files to symlink or copy into/from
+some "dotfiles" configuration dir or repository, and keep/check/update/restore
+metadata manifest for these files.
 
-Non-interactive CLI tool to keep a list of files to symlink or copy
-into/from some \"dotfiles\" configuration dir or repository, and
-keep/check/update/restore metadata manifest for these files.
+Keeps track of ACLs, POSIX capabilities and xattrs for metadata, runs file
+diffs for file copies and links, supports a bunch of neat symlinking options
+(like using relative symlinks, relative symlinks into symlinked repo-dir, etc).
 
-Keeps track of ACLs, POSIX capabilities and xattrs for metadata, runs
-file diffs for file copies and links, supports a bunch of neat
-symlinking options (like using relative symlinks, relative symlinks into
-symlinked repo-dir, etc).
-
-Idea is to keep links and metadata manifest files in some configuration
-repo, and run the tool occasionally after system updates or manual
-changes to pull updated files into repo, update files on fs from the
-repo, fix links/permissions on fs, copy/add new ones, etc - all
-manifest/maintenance ops done via this script.
+Idea is to keep links and metadata manifest files in some configuration repo,
+and run the tool occasionally after system updates or manual changes to pull
+updated files into repo, update files on fs from the repo, fix links/permissions
+on fs, copy/add new ones, etc - all manifest/maintenance ops done via this script.
 
 Format for links-list looks something like this:
 
@@ -57,8 +55,8 @@ Format for links-list looks something like this:
     myapp/suid.bin -> /usr/local/bin/myapp
     myapp/caps.bin -> /usr/local/bin/myapp-helper
 
-And metadata is also a simple plaintext file, with fancier stuff towards
-the end of lines, on paths where it\'s used/needed:
+And metadata is also a simple plaintext file, with fancier stuff towards the
+end of lines, on paths where it's used/needed::
 
     .gitconfig root:root:644
     bpf root:wheel:750
@@ -68,183 +66,166 @@ the end of lines, on paths where it\'s used/needed:
     myapp/suid.bin root:root:4711
     myapp/caps.bin root:root:4700/EP:net_raw/u::rwx,u:netuser:--x,g::r-x,m::r-x,o::---
 
-In addition to lists, there\'re separate links/meta exclude-files with
-regexps of paths to not warn about being missing in links-list or track
-metadata for.
+In addition to lists, there're separate links/meta exclude-files with regexps of
+paths to not warn about being missing in links-list or track metadata for.
 
-Only needs python3 to run, has bundled implementation for
-parsing/encoding modern linux ACLs/capabilities extended attributes.
-Uses `git diff --no-index` for `--diff-cmd` by default, as it is very
-fast, has nice colors and should be widely available.
+Only needs python3 to run, has bundled implementation for parsing/encoding
+modern linux ACLs/capabilities extended attributes.
+Uses `git diff --no-index` for `--diff-cmd` by default, as it is very fast,
+has nice colors and should be widely available.
 
-Started as a [cfgit project] long time ago, evolved away into this more
-generic (and not necessarily git-related) tool.
+Started as a [cfgit project] long time ago, evolved away into this more generic
+(and not necessarily git-related) tool.
 
-  [cfgit project]: http://fraggod.net/code/git/configit/
+[cfgit project]: http://fraggod.net/code/git/configit/
 
-##### [fatrace-pipe]
+##### [run_cmd_pipe.nim](run_cmd_pipe.nim)
 
-  [fatrace-pipe]: fatrace-pipe
+Small tool to match lines from stdin according to ini config file
+and run commands for any matching regexps specified there.
+Intended as a long-running handler for monitoring some process' output,
+e.g. monitor some log via `tail -F file.log`, or react to [fanotify]
+filesystem updates from fatrace_ efficiently.
 
-[fatrace]-based script to read filesystem write events via linux
-[fanotify] system and match them against specific path and app name,
-sending matches to a FIFO pipe.
+For example, with `myapp-changes.conf` file like this:
 
-  [fatrace]: https://github.com/martinpitt/fatrace
-  [fanotify]: http://lwn.net/Articles/339253/
+``` ini
+# Add 10s delay for changes to settle before running commands
+delay = 10_000
 
-Use-case is to, for example, setup watcher for development project dir
-changes, sending instant \"refresh\" signals to something that renders
-the project or shows changes\' results otherwise.
+[data-file-updates]
+regexp = : \S*[WD+<>]\S* */srv/myapp/data-files(/[^/]+)?$
+run = myapp process-new-data /srv/myapp/data-files
+# regexp-env-var = RCP_MATCH -- "run" command will get this in env by default
+# regexp-env-group = 1 -- regexp group to put into regexp-env-var, 0 - full match
 
-FIFO is there because fanotify requires root privileges, and running
-some potentially-rm-rf-/ ops as uid=0 is a damn bad idea. User\'s pid
-can read lines from the fifo and react to these safely instead.
+[config-updates]
+regexp = : \S*[WD+<>]\S* */srv/myapp/config(/.*)?$
+run = pkill -x HUP myapp
+```
 
-Example - run \"make\" on any change to `~user/hatch/project` files:
+\...tool can be run as `fatrace | run_cmd_pipe myapp-changes.conf` (or exec
+input-command without shell via `... -- cmd args...` by itself), to process
+any file-change events and run relevant commands to react to those in a daemon loop.
 
-    (root) ~# fatrace-pipe ~user/hatch/project
-    (user) project% xargs -in1 </tmp/fatrace.fifo make
+Can have cooldown and debouncing delay for rules, reloads config-file on SIGHUP,
+runs only one process per rule at a time, has small mem footprint, no deps, etc etc.
+`-h/--help` output has more info on configuration format and cli opts.
 
-##### [fatrace-run]
+Build with:
+`nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe`
 
-  [fatrace-run]: fatrace-run
+One interesting use I've found in combination with [fatrace] is to
+[monitor and synchronize local containers, as well as handle events from those].
 
-Convenience wrapper around [fatrace] like fatrace-pipe above, but
-intended to only filter by path prefix and run command on specified
-event(s).
+[fatrace]: https://github.com/martinpitt/fatrace
+[fanotify]: http://lwn.net/Articles/339253/
+[monitor and synchronize local containers, as well as handle events from those]:
+	https://blog.fraggod.net/2024/01/09/ab-using-fanotify-as-a-container-eventmessage-bus.html
 
-  [fatrace]: https://github.com/martinpitt/fatrace
+##### [findx](findx)
 
-For example, to e.g. reload nginx when anything under its config
-dir/subdirs changes:
-
-    # fatrace-run -p /etc/nginx -f 'WD<>' -- pkill -HUP -F /run/nginx.pid
-
-(-p to also echo events to stdout, \"-f W\" will filter file writes, D -
-deletions, \<\> - renames)
-
-##### [findx]
-
-  [findx]: findx
-
-Wrapper around GNU find to accept paths at the end of argv if none are
-passed before query.
+Wrapper around GNU find (from [findutils]) to accept paths at the end of argv
+if none are passed before query.
 
 Makes it somewhat more consistent with most other commands that accept
-options and a lists of paths (almost always after opts), but still warns
-when/if reordering takes place.
+options and a lists of paths (almost always after opts),
+but still warns when/if reordering takes place.
 
-No matter how many years I\'m using that tool, still sometimes type
-paths after query there, so decided to patch around that frustrating
-issue one day.
+No matter how many years I'm using that tool, still sometimes type paths
+after query there, so decided to patch around that frustrating issue one day.
 
-##### [patch-nspawn-ids]
+[findutils]: https://www.gnu.org/software/findutils/
 
-  [patch-nspawn-ids]: patch-nspawn-ids
+##### [patch-nspawn-ids](patch-nspawn-ids)
 
-Python script to \"shift\" or \"patch\" uid/gid values with new
-container-id according to systemd-nspawn schema, i.e. set upper 16-bit
-to specified container-id value and keep lower 16 bits to uid/gid inside
-the container.
+Python script to "shift" or "patch" uid/gid values with new container-id
+according to systemd-nspawn schema, i.e. set upper 16-bit to specified
+container-id value and keep lower 16 bits to uid/gid inside the container.
 
-Similar operation to what systemd-nspawn\'s \--private-users-chown
-option does (described in nspawn-patch-uid.c), but standalone, doesn\'t
-bother with ACLs or checks on filesystem boundaries.
+Similar operation to what systemd-nspawn's --private-users-chown option does
+(described in nspawn-patch-uid.c), but standalone, doesn't bother with ACLs or
+checks on filesystem boundaries.
 
-Main purpose is to update uids when migrating systemd-nspawn containers
-or adding paths/filesystems to these without clobbering ownership info
-there.
+Main purpose is to update uids when migrating systemd-nspawn containers or
+adding paths/filesystems to these without clobbering ownership info there.
 
-Should be safe to use anywhere, as in most non-nspawn cases upper bits
-of uid/gid are always zero, hence any changes can be easily reverted by
-running this tool again with -c0.
+Should be safe to use anywhere, as in most non-nspawn cases upper bits of
+uid/gid are always zero, hence any changes can be easily reverted by running
+this tool again with -c0.
 
-##### [bindfs-idmap]
-
-  [bindfs-idmap]: bindfs-idmap
+##### [bindfs-idmap](bindfs-idmap)
 
 [bindfs] wrapper script to setup id-mapping from uid of the mountpoint
 to uid/gid of the source directory.
 
-  [bindfs]: http://bindfs.org/
-
 I.e. after `bindfs-idmap /var/lib/machines/home/src-user ~dst-user/tmp`,
 `~dst-user/tmp` will be accessible to dst-user as if they were src-user,
-with all operations proxied to src-user\'s dir.
+with all operations proxied to src-user's dir.
 
 Anything created under `~dst-user/tmp` will have uid/gid of the src dir.
 
-Useful to allow temporary access to some uid\'s files in a local
-container to user acc in a main namespace.
+Useful to allow temporary access to some uid's files in a local container
+to a user id in a main namespace.
 
-For long-term access (e.g. for some daemon), there probably are better
-options than such bindfs hack - e.g. bind-mounts, shared uids/gids,
-ACLs, etc.
+For long-term access (e.g. for some daemon), there probably are better options
+than such bindfs hack - e.g. bind/idmapped mounts, shared uids/gids, ACLs, etc.
 
-##### [docker-ln]
+[bindfs]: http://bindfs.org/
 
-  [docker-ln]: docker-ln
+##### [docker-ln](docker-ln)
 
-Simple bash script to symlink uppermost \"merged\" overlayfs layer of a
-running docker-compose setup container, to allow easy access to
-temporary files there.
+Simple bash script to symlink uppermost "merged" overlayfs layer of a running
+docker-compose setup container, to allow easy access to temporary files there.
 
-Useful for testing stuff without the need to rebuild and restart whole
-container or a bunch of compose stuff after every one-liner tweak to
-some script that\'s supposed to be running in there, or to
-experiment-with and debug things.
+Useful for testing stuff without the need to rebuild and restart whole container
+or a bunch of compose stuff after every one-liner tweak to some script that's
+supposed to be running in there, or to experiment-with and debug things.
 
-These paths are very likely to change between container and
-docker-compose restarts for many reasons, so such symlinks are generally
-only valid during container runtime, and script needs a re-run to update
-these too.
+These paths are very likely to change between container and docker-compose
+restarts for many reasons, so such symlinks are generally only valid during
+container runtime, and script needs a re-run to update these too.
 
-##### [fast-disk-wipe]
+##### [fast-disk-wipe](fast-disk-wipe.c)
 
-  [fast-disk-wipe]: fast-disk-wipe.c
+Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
+device in a hurry.
 
-Very simple \"write 512B, skip N \* 512B, repeat\" binary for wiping
-some block device in a hurry.
+Idea is not to erase every trace of data or to hide it, but just to make files
+probabilistically unusable due to such junk blocks all over the place.
 
-Idea is not to erase every trace of data or to hide it, but just to make
-files probabilistically unusable due to such junk blocks all over the
-place.
+With low-enough intervals it should also corrupt filesystem pretty badly,
+making metadata hard to access.
 
-With low-enough intervals it should also corrupt filesystem pretty
-badly, making metadata hard to access.
+Fast loop of 512B writes to a device directly will likely hang that binary until
+it's done, as that's how such direct I/O seem to work on linux.
 
-Fast loop of 512B writes to a device directly will likely hang that
-binary until it\'s done, as that\'s how such direct I/O seem to work on
-linux.
-
-Writes only stop when write() or lseek() starts returning errors, so
-using this on some extendable file will result in it eating up all space
-available to it.
+Writes only stop when write() or lseek() starts returning errors, so using this
+on some extendable file will result in it eating up all space available to it.
 
 See head of the file for build and usage info.
 
-##### [lsx]
+##### [lsx](lsx)
 
-  [lsx]: lsx
-
-More functionality similar to common \"ls\" tool, to list files in some
-specific ways that are occasionally useful. All those are available via
-various options -see `-h/--help` for a full list of those.
+More functionality similar to common "ls" tool, to list files in some specific
+ways that are occasionally useful. All those are available via various options -
+see `-h/--help` for a full list of those.
 
 For example, to print `-a/--adjacent` files (w/ some ordering):
 
-    % lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
-    % lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
-    % lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
-    % lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+``` console
+% lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
+% lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
+% lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
+% lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+```
 
 Simple python script with no extra dependencies.
 
+
 #### Various file-data processing tools
 
-Things that manipulate some kind of data formats or mangle generic
-file/pipe contents.
+Things that manipulate some kind of data formats or mangle generic file/pipe contents.
 
 ##### [repr]
 
@@ -1181,7 +1162,7 @@ ones and -m700.
   tunnels.
 | Mostly just a bash wrapper with collection of options for such
   use-case.
-| 
+|
 
 I.e. to run `ssh-tunnel -ti 60 2223:nexthop:22 user@host -p2222` instead
 of some manual loop (re-)connecting every 60s in the background using
@@ -2393,46 +2374,6 @@ to use this binary with a typical dracut/systemd boot process.
 
   [\"More FIDO2 hw auth/key uses\" post]: https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
-##### [run_cmd_pipe.nim]
-
-  [run_cmd_pipe.nim]: run_cmd_pipe.nim
-
-Small tool to match lines from stdin according to ini config file and
-run commands for any matching regexps specified there. Intended as a
-long-running handler for monitoring some process\' output, e.g. monitor
-some log via `tail -F file.log`, or react to fanotify filesystem updates
-from [fatrace] efficiently.
-
-  [fatrace]: https://github.com/martinpitt/fatrace
-
-For example, with `myapp-changes.conf` file like this:
-
-    # Add 10s delay for changes to settle before running commands
-    delay = 10_000
-
-    [data-file-updates]
-    regexp = : \S*[WD+<>]\S* */srv/myapp/data-files(/[^/]+)?$
-    run = myapp process-new-data /srv/myapp/data-files
-    # regexp-env-var = RCP_MATCH -- "run" command will get this in env by default
-    # regexp-env-group = 1 -- regexp group to put into regexp-env-var, 0 - full match
-
-    [config-updates]
-    regexp = : \S*[WD+<>]\S* */srv/myapp/config(/.*)?$
-    run = pkill -x HUP myapp
-
-\...tool can be run as `fatrace | run_cmd_pipe myapp-changes.conf` (or
-exec input-command without shell via `... -- cmd args...` by itself), to
-process any file-change events and run relevant commands to react to
-those in a daemon loop.
-
-Can have cooldown and debouncing delay for rules, reloads config-file on
-SIGHUP, runs only one process per rule at a time, has small mem
-footprint, no deps, etc etc. `-h/--help` output has more info on
-configuration format and cli opts.
-
-Build with:
-`nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe`
-
 ### [\[dev\] Dev tools][2]
 
   [2]: dev
@@ -2868,7 +2809,7 @@ posix capabilities or whatever wrapper script doing similar thing, e.g.:
   binary.
 | Note: rsync with full rw fs access is usually same as \"NOPASSWD:
   ALL\" sudo.
-| 
+|
 
 To use any special rsync options or pre/post-sync actions on the
 backup-host side (such as backup file manifest, backup rotation and free
