@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
-import os, sys, re, collections as cs, pathlib as pl
+import os, sys, re, string, collections as cs, itertools as it, pathlib as pl
 
 
 checks_all = dict(
 	link_refs='Non-inline links like "[mylink]" have exactly one "[mylink]: URL" line for each.',
 	link_refs_unneeded='Inline URLs like "[mylink](URL)" when "[mylink]: URL" is also in the md.',
+	link_anchor='Not all headers have <a name=hdr-...> line. See also -a/--add-anchors option.',
+	link_anchor_match='Mismatch between header-anchors and hashtag-links pointing to them.',
 	link_files='Relative links point to an existing file (relative to them).',
-	link_files_weird='Relative links that start with non-letter/digit.',
+	link_files_weird='Relative links that start with non-letter/digit/hashmark.',
 	link_files_git='If .md file is in a git repo, warn if linked files are not under git control.',
 	link_dups='Multiple same-title links with URLs.',
 	rx_in_code='Command-line-specified regexp (if any) detected inside code block(s).',
@@ -35,6 +37,12 @@ def extract_toplevel(s, ab, strict=True):
 				n = 0
 	if n and strict: raise UnbalancedTokens
 
+
+def md_esc_strip(s, rev=False, _esc_pats = list(
+		(p, chr(0xf010+n)) for n, p in enumerate(['\\\\', *r'\[ \] \( \)'.split()]) )):
+	for p, rep in _esc_pats: s = s.replace(*((rep, p) if rev else (p, rep)))
+	return s
+md_esc_restore = lambda s: md_esc_strip(s, True)
 
 def md_clean(md, code_re, errs):
 	'Return markdown with all code-blocks stripped'
@@ -104,28 +112,62 @@ def md_clean(md, code_re, errs):
 	return lines
 
 
+def md_check_header_anchors(md_lines, errs):
+	'Check/return a list of header/anchor lines that needs some kind of fixing'
+	anchors, str_map = dict(), dict()
+	str_map.update((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
+	for k, (n, line) in enumerate(md_lines):
+		if n == 1: continue # don't add anchor for first-line header, if any
+		if not (m := re.match(r'#+\s+(\S.*)', line)): continue
+		line_last, hdr = '', md_esc_strip(m[1].strip())
+		if k:
+			n_last, line_last = md_lines[k-1]
+			if n_last != n - 1: line_last = ''
+		for a, b, link in extract_toplevel(hdr, '[]', False): # strip links
+			if urls := list(extract_toplevel(ls := hdr[b:], '()', False)):
+				ua, ub, url = urls[0]
+				if not ua: hdr = hdr[:b+ua] + hdr[b+ub:]
+			hdr = hdr[:a] + link + hdr[b:]
+		hdr = md_esc_restore(hdr)
+		name = ''.join(str_map.get(c, '_') for c in hdr.lower())
+		a_match = a_nolink = False
+		if a_exists := re.search(r'\<a name=hdr(x?)-(\S+)\>\</a\>', line_last):
+			a_nolink = bool(a_exists[1])
+			if not (a_match := (a_exists[2] == name)):
+				errs.append(adict( n=n, t='link_anchor',
+					s=f'Anchor-name mismatch for header [ {hdr} ]: {name!r} vs {name!r}' ))
+		else: errs.append(adict( n=n, t='link_anchor',
+			s=f'Missing anchor before header [ {name} ]: {hdr}' ))
+		name = ('hdr-' if not a_nolink else 'hdrx-') + name
+		if a_chk := anchors.get(name):
+			errs.append(adict( n=n, t='link_anchor',
+				s=f'Duplicate anchor-name with header on line-{a_chk.n}: {name}' ))
+		anchors[name] = adict( n=n, name=name, hdr=hdr,
+			exists=a_exists, match=a_match, nolink=a_nolink )
+	anchor_map = dict((a.n-1, a) for a in anchors.values())
+	for n, line in md_lines:
+		if not (m := re.search(r'\<a name=hdrx?-\S+\>\</a\>', line)): continue
+		if n not in anchor_map:
+			errs.append(adict( n=n, t='link_anchor',
+				s=f'Bogus/leftover anchor-line without a header: {line}' ))
+	return anchor_map
+
+
 def md_check_links(md_lines, errs):
 	'''Parse/check links in a cleaned-up/numbered md lines without code blocks.
 		Returns {target: [links...]} to run file/path/url/git and such checks on.'''
 	links, link_urls, st = dict(), dict(), adict(indented_url=None)
 
-	esc_pats = list( (p, chr(0xf010+n))
-		for n, p in enumerate(['\\\\', *r'\[ \] \( \)'.split()]) )
-	def _esc(s, rev=False):
-		for p, rep in esc_pats: s = s.replace(*((rep, p) if rev else (p, rep)))
-		return s
-	_unesc = lambda s: _esc(s, True)
-
 	for n, line_raw in md_lines:
-		if not (line := _esc(line_raw.strip())): continue
+		if not (line := md_esc_strip(line_raw.strip())): continue
 
 		if (link := st.indented_url) and line_raw.startswith(' '):
 			link.url, st.indented_url = line, None
 		elif m := re.fullmatch(r'\[(.*?)\]:(\s+(\S.*))?', line):
-			if link_chk := link_urls.get(title := _unesc(m[1])):
+			if link_chk := link_urls.get(title := md_esc_restore(m[1])):
 				errs.append(adict( n=n, t='link_refs',
 					s=f'Duplicate URL for [{title}], matching earlier one on line-{link_chk.n}' ))
-			link = link_urls[title] = adict(n=n, title=title, url=_unesc(m[3] or ''))
+			link = link_urls[title] = adict(n=n, title=title, url=md_esc_restore(m[3] or ''))
 			if not m[2]: st.indented_url = link
 		elif '[' not in line: continue
 
@@ -136,10 +178,10 @@ def md_check_links(md_lines, errs):
 		for a, b, title in titles:
 			if not title: continue # [] after image-links and such
 			if title != title.strip(): continue
-			link = adict(n=n, title=(title := _unesc(title)), url=None, dups=0)
+			link = adict(n=n, title=(title := md_esc_restore(title)), url=None, dups=0)
 			if urls := list(extract_toplevel(ls := line[b:], '()', False)):
 				ua, ub, url = urls[0]
-				if not ua: link.url = _unesc(url)
+				if not ua: link.url = md_esc_restore(url)
 			if (link_chk := links.get(title)) and (link_chk.url or link.url or link_chk.dups):
 				errs.append(adict( n=n, t='link_dups',
 					s=f'Duplicate non-uniform link [{link.title}], matching one on line-{link_chk.n}' ))
@@ -165,14 +207,14 @@ def md_check_links(md_lines, errs):
 
 def md_check_files(p_base, p_git, git_files, link_map, errs):
 	for url, links in link_map.items():
-		if re.match(r'(?i)https?://', url): continue
+		if re.match(r'(?i)(#|https?://)', url): continue
 		p_weird = not re.match(r'[\w]', url)
 		p_nx = not (p := (p_base / url).resolve()).exists()
 		p_nogit = p not in git_files
 		for link in links:
 			if p_weird:
 				errs.append(adict( n=link.n, t='link_files_weird',
-					s=f'URL for link [{link.title}] does not start with letter/digit [ {url} ]' ))
+					s=f'URL for link [{link.title}] does not start with letter/digit/hashmark [ {url} ]' ))
 			if p_nx:
 				errs.append(adict( n=link.n, t='link_files',
 					s=f'File/dir for link [{link.title}] does not exist [ {url} ]: {p}' ))
@@ -246,6 +288,12 @@ def main(argv=None):
 		Intended for detecting when/where specific known-markdown parts get into
 			code-blocks unintentionally (by accident), e.g. through unbalanced ```...```,
 			as a kind of sanity-check that opening/closing block-quotes haven't been inverted.'''))
+	parser.add_argument('-a', '--add-anchors', action='store_true', help=dd('''
+		Check that every header has an <a name=hdr-...>
+			anchor line before it, add missing ones and exit.
+		Only #-prefix headers are handled as such, all underlined ones are ignored.
+		This modifies files and suppresses normal script operation mode.
+		Exit code is 0 if no anchors were added, and non-zero otherwise.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
@@ -267,15 +315,51 @@ def main(argv=None):
 	if not opts.md_files: parser.error('At least one markdown file argument must be specified.')
 	for p, name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
 		md_lines = md_clean((p := pl.Path(p)).read_text(), code_re, errs := list())
+
+		anchor_map = md_check_header_anchors(md_lines, errs)
+		if opts.add_anchors:
+			for n, a in list(anchor_map.items()):
+				if a.match: del anchor_map[n] # no need to fix those
+			p_tmp = p.parent / f'{p.name}.md-checks.new'
+			try:
+				with p.open() as src, p_tmp.open('w') as dst:
+					for n, line in enumerate(src, 1):
+						if a := anchor_map.get(n):
+							if not a.exists: dst.write(line)
+							dst.write(f'<a name=hdr-{a.name}></a>\n')
+						else: dst.write(line)
+				p_tmp.rename(p); p_tmp = None
+			finally:
+				if p_tmp: p_tmp.unlink(missing_ok=True)
+			if anchor_map:
+				print( f'{name} :: Fixed {len(anchor_map)}'
+					' missing/mismatching anchors', file=sys.stderr )
+				err_code = 1
+			continue
+
 		link_map = md_check_links(md_lines, errs)
+
+		anchor_names = dict((a.name, a) for n, a in anchor_map.items())
+		for url, links in link_map.items():
+			if not (name := (url or '')).startswith('#'): continue
+			if not (a := anchor_names.get(name := name[1:])):
+				for link in links: errs.append(adict( n=link.n,
+					t='link_anchor_match', s=f'Link to a non-existing header-anchor: {link.url}' ))
+			else: a.setdefault('c', 0); a.c += 1
+		for name, a in anchor_names.items():
+			if not a.get('c') and not a.nolink: errs.append(adict( n=a.n,
+				t='link_anchor_match', s=f'Header-anchor with no links to it: {name}' ))
+
 		p_git, git_files = get_git_repo_files(p)
 		if p_git and not git_files:
 			errs.append(adict( n=0, t='link_files_git',
 				s=f'Detected git repository [ {p_git} ] appears to be empty' ))
 		if git_files: md_check_files(p.resolve().parent, p_git, git_files, link_map, errs)
+
 		for err in errs:
 			if err.t not in checks: continue
 			print(f'{name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
+
 	return err_code
 
 if __name__ == '__main__':
