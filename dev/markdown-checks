@@ -1,0 +1,254 @@
+#!/usr/bin/env python
+
+import os, sys, re, collections as cs, pathlib as pl
+
+
+checks_all = dict(
+	link_refs='Non-inline links like "[mylink]" have exactly one "[mylink]: URL" line for each.',
+	link_refs_unneeded='Inline URLs like "[mylink](URL)" when "[mylink]: URL" is also in the md.',
+	link_files='Relative links point to an existing file (relative to them).',
+	link_files_weird='Relative links that start with non-letter/digit.',
+	link_files_git='If .md file is in a git repo, warn if linked files are not under git control.',
+	link_dups='Multiple same-title links with URLs.',
+	tabs='Make sure md file contains no tab characters.',
+	syntax='Any kind of incorrect syntax, e.g. blocks opened and not closed and such.' )
+
+
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+class UnbalancedTokens(Exception): pass
+def extract_toplevel(s, ab, strict=True):
+	n, a, (ca, cb) = 0, 0, ab
+	for b, c in enumerate(s):
+		if c == ca:
+			if not n: a = b + 1
+			n += 1
+		elif c == cb:
+			n -= 1
+			if not n: yield a - 1, b + 1, s[a:b]
+			elif n < 0:
+				if strict: raise UnbalancedTokens
+				n = 0
+	if n and strict: raise UnbalancedTokens
+
+
+def md_clean(md, errs):
+	'Return markdown with all code-blocks stripped'
+	st = adict(code=None, code_inline=None, code_prefix=None, sep=None)
+	lines_cut, lines = list(), f'\n{md}'.splitlines() # \n to skip line-number=0 easily
+
+	def _find_code_start(n, line):
+		if (c := line.find('```')) != -1:
+			lines[n], st.code = line[:c], n + 1; return
+		for s in '``', '`':
+			while (c := line.find(s)) != -1:
+				lines[n], mn = re.subn(fr'{s}.+?{s}', '', line)
+				if mn: line = lines[n]
+				else: st.code, st.code_inline, lines[n] = n + 1, s, line[:c]; return
+		if st.sep and line.startswith(pre := ' '*4):
+			st.code, st.code_prefix = n, pre
+
+	def _find_code_end(n, line):
+		if (c := line.find('```')) != -1:
+			if st.code_inline:
+				errs.append(adict( n=n, t='syntax',
+					s=f'Inline code-span {st.code_inline}-block opened on'
+						f' line-{st.code}, but not closed until multiline ```-block' ))
+				st.code, st.code_inline = n, lines_cut.append((st.code, n))
+				return # still in the code block, just a different one
+			st.code = st.code_inline = lines_cut.append((st.code, n))
+			line = lines[n] = line[c:]
+		elif st.code_inline and (c := line.find(st.code_inline)) != -1:
+			st.code = st.code_inline = lines_cut.append((st.code, n))
+			line = lines[n] = line[c:]
+		elif st.code_prefix and not line.startswith(st.code_prefix):
+			if not st.sep:
+				errs.append(adict( n=n, t='syntax',
+					s='End of indented code block without empty-line separator' ))
+			line = st.code = st.code_prefix = lines_cut.append((st.code, n))
+		if not st.code and line: _find_code_start(n, line) # leftover line part might have stuff
+
+	for n, line in enumerate(lines):
+		if not line.strip(): st.sep = True; continue
+		if '\t' in line: errs.append(adict(n=n, t='tabs', s='Tab character'))
+		if not st.code: _find_code_start(n, line)
+		else: _find_code_end(n, line)
+		st.sep = False
+
+	for a, b in reversed(lines_cut): lines[a:b] = list()
+	if st.code and not st.code_prefix: errs.append(adict( n=n,
+		t='syntax', s=f'Unclosed code-block started at line-{st.code}' ))
+	return '\n'.join(lines[1:])
+
+
+def md_check_links(md, errs):
+	'''Parse/check links in a cleaned-up md without code blocks.
+		Returns {target: [links...]} to run file/path/url/git and such checks on.'''
+	links, link_urls = dict(), dict()
+
+	esc_pats = list( (p, chr(0xf010+n))
+		for n, p in enumerate(['\\\\', *r'\[ \] \( \)'.split()]) )
+	def _esc(s, rev=False):
+		for p, rep in esc_pats: s = s.replace(*((rep, p) if rev else (p, rep)))
+		return s
+	_unesc = lambda s: _esc(s, True)
+
+	for n, line in enumerate(f'\n{md}'.splitlines()):
+		if not (line := _esc(line.strip())): continue
+
+		if m := re.fullmatch(r'\[(.*?)\]:\s+(\S.*)', line):
+			if link_chk := link_urls.get(title := _unesc(m[1])):
+				errs.append(adict( n=n, t='link_refs',
+					s=f'Duplicate URL for [{title}], matching earlier one on line-{link_chk.n}' ))
+			link_urls[title] = adict(n=n, title=title, url=_unesc(m[2]))
+		elif '[' not in line: continue
+
+		try: titles = list(extract_toplevel(line, '[]'))
+		except UnbalancedTokens:
+			errs.append(adict(n=n, t='syntax', s='Unbalanced [link]-brackets')); continue
+
+		for a, b, title in titles:
+			if title != title.strip(): continue
+			link = adict(n=n, title=(title := _unesc(title)), url=None, dups=0)
+			if urls := list(extract_toplevel(ls := line[b:].strip(), '()', False)):
+				ua, ub, url = urls[0]
+				if not ua: link.url = _unesc(url)
+			if (link_chk := links.get(title)) and (link_chk.url or link.url or link_chk.dups):
+				errs.append(adict( n=n, t='link_dups',
+					s=f'Duplicate link [{link.title}], matching earlier one on line-{link_chk.n}' ))
+				link.dups = link_chk.dups + 1
+				if not link_chk.url: link.url = None # one of them needs an url
+			links[title] = link
+
+	link_map = cs.defaultdict(list)
+	for link in links.values():
+		if not link.url and not (url := link_urls.get(link.title)):
+			errs.append(adict( n=link.n, t='link_refs',
+				s=f'Link [{link.title}] has no corresponding URL for it' ))
+		elif link.url: link_map[link.url].append(link)
+		else: url.used = True; link_map[url.url].append(link)
+
+	for url in link_urls.values():
+		if url.get('used'): continue
+		errs.append(adict( n=url.n, t='link_refs_unneeded',
+			s=f'URL for link [{url.title}] is not used anywhere' ))
+
+	return link_map
+
+
+def md_check_files(p_base, p_git, git_files, link_map, errs):
+	for url, links in link_map.items():
+		if re.match(r'(?i)https?://', url): continue
+		p_weird = not re.match(r'[\w]', url)
+		p_nx = not (p := (p_base / url).resolve()).exists()
+		p_nogit = p not in git_files
+		for link in links:
+			if p_weird:
+				errs.append(adict( n=link.n, t='link_files_weird',
+					s=f'URL for link [{link.title}] does not start with letter/digit [ {url} ]' ))
+			if p_nx:
+				errs.append(adict( n=link.n, t='link_files',
+					s=f'File/dir for link [{link.title}] does not exist [ {url} ]: {p}' ))
+			elif p_nogit:
+				errs.append(adict( n=link.n, t='link_files_git', s='Git repo'
+					f' [ {p_git} ] does not have file/dir for link [{link.title}] target [ {url} ]: {p}' ))
+
+
+def path_names(*paths):
+	'Return short and distinct names from last path components, in the same order.'
+	names, paths = cs.Counter(p.name for p in paths), list(map(str, paths))
+	while True:
+		name, n = names.most_common(1)[0]
+		if n == 1: break
+		del names[name]
+		upd = sorted((
+				'/'.join(filter(None, p.rsplit('/', name.count('/')+2)[1:]))
+				for p in paths if p.endswith(f'/{name}') ),
+			key=lambda name: name.count('/') )
+		if len(upd) <= 1: raise AssertionError(name, upd)
+		names.update(upd)
+	return list(next(n for n in names if p == n or p.endswith(f'/{n}')) for p in paths)
+
+def get_git_repo_files(p):
+	p_git = p.resolve()
+	while True:
+		if ((p_git := p_git.parent) / '.git').exists(): p_git_found = True; break
+		if str(p_git) == '/': return None, None
+	import subprocess as sp
+	p_root, git_files, git_ls = p.parent, set(), sp.run(
+		['git', 'ls-files', '-z','--deduplicate'],
+		cwd=p_git, stdout=sp.PIPE ).stdout.decode().split('\0')
+	for p in git_ls:
+		if not (p := (p_git / p).resolve()).exists(): continue
+		while True:
+			git_files.add(p)
+			if (p := p.parent) == p_git or str(p) == '/': break
+	return p_git, git_files
+
+def main(argv=None):
+	checks = adict(checks_all)
+
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [opts] [--] file.md [...]',
+		description=dd('''
+			Check all specified markdown files for common issues.
+			Returns non-zero exit code with stderr output if any of the checks detect issues.
+
+			Currently checks for the following issues (--checks-list also lists those):\n
+			{link_list}\n
+			Specific checks can be enabled/disabled via command-line options.''')
+			.format(link_list='\n'.join(f' - {k.replace("_", "-")} :: {v}' for k,v in checks.items())))
+	parser.add_argument('md_files', nargs='*', help='Markdown file(s) to validate.')
+
+	parser.add_argument('-c', '--checks', metavar='chk1[ chk2...]', help=dd('''
+		Names of specific markdown checks to enable.
+		Full list of checks can be doung in -h/--help script description or via --checks-list option.
+		Can be separated by commas and/or spaces (make sure to quote spaces in shell).
+		Default is to enable all supported checks.'''))
+	parser.add_argument('-C', '--checks-disable', metavar='chk1[ chk2...]', help=dd('''
+		Same as -c/--checks option above, but to disable a list of specific check(s).
+		If specified along with -c/--checks option, disables checks from a list filtered by it.'''))
+	parser.add_argument('--checks-list', action='store_true',
+		help='List of all checks that script supports and exit. All of them are enabled by default.')
+
+	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+	if opts.checks_list:
+		print()
+		for k, v in checks_all.items(): print(f'{k.replace("_", "-")} :: {v}')
+		return print()
+	if opts.checks:
+		check_filter = opts.checks.lower().replace(',', ' ').replace('-', '_').split()
+		for k in check_filter:
+			if k not in checks_all: parser.error(f'Unsupported -c/--checks value: {k}')
+		checks = adict((k,v) for k,v in checks.items() if k in check_filter)
+	if opts.checks_disable:
+		for k in opts.checks_disable.lower().replace(',', ' ').replace('-', '_').split():
+			if k not in checks_all: parser.error(f'Unsupported -c/--checks-disable value: {k}')
+			if k in checks: del checks[k]
+
+	err_code = 0
+	if not opts.md_files: parser.error('At least one markdown file argument must be specified.')
+	for p, name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
+		md = md_clean((p := pl.Path(p)).read_text(), errs := list())
+		link_map = md_check_links(md, errs)
+		p_git, git_files = get_git_repo_files(p)
+		if p_git and not git_files:
+			errs.append(adict( n=0, t='link_files_git',
+				s=f'Detected git repository [ {p_git} ] appears to be empty' ))
+		if git_files: md_check_files(p.resolve().parent, p_git, git_files, link_map, errs)
+		for err in errs: print(f'{name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
+	return err_code
+
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
