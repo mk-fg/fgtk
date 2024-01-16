@@ -78,7 +78,7 @@ has nice colors and should be widely available.
 Started as a [cfgit project] long time ago, evolved away into this more generic
 (and not necessarily git-related) tool.
 
-[cfgit project]: http://fraggod.net/code/git/configit/
+[cfgit project]: https://fraggod.net/code/git/configit/
 
 ##### [run_cmd_pipe.nim](run_cmd_pipe.nim)
 
@@ -120,7 +120,7 @@ One interesting use I've found in combination with [fatrace] is to
 [monitor and synchronize local containers, as well as handle events from those].
 
 [fatrace]: https://github.com/martinpitt/fatrace
-[fanotify]: http://lwn.net/Articles/339253/
+[fanotify]: https://lwn.net/Articles/339253/
 [monitor and synchronize local containers, as well as handle events from those]:
   https://blog.fraggod.net/2024/01/09/ab-using-fanotify-as-a-container-eventmessage-bus.html
 
@@ -172,7 +172,7 @@ to a user id in a main namespace.
 For long-term access (e.g. for some daemon), there probably are better options
 than such bindfs hack - e.g. bind/idmapped mounts, shared uids/gids, ACLs, etc.
 
-[bindfs]: http://bindfs.org/
+[bindfs]: https://bindfs.org/
 
 ##### [docker-ln](docker-ln)
 
@@ -363,7 +363,9 @@ Jinja2 env for template has following filters and values:
     Probably a good idea to use this stuff only when IPs are static and
     get assigned strictly before templating.
 
--   `{% comment_out_if value[, comment-prefix] %}...{% comment_out_end %}`
+-   `❴% comment_out_if value[, comment-prefix] %❵...❴% comment_out_end %❵`
+
+    (curly-braces are weird to avoid jinja2 in github-pages - replace with normal ones)
 
     Custom template block to prefix each non-empty line within it with specified
     string (defaults to "#") if value is not false-y.
@@ -415,12 +417,12 @@ Example use-case can be grepping through huge multiline strings
 (e.g. webpage source) pasted into terminal, i.e.::
 
 ``` console
-% term-pipe | g -o '\<http://[^"]\+'
+% term-pipe | g -o '\<https?://[^"]\+'
 
 [pasting page here via e.g. Shift+Insert won't cause any echo]
 
-http://www.w3.org/TR/html4/loose.dtd
-http://www.bugzilla.org/docs/3.4/en/html/bug_page.html
+https://www.w3.org/TR/html4/loose.dtd
+https://www.bugzilla.org/docs/3.4/en/html/bug_page.html
 ...
 ```
 
@@ -549,7 +551,7 @@ See [blog post about liac tool] for more info.
 
 [interleaved colorized output]:
   https://blog.fraggod.net/images/liac_interleaved_colorized_output.jpg
-[runit]: http://smarden.org/runit/
+[runit]: https://smarden.org/runit/
 [blog post about liac tool]:
   https://blog.fraggod.net/2015/12/29/tool-to-interleave-and-colorize-lines-from-multiple-log-or-any-other-files.html
 
@@ -755,7 +757,7 @@ on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
 
 #### ZNC log helpers
 
-Couple scripts to manage [ZNC IRC bouncer](http://znc.in/) logs -
+Couple scripts to manage [ZNC IRC bouncer](https://znc.in/) logs -
 archive, view, search, etc.
 
 ##### [znc-log-aggregator](znc-log-aggregator)
@@ -880,7 +882,7 @@ e.g. to dump network configuration info as in example above.
 Useless without systemd and requires systemd python module, plus fping tool
 if `-n/--check-net-gw` option is used.
 
-[fping]: http://fping.org/
+[fping]: https://fping.org/
 
 ##### [cgrc](cgrc)
 
@@ -1047,7 +1049,7 @@ With encoding like --base32 ([Douglas Crockford's human-oriented Base32],
 last digit/lowercase-letter there is a checksum), it's easy to even read the
 thing over some voice channel, if necessary.
 
-[Douglas Crockford's human-oriented Base32]: http://www.crockford.com/wrmg/base32.html
+[Douglas Crockford's human-oriented Base32]: https://www.crockford.com/wrmg/base32.html
 
 ##### [ssh-key-init](ssh-key-init)
 
@@ -1224,7 +1226,7 @@ killing those useless ssh pids.
 
 See also: [autossh] and such.
 
-[autossh]: http://www.harding.motd.ca/autossh/
+[autossh]: https://www.harding.motd.ca/autossh/
 
 ##### [mosh-nat] / [mosh-nat-bind.c]
 
@@ -1430,11 +1432,11 @@ Simple script to grab a file using wget and then validate checksum of
 the result, e.g.:
 
 ``` console
-$ wgets -c http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz cea5d785df19151806aa5ac3a917e41c
+$ wgets -c https://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz cea5d785df19151806aa5ac3a917e41c
 
 Using hash: md5
 Using output filename: ArchLinuxARM-sun4i-latest.tar.gz
---2014-09-27 00:04:45--  http://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz
+--2014-09-27 00:04:45--  https://os.archlinuxarm.org/os/ArchLinuxARM-sun4i-latest.tar.gz
 Resolving os.archlinuxarm.org (os.archlinuxarm.org)... 142.4.223.96, 67.23.118.182, 54.203.244.41, ...
 Connecting to os.archlinuxarm.org (os.archlinuxarm.org)|142.4.223.96|:80... connected.
 HTTP request sent, awaiting response... 416 Requested Range Not Satisfiable
@@ -2218,8 +2220,8 @@ intentation is correct.
 Again, ideally no one should even notice that I actually don't have that crap
 in the editor, while repo and compiler will see the proper (bloated) code.
 
-[Go]: http://golang.org/
-[coffee-script]: http://jashkenas.github.com/coffee-script/
+[Go]: https://4golang.org/
+[coffee-script]: https://jashkenas.github.com/coffee-script/
 
 #### [distribute_regen](dev/distribute_regen)
 
@@ -2667,7 +2669,7 @@ next track.
 
 More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
-[mpv]: http://mpv.io/
+[mpv]: https://mpv.io/
 
 ##### [icy_record](desktop/media/icy_record)
 
@@ -2677,7 +2679,7 @@ files, split when stream title (as passed in icy StreamTitle metadata) changes.
 By default, filenames will include timestamp of recording start, sequence
 number, timestamp of a track start and a stream title (in a filename-friendly form).
 
-Sample usage: `icy_record --debug -x http://pub5.di.fm/di_vocaltrance`
+Sample usage: `icy_record --debug -x https://pub5.di.fm/di_vocaltrance`
 
 Note that by default dumped streams will be in some raw adts format (as streamed
 over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
@@ -2833,19 +2835,19 @@ to start playback before whole process ends.
 General usage examples (wrapped):
 
     % twitch_vod_fetch \
-      http://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8 \
-      http://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4 \
-      http://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals \
-      http://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv
+      https://www.twitch.tv/starcraft/v/15655862 sc2_wcs_ro8 \
+      https://www.twitch.tv/starcraft/v/15831152 sc2_wcs_ro4 \
+      https://www.twitch.tv/starcraft/v/15842540 sc2_wcs_finals \
+      https://www.twitch.tv/starcraft/v/15867047 sc2_wcs_lotv
 
     % twitch_vod_fetch -x 120/15:00 \
-      http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_preview
+      https://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_preview
 
     % twitch_vod_fetch -s 4:22:00 -l 2:00:00 \
-      http://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_picked_2h_chunk
+      https://www.twitch.tv/redbullesports/v/13263504 sc2_rb_p01_picked_2h_chunk
 
     % twitch_vod_fetch -p \
-      http://www.twitch.tv/starcraft/v/24523048 sc2_blizzcon_finals \
+      https://www.twitch.tv/starcraft/v/24523048 sc2_blizzcon_finals \
       &>sc2_blizzcon_finals.log &
     % mpv sc2_blizzcon_finals.mp4   # starts playback before download ends
 
@@ -2855,7 +2857,7 @@ General usage examples (wrapped):
 [Choonster's fork of this repo]: https://github.com/Choonster/fgtk#twitch-vod-fetch
 [youtube-dl]: https://rg3.github.io/youtube-dl/
 [doesn't support neither seeking to time nor length limits]: https://github.com/rg3/youtube-dl/issues/622
-[aria2]: http://aria2.sourceforge.net/
+[aria2]: https://aria2.sourceforge.net/
 [aiohttp]: https://aiohttp.readthedocs.io/
 [this twitchtv-vods-... blog post]:
   https://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
@@ -2946,7 +2948,7 @@ on some "magnet:..." link was successfully processed or discarded with some erro
       -d, --dump            Include stdou/stderr for all notifications.
       ...
 
-[desktop-notifications]: http://developer.gnome.org/notification-spec/
+[desktop-notifications]: https://developer.gnome.org/notification-spec/
 
 ##### [power](desktop/notifications/power)
 
@@ -3118,7 +3120,7 @@ Somewhat similar project (which I didn't find at the time of implementing
 this back in 2013) - [maxpat78/FATtools].
 
 [dentries]: https://en.wikipedia.org/wiki/File_Allocation_Table#Directory_entry
-[pypy]: http://pypy.org/
+[pypy]: https://pypy.org/
 [construct module]: https://construct.readthedocs.io/
 [maxpat78/FATtools]: https://github.com/maxpat78/FATtools/
 
@@ -3137,7 +3139,7 @@ Script to query [beets] music database (possibly on a remote host using ssh)
 with specified parameters and add found tracks to [EMMS] playlist (via emacsclient).
 Also allows to just query/dump resulting paths conveniently.
 
-[beets]: http://beets.readthedocs.org/
+[beets]: https://beets.readthedocs.org/
 [EMMS]: https://www.gnu.org/software/emms/
 
 ##### [ff_backup](desktop/ff_backup)
@@ -3221,12 +3223,12 @@ Parsed time_spec 'now' as 2015-04-26 14:23:54.658134 (delta: just now)
 
 ![alarm bubble][]
 
-[alarm bubble]: http://fraggod.net/static/misc/notification-thing__alarm.jpg
+[alarm bubble]: https://fraggod.net/static/misc/notification-thing__alarm.jpg
 
 ``` console
 % alarm -t 3600 -i my-alarm-icon -s my-alarm-sound -f 'tomorrow 9am' \
   'hey, wake up!!!' "It's time to do some stuff... here's the schedule:" \
-  -c 'curl -s http://my-site.com/schedule/today'
+  -c 'curl -s https://my-site.com/schedule/today'
 Parsed time_spec 'tomorrow 9am' as 2015-04-27 09:00:00 (delta: 18h 25m)
 ```
 
@@ -3302,7 +3304,7 @@ Or, to type stuff on gamepad button press: `BTN_SOUTH 1: [t,e,s,t,enter]`
 Requires python, [python-evdev], standard "uinput" kernel module enabled/loaded,
 read access to specified evdev(s) and rw to /dev/uinput.
 
-[python-evdev]: http://python-evdev.readthedocs.org/
+[python-evdev]: https://python-evdev.readthedocs.org/
 
 ##### [exclip](desktop/exclip.c)
 
@@ -3797,7 +3799,7 @@ Didn't test sensor bindings after py2 -> py3 conversion, it might
 still need some small fixups to read stuff or use newer modules there.
 
 [yaml]: https://pyyaml.org/
-[rrdtool]: http://oss.oetiker.ch/rrdtool/
+[rrdtool]: https://oss.oetiker.ch/rrdtool/
 
 #### [graphite-scratchpad](metrics/graphite-scratchpad)
 
@@ -3840,7 +3842,7 @@ Edit that and do `graphite-scratchpad yaml dash:top < dash.yaml` to replace
 the thing in graphite db with an updated thing. Much easier than doing anything
 with GUI.
 
-[graphite]: http://graphite.readthedocs.org/
+[graphite]: https://graphite.readthedocs.org/
 
 #### [gnuplot-free](metrics/gnuplot-free)
 
@@ -3865,7 +3867,7 @@ or observablehq.com snippets.
 
 Direct gh-pages link: [d3-line-chart-boilerplate.html]
 
-[d3.js]: http://d3js.org/
+[d3.js]: https://d3js.org/
 [d3-line-chart-boilerplate.html]:
   https://mk-fg.github.io/fgtk/metrics/d3-line-chart-boilerplate.html
 
@@ -3917,7 +3919,7 @@ or as a local file, doesn't have any external links.
 Allows uploading multiple files to display in the same hierarchy, if paths
 in them are absolute (otherwise each one will be prefixed by "root-X" pseudo-node).
 
-[xdiskusage]: http://xdiskusage.sourceforge.net/
+[xdiskusage]: https://xdiskusage.sourceforge.net/
 [d3-du-disk-space-usage-layout.html]:
   https://mk-fg.github.io/fgtk/metrics/d3-du-disk-space-usage-layout.html
 
@@ -4189,8 +4191,8 @@ option for json output), [sleuthkit] (to query size of FAT fs), and [parted].
 More info on this script can be found in the [resizing-first-fat32-partition-...] blog post.
 
 [util-linux]: https://www.kernel.org/pub/linux/utils/util-linux/
-[sleuthkit]: http://www.sleuthkit.org/sleuthkit
-[parted]: http://www.gnu.org/software/parted/parted.html
+[sleuthkit]: https://www.sleuthkit.org/sleuthkit
+[parted]: https://www.gnu.org/software/parted/parted.html
 [resizing-first-fat32-partition-...]:
   https://blog.fraggod.net/2015/12/07/resizing-first-fat32-partition-to-microsd-card-size-on-boot-from-raspberry-pi.html
 
