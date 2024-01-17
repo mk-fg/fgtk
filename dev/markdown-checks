@@ -143,11 +143,14 @@ def md_check_header_anchors(md_lines, errs, name_max_len=40):
 		if len(name) > name_max_len + 5: # truncate long-header anchor-names
 			name = name[:name_max_len] + '.' + b64_hash(name[name_max_len:], 4)
 		a_match = a_nolink = False
-		if a_exists := re.search(r'\<a name=hdr(x?)-(\S+)\>\</a\>', line_last):
-			a_nolink = bool(a_exists[1])
-			if not (a_match := (a_exists[2] == name)):
+		if a_exists := re.findall(
+				r'<a name=(?:user-content-)?hdr(x?)-(\S+)></a>', line_last ):
+			# Multiple anchors are for diff renderers, e.g. github + codeberg
+			if len(set(a_exists)) != 1: a_nolink, name_chk = False, ''
+			else: a_nolink, name_chk = a_exists[0]
+			if not (a_match := (name_chk == name)):
 				errs.append(adict( n=n, t='link_anchor', s='Anchor-name'
-					f' mismatch for header [ {hdr} ]: new={name!r} old={a_exists[2]!r}' ))
+					f' mismatch for header [ {hdr} ]: new={name!r} old={name_chk!r}' ))
 		else: errs.append(adict( n=n, t='link_anchor',
 			s=f'Missing anchor before header [ {name} ]: {hdr}' ))
 		name = ('hdr-' if not a_nolink else 'hdrx-') + name
@@ -158,7 +161,7 @@ def md_check_header_anchors(md_lines, errs, name_max_len=40):
 			exists=a_exists, match=a_match, nolink=a_nolink )
 	anchor_map = dict((a.n-1, a) for a in anchors.values())
 	for n, line in md_lines:
-		if not (m := re.search(r'\<a name=hdrx?-\S+\>\</a\>', line)): continue
+		if not (m := re.search(r'<a name=hdrx?-\S+></a>', line)): continue
 		if n not in anchor_map:
 			errs.append(adict( n=n, t='link_anchor',
 				s=f'Bogus/leftover anchor-line without a header: {line}' ))
@@ -340,7 +343,9 @@ def main(argv=None):
 					for n, line in enumerate(src, 1):
 						if a := anchor_map.get(n):
 							if not a.exists: dst.write(line)
-							dst.write(f'<a name={a.name}></a>\n')
+							# Codeberg/gitea changes #-links to go to "user-content-<name>"
+							dst.write( f'<a name={a.name}></a>'
+								f'<a name=user-content-{a.name}></a>\n' )
 						else: dst.write(line)
 				p_tmp.rename(p); p_tmp = None
 			finally:

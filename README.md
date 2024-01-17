@@ -258,17 +258,17 @@ Contents - links to doc section for each script here:
 
 
 
-<a name=hdr-__-root-___various_cli_system_things></a>
+<a name=hdr-__-root-___various_cli_system_things></a><a name=user-content-hdr-__-root-___various_cli_system_things></a>
 ### \[-root-\] Various CLI/system things
 
 
 
-<a name=hdr-file_dir_fs_management></a>
+<a name=hdr-file_dir_fs_management></a><a name=user-content-hdr-file_dir_fs_management></a>
 #### File/dir/fs management
 
 File/link/dir and filesystem structure manipulation tools.
 
-<a name=hdr-scim></a>
+<a name=hdr-scim></a><a name=user-content-hdr-scim></a>
 ##### [scim](scim)
 
 Non-interactive CLI tool to keep a list of files to symlink or copy into/from
@@ -319,7 +319,7 @@ Started as a [cfgit project] long time ago, evolved away into this more generic
 
 [cfgit project]: https://fraggod.net/code/git/configit/
 
-<a name=hdr-run_cmd_pipe.nim></a>
+<a name=hdr-run_cmd_pipe.nim></a><a name=user-content-hdr-run_cmd_pipe.nim></a>
 ##### [run_cmd_pipe.nim](run_cmd_pipe.nim)
 
 Small tool to match lines from stdin according to ini config file
@@ -364,7 +364,7 @@ One interesting use I've found in combination with [fatrace] is to
 [monitor and synchronize local containers, as well as handle events from those]:
   https://blog.fraggod.net/2024/01/09/ab-using-fanotify-as-a-container-eventmessage-bus.html
 
-<a name=hdr-findx></a>
+<a name=hdr-findx></a><a name=user-content-hdr-findx></a>
 ##### [findx](findx)
 
 Wrapper around GNU find (from [findutils]) to accept paths at the end of argv
@@ -379,7 +379,7 @@ after query there, so decided to patch around that frustrating issue one day.
 
 [findutils]: https://www.gnu.org/software/findutils/
 
-<a name=hdr-patch-nspawn-ids></a>
+<a name=hdr-patch-nspawn-ids></a><a name=user-content-hdr-patch-nspawn-ids></a>
 ##### [patch-nspawn-ids](patch-nspawn-ids)
 
 Python script to "shift" or "patch" uid/gid values with new container-id
@@ -397,7 +397,7 @@ Should be safe to use anywhere, as in most non-nspawn cases upper bits of
 uid/gid are always zero, hence any changes can be easily reverted by running
 this tool again with -c0.
 
-<a name=hdr-bindfs-idmap></a>
+<a name=hdr-bindfs-idmap></a><a name=user-content-hdr-bindfs-idmap></a>
 ##### [bindfs-idmap](bindfs-idmap)
 
 [bindfs] wrapper script to setup id-mapping from uid of the mountpoint
@@ -417,7 +417,7 @@ than such bindfs hack - e.g. bind/idmapped mounts, shared uids/gids, ACLs, etc.
 
 [bindfs]: https://bindfs.org/
 
-<a name=hdr-docker-ln></a>
+<a name=hdr-docker-ln></a><a name=user-content-hdr-docker-ln></a>
 ##### [docker-ln](docker-ln)
 
 Simple bash script to symlink uppermost "merged" overlayfs layer of a running
@@ -431,7 +431,7 @@ These paths are very likely to change between container and docker-compose
 restarts for many reasons, so such symlinks are generally only valid during
 container runtime, and script needs a re-run to update these too.
 
-<a name=hdr-fast-disk-wipe></a>
+<a name=hdr-fast-disk-wipe></a><a name=user-content-hdr-fast-disk-wipe></a>
 ##### [fast-disk-wipe](fast-disk-wipe.c)
 
 Very simple "write 512B, skip N * 512B, repeat" binary for wiping some block
@@ -451,7 +451,7 @@ on some extendable file will result in it eating up all space available to it.
 
 See head of the file for build and usage info.
 
-<a name=hdr-lsx></a>
+<a name=hdr-lsx></a><a name=user-content-hdr-lsx></a>
 ##### [lsx](lsx)
 
 More functionality similar to common "ls" tool, to list files in some specific
@@ -471,12 +471,12 @@ Simple python script with no extra dependencies.
 
 
 
-<a name=hdr-various_file-data_processing_tools></a>
+<a name=hdr-various_file-data_processing_tools></a><a name=user-content-hdr-various_file-data_processing_tools></a>
 #### Various file-data processing tools
 
 Things that manipulate some kind of data formats or mangle generic file/pipe contents.
 
-<a name=hdr-repr></a>
+<a name=hdr-repr></a><a name=user-content-hdr-repr></a>
 ##### [repr](repr)
 
 Ever needed to check if file has newlines or BOM in it, yet every editor is
@@ -498,7 +498,7 @@ newlines, and sometimes you just want "MS utf-8 mode" (`repr -c utf-8-sig+r`).
 Using that with +i flag as e.g. `repr -c utf-8-sig+ri file1 file2 ...`
 converts encoding+newlines+BOM for files in-place at no extra hassle.
 
-<a name=hdr-color></a>
+<a name=hdr-color></a><a name=user-content-hdr-color></a>
 ##### [color](color)
 
 Outputs terminal color sequences, making important output more distinctive.
@@ -513,7 +513,7 @@ Also can be used to interleave "tail -f" of several logfiles in the same termina
 
 Or to get color-escape-magic for your bash script: `color red bold p`
 
-<a name=hdr-resolve-hostnames></a>
+<a name=hdr-resolve-hostnames></a><a name=user-content-hdr-resolve-hostnames></a>
 ##### [resolve-hostnames](resolve-hostnames)
 
 Script (py3) to find all specified (either directly, or by regexp)
@@ -556,7 +556,7 @@ names (in some arbitrary format) to IP addresses, and such.
 Has all sorts of failure-handling and getaddrinfo-control cli options, can
 resolve port/protocol names as well.
 
-<a name=hdr-resolve-conf></a>
+<a name=hdr-resolve-conf></a><a name=user-content-hdr-resolve-conf></a>
 ##### [resolve-conf](resolve-conf)
 
 Python/Jinja2 script to produce a text file from a template, focused
@@ -634,7 +634,7 @@ Use-case is a simple conf-file pre-processor for autonomous templating on servic
 startup with a minimal toolbox on top of jinja2, without huge dep-tree or any other
 requirements and complexity, that is not scary to run from `ExecStartPre=` line as root.
 
-<a name=hdr-temp-patch></a>
+<a name=hdr-temp-patch></a><a name=user-content-hdr-temp-patch></a>
 ##### [temp-patch](temp-patch)
 
 Tool to temporarily modify (patch) a file - until reboot or for a specified
@@ -654,7 +654,7 @@ accidental modification (that can be lost).
 There're also "-t" and "-m" flags to control timestamps during the whole
 process.
 
-<a name=hdr-term-pipe></a>
+<a name=hdr-term-pipe></a><a name=user-content-hdr-term-pipe></a>
 ##### [term-pipe](term-pipe)
 
 Python script with various terminal input/output piping helpers and tools.
@@ -707,7 +707,7 @@ significant changes, something like "2>/tmp/errors.log" can be added at the end.
 
 Check options of this subcommand for rate-limiting and some other tweaks.
 
-<a name=hdr-yaml-to-pretty-json></a>
+<a name=hdr-yaml-to-pretty-json></a><a name=user-content-hdr-yaml-to-pretty-json></a>
 ##### [yaml-to-pretty-json](yaml-to-pretty-json)
 
 Converts yaml files to an indented json, which is a bit more readable and
@@ -716,7 +716,7 @@ editable by hand than the usual compact one-liner serialization.
 Due to yaml itself being json superset, can be used to convert json to
 pretty-json as well.
 
-<a name=hdr-yaml-flatten></a>
+<a name=hdr-yaml-flatten></a><a name=user-content-hdr-yaml-flatten></a>
 ##### [yaml-flatten](yaml-flatten)
 
 Converts yaml/json files to a flat "key: value" lines.
@@ -731,7 +731,7 @@ and empty lists/dicts and such in a readable manner too.
 Output is intended for a human reader, to easily see value paths and such,
 and definitely can't be converted back to yaml or any kind of data safely.
 
-<a name=hdr-yaml-diff></a>
+<a name=hdr-yaml-diff></a><a name=user-content-hdr-yaml-diff></a>
 ##### [yaml-diff](yaml-diff)
 
 Tool to normalize YAML files' ordering/formatting and run "git diff | [delta]"
@@ -760,7 +760,7 @@ via env variables printed in -h/--help output.
 [delta]: https://github.com/dandavison/delta
 [pygments]: https://pygments.org/
 
-<a name=hdr-hz></a>
+<a name=hdr-hz></a><a name=user-content-hdr-hz></a>
 ##### [hz](hz)
 
 Same thing as the common "head", but works with \\x00
@@ -785,7 +785,7 @@ option) would be aliased neatly to "hz", hence the script name.
 Defaults to reading ALL lines, not just arbitrary number (like 10, which is
 default for regular "head")!
 
-<a name=hdr-liac></a>
+<a name=hdr-liac></a><a name=user-content-hdr-liac></a>
 ##### [liac](liac)
 
 "Log Interleaver And Colorizer" python script.
@@ -813,7 +813,7 @@ See [blog post about liac tool] for more info.
 [blog post about liac tool]:
   https://blog.fraggod.net/2015/12/29/tool-to-interleave-and-colorize-lines-from-multiple-log-or-any-other-files.html
 
-<a name=hdr-html-embed></a>
+<a name=hdr-html-embed></a><a name=user-content-hdr-html-embed></a>
 ##### [html-embed](html-embed)
 
 Script to create "fat" HTML files, embedding all linked images
@@ -833,7 +833,7 @@ Use-case is to easily produce single-file webapps or pages to pass around (or
 share somewhere), e.g. some d3-based interactive chart page or an html report
 with a few embedded images.
 
-<a name=hdr-someml-indent></a>
+<a name=hdr-someml-indent></a><a name=user-content-hdr-someml-indent></a>
 ##### [someml-indent](someml-indent)
 
 Simple and dirty regexp + backreferences something-ML (SGML/HTML/XML) parser to
@@ -850,7 +850,7 @@ it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when `xmllint --format` fail and/or break such kinda-ML-but-not-XML files.
 
-<a name=hdr-hashname></a>
+<a name=hdr-hashname></a><a name=user-content-hdr-hashname></a>
 ##### [hashname](hashname)
 
 Script to add base32-encoded content hash to filenames.
@@ -871,7 +871,7 @@ like random "wallpaper.jpg" or "image.jpg" images above from the internets.
 
 Use -h/--help for info on more useful options.
 
-<a name=hdr-hhash></a>
+<a name=hdr-hhash></a><a name=user-content-hdr-hhash></a>
 ##### [hhash](hhash.ml)
 
 Produces lower-entropy "human hash" phrase consisting of aspell english
@@ -909,7 +909,7 @@ consistent results on this machine. Updating that dictionary will change outputs
 
 [libsodium]: https://libsodium.org/
 
-<a name=hdr-crypt></a>
+<a name=hdr-crypt></a><a name=user-content-hdr-crypt></a>
 ##### [crypt](crypt)
 
 Trivial file/stream encryption tool using [PyNaCl's]
@@ -937,10 +937,10 @@ stop and throw error at that point.
 
 
 
-<a name=hdr-kernel_sources_build_version_management></a>
+<a name=hdr-kernel_sources_build_version_management></a><a name=user-content-hdr-kernel_sources_build_version_management></a>
 #### Kernel sources/build/version management
 
-<a name=hdr-kernel-patch></a>
+<a name=hdr-kernel-patch></a><a name=user-content-hdr-kernel-patch></a>
 ##### [kernel-patch](kernel-patch)
 
 Simple stateless script to update sources in /usr/src/linux to some (specified)
@@ -961,7 +961,7 @@ In short, allows to run e.g. `kernel-patch 3.14.22` to get 3.14.22 in
 `/usr/src/linux` from any other clean 3.14.\* version, or just
 `kernel-patch` to have the latest 3.14 patchset.
 
-<a name=hdr-kernel-conf-check></a>
+<a name=hdr-kernel-conf-check></a><a name=user-content-hdr-kernel-conf-check></a>
 ##### [kernel-conf-check](kernel-conf-check)
 
 Ad-hoc python script to check any random snippet with linux kernel
@@ -970,7 +970,7 @@ against kernel config file, current config in /proc/config.gz or such.
 
 Reports what matches and what doesn't to stdout, trivial regexp matching.
 
-<a name=hdr-clean-boot></a>
+<a name=hdr-clean-boot></a><a name=user-content-hdr-clean-boot></a>
 ##### [clean-boot](clean-boot)
 
 Script to remove older kernel versions (as installed by `/sbin/installkernel`)
@@ -1022,13 +1022,13 @@ on, but 3.2.16 (latest of 3.2.X) gets removed towards the very end, among other
 
 
 
-<a name=hdr-znc_log_helpers></a>
+<a name=hdr-znc_log_helpers></a><a name=user-content-hdr-znc_log_helpers></a>
 #### ZNC log helpers
 
 Couple scripts to manage [ZNC IRC bouncer](https://znc.in/) logs -
 archive, view, search, etc.
 
-<a name=hdr-znc-log-aggregator></a>
+<a name=hdr-znc-log-aggregator></a><a name=user-content-hdr-znc-log-aggregator></a>
 ##### [znc-log-aggregator](znc-log-aggregator)
 
 Tool to process ZNC chat logs, produced by "log" module (one enabled globally,
@@ -1062,7 +1062,7 @@ usage of uncompressed logs in the long run.
 ZNC changed how it stores logs a few times over the years, and this tools
 also helped maintain consistent storage schema across these.
 
-<a name=hdr-znc-log-reader></a>
+<a name=hdr-znc-log-reader></a><a name=user-content-hdr-znc-log-reader></a>
 ##### [znc-log-reader](znc-log-reader)
 
 Same as znc-log-aggregator above, but seeks/reads specific tail ("last n lines")
@@ -1073,10 +1073,10 @@ Mostly used to query/grep recent chat logs by approximate channel name from term
 
 
 
-<a name=hdr-systemd-related></a>
+<a name=hdr-systemd-related></a><a name=user-content-hdr-systemd-related></a>
 #### systemd-related
 
-<a name=hdr-systemd-dashboard></a>
+<a name=hdr-systemd-dashboard></a><a name=user-content-hdr-systemd-dashboard></a>
 ##### [systemd-dashboard]
 
 [systemd-dashboard]: systemd-dashboard
@@ -1097,7 +1097,7 @@ though it's probably obsolete otherwise since this thing was rewritten.
 [Dashboard-for-... blog post]:
   https://blog.fraggod.net/2011/2/Dashboard-for-enabled-services-in-systemd
 
-<a name=hdr-systemd-watchdog></a>
+<a name=hdr-systemd-watchdog></a><a name=user-content-hdr-systemd-watchdog></a>
 ##### [systemd-watchdog](systemd-watchdog)
 
 Trivial script to ping systemd watchdog and do some trivial actions in-between
@@ -1157,7 +1157,7 @@ if `-n/--check-net-gw` option is used.
 
 [fping]: https://fping.org/
 
-<a name=hdr-cgrc></a>
+<a name=hdr-cgrc></a><a name=user-content-hdr-cgrc></a>
 ##### [cgrc](cgrc)
 
 Wrapper for [systemd.resource control] stuff to run commands in transient
@@ -1220,12 +1220,12 @@ Run without any args/opts or with -h/--help to get more detailed usage info.
 
 
 
-<a name=hdr-ssh_and_wireguard_related></a>
+<a name=hdr-ssh_and_wireguard_related></a><a name=user-content-hdr-ssh_and_wireguard_related></a>
 #### SSH and WireGuard related
 
 See also "backup" subsection.
 
-<a name=hdr-ssh-fingerprint></a>
+<a name=hdr-ssh-fingerprint></a><a name=user-content-hdr-ssh-fingerprint></a>
 ##### [ssh-fingerprint](ssh-fingerprint)
 
 ssh-keyscan, but outputting each key in every possible format.
@@ -1257,7 +1257,7 @@ With this command, just running it on the remote host - presumably from diff
 location, or even localhost - should give (hopefully) any possible gibberish
 permutation that openssh (or something else) may decide to throw at you.
 
-<a name=hdr-ssh-keyparse></a>
+<a name=hdr-ssh-keyparse></a><a name=user-content-hdr-ssh-keyparse></a>
 ##### [ssh-keyparse](ssh-keyparse)
 
 Python script to extract raw private key string from ed25519 ssh keys.
@@ -1328,7 +1328,7 @@ thing over some voice channel, if necessary.
 
 [Douglas Crockford's human-oriented Base32]: https://www.crockford.com/wrmg/base32.html
 
-<a name=hdr-ssh-key-init></a>
+<a name=hdr-ssh-key-init></a><a name=user-content-hdr-ssh-key-init></a>
 ##### [ssh-key-init](ssh-key-init)
 
 Bash script to generate (init) ssh key (via ssh-keygen) without asking about
@@ -1345,7 +1345,7 @@ Has -m option to init key for an nspawn container under `/var/lib/machines`
 (e.g. `ssh-key-init -m mymachine`) and -r option to replace any existing keys.
 Sets uid/gid of the parent path for all new ones and -m700.
 
-<a name=hdr-ssh-tunnel></a>
+<a name=hdr-ssh-tunnel></a><a name=user-content-hdr-ssh-tunnel></a>
 ##### [ssh-tunnel](ssh-tunnel)
 
 Script to keep persistent, unique and reasonably responsive ssh tunnels.\
@@ -1366,7 +1366,7 @@ Which are all pretty much required for proper background tunnel operation.
 Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.\
 Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
 
-<a name=hdr-ssh-reverse-mux-server_ssh-reverse-mux-client></a>
+<a name=hdr-ssh-reverse-mux-server_ssh-reverse-mux-client></a><a name=user-content-hdr-ssh-reverse-mux-server_ssh-reverse-mux-client></a>
 ##### [ssh-reverse-mux-server] / [ssh-reverse-mux-client]
 [ssh-reverse-mux-server]: ssh-reverse-mux-server
 [ssh-reverse-mux-client]: ssh-reverse-mux-client
@@ -1390,7 +1390,7 @@ Note that all `--auth-secret` is used for is literally handing-out sequential
 numbers, and isn't expected to be strong protection against anything, unlike ssh
 auth that should come after that.
 
-<a name=hdr-wg-mux-server___wg-mux-client></a>
+<a name=hdr-wg-mux-server___wg-mux-client></a><a name=user-content-hdr-wg-mux-server___wg-mux-client></a>
 ##### [wg-mux-server] / [wg-mux-client]
 [wg-mux-server]: wg-mux-server
 [wg-mux-client]: wg-mux-client
@@ -1479,7 +1479,7 @@ and then keep it alive from there indefinitely (via `--ping-cmd` + systemd resta
 Explicit iface/IP init in these units can be replaced by systemd-networkd
 .netdev + .network stuff, as it supports wireguard configuration there.
 
-<a name=hdr-ssh-tunnels-cleanup></a>
+<a name=hdr-ssh-tunnels-cleanup></a><a name=user-content-hdr-ssh-tunnels-cleanup></a>
 ##### [ssh-tunnels-cleanup](ssh-tunnels-cleanup)
 
 Bash script to list or kill users' sshd pids, created for "ssh -R" tunnels, that
@@ -1508,7 +1508,7 @@ See also: [autossh] and such.
 
 [autossh]: https://www.harding.motd.ca/autossh/
 
-<a name=hdr-mosh-nat___mosh-nat-bind.c></a>
+<a name=hdr-mosh-nat___mosh-nat-bind.c></a><a name=user-content-hdr-mosh-nat___mosh-nat-bind.c></a>
 ##### [mosh-nat] / [mosh-nat-bind.c]
 [mosh-nat]: mosh-nat
 [mosh-nat-bind.c]: mosh-nat-bind.c
@@ -1554,7 +1554,7 @@ Source for LD_PRELOAD lib is based on <https://github.com/yongboy/bindp/>
 [pwnat]: https://samy.pl/pwnat/
 [mobile-shell/mosh#623]: https://github.com/mobile-shell/mosh/issues/623
 
-<a name=hdr-tping></a>
+<a name=hdr-tping></a><a name=user-content-hdr-tping></a>
 ##### [tping](tping)
 
 Python (asyncio) tool to try connecting to specified TCP port until connection
@@ -1592,10 +1592,10 @@ in an efficient manner.
 
 
 
-<a name=hdr-wifi___bluetooth_helpers></a>
+<a name=hdr-wifi___bluetooth_helpers></a><a name=user-content-hdr-wifi___bluetooth_helpers></a>
 #### WiFi / Bluetooth helpers
 
-<a name=hdr-adhocapd></a>
+<a name=hdr-adhocapd></a><a name=user-content-hdr-adhocapd></a>
 ##### [adhocapd](adhocapd)
 
 Picks first wireless dev from `iw dev` and runs [hostapd] + udhcpd
@@ -1629,7 +1629,7 @@ usb-wlan interfaces will be named according to NAME there):
 
 [hostapd]: https://w1.fi/hostapd/
 
-<a name=hdr-wpa-systemd-wrapper></a>
+<a name=hdr-wpa-systemd-wrapper></a><a name=user-content-hdr-wpa-systemd-wrapper></a>
 ##### [wpa-systemd-wrapper](wpa-systemd-wrapper)
 
 Systemd wrapper for [wpa_supplicant] or [hostapd], enabling either to
@@ -1681,12 +1681,12 @@ and `-d/--debug` opts for more info.
 
 
 
-<a name=hdr-misc></a>
+<a name=hdr-misc></a><a name=user-content-hdr-misc></a>
 #### Misc
 
 Misc one-off scripts that don't group well with anythin else.
 
-<a name=hdr-at></a>
+<a name=hdr-at></a><a name=user-content-hdr-at></a>
 ##### [at](at)
 
 Replacement for standard unix'ish "atd" daemon in the form of a bash script.
@@ -1697,7 +1697,7 @@ Unlike atd proper, such tasks won't survive reboot, obviously.
     Usage: ./at [ -h | -v ] when < sh_script
     With -v flag ./at mails script output if it's not empty even if exit code is zero.
 
-<a name=hdr-sleepc></a>
+<a name=hdr-sleepc></a><a name=user-content-hdr-sleepc></a>
 ##### [sleepc](sleepc)
 
 Python script that works like a verbose "sleep" tool - prints countdown until
@@ -1713,7 +1713,7 @@ Countdown: 3:01:59 [in 3h 2m]
 Useful for waiting with a known time or delay in interactive consoles, to avoid
 needing to calculate offset for "sleep", and be able to check back on it later.
 
-<a name=hdr-wgets></a>
+<a name=hdr-wgets></a><a name=user-content-hdr-wgets></a>
 ##### [wgets](wgets)
 
 Simple script to grab a file using wget and then validate checksum of
@@ -1747,7 +1747,7 @@ it might be a good idea to fetch that checksum on a different host or a proxy,
 making spoofing of both checksum and the original file on the same connection
 a bit harder.
 
-<a name=hdr-mail></a>
+<a name=hdr-mail></a><a name=user-content-hdr-mail></a>
 ##### [mail](mail)
 
 Simple bash wrapper for sendmail command, generating From/Date headers and
@@ -1755,7 +1755,7 @@ stuff, just like mailx would do, but also allowing to pass custom headers
 (useful for filtering error reports by-source), which some implementations
 of "mail" fail to do.
 
-<a name=hdr-passgen></a>
+<a name=hdr-passgen></a><a name=user-content-hdr-passgen></a>
 ##### [passgen](passgen)
 
 Uses aspell english dictionaly to generate easy-to-remember passphrase -
@@ -1769,7 +1769,7 @@ based on number of words in aspell dictionary dump that is being used.
 Other options allow for picking number of words and sanity-checks like min/max
 length (to avoid making it too unwieldy or easy to bruteforce via other methods).
 
-<a name=hdr-urlparse></a>
+<a name=hdr-urlparse></a><a name=user-content-hdr-urlparse></a>
 ##### [urlparse](urlparse)
 
 Simple script to parse long URL with lots of parameters, decode and print it out
@@ -1779,7 +1779,7 @@ command on two outputs) with another URL.
 No more squinting at some huge incomprehensible ecommerce URLs before scraping
 the hell out of them!
 
-<a name=hdr-ip-ext></a>
+<a name=hdr-ip-ext></a><a name=user-content-hdr-ip-ext></a>
 ##### [ip-ext](ip-ext)
 
 Some minor tools for network configuration from console/scripts, which iproute2
@@ -1809,7 +1809,7 @@ an easy-to-remember static ones.
 including any custom chains, using iptables-save/restore command-line tools,
 and sets policy for default chains to ACCEPT.
 
-<a name=hdr-blinky></a>
+<a name=hdr-blinky></a><a name=user-content-hdr-blinky></a>
 ##### [blinky](blinky)
 
 Script to blink gpio-connected leds via `/sys/class/gpio` interface.
@@ -1820,7 +1820,7 @@ cooperation between several instances using same gpio pin, "until" timestamp
 spec, and generally everything I can think of being useful (mostly for use from
 other scripts though).
 
-<a name=hdr-openssl-fingerprint></a>
+<a name=hdr-openssl-fingerprint></a><a name=user-content-hdr-openssl-fingerprint></a>
 ##### [openssl-fingerprint](openssl-fingerprint)
 
 Do `openssl s_client -connect somesite </dev/null | openssl x509 -fingerprint -noout -sha1`
@@ -1835,7 +1835,7 @@ connection through it - for example, to get fingerprint over Tor
 SHA1 Fingerprint=A8:7A:93:13:23:2E:97:4A:08:83:DD:09:C4:5F:37:D5:B7:4E:E2:D4
 ```
 
-<a name=hdr-nsh></a>
+<a name=hdr-nsh></a><a name=user-content-hdr-nsh></a>
 ##### [nsh](nsh)
 
 Bash script to "nsenter" into specified machine's (as can be seen in
@@ -1861,7 +1861,7 @@ If run without argument or with `-l/--list` option, will list running machines.
 
 See also: lsns(1), nsenter(1), unshare(1)
 
-<a name=hdr-pam-run></a>
+<a name=hdr-pam-run></a><a name=user-content-hdr-pam-run></a>
 ##### [pam-run](pam-run)
 
 Wrapper that opens specified PAM session (as per one of the configs in
@@ -1898,7 +1898,7 @@ systemd or manually).
 
 [mk-fg/de-setup]: https://github.com/mk-fg/de-setup
 
-<a name=hdr-primes></a>
+<a name=hdr-primes></a><a name=user-content-hdr-primes></a>
 ##### [primes](primes)
 
 Python script to print prime numbers in specified range.
@@ -1907,7 +1907,7 @@ For small ranges only, as it does dumbest brute-force \[2, sqrt(n)\] division ch
 and intended to generate primes for non-overlapping "tick % n" workload spacing,
 not any kind of crypto operations.
 
-<a name=hdr-boot-patcher></a>
+<a name=hdr-boot-patcher></a><a name=user-content-hdr-boot-patcher></a>
 ##### [boot-patcher](boot-patcher)
 
 Py script to run on early boot, checking specific directory for update-files
@@ -2004,7 +2004,7 @@ Misc notes:
 
 - Run as `boot-patcher --print-systemd-unit` for the only bit of setup it needs.
 
-<a name=hdr-audit-follow></a>
+<a name=hdr-audit-follow></a><a name=user-content-hdr-audit-follow></a>
 ##### [audit-follow](audit-follow)
 
 Simple py3 script to decode audit messages from "journalctl -af -o json" output,
@@ -2046,7 +2046,7 @@ Some useful incantations (cheatsheet):
 auditd + ausearch can be used as an offline/advanced alternative to such script.\
 More powerful options for such task on linux can be sysdig and various BPF tools.
 
-<a name=hdr-tui-binary-conv></a>
+<a name=hdr-tui-binary-conv></a><a name=user-content-hdr-tui-binary-conv></a>
 ##### [tui-binary-conv](tui-binary-conv)
 
 Simple ncurses-based interactive (TUI) decimal/hex/binary
@@ -2064,7 +2064,7 @@ There's a picture of it [on the blog page here].
 [on the blog page here]:
   https://blog.fraggod.net/2019/01/10/tui-console-dechexbinary-converter-tool.html
 
-<a name=hdr-maildir-cat></a>
+<a name=hdr-maildir-cat></a><a name=user-content-hdr-maildir-cat></a>
 ##### [maildir-cat](maildir-cat)
 
 Python script to iterate over all messages in all folders of a maildir and
@@ -2081,7 +2081,7 @@ as simple text files there.
 Can also be pointed to maildir subdirs (same thing) or individual files.\
 Uses python stdlib email.* modules for all processing.
 
-<a name=hdr-dns-update-proxy></a>
+<a name=hdr-dns-update-proxy></a><a name=user-content-hdr-dns-update-proxy></a>
 ##### [dns-update-proxy](dns-update-proxy)
 
 Small py3/asyncio UDP listener that receives ~100B `pk || box(name:addr)`
@@ -2132,7 +2132,7 @@ update_dns(proxy_conf, 'my.ddns.host.net', '1.2.3.4')
 
 [nsd]: https://wiki.alpinelinux.org/wiki/Setting_up_nsd_DNS_server
 
-<a name=hdr-dns-test-daemon></a>
+<a name=hdr-dns-test-daemon></a><a name=user-content-hdr-dns-test-daemon></a>
 ##### [dns-test-daemon](dns-test-daemon)
 
 Python + [async_dns] authoritative DNS resolver daemon to
@@ -2192,7 +2192,7 @@ network is down, which runs "fping" to check that on detected DNS failures.
 
 [async_dns]: https://github.com/gera2ld/async_dns
 
-<a name=hdr-nginx-access-log-stat-block></a>
+<a name=hdr-nginx-access-log-stat-block></a><a name=user-content-hdr-nginx-access-log-stat-block></a>
 ##### [nginx-access-log-stat-block](nginx-access-log-stat-block)
 
 Python/ctypes script to be used alongside [nginx-stat-check] module, reliably
@@ -2245,7 +2245,7 @@ which is fine for intended purpose (bots spam requests anyway).
 
 [nginx-stat-check]: https://github.com/mk-fg/nginx-stat-check
 
-<a name=hdr-sys-wait></a>
+<a name=hdr-sys-wait></a><a name=user-content-hdr-sys-wait></a>
 ##### [sys-wait](sys-wait)
 
 Bash script to check and wait for various system conditions,
@@ -2262,7 +2262,7 @@ Helps to avoid writing those annoyingly-common
 when something heavy/long is already running and you just don't
 have the heart to break and reschedule it properly.
 
-<a name=hdr-yt-feed-to-email></a>
+<a name=hdr-yt-feed-to-email></a><a name=user-content-hdr-yt-feed-to-email></a>
 ##### [yt-feed-to-email](yt-feed-to-email)
 
 Python + [feedparser] RSS-to-email notification script for YouTube RSS feeds.
@@ -2282,7 +2282,7 @@ notification emails on that platform.
 [feedparser]: https://pythonhosted.org/feedparser/
 [EWMA]: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
 
-<a name=hdr-color-b64sort></a>
+<a name=hdr-color-b64sort></a><a name=user-content-hdr-color-b64sort></a>
 ##### [color-b64sort](color-b64sort)
 
 Tool to filter, sort and compress list of colors - aka color palette - into
@@ -2334,7 +2334,7 @@ but using pypy instead of cpython can speed that up a lot.
 ["i want hue"]: https://medialab.github.io/iwanthue/
 [colormath]: https://python-colormath.readthedocs.io/
 
-<a name=hdr-fido2-hmac-desalinate.c></a>
+<a name=hdr-fido2-hmac-desalinate.c></a><a name=user-content-hdr-fido2-hmac-desalinate.c></a>
 ##### [fido2-hmac-desalinate.c]
 [fido2-hmac-desalinate.c]: fido2-hmac-desalinate.c
 
@@ -2439,7 +2439,7 @@ usage info/examples of this small tool.
 ["FIDO2 hardware password/secret management" blog post]:
   https://blog.fraggod.net/2023/01/04/fido2-hardware-passwordsecret-management.html
 
-<a name=hdr-fido2_hmac_boot.nim></a>
+<a name=hdr-fido2_hmac_boot.nim></a><a name=user-content-hdr-fido2_hmac_boot.nim></a>
 ##### [fido2_hmac_boot.nim](fido2_hmac_boot.nim)
 
 Small tool similar to [fido2-hmac-desalinate.c] above, but intended to produce
@@ -2477,12 +2477,12 @@ on how to use this binary with a typical dracut/systemd boot process.
 
 
 
-<a name=hdr-__dev___dev_tools></a>
+<a name=hdr-__dev___dev_tools></a><a name=user-content-hdr-__dev___dev_tools></a>
 ### [\[dev\] Dev tools](dev)
 
 Minor things I tend to use when writing code and stuff.
 
-<a name=hdr-indent-replace></a>
+<a name=hdr-indent-replace></a><a name=user-content-hdr-indent-replace></a>
 #### [indent-replace](dev/indent-replace)
 
 Very simple script to replace tabs with spaces and back,
@@ -2492,7 +2492,7 @@ Goal is to avoid all inconvenience with handling unfamiliar indent types
 in editor, and just have it setup for strictly one of those, doing translation
 before/after commits manually.
 
-<a name=hdr-indent-braces></a>
+<a name=hdr-indent-braces></a><a name=user-content-hdr-indent-braces></a>
 #### [indent-braces](dev/indent-braces)
 
 Script to indent lines in a file based on opening/closing braces and nothing else.
@@ -2509,7 +2509,7 @@ include same byte as braces in other characters (like utf-8).
 
 Running on large (multi-MiB) files via pypy3 works much faster than cpython.
 
-<a name=hdr-golang_filter></a>
+<a name=hdr-golang_filter></a><a name=user-content-hdr-golang_filter></a>
 #### [golang_filter](dev/golang_filter)
 
 Same idea as in "tabs_filter", but on a larger scale - basically does to [Go]
@@ -2534,7 +2534,7 @@ in the editor, while repo and compiler will see the proper (bloated) code.
 [Go]: https://4golang.org/
 [coffee-script]: https://jashkenas.github.com/coffee-script/
 
-<a name=hdr-distribute_regen></a>
+<a name=hdr-distribute_regen></a><a name=user-content-hdr-distribute_regen></a>
 #### [distribute_regen](dev/distribute_regen)
 
 Tool to auto-update python package metadata in setup.py and README files.
@@ -2551,7 +2551,7 @@ README.rst.
 Designed to be used from pre-commit hook, like `ln -s /path/to/distribute_regen
 .git/hooks/pre-commit`, to update version number before every commit.
 
-<a name=hdr-darcs_bundle_to_diff></a>
+<a name=hdr-darcs_bundle_to_diff></a><a name=user-content-hdr-darcs_bundle_to_diff></a>
 #### [darcs_bundle_to_diff](dev/darcs_bundle_to_diff)
 
 Ad-hoc tool to dissect and convert darcs bundles into a sequence of unified diff
@@ -2563,7 +2563,7 @@ tickets, which crashed darcs on "darcs apply"), so might be incomplete and a bit
 out-of-date, but I imagine it shouldn't take much effort to make it work with
 any other bundles.
 
-<a name=hdr-git-nym></a>
+<a name=hdr-git-nym></a><a name=user-content-hdr-git-nym></a>
 #### [git-nym](dev/git-nym)
 
 Script to read NYM env var and run git using that ssh id instead of
@@ -2580,7 +2580,7 @@ key or as `NYM=project-x git nym clone ...`.
 Also to just test new keys with git, disregarding ssh-agent and lingering
 control sockets with NYM_CLEAN flag set.
 
-<a name=hdr-git-meld></a>
+<a name=hdr-git-meld></a><a name=user-content-hdr-git-meld></a>
 #### [git-meld](dev/git-meld)
 
 Git-command replacement for git-diff to run meld instead of regular
@@ -2601,7 +2601,7 @@ Should be installed as `git-meld` somewhere in PATH *and* symlinked as
 `meld-git` (git-meld runs `GIT_EXTERNAL_DIFF=meld-git git diff "$@"`)
 to work.
 
-<a name=hdr-catn></a>
+<a name=hdr-catn></a><a name=user-content-hdr-catn></a>
 #### [catn](dev/catn)
 
 Similar to "cat" (specifically coreutils' `cat -n file`),
@@ -2624,7 +2624,7 @@ where "3" in the first and last one means "3 lines of context"
 `catn -q ...` outputs line + context verbatim, so it'd be more useful
 for piping to another file/command or terminal copy-paste.
 
-<a name=hdr-git_terminate></a>
+<a name=hdr-git_terminate></a><a name=user-content-hdr-git_terminate></a>
 #### [git_terminate](dev/git_terminate)
 
 Script to permanently delete files/folders from repository and its history -
@@ -2637,7 +2637,7 @@ WARNING: will do things like `git reflog expire` and `git gc` with agressive
 parameters on the whole repository, so any other possible history not stashed
 or linked to existing branches/remotes (e.g. stuff in `git reflog`) will be purged.
 
-<a name=hdr-git_contains></a>
+<a name=hdr-git_contains></a><a name=user-content-hdr-git_contains></a>
 #### [git_contains](dev/git_contains)
 
 Checks if passed tree-ish (hash, trimmed hash, branch name, etc - see
@@ -2670,7 +2670,7 @@ git rev-parse failed for tree-ish 'notarealting' (command: ['git', 'rev-parse', 
 
 Lines in square brackets above are comments, not actual output.
 
-<a name=hdr-gtk-val-slider></a>
+<a name=hdr-gtk-val-slider></a><a name=user-content-hdr-gtk-val-slider></a>
 #### [gtk-val-slider](dev/gtk-val-slider)
 
 Renders gtk3 window with a slider widget and writes value (float or int) picked
@@ -2682,7 +2682,7 @@ E.g. instead of hardware sensors (which might be hard to get/connect/use), just
 setup app to read value(s) that should be there from file(s), specify proper
 value range to the thing and play around with values all you want to see what happens.
 
-<a name=hdr-git-version-bump-filter></a>
+<a name=hdr-git-version-bump-filter></a><a name=user-content-hdr-git-version-bump-filter></a>
 #### [git-version-bump-filter](dev/git-version-bump-filter)
 
 Very simple script to bump version numbers for file(s) in a git repo before
@@ -2730,7 +2730,7 @@ avoid loosing these).
 
 Runs a single git-log and sed command under the hood, nothing fancy.
 
-<a name=hdr-git-prepare-commit-msg-hook></a>
+<a name=hdr-git-prepare-commit-msg-hook></a><a name=user-content-hdr-git-prepare-commit-msg-hook></a>
 #### [git-prepare-commit-msg-hook](dev/git-prepare-commit-msg-hook)
 
 Common hook that I use for all git repos to append useful comment-lines to
@@ -2791,7 +2791,7 @@ as it'd prevent running repo-local hooks by default otherwise.
 After using it for couple years now (as of 2022), don't think I found a repo
 where I don't want to have this hook yet, but might be just me, of course.
 
-<a name=hdr-markdown-checks></a>
+<a name=hdr-markdown-checks></a><a name=user-content-hdr-markdown-checks></a>
 #### [markdown-checks](dev/markdown-checks)
 
 Linter-type script for markdown .md file(s) like this README, to make sure all
@@ -2818,12 +2818,12 @@ where otherwise nothing will indicate any potential issues.
 
 
 
-<a name=hdr-__backup___backup_helpers></a>
+<a name=hdr-__backup___backup_helpers></a><a name=user-content-hdr-__backup___backup_helpers></a>
 ### [\[backup\] Backup helpers](backup)
 
 Various dedicated backup tools and snippets.
 
-<a name=hdr-ssh-r-sync___ssh-r-sync-recv></a>
+<a name=hdr-ssh-r-sync___ssh-r-sync-recv></a><a name=user-content-hdr-ssh-r-sync___ssh-r-sync-recv></a>
 #### [ssh-r-sync] / [ssh-r-sync-recv]
 [ssh-r-sync]: backup/ssh-r-sync
 [ssh-r-sync-recv]: backup/ssh-r-sync-recv
@@ -2875,7 +2875,7 @@ see `ssh-r-sync-recv --hook-list` for more info.
 Only needs python + ssh + rsync on either side.\
 See `ssh-r-sync-recv -h` for sshd_config setup notes.
 
-<a name=hdr-ssh-dump></a>
+<a name=hdr-ssh-dump></a><a name=user-content-hdr-ssh-dump></a>
 #### [ssh-dump](backup/ssh-dump)
 
 Bash wrapper around ssh to run it in non-interactive command mode, storing
@@ -2887,7 +2887,7 @@ contents from remote host for backup purposes.
 Passes bunch of common options to use ssh batch mode, disable non-key auth and
 enable keepalive in case of long-running remote commands.
 
-<a name=hdr-zfs-snapper></a>
+<a name=hdr-zfs-snapper></a><a name=user-content-hdr-zfs-snapper></a>
 #### [zfs-snapper](backup/zfs-snapper)
 
 Simple py script to create ZFS snapshot and keep a number of older snapshots
@@ -2912,7 +2912,7 @@ Similar to [sanoid], but much simpler and in python instead of perl.
   https://digint.ch/btrbk/doc/btrbk.conf.5.html#_retention_policy
 [sanoid]: https://github.com/jimsalterjrs/sanoid
 
-<a name=hdr-btrfs-snapper></a>
+<a name=hdr-btrfs-snapper></a><a name=user-content-hdr-btrfs-snapper></a>
 #### [btrfs-snapper](backup/btrfs-snapper)
 
 Same as zfs-snapper script above, but for making and managing
@@ -2924,7 +2924,7 @@ without a ton of extra features that's been piled-on there over time.
 
 [btrbk]: https://digint.ch/btrbk/
 
-<a name=hdr-dir-snapper></a>
+<a name=hdr-dir-snapper></a><a name=user-content-hdr-dir-snapper></a>
 #### [dir-snapper](backup/dir-snapper)
 
 Similar to zfs-snapper and btrfs-snapper scripts above, except it simply
@@ -2936,26 +2936,26 @@ fs level is handled somewhere else or unnecessary.
 
 
 
-<a name=hdr-__desktop___linux_desktop_stuff></a>
+<a name=hdr-__desktop___linux_desktop_stuff></a><a name=user-content-hdr-__desktop___linux_desktop_stuff></a>
 ### [\[desktop\] Linux desktop stuff](desktop)
 
 Helpers for more interactive (client) machine, DE and apps there.
 
 
-<a name=hdr-__desktop_uri_handlers__></a>
+<a name=hdr-__desktop_uri_handlers__></a><a name=user-content-hdr-__desktop_uri_handlers__></a>
 #### [\[desktop/uri_handlers\]](desktop/uri_handlers)
 
 Scripts to delegate downloads from browser to more sensible download managers,
 like passing magnet: links to transmission, or processing .torrent files.
 
 
-<a name=hdr-__desktop_media__></a>
+<a name=hdr-__desktop_media__></a><a name=user-content-hdr-__desktop_media__></a>
 #### [\[desktop/media\]](desktop/media)
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
 process) various media files and streams.
 
-<a name=hdr-parec_from_flash></a>
+<a name=hdr-parec_from_flash></a><a name=user-content-hdr-parec_from_flash></a>
 ##### [parec_from_flash](desktop/media/parec_from_flash)
 
 Creates null-sink in pulseaudio and redirects browser flash plugin audio output
@@ -2965,19 +2965,19 @@ there.
 Can be useful to convert video to podcast if downloading flv is tricky for
 whatever reason.
 
-<a name=hdr-pa_track_history></a>
+<a name=hdr-pa_track_history></a><a name=user-content-hdr-pa_track_history></a>
 ##### [pa_track_history](desktop/media/pa_track_history)
 
 Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
 
-<a name=hdr-pa_mute></a>
+<a name=hdr-pa_mute></a><a name=user-content-hdr-pa_mute></a>
 ##### [pa_mute](desktop/media/pa_mute)
 
 Simple script to toggle mute for all pluseaudio streams from a specified pid.
 
-<a name=hdr-pa_modtoggle></a>
+<a name=hdr-pa_modtoggle></a><a name=user-content-hdr-pa_modtoggle></a>
 ##### [pa_modtoggle](desktop/media/pa_modtoggle)
 
 Script to toggle - load or unload - pulseaudio module.
@@ -2997,7 +2997,7 @@ Uses/requires [pulsectl module], python.
 
 [pulsectl module]: https://github.com/mk-fg/python-pulse-control/
 
-<a name=hdr-mpv_icy_track_history></a>
+<a name=hdr-mpv_icy_track_history></a><a name=user-content-hdr-mpv_icy_track_history></a>
 ##### [mpv_icy_track_history](desktop/media/mpv_icy_track_history)
 
 Same as pa_track_history above, but gets tracks when [mpv] dumps icy-\* tags
@@ -3008,7 +3008,7 @@ More efficient and reliable than pa_track_history, but obviously mpv-specific.
 
 [mpv]: https://mpv.io/
 
-<a name=hdr-icy_record></a>
+<a name=hdr-icy_record></a><a name=user-content-hdr-icy_record></a>
 ##### [icy_record](desktop/media/icy_record)
 
 Simple script to dump "online radio" kind of streams to a bunch of separate
@@ -3025,14 +3025,14 @@ over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
 This doesn't seem to be an issue for at least mp3 streams though, which work
 fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
 
-<a name=hdr-radio></a>
+<a name=hdr-radio></a><a name=user-content-hdr-radio></a>
 ##### [radio](desktop/media/radio)
 
 Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
 with appropriate settings, generally simplified ui, logging and echoing what's
 being played, with a mute button (on SIGQUIT button from terminal).
 
-<a name=hdr-toogg></a>
+<a name=hdr-toogg></a><a name=user-content-hdr-toogg></a>
 ##### [toogg](desktop/media/toogg)
 
 Any-media-to-ogg convertor, using ffmpeg, encoding stuff in parallel,
@@ -3049,7 +3049,7 @@ Needs youtube-dl installed if URLs are specified instead of regular files.
 
 [loudnorm filter]: https://ffmpeg.org/ffmpeg-all.html#loudnorm
 
-<a name=hdr-totty></a>
+<a name=hdr-totty></a><a name=user-content-hdr-totty></a>
 ##### [totty](desktop/media/totty)
 
 Wrapper around [img2xterm] tool to display images in a color-capable
@@ -3060,7 +3060,7 @@ Quality of the resulting images is kinda amazing, given tty limitations.
 
 [img2xterm]: https://github.com/rossy2401/img2xterm
 
-<a name=hdr-split></a>
+<a name=hdr-split></a><a name=user-content-hdr-split></a>
 ##### [split](desktop/media/split)
 
 Simple bash script to split media files into chunks of specified length (in
@@ -3074,7 +3074,7 @@ Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
 (default, changed by passing these after duration arg) to grab only audio
 chunks from the source file.
 
-<a name=hdr-audio_split_m4b></a>
+<a name=hdr-audio_split_m4b></a><a name=user-content-hdr-audio_split_m4b></a>
 ##### [audio_split_m4b](desktop/media/audio_split_m4b)
 
 Splits m4b audiobook files on chapters (list of which are encoded into
@@ -3088,7 +3088,7 @@ be controlled with --name-format, default is `{n:03d}__{title}.aac`).
 Doesn't do any transcoding, which can easily be performed later to e.g.
 convert resulting aac files to mp3 or ogg, if necessary.
 
-<a name=hdr-video-concat-xfade></a>
+<a name=hdr-video-concat-xfade></a><a name=user-content-hdr-video-concat-xfade></a>
 ##### [video-concat-xfade](desktop/media/video-concat-xfade)
 
 Wrapper around ffmpeg to create (and run) a list of filters to merge video from
@@ -3097,7 +3097,7 @@ pieces, scale them to same size, and apply some crossfade effect in-between.
 Useful to merge cut-out pieces of some longer video back together for a kind
 of highlights/demo reel, without needing to go into full video editing suite.
 
-<a name=hdr-pick-tracks></a>
+<a name=hdr-pick-tracks></a><a name=user-content-hdr-pick-tracks></a>
 ##### [pick-tracks](desktop/media/pick-tracks)
 
 A simple tool to randomly pick and copy files (intended usage is music tracks)
@@ -3139,7 +3139,7 @@ media tags, instead of reusing source filenames, unless disabled.
 [unidecode]: https://pypi.org/project/Unidecode/
 [mutagen]: https://mutagen.readthedocs.io/en/latest/
 
-<a name=hdr-twitch_vod_fetch></a>
+<a name=hdr-twitch_vod_fetch></a><a name=user-content-hdr-twitch_vod_fetch></a>
 ##### [twitch_vod_fetch](desktop/media/twitch_vod_fetch)
 
 Script to download any time slice of a twitch.tv VoD (video-on-demand).
@@ -3208,7 +3208,7 @@ A bit more info (on its previous py2 version) can be found in [this twitchtv-vod
 [this twitchtv-vods-... blog post]:
   https://blog.fraggod.net/2015/05/19/twitchtv-vods-video-on-demand-downloading-issues-and-fixes.html
 
-<a name=hdr-ytdl-chan></a>
+<a name=hdr-ytdl-chan></a><a name=user-content-hdr-ytdl-chan></a>
 ##### [ytdl-chan](desktop/media/ytdl-chan)
 
 Bash wrapper script around [youtube-dl] tool to download numbered range of videos
@@ -3232,7 +3232,7 @@ Requires [youtube-dl] and [jq] (to parse URLs from json).
 
 [jq]: https://stedolan.github.io/jq/
 
-<a name=hdr-streamdump></a>
+<a name=hdr-streamdump></a><a name=user-content-hdr-streamdump></a>
 ##### [streamdump](desktop/media/streamdump)
 
 Bash wrapper for [streamlink] to make dumping stream to a file more reliable,
@@ -3258,7 +3258,7 @@ Should never stop trying on its own, unless failing to start immediately.
 
 [streamlink]: https://github.com/streamlink/streamlink
 
-<a name=hdr-image-compact></a>
+<a name=hdr-image-compact></a><a name=user-content-hdr-image-compact></a>
 ##### [image-compact](desktop/media/image-compact)
 
 Wrapper for ImageMagick's convert and jpegoptim tools to process large images
@@ -3269,12 +3269,12 @@ Can be used as `image-compact image.jpg` for default "fit into 1600x square"
 mode, or with optional SZ= env-var to scale it differently, but always preserving
 the aspect ratio.
 
-<a name=hdr-__desktop_notifications__></a>
+<a name=hdr-__desktop_notifications__></a><a name=user-content-hdr-__desktop_notifications__></a>
 #### [\[desktop/notifications\]](desktop/notifications)
 
 A bunch of tools to issue various desktop notifications.
 
-<a name=hdr-exec></a>
+<a name=hdr-exec></a><a name=user-content-hdr-exec></a>
 ##### [exec](desktop/notifications/exec)
 
 Wrapper to run specified command and notify (via [desktop-notifications] only atm)
@@ -3301,7 +3301,7 @@ on some "magnet:..." link was successfully processed or discarded with some erro
 
 [desktop-notifications]: https://developer.gnome.org/notification-spec/
 
-<a name=hdr-power></a>
+<a name=hdr-power></a><a name=user-content-hdr-power></a>
 ##### [power](desktop/notifications/power)
 
 Script to spam [desktop-notifications] when charger gets plugged/unplugged
@@ -3314,7 +3314,7 @@ indication for that already.
 Uses python/pyudev and systemd dbus lib via ctypes for notifications.\
 Run with `--print-systemd-unit` to get systemd/udev templates.
 
-<a name=hdr-logtail></a>
+<a name=hdr-logtail></a><a name=user-content-hdr-logtail></a>
 ##### [logtail](desktop/notifications/logtail)
 
 Script to watch log files (as many as necessary) for changes with inotify and
@@ -3340,7 +3340,7 @@ Somewhat advanced usage example:
 
 Python, needs python-gobject ("gi" module, for notifications), uses inotify via ctypes.
 
-<a name=hdr-dovecot-mail></a>
+<a name=hdr-dovecot-mail></a><a name=user-content-hdr-dovecot-mail></a>
 ##### [dovecot-mail](desktop/notifications/dovecot-mail)
 
 Daemon script to monitor dovecot delivery logs (either generic ones, or produced
@@ -3375,7 +3375,7 @@ and that's the one I have here.
 [claws-mail doesn't seem to support those yet]:
   https://www.thewildbeast.co.uk/claws-mail/bugzilla/show_bug.cgi?id=1408
 
-<a name=hdr-icon></a>
+<a name=hdr-icon></a><a name=user-content-hdr-icon></a>
 ##### [icon](desktop/notifications/icon)
 
 Script to display specified xdg icon or image in a transparent popup window,
@@ -3397,7 +3397,7 @@ will be displayed in a semi-transparent box instead.
 
 Stuff gets displayed until process is terminated. Uses gtk3/pygobject.
 
-<a name=hdr-aqm-alerts></a>
+<a name=hdr-aqm-alerts></a><a name=user-content-hdr-aqm-alerts></a>
 ##### [aqm-alerts](desktop/notifications/aqm-alerts)
 
 Receiver for UDP alert packets from [RP2040 SEN5x Air Quality Monitor]
@@ -3412,7 +3412,7 @@ Likely only useful for that AQM tool and its `[alerts]` configuration.
 [RP2040 SEN5x Air Quality Monitor]: https://github.com/mk-fg/rp2040-sen5x-air-quality-webui-monitor
 [notification-thing daemon]: https://github.com/mk-fg/notification-thing/#network-broadcasting
 
-<a name=hdr-dev-nodes></a>
+<a name=hdr-dev-nodes></a><a name=user-content-hdr-dev-nodes></a>
 ##### [dev-nodes](desktop/notifications/dev-nodes)
 
 Trivial script to read \~/.dev-nodes.monitor.list with
@@ -3436,10 +3436,10 @@ notification-bubble monitor pids around.
 
 
 
-<a name=hdr-__desktop___others></a>
+<a name=hdr-__desktop___others></a><a name=user-content-hdr-__desktop___others></a>
 #### [\[desktop\] others](desktop)
 
-<a name=hdr-vfat_shuffler></a>
+<a name=hdr-vfat_shuffler></a><a name=user-content-hdr-vfat_shuffler></a>
 ##### [vfat_shuffler](desktop/vfat_shuffler)
 
 Python script to list/shuffle/order and do some other things to LFN entries
@@ -3483,7 +3483,7 @@ this back in 2013) - [maxpat78/FATtools].
 [construct module]: https://construct.readthedocs.io/
 [maxpat78/FATtools]: https://github.com/maxpat78/FATtools/
 
-<a name=hdr-fan_control></a>
+<a name=hdr-fan_control></a><a name=user-content-hdr-fan_control></a>
 ##### [fan_control](desktop/fan_control)
 
 Script to control speed of dying laptop fan on Acer S3 using direct reads/writes
@@ -3493,7 +3493,7 @@ yet trying to keep cpu cool enough.
 Or, failing that, use cpupower tool to drop frequency (making it run cooler in general)
 and issue dire warnings to desktop.
 
-<a name=hdr-emms-beets-enqueue></a>
+<a name=hdr-emms-beets-enqueue></a><a name=user-content-hdr-emms-beets-enqueue></a>
 ##### [emms-beets-enqueue](desktop/emms-beets-enqueue)
 
 Script to query [beets] music database (possibly on a remote host using ssh)
@@ -3503,7 +3503,7 @@ Also allows to just query/dump resulting paths conveniently.
 [beets]: https://beets.readthedocs.org/
 [EMMS]: https://www.gnu.org/software/emms/
 
-<a name=hdr-ff_backup></a>
+<a name=hdr-ff_backup></a><a name=user-content-hdr-ff_backup></a>
 ##### [ff_backup](desktop/ff_backup)
 
 Old python2 script to backup firefox tab list and settings in a diff/scm-friendly
@@ -3519,7 +3519,7 @@ probably is already, see its [ff_backup.yaml] output example for details.
 [pyaml]: https://github.com/mk-fg/pretty-yaml
 [ff_backup.yaml]: desktop/ff_backup.yaml
 
-<a name=hdr-ff-cli></a>
+<a name=hdr-ff-cli></a><a name=user-content-hdr-ff-cli></a>
 ##### [ff-cli](desktop/ff-cli)
 
 Command-line tool to interact with firefox-like browsers and their profile
@@ -3540,7 +3540,7 @@ Currently has following tools/commands implemented:
 
 To be extended with more stuff over time.
 
-<a name=hdr-bt_agent></a>
+<a name=hdr-bt_agent></a><a name=user-content-hdr-bt_agent></a>
 ##### [bt_agent](desktop/bt_agent)
 
 BlueZ bluetooth authorization agent script/daemon.
@@ -3563,7 +3563,7 @@ initialization routines.
 
 Python, needs dbus-python module with glib loop support.
 
-<a name=hdr-alarm></a>
+<a name=hdr-alarm></a><a name=user-content-hdr-alarm></a>
 ##### [alarm](desktop/alarm)
 
 Script to issue notification(s) after some specified period of time.
@@ -3606,7 +3606,7 @@ and such), there's an `--at` option to use at(1p) daemon.
 
 Python, needs python-gobject ("gi" module) for desktop notifications.
 
-<a name=hdr-acpi-wakeup-config></a>
+<a name=hdr-acpi-wakeup-config></a><a name=user-content-hdr-acpi-wakeup-config></a>
 ##### [acpi-wakeup-config](desktop/acpi-wakeup-config)
 
 Bash script to statelessly enable/disable (and not toggle) events in
@@ -3621,7 +3621,7 @@ when one wants to set it to a specific value.
 Also has special `+all` and `-all` switches to enable/disable all events
 and prints the whole wakeup-table if ran without arguments.
 
-<a name=hdr-olaat></a>
+<a name=hdr-olaat></a><a name=user-content-hdr-olaat></a>
 ##### [olaat](desktop/olaat)
 
 "one-letter-at-a-time" script to display (via gtk3/gi) a semi-transparent
@@ -3632,7 +3632,7 @@ Useful to do any kind of letter-by-letter checks and stuff manually.
 
 Can also be an example code / stub for composited screen overlays with input grab.
 
-<a name=hdr-blinds></a>
+<a name=hdr-blinds></a><a name=user-content-hdr-blinds></a>
 ##### [blinds](desktop/blinds)
 
 Python/Gtk3 script to draw an empty colored/transparent window with custom hints
@@ -3651,7 +3651,7 @@ With custom wm hints/opacity:
 
 (see `-h/--help` output for a full list of these)
 
-<a name=hdr-evdev-to-xev></a>
+<a name=hdr-evdev-to-xev></a><a name=user-content-hdr-evdev-to-xev></a>
 ##### [evdev-to-xev](desktop/evdev-to-xev)
 
 Simple tool to bind events (and specific values passed with these) from
@@ -3674,7 +3674,7 @@ read access to specified evdev(s) and rw to /dev/uinput.
 
 [python-evdev]: https://python-evdev.readthedocs.org/
 
-<a name=hdr-exclip></a>
+<a name=hdr-exclip></a><a name=user-content-hdr-exclip></a>
 ##### [exclip](desktop/exclip.c)
 
 Small standalone C binary based on [xclip] code to copy primary X11 selection
@@ -3698,7 +3698,7 @@ various ways - see -h/--help output for more info.
 
 [xclip]: https://github.com/astrand/xclip
 
-<a name=hdr-xdpms></a>
+<a name=hdr-xdpms></a><a name=user-content-hdr-xdpms></a>
 ##### [xdpms](desktop/xdpms.c)
 
 Small 50-line C tool, kinda like xprintidle_, but instead of idle time, prints how
@@ -3716,7 +3716,7 @@ somewhere, instead of needing this kind of polling.
 
 [xprintidle]: https://github.com/g0hl1n/xprintidle
 
-<a name=hdr-xiwait></a>
+<a name=hdr-xiwait></a><a name=user-content-hdr-xiwait></a>
 ##### [xiwait](desktop/xiwait.c)
 
 Kinda opposite of xdpms tool above - trivial binary to detect when X
@@ -3726,7 +3726,7 @@ Build with: `gcc -O2 -lX11 -lXi -Wall xiwait.c -o xiwait && strip xiwait`
 
 Also same as xdpms - should probably only work on Xorg systems, not wayland.
 
-<a name=hdr-rss-get></a>
+<a name=hdr-rss-get></a><a name=user-content-hdr-rss-get></a>
 ##### [rss-get](desktop/rss-get)
 
 Python/feedparser script to download items attached to RSS feeds fast
@@ -3739,7 +3739,7 @@ script has option to pass it destination filenames according to item date/time
 instead of the usual nonsensical, incoherent and inconsistent names authors seem
 to inevitably assign to files on a regular-content feeds.
 
-<a name=hdr-qr></a>
+<a name=hdr-qr></a><a name=user-content-hdr-qr></a>
 ##### [qr](desktop/qr)
 
 Bash wrapper around [qrencode] and [zbar] tools to assemble/display
@@ -3755,7 +3755,7 @@ Has bunch of other options for different common use-cases.
 [zbar]: https://github.com/mchehab/zbar
 [feh]: https://feh.finalrewind.org/
 
-<a name=hdr-gtk-color-calc></a>
+<a name=hdr-gtk-color-calc></a><a name=user-content-hdr-gtk-color-calc></a>
 ##### [gtk-color-calc](desktop/gtk-color-calc)
 
 CLI tool to calculate color values and print/convert them in various ways.
@@ -3772,7 +3772,7 @@ L\*a\*b\*, requires python/gtk3 to run.
 [GTK3 CSS color specs]:
   https://developer.gnome.org/gtk3/stable/chap-css-overview.html
 
-<a name=hdr-filetag></a>
+<a name=hdr-filetag></a><a name=user-content-hdr-filetag></a>
 ##### [filetag](desktop/filetag)
 
 Command-line python script to scan files for tagging based on paths or filename
@@ -3795,7 +3795,7 @@ forgot already :)
 [tmsu]: https://tmsu.org/
 [dcode.fr calculator]: https://www.dcode.fr/boolean-expressions-calculator
 
-<a name=hdr-hamster-tally></a>
+<a name=hdr-hamster-tally></a><a name=user-content-hdr-hamster-tally></a>
 ##### [hamster-tally](desktop/hamster-tally)
 
 A tool to query activity logs from [Project Hamster] time-tracker
@@ -3812,7 +3812,7 @@ allowed through follow-up commits.
 
 [Project Hamster]: https://github.com/projecthamster
 
-<a name=hdr-feh-screen></a>
+<a name=hdr-feh-screen></a><a name=user-content-hdr-feh-screen></a>
 ##### [feh-screen](desktop/feh-screen)
 
 Tool to open images in a persistent [feh image viewer] window.
@@ -3863,7 +3863,7 @@ or other code mirrors listed at the top somewhere).
 
 
 
-<a name=hdr-__vm___vm_scripts></a>
+<a name=hdr-__vm___vm_scripts></a><a name=user-content-hdr-__vm___vm_scripts></a>
 ### [\[vm\] VM scripts](vm)
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
@@ -3878,7 +3878,7 @@ qemu/kvm, as latter already have decent enough interfaces to work with.
 
 
 
-<a name=hdr-__bpf___linux_ebpf_filters></a>
+<a name=hdr-__bpf___linux_ebpf_filters></a><a name=user-content-hdr-__bpf___linux_ebpf_filters></a>
 ### [\[bpf\] Linux eBPF filters](bpf)
 
 eBPF at this point is kinda like generic "extension language" in linux,
@@ -3895,12 +3895,12 @@ See head of specific .c files for compilation/loading/usage instructions.
 
 
 
-<a name=hdr-__arch___archlinux__arm_></a>
+<a name=hdr-__arch___archlinux__arm_></a><a name=user-content-hdr-__arch___archlinux__arm_></a>
 ### [\[arch\] ArchLinux(+ARM)](arch)
 
 Tools for automating various Arch Linux tasks.
 
-<a name=hdr-elf-deps></a>
+<a name=hdr-elf-deps></a><a name=user-content-hdr-elf-deps></a>
 #### [elf-deps](arch/elf-deps)
 
 Shows shared-lib dependencies for specified binary/so even if it's for different
@@ -3947,7 +3947,7 @@ libdrm
 Can be useful for providing necessary stuff to run proprietary
 32-bit binaries (like games or crapware) on amd64.
 
-<a name=hdr-pacman-manifest></a>
+<a name=hdr-pacman-manifest></a><a name=user-content-hdr-pacman-manifest></a>
 #### [pacman-manifest]
 [pacman-manifest]: arch/pacman-manifest
 
@@ -3975,13 +3975,13 @@ Useful to pull them all into some git to keep track what gets installed or
 updated in the system over time, including makepkg'ed things and ad-hoc
 stuff in `/usr/local`.
 
-<a name=hdr-pacman-extra-files></a>
+<a name=hdr-pacman-extra-files></a><a name=user-content-hdr-pacman-extra-files></a>
 #### [pacman-extra-files](arch/pacman-extra-files)
 
 Lists files that don't belong to any of the packages in either
 in default `/etc /opt /usr` dirs or whichever ones are specified.
 
-<a name=hdr-pacman-pacnew></a>
+<a name=hdr-pacman-pacnew></a><a name=user-content-hdr-pacman-pacnew></a>
 #### [pacman-pacnew](arch/pacman-pacnew)
 
 My version of utility to merge .pacnew files with originals, using convenient
@@ -4005,7 +4005,7 @@ Bash script, requires git and perl (as "git-add--interactive" is a perl script).
 Shorter and simpler than most scripts for same purpose, as git does most of the
 work in this case, less wheels re-invented, less interfaces to learn/remember.
 
-<a name=hdr-pacman-fsck></a>
+<a name=hdr-pacman-fsck></a><a name=user-content-hdr-pacman-fsck></a>
 #### [pacman-fsck](arch/pacman-fsck)
 
 Python script to validate checksums of fs files against ones recoded in mtree
@@ -4018,7 +4018,7 @@ types of errors or path prefixes (to avoid checking /etc files for example).
 Does not need pacman itself, only its mtree files (decompressing them via bsdcat),
 uses posix_fadvise to avoid needlessly trashing fs cache during operation.
 
-<a name=hdr-tar-strap></a>
+<a name=hdr-tar-strap></a><a name=user-content-hdr-tar-strap></a>
 #### [tar-strap](arch/tar-strap)
 
 Wrapper to quickly download and setup archlinux chroot (for e.g. systemd-nspawn
@@ -4032,7 +4032,7 @@ Should be way faster than pacstrap, but kinda similar otherwise.
 
 Either URL or path to source tarball should be specified on the command line.
 
-<a name=hdr-can-strap></a>
+<a name=hdr-can-strap></a><a name=user-content-hdr-can-strap></a>
 #### [can-strap](arch/can-strap)
 
 Wrapper to bootstrap ready-to-use Arch container ("can") in /var/lib/machines,
@@ -4065,7 +4065,7 @@ suitable to boot and log into with e.g. `systemd-nspawn -bn -M buildbot-32`.
 [archlinux-pkgbuilds]: https://github.com/mk-fg/archlinux-pkgbuilds
 [can-base PKGBUILD]: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
 
-<a name=hdr-curl-cache></a>
+<a name=hdr-curl-cache></a><a name=user-content-hdr-curl-cache></a>
 #### [curl-cache](arch/curl-cache)
 
 XferCommand script to use in pacman.conf for trying package downloads from
@@ -4090,12 +4090,12 @@ and `-h/--help` output from script for more options.
 
 
 
-<a name=hdr-__alpine___alpine_linux></a>
+<a name=hdr-__alpine___alpine_linux></a><a name=user-content-hdr-__alpine___alpine_linux></a>
 ### [\[alpine\] Alpine Linux](alpine)
 
 Various helper tools for automating Alpine Linux OS-level tasks.
 
-<a name=hdr-manifest></a>
+<a name=hdr-manifest></a><a name=user-content-hdr-manifest></a>
 #### [manifest](alpine/manifest)
 
 Similar to [pacman-manifest] script above, but for alpine -
@@ -4127,13 +4127,13 @@ new/unnecessary/forgotten `/usr/local` stuff, etc.
 
 
 
-<a name=hdr-__metrics___charts_and_metrics></a>
+<a name=hdr-__metrics___charts_and_metrics></a><a name=user-content-hdr-__metrics___charts_and_metrics></a>
 ### [\[metrics\] Charts and metrics](metrics)
 
 Tools for working with various time-series databases and metrics-monitoring
 systems - collection, aggregation, configuration, graphs, etc.
 
-<a name=hdr-rrd-sensors-logger></a>
+<a name=hdr-rrd-sensors-logger></a><a name=user-content-hdr-rrd-sensors-logger></a>
 #### [rrd-sensors-logger](metrics/rrd-sensors-logger)
 
 Daemon script to grab data from whatever sensors and log it all via rrdtool.
@@ -4192,7 +4192,7 @@ still need some small fixups to read stuff or use newer modules there.
 [yaml]: https://pyyaml.org/
 [rrdtool]: https://oss.oetiker.ch/rrdtool/
 
-<a name=hdr-graphite-scratchpad></a>
+<a name=hdr-graphite-scratchpad></a><a name=user-content-hdr-graphite-scratchpad></a>
 #### [graphite-scratchpad](metrics/graphite-scratchpad)
 
 Tool to load/dump stored [graphite] graphs through formats easily editable by hand.
@@ -4236,7 +4236,7 @@ with GUI.
 
 [graphite]: https://graphite.readthedocs.org/
 
-<a name=hdr-gnuplot-free></a>
+<a name=hdr-gnuplot-free></a><a name=user-content-hdr-gnuplot-free></a>
 #### [gnuplot-free](metrics/gnuplot-free)
 
 Rolling plot of "free" output via gnuplot.
@@ -4248,7 +4248,7 @@ There's more info on it in [gnuplot-for-live-last-30-seconds] blog post.
 [gnuplot-for-live-last-30-seconds]:
   https://blog.fraggod.net/2015/03/25/gnuplot-for-live-last-30-seconds-sliding-window-of-free-memory-data.html
 
-<a name=hdr-d3-line-chart-boilerplate></a>
+<a name=hdr-d3-line-chart-boilerplate></a><a name=user-content-hdr-d3-line-chart-boilerplate></a>
 #### [d3-line-chart-boilerplate](metrics/d3-line-chart-boilerplate.html)
 
 Boilerplate [d3.js] page for basic line chart to plot arbitrary JS function
@@ -4265,7 +4265,7 @@ Direct gh-pages link: [d3-line-chart-boilerplate.html]
 [d3-line-chart-boilerplate.html]:
   https://mk-fg.github.io/fgtk/metrics/d3-line-chart-boilerplate.html
 
-<a name=hdr-d3-histogram-boilerplate></a>
+<a name=hdr-d3-histogram-boilerplate></a><a name=user-content-hdr-d3-histogram-boilerplate></a>
 #### [d3-histogram-boilerplate](metrics/d3-histogram-boilerplate.html)
 
 Similar d3 boilerplate-chart as d3-line-chart-boilerplate, but for
@@ -4278,7 +4278,7 @@ Direct gh-pages link: [d3-histogram-boilerplate.html]
 [d3-histogram-boilerplate.html]:
   https://mk-fg.github.io/fgtk/metrics/d3-histogram-boilerplate.html
 
-<a name=hdr-d3-temp-rh-sensor-tsv-series-chart></a>
+<a name=hdr-d3-temp-rh-sensor-tsv-series-chart></a><a name=user-content-hdr-d3-temp-rh-sensor-tsv-series-chart></a>
 #### [d3-temp-rh-sensor-tsv-series-chart](metrics/d3-temp-rh-sensor-tsv-series-chart.html)
 
 [d3.js]-based ES6 graphing app for time-series data from rather common
@@ -4303,7 +4303,7 @@ More info can be found in the
 [d3-chart-for-common-temperaturerh-time-series-data]:
   https://blog.fraggod.net/2016/08/05/d3-chart-for-common-temperaturerh-time-series-data.html
 
-<a name=hdr-d3-du-disk-space-usage-layout></a>
+<a name=hdr-d3-du-disk-space-usage-layout></a><a name=user-content-hdr-d3-du-disk-space-usage-layout></a>
 #### [d3-du-disk-space-usage-layout](metrics/d3-du-disk-space-usage-layout.html)
 
 [d3.js]-based [xdiskusage] implementation - app to parse `du -b` output
@@ -4320,7 +4320,7 @@ in them are absolute (otherwise each one will be prefixed by "root-X" pseudo-nod
 [d3-du-disk-space-usage-layout.html]:
   https://mk-fg.github.io/fgtk/metrics/d3-du-disk-space-usage-layout.html
 
-<a name=hdr-prometheus-snmp-iface-counters-exporter></a>
+<a name=hdr-prometheus-snmp-iface-counters-exporter></a><a name=user-content-hdr-prometheus-snmp-iface-counters-exporter></a>
 #### [prometheus-snmp-iface-counters-exporter](metrics/prometheus-snmp-iface-counters-exporter)
 
 Script to poll 64-bit IF-MIB SNMPv3 counters for specified interface,
@@ -4347,7 +4347,7 @@ Uses [prometheus_client] and [pysnmp] modules for exporting and querying.
 [prometheus_client]: https://github.com/prometheus/client_python
 [pysnmp]: https://github.com/etingof/pysnmp
 
-<a name=hdr-prometheus-grafana-simplejson-aggregator></a>
+<a name=hdr-prometheus-grafana-simplejson-aggregator></a><a name=user-content-hdr-prometheus-grafana-simplejson-aggregator></a>
 #### [prometheus-grafana-simplejson-aggregator](metrics/prometheus-grafana-simplejson-aggregator)
 
 Aggregator to query [prometheus] server for specified metrics/labels,
@@ -4406,7 +4406,7 @@ for interfaces and to optimize efficiency).
 [Grafana Simple JSON Datasource]: https://grafana.com/grafana/plugins/grafana-simple-json-datasource
 [Grafana]: https://grafana.com
 
-<a name=hdr-systemd-cglog></a>
+<a name=hdr-systemd-cglog></a><a name=user-content-hdr-systemd-cglog></a>
 #### [systemd-cglog](metrics/systemd-cglog)
 
 Script to log JSON-lines with available cpu/mem/io cgroup stats for
@@ -4447,21 +4447,21 @@ Idea here is just to gather all useful numbers over time.
 
 
 
-<a name=hdr-_cron-checks_things_to_run_from_crontab_.VYkK></a>
+<a name=hdr-_cron-checks_things_to_run_from_crontab_.VYkK></a><a name=user-content-hdr-_cron-checks_things_to_run_from_crontab_.VYkK></a>
 ### [\[cron-checks\] Things to run from crontab scripts for diffs/alerts](cron-checks)
 
 Typically templates for simple host-specific scripts that run from cron
 daemon to check something and produce stderr output and non-0 exit code
 upon detecting any anomalies.
 
-<a name=hdr-df></a>
+<a name=hdr-df></a><a name=user-content-hdr-df></a>
 #### [df](cron-checks/df)
 
 Standard template for a trivial bash + coreutils "df" checker
 to put into crontab on any random linux box, to warn when any
 of the mountpoints are about to run out of space/inodes.
 
-<a name=hdr-attrs></a>
+<a name=hdr-attrs></a><a name=user-content-hdr-attrs></a>
 #### [attrs](cron-checks/attrs)
 
 Bash script to monitor for diffs in extended attributes on dirs/mountpoints
@@ -4484,7 +4484,7 @@ list, unless installed deliberately, or it's clear that xattrs are needed there.
 All configuration stuff is at the top of the script.
 Should be smart enough to navigate btrfs subvols, but not data mountpoints.
 
-<a name=hdr-git-manifest></a>
+<a name=hdr-git-manifest></a><a name=user-content-hdr-git-manifest></a>
 #### [git-manifest](cron-checks/git-manifest)
 
 Self-contained python script (no deps) to build a manifest of full linux
@@ -4524,7 +4524,7 @@ Can be combined with tools like [b2tag] to make a manifest with checksums in xat
 
 [b2tag]: https://github.com/modelrockettier/b2tag
 
-<a name=hdr-systemd></a>
+<a name=hdr-systemd></a><a name=user-content-hdr-systemd></a>
 #### [systemd](systemd-dashboard)
 
 Symlink to a [systemd-dashboard] script - it kinda belongs here too.
@@ -4532,13 +4532,13 @@ Symlink to a [systemd-dashboard] script - it kinda belongs here too.
 
 
 
-<a name=hdr-__scraps__></a>
+<a name=hdr-__scraps__></a><a name=user-content-hdr-__scraps__></a>
 ### [\[scraps\]](scraps)
 
 Misc prefabs and *really* ad-hoc scripts,
 mostly stored here as templates to make something out of later.
 
-<a name=hdr-rsync-diff></a>
+<a name=hdr-rsync-diff></a><a name=user-content-hdr-rsync-diff></a>
 #### [rsync-diff](scraps/rsync-diff)
 
 Script to sync paths, based on berkley db and rsync.
@@ -4558,13 +4558,13 @@ Wrote it before realizing that it's quite pointless for my mirroring use-case -
 do have full source and destination trees, so rsync can be used to compare
 (if diff file-list is needed) or sync them.
 
-<a name=hdr-pcap-process></a>
+<a name=hdr-pcap-process></a><a name=user-content-hdr-pcap-process></a>
 #### [pcap-process](scraps/pcap-process)
 
 Processor for tshark's xml (pdml) output, for cases when wireshark's
 filtering/ui is not enough or it should be automated.
 
-<a name=hdr-log-tail-check></a>
+<a name=hdr-log-tail-check></a><a name=user-content-hdr-log-tail-check></a>
 #### [log-tail-check](scraps/log-tail-check)
 
 Python script (or a template of one) designed to be run periodically to process
@@ -4589,7 +4589,7 @@ in the script, with example input-log for this template-script looking like this
 To test with:
 `./scraps/log-tail-check -n name1 -n name2 -n name3 test.log`
 
-<a name=hdr-resize-rpi-fat32-for-card></a>
+<a name=hdr-resize-rpi-fat32-for-card></a><a name=user-content-hdr-resize-rpi-fat32-for-card></a>
 #### [resize-rpi-fat32-for-card](scraps/resize-rpi-fat32-for-card)
 
 Script to resize RPi's boot FAT32 partition and filesystem to conver as much of
@@ -4606,7 +4606,7 @@ More info on this script can be found in the [resizing-first-fat32-partition-...
 [resizing-first-fat32-partition-...]:
   https://blog.fraggod.net/2015/12/07/resizing-first-fat32-partition-to-microsd-card-size-on-boot-from-raspberry-pi.html
 
-<a name=hdr-asciitree-parse></a>
+<a name=hdr-asciitree-parse></a><a name=user-content-hdr-asciitree-parse></a>
 #### [asciitree-parse](scraps/asciitree-parse)
 
 Py script to parse output of asciitree.LeftAligned tree,
@@ -4617,7 +4617,7 @@ of strings, without need to abuse YAML or something less-readable for those.
 
 [asciitree module]: https://pypi.python.org/pypi/asciitree/
 
-<a name=hdr-glusterfs-xattr-trusted-to-user></a>
+<a name=hdr-glusterfs-xattr-trusted-to-user></a><a name=user-content-hdr-glusterfs-xattr-trusted-to-user></a>
 #### [glusterfs-xattr-trusted-to-user](scraps/glusterfs-xattr-trusted-to-user)
 
 Script (python) to copy trusted.\* xattrs to user.\* and/or wipe out
@@ -4629,7 +4629,7 @@ Useful when running patched glusterd in a container, as described in
 [running-glusterfs-in-a-user-namespace blog post here]:
   https://blog.fraggod.net/2017/03/21/running-glusterfs-in-a-user-namespace-uid-mapped-container.html
 
-<a name=hdr-led-blink-arg></a>
+<a name=hdr-led-blink-arg></a><a name=user-content-hdr-led-blink-arg></a>
 #### [led-blink-arg](scraps/led-blink-arg)
 
 Python script to blink bit-pattern from a passed argument using linux led subsystem
@@ -4638,7 +4638,7 @@ Python script to blink bit-pattern from a passed argument using linux led subsys
 Useful to make e.g. RPi boards booted from identical OS img distinguishable by
 blinking last bits of their IP address, MAC, serial number or stuff like that.
 
-<a name=hdr-led-blink-seq></a>
+<a name=hdr-led-blink-seq></a><a name=user-content-hdr-led-blink-seq></a>
 #### [led-blink-seq](scraps/led-blink-seq)
 
 Python script to blink any arbitrary on/off sequence or numbers (using bits) on an
@@ -4666,7 +4666,7 @@ Where:
 Somewhat easier than writing one-off "set(0), sleep(100), set(1), ..."
 scripts with mostly boilerplate or extra deps for this simple purpose.
 
-<a name=hdr-gue-tunnel></a>
+<a name=hdr-gue-tunnel></a><a name=user-content-hdr-gue-tunnel></a>
 #### [gue-tunnel](scraps/gue-tunnel)
 
 Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
@@ -4674,7 +4674,7 @@ Bash script to setup/destroy GRE tunnel with Generic UDP Encapsulation (GUE).
 One command instead of bunch of them, with some built-in templating
 to make it easier to use on identical remote hosts.
 
-<a name=hdr-wifi-client-match></a>
+<a name=hdr-wifi-client-match></a><a name=user-content-hdr-wifi-client-match></a>
 #### [wifi-client-match](scraps/wifi-client-match)
 
 Basic script to automate [wpa_supplicant] matching AP in a python script
@@ -4685,7 +4685,7 @@ For cases when wpa_supplicant.conf is not powerful enough.
 
 Python, uses dbus-python module and its glib eventloop.
 
-<a name=hdr-mem-search-replace></a>
+<a name=hdr-mem-search-replace></a><a name=user-content-hdr-mem-search-replace></a>
 #### [mem-search-replace](scraps/mem-search-replace)
 
 Unfinished simple python script to search/replace memory of a process via
@@ -4696,7 +4696,7 @@ restart or disrupt them in any way, but found that this approach was too tedious
 in my specific case due to how stuff is stored there, so didn't bother with
 process_vm_writev part.
 
-<a name=hdr-gpm-track></a>
+<a name=hdr-gpm-track></a><a name=user-content-hdr-gpm-track></a>
 #### [gpm-track](scraps/gpm-track.py)
 
 Python script to capture and print mouse events from [GPM]
@@ -4721,7 +4721,7 @@ which isn't very useful for GUIs, alas.
 [GPM]: https://github.com/telmich/gpm
 [gpm-track.c]: scraps/gpm-track.c
 
-<a name=hdr-rsyslogs></a>
+<a name=hdr-rsyslogs></a><a name=user-content-hdr-rsyslogs></a>
 #### [rsyslogs](scraps/rsyslogs.c)
 
 Wrappers to test tools that tend to spam /dev/log regardless of their settings.
@@ -4750,7 +4750,7 @@ where such uncommon spam to syslog gets delivered via desktop notifications
 
 [rsyslog]: https://www.rsyslog.com/
 
-<a name=hdr-relp-test></a>
+<a name=hdr-relp-test></a><a name=user-content-hdr-relp-test></a>
 #### [relp-test](scraps/relp-test.c)
 
 Small .c binary around [librelp] to build and send syslog message over
@@ -4768,7 +4768,7 @@ Run binary without args to get more usage info and/or see .c file header for tha
 
 [librelp]: https://github.com/rsyslog/librelp
 
-<a name=hdr-ccc-dl></a>
+<a name=hdr-ccc-dl></a><a name=user-content-hdr-ccc-dl></a>
 #### [ccc-dl](scraps/ccc-dl)
 
 Script to download Chaos Communication Congress (ccc/c3) videos as simple .mp4
@@ -4785,7 +4785,7 @@ This script simplifies it to one command, querying their JSON APIs under the hoo
 using all proper IDs and such, which is still like 3-4 complicated json-parsing requests,
 hence the need for a proper script to do it.
 
-<a name=hdr-exec.c></a>
+<a name=hdr-exec.c></a><a name=user-content-hdr-exec.c></a>
 #### [exec.c](scraps/exec.c)
 
 5-liner C binary to execvp() whatever was passed to it as arguments.
@@ -4793,7 +4793,7 @@ hence the need for a proper script to do it.
 Can be used to act as an unique wrapper for AppArmor profiles bound to
 executable path, or whatever trivial suid-root hacks.
 
-<a name=hdr-sqlite-python-concurrency-test></a>
+<a name=hdr-sqlite-python-concurrency-test></a><a name=user-content-hdr-sqlite-python-concurrency-test></a>
 #### [sqlite-python-concurrency-test](scraps/sqlite-python-concurrency-test)
 
 Script to test various [python "sqlite3" module] locking/concurrency
@@ -4819,7 +4819,7 @@ module, as mentioned.
 [journal_mode pragma values]: https://www.sqlite.org/pragma.html#pragma_journal_mode
 [journal_mode=wal (Write-Ahead Logging)]: https://www.sqlite.org/wal.html
 
-<a name=hdr-numfmt.awk></a>
+<a name=hdr-numfmt.awk></a><a name=user-content-hdr-numfmt.awk></a>
 #### [numfmt.awk](scraps/numfmt.awk)
 
 [GNU AWK] library (file with functions to use with `-i/--include` option)
@@ -4899,7 +4899,7 @@ blog post also has these funcs as 3-liners to embed into shell scripts more easi
 
 
 
-<a name=hdr-license__wtfpl_></a>
+<a name=hdr-license__wtfpl_></a><a name=user-content-hdr-license__wtfpl_></a>
 ## License (WTFPL)
 
     DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
