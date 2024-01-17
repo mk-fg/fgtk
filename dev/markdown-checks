@@ -363,7 +363,7 @@ def main(argv=None):
 			if not (name := (url or '')).startswith('#'): continue
 			if not (a := anchor_names.get(name := name[1:])):
 				for link in links: errs.append(adict( n=link.n,
-					t='link_anchor_match', s=f'Link to a non-existing header-anchor: {link.url}' ))
+					t='link_anchor_match', s=f'Link to a non-existing header-anchor: {url}' ))
 			else: a.setdefault('c', 0); a.c += 1
 		for name, a in anchor_names.items():
 			if not a.get('c') and not a.nolink: errs.append(adict( n=a.n,
