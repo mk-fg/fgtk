@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-import os, sys, re, string, collections as cs, itertools as it, pathlib as pl
+import collections as cs, itertools as it, hashlib as hl
+import os, sys, re, string, base64, pathlib as pl
 
 
 checks_all = dict(
@@ -36,6 +37,14 @@ def extract_toplevel(s, ab, strict=True):
 				if strict: raise UnbalancedTokens
 				n = 0
 	if n and strict: raise UnbalancedTokens
+
+def b64_hash(data, n=4, person=b'mdchecks', **b2_kws):
+	if not isinstance(data, bytes): data = data.encode()
+	digest = hl.blake2s(data, person=person, **b2_kws).digest()
+	while True:
+		b64 = base64.urlsafe_b64encode(digest).decode().replace('_', '').replace('-', '')
+		if len(b64) >= n: return b64[:n]
+		digest = hl.blake2s(digest, person=person, **b2_kws).digest()
 
 
 def md_esc_strip(s, rev=False, _esc_pats = list(
@@ -112,7 +121,7 @@ def md_clean(md, code_re, errs):
 	return lines
 
 
-def md_check_header_anchors(md_lines, errs):
+def md_check_header_anchors(md_lines, errs, name_max_len=40):
 	'Check/return a list of header/anchor lines that needs some kind of fixing'
 	anchors, str_map = dict(), dict()
 	str_map.update((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
@@ -123,19 +132,22 @@ def md_check_header_anchors(md_lines, errs):
 		if k:
 			n_last, line_last = md_lines[k-1]
 			if n_last != n - 1: line_last = ''
-		for a, b, link in extract_toplevel(hdr, '[]', False): # strip links
+		for a, b, link in reversed(list(extract_toplevel(hdr, '[]', False))):
 			if urls := list(extract_toplevel(ls := hdr[b:], '()', False)):
 				ua, ub, url = urls[0]
 				if not ua: hdr = hdr[:b+ua] + hdr[b+ub:]
-			hdr = hdr[:a] + link + hdr[b:]
+			hdr = hdr[:a] + link + hdr[b:] # strip link syntax and urls
 		hdr = md_esc_restore(hdr)
 		name = ''.join(str_map.get(c, '_') for c in hdr.lower())
+		if len(name) > name_max_len: name = re.sub(r'_+', '_', name)
+		if len(name) > name_max_len + 5: # truncate long-header anchor-names
+			name = name[:name_max_len] + '.' + b64_hash(name[name_max_len:], 4)
 		a_match = a_nolink = False
 		if a_exists := re.search(r'\<a name=hdr(x?)-(\S+)\>\</a\>', line_last):
 			a_nolink = bool(a_exists[1])
 			if not (a_match := (a_exists[2] == name)):
-				errs.append(adict( n=n, t='link_anchor',
-					s=f'Anchor-name mismatch for header [ {hdr} ]: {name!r} vs {name!r}' ))
+				errs.append(adict( n=n, t='link_anchor', s='Anchor-name'
+					f' mismatch for header [ {hdr} ]: new={name!r} old={a_exists[2]!r}' ))
 		else: errs.append(adict( n=n, t='link_anchor',
 			s=f'Missing anchor before header [ {name} ]: {hdr}' ))
 		name = ('hdr-' if not a_nolink else 'hdrx-') + name
@@ -328,14 +340,14 @@ def main(argv=None):
 					for n, line in enumerate(src, 1):
 						if a := anchor_map.get(n):
 							if not a.exists: dst.write(line)
-							dst.write(f'<a name=hdr-{a.name}></a>\n')
+							dst.write(f'<a name={a.name}></a>\n')
 						else: dst.write(line)
 				p_tmp.rename(p); p_tmp = None
 			finally:
 				if p_tmp: p_tmp.unlink(missing_ok=True)
 			if anchor_map:
 				print( f'{name} :: Fixed {len(anchor_map)}'
-					' missing/mismatching anchors', file=sys.stderr )
+					' missing/mismatching anchor(s)', file=sys.stderr )
 				err_code = 1
 			continue
 

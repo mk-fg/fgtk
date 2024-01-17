@@ -71,10 +71,10 @@ Contents - links to doc section for each script here:
         - [ssh-keyparse](#hdr-ssh-keyparse)
         - [ssh-key-init](#hdr-ssh-key-init)
         - [ssh-tunnel](#hdr-ssh-tunnel)
-        - [ssh-reverse-mux-server / ssh-reverse-mux-client](#hdr-ssh-reverse-mux-server____sssh-reverse-mux-client)
-        - [wg-mux-server / wg-mux-client](#hdr-wg-mux-server____wwg-mux-client)
+        - [ssh-reverse-mux-server / ssh-reverse-mux-client](#hdr-ssh-reverse-mux-server_ssh-reverse-mux-client)
+        - [wg-mux-server / wg-mux-client](#hdr-wg-mux-server___wg-mux-client)
         - [ssh-tunnels-cleanup](#hdr-ssh-tunnels-cleanup)
-        - [mosh-nat / mosh-nat-bind.c](#hdr-mosh-nat____mmosh-nat-bind.c)
+        - [mosh-nat / mosh-nat-bind.c](#hdr-mosh-nat___mosh-nat-bind.c)
         - [tping](#hdr-tping)
 
     - [WiFi / Bluetooth helpers](#hdr-wifi___bluetooth_helpers)
@@ -128,7 +128,7 @@ Contents - links to doc section for each script here:
 
 - [\[backup\] Backup helpers](#hdr-__backup___backup_helpers)
 
-    - [ssh-r-sync / ssh-r-sync-recv](#hdr-ssh-r-sync____sssh-r-sync-recv)
+    - [ssh-r-sync / ssh-r-sync-recv](#hdr-ssh-r-sync___ssh-r-sync-recv)
     - [ssh-dump](#hdr-ssh-dump)
     - [zfs-snapper](#hdr-zfs-snapper)
     - [btrfs-snapper](#hdr-btrfs-snapper)
@@ -223,7 +223,7 @@ Contents - links to doc section for each script here:
     - [prometheus-grafana-simplejson-aggregator](#hdr-prometheus-grafana-simplejson-aggregator)
     - [systemd-cglog](#hdr-systemd-cglog)
 
-- [\[cron-checks\] Things to run from crontab scripts for diffs/alerts](#hdr-__cron-checks___things_to_run_from_crontab_scripts_for_diffs_alerts)
+- [\[cron-checks\] Diff/alert checks for crontab](#hdr-_cron-checks_things_to_run_from_crontab_.VYkK)
 
     - [df](#hdr-df)
     - [attrs](#hdr-attrs)
@@ -1366,7 +1366,7 @@ Which are all pretty much required for proper background tunnel operation.
 | Has opts for reverse-tunnels and using tping tool instead of ssh/sleep loop.
 | Keeps pidfiles in /tmp and allows to kill running tunnel-script via same command with -k/kill appended.
 
-<a name=hdr-ssh-reverse-mux-server____sssh-reverse-mux-client></a>
+<a name=hdr-ssh-reverse-mux-server_ssh-reverse-mux-client></a>
 ##### [ssh-reverse-mux-server] / [ssh-reverse-mux-client]
 
 [ssh-reverse-mux-server]: ssh-reverse-mux-server
@@ -1391,7 +1391,7 @@ Note that all `--auth-secret` is used for is literally handing-out sequential
 numbers, and isn't expected to be strong protection against anything, unlike ssh
 auth that should come after that.
 
-<a name=hdr-wg-mux-server____wwg-mux-client></a>
+<a name=hdr-wg-mux-server___wg-mux-client></a>
 ##### [wg-mux-server] / [wg-mux-client]
 
 [wg-mux-server]: wg-mux-server
@@ -1510,7 +1510,7 @@ See also: [autossh] and such.
 
 [autossh]: https://www.harding.motd.ca/autossh/
 
-<a name=hdr-mosh-nat____mmosh-nat-bind.c></a>
+<a name=hdr-mosh-nat___mosh-nat-bind.c></a>
 ##### [mosh-nat] / [mosh-nat-bind.c]
 
 [mosh-nat]: mosh-nat
@@ -2828,7 +2828,7 @@ where otherwise nothing will indicate any potential issues.
 
 Various dedicated backup tools and snippets.
 
-<a name=hdr-ssh-r-sync____sssh-r-sync-recv></a>
+<a name=hdr-ssh-r-sync___ssh-r-sync-recv></a>
 #### [ssh-r-sync] / [ssh-r-sync-recv]
 
 [ssh-r-sync]: backup/ssh-r-sync
@@ -4455,7 +4455,7 @@ Idea here is just to gather all useful numbers over time.
 
 
 
-<a name=hdr-__cron-checks___things_to_run_from_crontab_scripts_for_diffs_alerts></a>
+<a name=hdr-_cron-checks_things_to_run_from_crontab_.VYkK></a>
 ### [\[cron-checks\] Things to run from crontab scripts for diffs/alerts](cron-checks)
 
 Typically templates for simple host-specific scripts that run from cron
