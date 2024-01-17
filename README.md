@@ -16,239 +16,240 @@ Repository URLs:
 
 Contents - links to doc section for each script here:
 
-- \[-root-\] Various CLI/system things
+- [\[-root-\] Various CLI/system things](#hdr-__-root-___various_cli_system_things)
 
-    - File/dir/fs management
+    - [File/dir/fs management](#hdr-file_dir_fs_management)
 
-        - scim
-        - fatrace-pipe
-        - fatrace-run
-        - findx
-        - patch-nspawn-ids
-        - bindfs-idmap
-        - docker-ln
-        - fast-disk-wipe
+        - [scim](#hdr-scim)
+        - [run_cmd_pipe.nim](#hdr-run_cmd_pipe.nim)
+        - [findx](#hdr-findx)
+        - [patch-nspawn-ids](#hdr-patch-nspawn-ids)
+        - [bindfs-idmap](#hdr-bindfs-idmap)
+        - [docker-ln](#hdr-docker-ln)
+        - [fast-disk-wipe](#hdr-fast-disk-wipe)
+        - [lsx](#hdr-lsx)
 
-    - Various file-data processing tools
+    - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
-        - repr
-        - color
-        - resolve-hostnames
-        - resolve-conf
-        - temp-patch
-        - term-pipe
-        - out-paste
-        - shell-notify
-        - yaml-to-pretty-json
-        - yaml-flatten
-        - yaml-diff
-        - hz
-        - liac
-        - html-embed
-        - someml-indent
-        - hashname
-        - hhash
-        - crypt
+        - [repr](#hdr-repr)
+        - [color](#hdr-color)
+        - [resolve-hostnames](#hdr-resolve-hostnames)
+        - [resolve-conf](#hdr-resolve-conf)
+        - [temp-patch](#hdr-temp-patch)
+        - [term-pipe](#hdr-term-pipe)
+        - [yaml-to-pretty-json](#hdr-yaml-to-pretty-json)
+        - [yaml-flatten](#hdr-yaml-flatten)
+        - [yaml-diff](#hdr-yaml-diff)
+        - [hz](#hdr-hz)
+        - [liac](#hdr-liac)
+        - [html-embed](#hdr-html-embed)
+        - [someml-indent](#hdr-someml-indent)
+        - [hashname](#hdr-hashname)
+        - [hhash](#hdr-hhash)
+        - [crypt](#hdr-crypt)
 
-    - Kernel sources/build/version management
+    - [Kernel sources/build/version management](#hdr-kernel_sources_build_version_management)
 
-        - kernel-patch
-        - kernel-conf-check
-        - clean-boot
+        - [kernel-patch](#hdr-kernel-patch)
+        - [kernel-conf-check](#hdr-kernel-conf-check)
+        - [clean-boot](#hdr-clean-boot)
 
-    - ZNC log helpers
+    - [ZNC log helpers](#hdr-znc_log_helpers)
 
-        - znc-log-aggregator
-        - znc-log-reader
+        - [znc-log-aggregator](#hdr-znc-log-aggregator)
+        - [znc-log-reader](#hdr-znc-log-reader)
 
-    - systemd
+    - [systemd-related](#hdr-systemd-related)
 
-        - systemd-dashboard
-        - systemd-watchdog
-        - cgrc
+        - [systemd-dashboard](#hdr-systemd-dashboard)
+        - [systemd-watchdog](#hdr-systemd-watchdog)
+        - [cgrc](#hdr-cgrc)
 
-    - SSH and WireGuard related
+    - [SSH and WireGuard related](#hdr-ssh_and_wireguard_related)
 
-        - ssh-fingerprint
-        - ssh-keyparse
-        - ssh-key-init
-        - ssh-tunnel
-        - ssh-reverse-mux-server / ssh-reverse-mux-client
-        - wg-mux-server / wg-mux-client
-        - ssh-tunnels-cleanup
-        - mosh-nat / mosh-nat-bind.c
-        - tping
+        - [ssh-fingerprint](#hdr-ssh-fingerprint)
+        - [ssh-keyparse](#hdr-ssh-keyparse)
+        - [ssh-key-init](#hdr-ssh-key-init)
+        - [ssh-tunnel](#hdr-ssh-tunnel)
+        - [ssh-reverse-mux-server / ssh-reverse-mux-client](#hdr-ssh-reverse-mux-server____sssh-reverse-mux-client)
+        - [wg-mux-server / wg-mux-client](#hdr-wg-mux-server____wwg-mux-client)
+        - [ssh-tunnels-cleanup](#hdr-ssh-tunnels-cleanup)
+        - [mosh-nat / mosh-nat-bind.c](#hdr-mosh-nat____mmosh-nat-bind.c)
+        - [tping](#hdr-tping)
 
-    - WiFi / Bluetooth helpers
+    - [WiFi / Bluetooth helpers](#hdr-wifi___bluetooth_helpers)
 
-        - adhocapd
-        - wpa-systemd-wrapper
+        - [adhocapd](#hdr-adhocapd)
+        - [wpa-systemd-wrapper](#hdr-wpa-systemd-wrapper)
 
-    - Misc
+    - [Misc](#hdr-misc)
 
-        - at
-        - sleepc
-        - wgets
-        - mail
-        - passgen
-        - urlparse
-        - ip-ext
-        - blinky
-        - openssl-fingerprint
-        - nsh
-        - pam-run
-        - primes
-        - boot-patcher
-        - audit-follow
-        - tui-binary-conv
-        - maildir-cat
-        - dns-update-proxy
-        - dns-test-daemon
-        - nginx-access-log-stat-block
-        - sys-wait
-        - yt-feed-to-email
-        - color-b64sort
-        - fido2-hmac-desalinate.c
-        - fido2_hmac_boot.nim
-        - lsx
+        - [at](#hdr-at)
+        - [sleepc](#hdr-sleepc)
+        - [wgets](#hdr-wgets)
+        - [mail](#hdr-mail)
+        - [passgen](#hdr-passgen)
+        - [urlparse](#hdr-urlparse)
+        - [ip-ext](#hdr-ip-ext)
+        - [blinky](#hdr-blinky)
+        - [openssl-fingerprint](#hdr-openssl-fingerprint)
+        - [nsh](#hdr-nsh)
+        - [pam-run](#hdr-pam-run)
+        - [primes](#hdr-primes)
+        - [boot-patcher](#hdr-boot-patcher)
+        - [audit-follow](#hdr-audit-follow)
+        - [tui-binary-conv](#hdr-tui-binary-conv)
+        - [maildir-cat](#hdr-maildir-cat)
+        - [dns-update-proxy](#hdr-dns-update-proxy)
+        - [dns-test-daemon](#hdr-dns-test-daemon)
+        - [nginx-access-log-stat-block](#hdr-nginx-access-log-stat-block)
+        - [sys-wait](#hdr-sys-wait)
+        - [yt-feed-to-email](#hdr-yt-feed-to-email)
+        - [color-b64sort](#hdr-color-b64sort)
+        - [fido2-hmac-desalinate.c](#hdr-fido2-hmac-desalinate.c)
+        - [fido2_hmac_boot.nim](#hdr-fido2_hmac_boot.nim)
 
-- \[dev\] Dev tools
+- [\[dev\] Dev tools](#hdr-__dev___dev_tools)
 
-    - indent-replace
-    - indent-braces
-    - golang_filter
-    - distribute_regen
-    - darcs_bundle_to_diff
-    - git-nym
-    - git-meld
-    - catn
-    - git_terminate
-    - git_contains
-    - gtk-val-slider
-    - git-version-bump-filter
-    - git-prepare-commit-msg-hook
+    - [indent-replace](#hdr-indent-replace)
+    - [indent-braces](#hdr-indent-braces)
+    - [golang_filter](#hdr-golang_filter)
+    - [distribute_regen](#hdr-distribute_regen)
+    - [darcs_bundle_to_diff](#hdr-darcs_bundle_to_diff)
+    - [git-nym](#hdr-git-nym)
+    - [git-meld](#hdr-git-meld)
+    - [catn](#hdr-catn)
+    - [git_terminate](#hdr-git_terminate)
+    - [git_contains](#hdr-git_contains)
+    - [gtk-val-slider](#hdr-gtk-val-slider)
+    - [git-version-bump-filter](#hdr-git-version-bump-filter)
+    - [git-prepare-commit-msg-hook](#hdr-git-prepare-commit-msg-hook)
+    - [markdown-checks](#hdr-markdown-checks)
 
-- \[backup\] Backup helpers
+- [\[backup\] Backup helpers](#hdr-__backup___backup_helpers)
 
-    - ssh-r-sync / ssh-r-sync-recv
-    - ssh-dump
-    - zfs-snapper
-    - btrfs-snapper
-    - dir-snapper
+    - [ssh-r-sync / ssh-r-sync-recv](#hdr-ssh-r-sync____sssh-r-sync-recv)
+    - [ssh-dump](#hdr-ssh-dump)
+    - [zfs-snapper](#hdr-zfs-snapper)
+    - [btrfs-snapper](#hdr-btrfs-snapper)
+    - [dir-snapper](#hdr-dir-snapper)
 
-- \[desktop\] Linux desktop stuff
+- [\[desktop\] Linux desktop stuff](#hdr-__desktop___linux_desktop_stuff)
 
-    - \[desktop/uri_handlers\]
+    - [\[desktop/uri_handlers\]](#hdr-__desktop_uri_handlers__)
 
-    - \[desktop/media\]
+    - [\[desktop/media\]](#hdr-__desktop_media__)
 
-        - parec_from_flash
-        - pa_track_history
-        - pa_mute
-        - pa_modtoggle
-        - mpv_icy_track_history
-        - icy_record
-        - radio
-        - toogg
-        - totty
-        - split
-        - audio_split_m4b
-        - video-concat-xfade
-        - pick-tracks
-        - twitch_vod_fetch
-        - ytdl-chan
-        - streamdump
-        - image-compact
+        - [parec_from_flash](#hdr-parec_from_flash)
+        - [pa_track_history](#hdr-pa_track_history)
+        - [pa_mute](#hdr-pa_mute)
+        - [pa_modtoggle](#hdr-pa_modtoggle)
+        - [mpv_icy_track_history](#hdr-mpv_icy_track_history)
+        - [icy_record](#hdr-icy_record)
+        - [radio](#hdr-radio)
+        - [toogg](#hdr-toogg)
+        - [totty](#hdr-totty)
+        - [split](#hdr-split)
+        - [audio_split_m4b](#hdr-audio_split_m4b)
+        - [video-concat-xfade](#hdr-video-concat-xfade)
+        - [pick-tracks](#hdr-pick-tracks)
+        - [twitch_vod_fetch](#hdr-twitch_vod_fetch)
+        - [ytdl-chan](#hdr-ytdl-chan)
+        - [streamdump](#hdr-streamdump)
+        - [image-compact](#hdr-image-compact)
 
-    - \[desktop/notifications\]
+    - [\[desktop/notifications\]](#hdr-__desktop_notifications__)
 
-        - exec
-        - power
-        - logtail
-        - dovecot-mail
-        - icon
-        - aqm-alerts
+        - [exec](#hdr-exec)
+        - [power](#hdr-power)
+        - [logtail](#hdr-logtail)
+        - [dovecot-mail](#hdr-dovecot-mail)
+        - [icon](#hdr-icon)
+        - [aqm-alerts](#hdr-aqm-alerts)
+        - [dev-nodes](#hdr-dev-nodes)
 
-    - \[desktop\] others
+    - [\[desktop\] others](#hdr-__desktop___others)
 
-        - vfat_shuffler
-        - fan_control
-        - emms-beets-enqueue
-        - ff_backup
-        - ff-cli
-        - bt_agent
-        - alarm
-        - acpi-wakeup-config
-        - olaat
-        - blinds
-        - evdev-to-xev
-        - exclip
-        - xdpms
-        - xiwait
-        - rss-get
-        - qr
-        - gtk-color-calc
-        - filetag
-        - hamster-tally
-        - feh-screen
+        - [vfat_shuffler](#hdr-vfat_shuffler)
+        - [fan_control](#hdr-fan_control)
+        - [emms-beets-enqueue](#hdr-emms-beets-enqueue)
+        - [ff_backup](#hdr-ff_backup)
+        - [ff-cli](#hdr-ff-cli)
+        - [bt_agent](#hdr-bt_agent)
+        - [alarm](#hdr-alarm)
+        - [acpi-wakeup-config](#hdr-acpi-wakeup-config)
+        - [olaat](#hdr-olaat)
+        - [blinds](#hdr-blinds)
+        - [evdev-to-xev](#hdr-evdev-to-xev)
+        - [exclip](#hdr-exclip)
+        - [xdpms](#hdr-xdpms)
+        - [xiwait](#hdr-xiwait)
+        - [rss-get](#hdr-rss-get)
+        - [qr](#hdr-qr)
+        - [gtk-color-calc](#hdr-gtk-color-calc)
+        - [filetag](#hdr-filetag)
+        - [hamster-tally](#hdr-hamster-tally)
+        - [feh-screen](#hdr-feh-screen)
 
-- \[vm\] VM scripts
+- [\[vm\] VM scripts](#hdr-__vm___vm_scripts)
 
-- \[bpf\] Linux eBPF filters
+- [\[bpf\] Linux eBPF filters](#hdr-__bpf___linux_ebpf_filters)
 
-- \[arch\] ArchLinux(+ARM)
+- [\[arch\] ArchLinux(+ARM)](#hdr-__arch___archlinux__arm_)
 
-    - elf-deps
-    - pacman-manifest
-    - pacman-extra-files
-    - pacman-pacnew
-    - pacman-fsck
-    - tar-strap
-    - can-strap
-    - curl-cache
+    - [elf-deps](#hdr-elf-deps)
+    - [pacman-manifest](#hdr-pacman-manifest)
+    - [pacman-extra-files](#hdr-pacman-extra-files)
+    - [pacman-pacnew](#hdr-pacman-pacnew)
+    - [pacman-fsck](#hdr-pacman-fsck)
+    - [tar-strap](#hdr-tar-strap)
+    - [can-strap](#hdr-can-strap)
+    - [curl-cache](#hdr-curl-cache)
 
-- \[alpine\] Alpine Linux
+- [\[alpine\] Alpine Linux](#hdr-__alpine___alpine_linux)
 
-    - manifest
+    - [manifest](#hdr-manifest)
 
-- \[metrics\] Charts and metrics
+- [\[metrics\] Charts and metrics](#hdr-__metrics___charts_and_metrics)
 
-    - rrd-sensors-logger
-    - graphite-scratchpad
-    - gnuplot-free
-    - d3-line-chart-boilerplate
-    - d3-histogram-boilerplate
-    - d3-temp-rh-sensor-tsv-series-chart
-    - d3-du-disk-space-usage-layout
-    - prometheus-snmp-iface-counters-exporter
-    - prometheus-grafana-simplejson-aggregator
-    - systemd-cglog
+    - [rrd-sensors-logger](#hdr-rrd-sensors-logger)
+    - [graphite-scratchpad](#hdr-graphite-scratchpad)
+    - [gnuplot-free](#hdr-gnuplot-free)
+    - [d3-line-chart-boilerplate](#hdr-d3-line-chart-boilerplate)
+    - [d3-histogram-boilerplate](#hdr-d3-histogram-boilerplate)
+    - [d3-temp-rh-sensor-tsv-series-chart](#hdr-d3-temp-rh-sensor-tsv-series-chart)
+    - [d3-du-disk-space-usage-layout](#hdr-d3-du-disk-space-usage-layout)
+    - [prometheus-snmp-iface-counters-exporter](#hdr-prometheus-snmp-iface-counters-exporter)
+    - [prometheus-grafana-simplejson-aggregator](#hdr-prometheus-grafana-simplejson-aggregator)
+    - [systemd-cglog](#hdr-systemd-cglog)
 
-- \[cron-checks\] Things to run from crontab scripts for diffs/alerts
+- [\[cron-checks\] Things to run from crontab scripts for diffs/alerts](#hdr-__cron-checks___things_to_run_from_crontab_scripts_for_diffs_alerts)
 
-    - df
-    - attrs
-    - git-manifest
-    - systemd
+    - [df](#hdr-df)
+    - [attrs](#hdr-attrs)
+    - [git-manifest](#hdr-git-manifest)
+    - [systemd](#hdr-systemd)
 
-- \[scraps\]
+- [\[scraps\]](#hdr-__scraps__)
 
-    - rsync-diff
-    - pcap-process
-    - log-tail-check
-    - resize-rpi-fat32-for-card
-    - asciitree-parse
-    - glusterfs-xattr-trusted-to-user
-    - led-blink-arg
-    - led-blink-seq
-    - gue-tunnel
-    - wifi-client-match
-    - mem-search-replace
-    - gpm-track
-    - rsyslogs
-    - relp-test
-    - ccc-dl
-    - exec.c
+    - [rsync-diff](#hdr-rsync-diff)
+    - [pcap-process](#hdr-pcap-process)
+    - [log-tail-check](#hdr-log-tail-check)
+    - [resize-rpi-fat32-for-card](#hdr-resize-rpi-fat32-for-card)
+    - [asciitree-parse](#hdr-asciitree-parse)
+    - [glusterfs-xattr-trusted-to-user](#hdr-glusterfs-xattr-trusted-to-user)
+    - [led-blink-arg](#hdr-led-blink-arg)
+    - [led-blink-seq](#hdr-led-blink-seq)
+    - [gue-tunnel](#hdr-gue-tunnel)
+    - [wifi-client-match](#hdr-wifi-client-match)
+    - [mem-search-replace](#hdr-mem-search-replace)
+    - [gpm-track](#hdr-gpm-track)
+    - [rsyslogs](#hdr-rsyslogs)
+    - [relp-test](#hdr-relp-test)
+    - [ccc-dl](#hdr-ccc-dl)
+    - [exec.c](#hdr-exec.c)
+    - [sqlite-python-concurrency-test](#hdr-sqlite-python-concurrency-test)
+    - [numfmt.awk](#hdr-numfmt.awk)
 
 
 

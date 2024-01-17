@@ -182,6 +182,8 @@ def md_check_links(md_lines, errs):
 			if urls := list(extract_toplevel(ls := line[b:], '()', False)):
 				ua, ub, url = urls[0]
 				if not ua: link.url = md_esc_restore(url)
+			if (link.url or '').startswith('#'): # these are special - for anchor-checks only
+				title = link.title = f'\uf001{link.title}'
 			if (link_chk := links.get(title)) and (link_chk.url or link.url or link_chk.dups):
 				errs.append(adict( n=n, t='link_dups',
 					s=f'Duplicate non-uniform link [{link.title}], matching one on line-{link_chk.n}' ))
