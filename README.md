@@ -2808,6 +2808,7 @@ Current full list of checks that it runs:
 - link-files-weird :: Relative links that start with non-letter/digit/hashmark.
 - link-files-git :: If .md file is in a git repo, warn if linked files are not under git control.
 - link-dups :: Multiple same-title links with URLs.
+- quirks :: Minor non-obvious md syntax quirks which are almost never intentional.
 - rx-in-code :: Command-line-specified regexp (if any) detected inside code block(s).
 - tabs :: Make sure md file contains no tab characters.
 - syntax :: Any kind of incorrect syntax, e.g. blocks opened and not closed and such.

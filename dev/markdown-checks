@@ -13,6 +13,7 @@ checks_all = dict(
 	link_files_weird='Relative links that start with non-letter/digit/hashmark.',
 	link_files_git='If .md file is in a git repo, warn if linked files are not under git control.',
 	link_dups='Multiple same-title links with URLs.',
+	quirks='Minor non-obvious md syntax quirks which are almost never intentional.',
 	rx_in_code='Command-line-specified regexp (if any) detected inside code block(s).',
 	tabs='Make sure md file contains no tab characters.',
 	syntax='Any kind of incorrect syntax, e.g. blocks opened and not closed and such.' )
@@ -119,6 +120,14 @@ def md_clean(md, code_re, errs):
 	if st.code and not st.code_prefix: errs.append(adict( n=n,
 		t='syntax', s=f'Unclosed code-block started at line-{st.code}' ))
 	return lines
+
+
+def md_check_quirks(md_lines, errs):
+	for n, line in md_lines:
+		if line.strip().startswith(r'\['):
+			# \[stuff\] at BOL translates into centered "stuff" line on codeberg
+			errs.append(adict( n=n, t='quirks',
+				s=f'Line starting with \[ can turn into some weird centered-text thing' ))
 
 
 def md_check_header_anchors(md_lines, errs, name_max_len=40):
@@ -330,8 +339,9 @@ def main(argv=None):
 
 	err_code, code_re = 0, (rx := opts.code_rx) and re.compile(rx)
 	if not opts.md_files: parser.error('At least one markdown file argument must be specified.')
-	for p, name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
+	for p, p_name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
 		md_lines = md_clean((p := pl.Path(p)).read_text(), code_re, errs := list())
+		md_check_quirks(md_lines, errs)
 
 		anchor_map = md_check_header_anchors(md_lines, errs)
 		if opts.add_anchors:
@@ -351,7 +361,7 @@ def main(argv=None):
 			finally:
 				if p_tmp: p_tmp.unlink(missing_ok=True)
 			if anchor_map:
-				print( f'{name} :: Fixed {len(anchor_map)}'
+				print( f'{p_name} :: Fixed {len(anchor_map)}'
 					' missing/mismatching anchor(s)', file=sys.stderr )
 				err_code = 1
 			continue
@@ -377,7 +387,7 @@ def main(argv=None):
 
 		for err in errs:
 			if err.t not in checks: continue
-			print(f'{name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
+			print(f'{p_name}:{err.n} :: {err.t} :: {err.s}', file=sys.stderr); err_code = 1
 
 	return err_code
 
