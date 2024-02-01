@@ -288,7 +288,7 @@ def main(argv=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
-		usage='%(prog)s [opts] [--] file.md [...]',
+		usage='%(prog)s [opts] [--] [file.md ...]',
 		description=dd('''
 			Check all specified markdown files for common issues.
 			Returns non-zero exit code with stderr output if any of the checks detect issues.
@@ -297,7 +297,8 @@ def main(argv=None):
 			{link_list}\n
 			Specific checks can be enabled/disabled via command-line options.''')
 			.format(link_list='\n'.join(f' - {k.replace("_", "-")} :: {v}' for k,v in checks.items())))
-	parser.add_argument('md_files', nargs='*', help='Markdown file(s) to validate.')
+	parser.add_argument('md_files', nargs='*',
+		help='Markdown file(s) to validate. Default: README.md')
 
 	parser.add_argument('-c', '--checks', metavar='chk1[ chk2...]', help=dd('''
 		Names of specific markdown checks to enable.
@@ -338,7 +339,7 @@ def main(argv=None):
 			if k in checks: del checks[k]
 
 	err_code, code_re = 0, (rx := opts.code_rx) and re.compile(rx)
-	if not opts.md_files: parser.error('At least one markdown file argument must be specified.')
+	if not opts.md_files: opts.md_files = ['README.md']
 	for p, p_name in zip(ps := list(map(pl.Path, opts.md_files)), path_names(*ps)):
 		md_lines = md_clean((p := pl.Path(p)).read_text(), code_re, errs := list())
 		md_check_quirks(md_lines, errs)

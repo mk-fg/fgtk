@@ -2816,6 +2816,10 @@ Current full list of checks that it runs:
 Useful for maintaining non-mkdocs .md files for git forges and such,
 where otherwise nothing will indicate any potential issues.
 
+["Basic markdown syntax/links checks ..." blog post] might have a bit more info/context for this script.
+
+["Basic markdown syntax/links checks ..." blog post]:
+  https://blog.fraggod.net/2024/01/17/basic-markdown-syntaxlinks-checks-after-rst-md-migration.html
 
 
 
@@ -3587,8 +3591,7 @@ Examples:
 Parsed time_spec 'now' as 2015-04-26 14:23:54.658134 (delta: just now)
 ```
 
-![alarm bubble][]
-[alarm bubble]: https://fraggod.net/static/misc/notification-thing__alarm.jpg
+![alarm bubble](https://fraggod.net/static/misc/notification-thing__alarm.jpg)
 
 ``` console
 % alarm -t 3600 -i my-alarm-icon -s my-alarm-sound -f 'tomorrow 9am' \
