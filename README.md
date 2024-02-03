@@ -3425,14 +3425,15 @@ Trivial script to read \~/.dev-nodes.monitor.list with
 
     /dev/disk/by-id/wwn-0x... unplug some external hdd
     usb_wifi net-cut wifi temp usb ap
+    /dev/fido2 fido2-pins-5 YubiKey has <5 pin-attempts left
 
 ...and issue persistent deduplicated desktop notifications if device needs to be
 unplugged, network interface removed, and such physical-manipulation reminders,
 to fix common "always forget about this thing" errors that are easily detectable
 and avoidable.
 
-Looks up either specific paths with "plug"/"unplug" checks, or network
-interfaces with "net-cut" or "net-connect".
+Looks up either specific paths with "plug"/"unplug" and fido2-token checks,
+or network interfaces with "net-cut" or "net-connect".
 
 Avoids creating duplicate notifications while one is already on-screen via
 `-w/--wait` option of notify-send (to monitor "notification closed" signals)
