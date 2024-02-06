@@ -142,7 +142,6 @@ Contents - links to doc section for each script here:
 
         - [parec_from_flash](#hdr-parec_from_flash)
         - [pa_track_history](#hdr-pa_track_history)
-        - [pa_mute](#hdr-pa_mute)
         - [pa_modtoggle](#hdr-pa_modtoggle)
         - [mpv_icy_track_history](#hdr-mpv_icy_track_history)
         - [icy_record](#hdr-icy_record)
@@ -2976,11 +2975,6 @@ whatever reason.
 Queries pa sinks for specific pid (which it can start) and writes "media.name"
 (usually track name) history, which can be used to record played track names
 from e.g. online radio stream in player-independent fashion.
-
-<a name=hdr-pa_mute></a><a name=user-content-hdr-pa_mute></a>
-##### [pa_mute](desktop/media/pa_mute)
-
-Simple script to toggle mute for all pluseaudio streams from a specified pid.
 
 <a name=hdr-pa_modtoggle></a><a name=user-content-hdr-pa_modtoggle></a>
 ##### [pa_modtoggle](desktop/media/pa_modtoggle)
