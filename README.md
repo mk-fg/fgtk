@@ -338,6 +338,7 @@ regexp = : \S*[WD+<>]\S* */srv/myapp/data-files(/[^/]+)?$
 run = myapp process-new-data /srv/myapp/data-files
 # regexp-env-var = RCP_MATCH -- "run" command will get this in env by default
 # regexp-env-group = 1 -- regexp group to put into regexp-env-var, 0 - full match
+# regexp-run-group = 1 -- to run/delay/cooldown commands based on matched group
 
 [config-updates]
 regexp = : \S*[WD+<>]\S* */srv/myapp/config(/.*)?$

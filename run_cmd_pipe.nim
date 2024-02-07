@@ -21,8 +21,9 @@ type
 		regexp: Regex,
 		regexp_env_var: string,
 		regexp_env_group: int,
+		regexp_run_group: int,
 		run: seq[string] ]
-const regexp_env_group_max = 19
+const regexp_group_max = 19
 
 proc parse_conf(conf_path: string): Conf =
 	var
@@ -32,7 +33,8 @@ proc parse_conf(conf_path: string): Conf =
 		rules = initTable[string, Rule]()
 		re_comm = re"^\s*([#;].*)?$"
 		re_name = re"^\[(.*)\]$"
-		re_name_internal = re"^--[^-]"
+		re_name_int_prefix = re"^--[^-]" # to avoid clashes with internal event name
+		re_name_int_infix = re" (¦+) " # avoids clashes with regexp-run-group matches
 		re_var = re"^\s*(\S.*?)\s*(=\s*(\S.*?)?\s*)?$"
 		line_n = 0
 		name = ""
@@ -40,6 +42,7 @@ proc parse_conf(conf_path: string): Conf =
 		run: seq[string]
 		regexp_env_var = "RCP_MATCH"
 		regexp_env_group = 0
+		regexp_run_group = -1
 	mtime = getLastModificationTime(conf_path)
 	for line in (readFile(conf_path) & "\n[end]").splitLines:
 		line_n += 1
@@ -47,10 +50,15 @@ proc parse_conf(conf_path: string): Conf =
 		elif line =~ re_name:
 			if name != "":
 				if regexp == nil: warn(&"Ignoring rule with missing regexp: {name}")
-				else: rules[name] = (name, regexp, regexp_env_var, regexp_env_group, run)
+				else:
+					if rules.contains(name):
+						warn(&"Replacing earlier rule with duplicate name: {name}")
+					rules[name] = ( name, regexp,
+						regexp_env_var, regexp_env_group, regexp_run_group, run )
 			name = matches[0]; regexp = nil; run = @[]
-			regexp_env_var = "RCP_MATCH"; regexp_env_group = 0
-			if name =~ re_name_internal: name = "-" & name
+			regexp_env_var = "RCP_MATCH"; regexp_env_group = 0; regexp_run_group = -1
+			if name =~ re_name_int_prefix: name = "-" & name
+			if name =~ re_name_int_infix: name = name.replacef(re_name_int_infix, " $1¦ ")
 		elif line =~ re_var:
 			if name == "":
 				try:
@@ -61,16 +69,19 @@ proc parse_conf(conf_path: string): Conf =
 					warn(&"Failed to parse config value on line {line_n} [ {line} ] :: {err.msg}")
 			else:
 				try:
-					if matches[0] == "regexp": regexp = re(&"({matches[2]})")
-					elif matches[0] == "regexp-ci":
-						regexp = re(&"({matches[2]})", {reIgnoreCase, reStudy})
-					elif matches[0] == "regexp-env-var": regexp_env_var = matches[2].strip
-					elif matches[0] == "regexp-env-group":
-						regexp_env_group = matches[2].parseInt
-						if regexp_env_group > regexp_env_group_max:
+					let k = matches[0]; let v = matches[2]
+					if k == "regexp": regexp = re(&"({v})")
+					elif k == "regexp-ci":
+						regexp = re(&"({v})", {reIgnoreCase, reStudy})
+					elif k == "regexp-env-var": regexp_env_var = v.strip
+					elif k in ["regexp-env-group", "regexp-run-group"]:
+						let n = v.parseInt
+						if n > regexp_group_max:
 							raise newException( ValueError,
-								&"Regexp match-group N must be < {regexp_env_group_max+1}" )
-					elif matches[0] == "run": run = matches[2].strip.split
+								&"Regexp match-group N must be < {regexp_group_max+1}" )
+						if k == "regexp-env-group": regexp_env_group = n
+						elif k == "regexp-run-group": regexp_run_group = n
+					elif k == "run": run = v.strip.split
 					else: warn(&"Ignoring unrecognized rule-option line {line_n} [ {line} ]")
 				except Exception as err:
 					warn(&"Failed to parse config value on line {line_n} [ {line} ] :: {err.msg}")
@@ -145,16 +156,18 @@ proc main_help(err="") =
 
 			# All rule opts are listed below. Defaults: re-var=RCP_MATCH re-group=0
 			[my-rule]
-			regexp = systemd\[1\]: (.*)$
+			regexp = systemd\[(\d+)\]: (.*)$
 			# regexp-ci = ... -- same as regexp, but case-insensitive
 			regexp-env-var = SD_LOG_MSG
-			regexp-env-group = 1
+			regexp-env-group = 2
+			# regexp-run-group = 1 -- to run/delay/cooldown process for rule+match-group
 			run = env
 			# ...plus any more such rule blocks, any number of which can match each line.
 
 		 -c / --cooldown milliseconds
 			Min interval between running commands on events (default=300ms).
-			If multiple events to trigger same command are detected, it will run after delay.
+			If multiple events to trigger same rule (or rule + regexp-run-group)
+				are detected, command will run after cooldown delay with last regexp-match.
 
 		 -d / --delay milliseconds
 			Add fixed time delay (in ms) from event to running a corresponding command.
@@ -216,7 +229,7 @@ proc main(argv_full: seq[string]) =
 		rule_last_ts = initTable[string, MonoTime]()
 		rule_last_match = initTable[string, string]()
 		rule_procs = initTable[string, Process]()
-		rule_matches: array[regexp_env_group_max + 1, string]
+		rule_matches: array[regexp_group_max + 1, string]
 		td_cooldown: Duration
 		td_delay: Duration
 
@@ -289,27 +302,29 @@ proc main(argv_full: seq[string]) =
 					debug("Rule match [ ", rule.name, " ]")
 					let ts_now = getMonoTime()
 					rule_last_match[rule.name] = rule_matches[rule.regexp_env_group]
+					var key = if rule.regexp_run_group < 0: rule.name
+						else: &"{rule.name} ¦ {rule_matches[rule.regexp_run_group]}"
 
-					rule_last_ts.withValue(rule.name, ts_last_ptr):
+					rule_last_ts.withValue(key, ts_last_ptr):
 						let ts_last = ts_last_ptr[]
 						if ts_last > ts_now:
-							debug("Rule already scheduled [ ", rule.name, " ]")
+							debug("Rule already scheduled [ ", key, " ]")
 							continue
 						let delay = td_cooldown - (ts_now - ts_last)
 						if delay > DurationZero:
-							debug("Rule cooldown-delay [ ", rule.name, " ] ms=", delay.inMilliseconds.nfmt)
-							rule_last_ts[rule.name] = ts_last + td_cooldown
-							s.registerTimer(delay.inMilliseconds, true, rule.name)
+							debug("Rule cooldown-delay [ ", key, " ] ms=", delay.inMilliseconds.nfmt)
+							rule_last_ts[key] = ts_last + td_cooldown
+							s.registerTimer(delay.inMilliseconds, true, key)
 							continue
 
 					if td_delay > DurationZero:
-						rule_last_ts[rule.name] = ts_now + td_delay
-						debug("Rule fixed-delay [ ", rule.name, " ] ms=", td_delay.inMilliseconds.nfmt)
-						s.registerTimer(td_delay.inMilliseconds, true, rule.name)
+						rule_last_ts[key] = ts_now + td_delay
+						debug("Rule fixed-delay [ ", key, " ] ms=", td_delay.inMilliseconds.nfmt)
+						s.registerTimer(td_delay.inMilliseconds, true, key)
 
 					else:
-						rule_last_ts[rule.name] = ts_now
-						run_rules.add(rule.name)
+						rule_last_ts[key] = ts_now
+						run_rules.add(key)
 
 			do: warn("Event-poller unexpected ev={rk.events} fd={rk.fd}")
 
@@ -320,8 +335,9 @@ proc main(argv_full: seq[string]) =
 			pr: Process
 			pid: int
 			exit_code: int
-		for name in run_rules:
-			debug("Rule run [ ", name, " ]")
+		for key in run_rules:
+			let name = key.split(" ¦ ", 1)[0]
+			debug("Rule run [ ", key, " ]", if key == name: "" else: &" -> [ {name} ]")
 			if not rules.contains(name): continue
 			rule = rules[name]
 			if rule.run.len == 0: continue
