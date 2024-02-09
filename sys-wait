@@ -4,15 +4,15 @@ set -eo pipefail
 usage() {
 	local bin=$(basename $0)
 	[[ $1 -eq 0 ]] || exec 1>&2
-	echo "Usage: $bin $(gawk \
-		'/^\s+case\>/ {parse=1; next}
+	echo "Usage: $bin$(gawk \
+		'/^\s+case\>/ {parse=1; m=0; next}
 		/^\s+esac\>/ {exit}
 		!parse {next}
-		match($0, /^\s*([\-|a-z0-9]+)\)/, a) {
+		match($0, /^\s*([\-|a-zA-Z0-9]+)\)/, a) {
 			if (ac==0 || ac<2) ac=""
 				else ac= ac==2 ? " val" : sprintf(" val[x%s]", ac-1)
-			if (ap) printf("[ %s%s ] ", ap, ac)
-			ap=a[1]; ac=0 }
+			if (ap) printf( "%s[ %s%s ]", m>2 ? "\n  " : " ", ap, ac)
+			ap=a[1]; ac=0; m++ }
 		{for (i=1;i<NF;i++) if (match($i, /\<shift\>/)) ac++}' $0)"
 	echo
 	echo "Wait until all specified system/load conditions are met."
@@ -23,7 +23,7 @@ usage() {
 
 interval=60
 load1= load5= load15=
-pgrep= pid=$$
+file= file_nx=
 
 while [[ -n "$1" ]]; do
 	case "$1" in
@@ -36,7 +36,8 @@ while [[ -n "$1" ]]; do
 		--load5) shift; load5=$1; shift ;;
 		--load15) shift; load15=$1; shift ;;
 
-		-p|--pgrep) shift; pgrep=$1; shift ;;
+		-f|--file) shift; file=$1; shift ;;
+		-F|--file-nx) shift; file_nx=$1; shift ;;
 
 		welp) exit 1 ;;
 		*) echo "ERROR: Unknown option - $1"; usage 1 ;;
@@ -66,13 +67,10 @@ while :; do
 		read m1 m5 m15 rest < /proc/loadavg
 		[[ -z "$load1" ]] || load_test "$m1" "$load1" || err=1
 		[[ -z "$load5" ]] || load_test "$m5" "$load5" || err=1
-		[[ -z "$load15" ]] || load_test "$m15" "$load15" || err=1
-	}
+		[[ -z "$load15" ]] || load_test "$m15" "$load15" || err=1; }
 
-	[[ -z "$pgrep" ]] || {
-		# Skipping pids of script/subshell because e.g. "pgrep -f" can also match these
-		pids=$(spid=$BASHPID; pgrep $pgrep | grep -v '^'$spid'\|'$pid'$' ||:)
-		[[ -z "$pids" ]] || err=1; }
+	[[ -z "$file" ]] || { [[ -e "$file" ]] || err=1; }
+	[[ -z "$file_nx" ]] || { [[ ! -e "$file_nx" ]] || err=1; }
 
 	[[ $err -ne 0 ]] || break
 	sleep $interval

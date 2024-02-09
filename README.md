@@ -2249,18 +2249,22 @@ which is fine for intended purpose (bots spam requests anyway).
 ##### [sys-wait](sys-wait)
 
 Bash script to check and wait for various system conditions,
-processes or thresholds like load average or PSI values.
+files, processes or thresholds like load average or PSI values.
 
 Random examples:
 
     % sys-wait -l 3 && run-less-heavy-task
     % sys-wait --load15 5 && run-next-heavy-task
-    % sys-wait --pgrep '-x rsync' && run-other-rsync
+    % sys-wait -f /some/file/appeared && process-file
+    % sys-wait -F /file/to-be-removed && run-stuff
 
 Helps to avoid writing those annoyingly-common
 `while :; do some-check || break; sleep 60; done; run-other-stuff`
 when something heavy/long is already running and you just don't
 have the heart to break and reschedule it properly.
+
+Mostly used to need for pgrep in a loop, but these days util-linux includes
+pidwait binary, which does the job without this wrapper.
 
 <a name=hdr-yt-feed-to-email></a><a name=user-content-hdr-yt-feed-to-email></a>
 ##### [yt-feed-to-email](yt-feed-to-email)
