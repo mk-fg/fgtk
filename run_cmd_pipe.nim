@@ -80,7 +80,7 @@ proc parse_conf(conf_path: string): Conf =
 							raise newException( ValueError,
 								&"Regexp match-group N must be < {regexp_group_max+1}" )
 						if k == "regexp-env-group": regexp_env_group = n
-						elif k == "regexp-run-group": regexp_run_group = n
+						else: regexp_run_group = n
 					elif k == "run": run = v.strip.split
 					else: warn(&"Ignoring unrecognized rule-option line {line_n} [ {line} ]")
 				except Exception as err:
