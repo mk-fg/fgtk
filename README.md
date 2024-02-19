@@ -106,8 +106,6 @@ Contents - links to doc section for each script here:
         - [sys-wait](#hdr-sys-wait)
         - [yt-feed-to-email](#hdr-yt-feed-to-email)
         - [color-b64sort](#hdr-color-b64sort)
-        - [fido2-hmac-desalinate.c](#hdr-fido2-hmac-desalinate.c)
-        - [fido2_hmac_boot.nim](#hdr-fido2_hmac_boot.nim)
 
 - [\[dev\] Dev tools](#hdr-__dev___dev_tools)
 
@@ -133,6 +131,11 @@ Contents - links to doc section for each script here:
     - [zfs-snapper](#hdr-zfs-snapper)
     - [btrfs-snapper](#hdr-btrfs-snapper)
     - [dir-snapper](#hdr-dir-snapper)
+
+- [\[hsm\] FIDO2 / PIV / etc smartcard stuff](#hdr-_hsm_fido2_piv_etc_smartcard_stuff)
+
+    - [fido2-hmac-desalinate.c](#hdr-fido2-hmac-desalinate.c)
+    - [fido2_hmac_boot.nim](#hdr-fido2_hmac_boot.nim)
 
 - [\[desktop\] Linux desktop stuff](#hdr-__desktop___linux_desktop_stuff)
 
@@ -2338,147 +2341,6 @@ but using pypy instead of cpython can speed that up a lot.
 ["i want hue"]: https://medialab.github.io/iwanthue/
 [colormath]: https://python-colormath.readthedocs.io/
 
-<a name=hdr-fido2-hmac-desalinate.c></a><a name=user-content-hdr-fido2-hmac-desalinate.c></a>
-##### [fido2-hmac-desalinate.c]
-[fido2-hmac-desalinate.c]: fido2-hmac-desalinate.c
-
-Small C tool to do short-string encryption/decryption, using hmac-secret
-extension of libfido2-supported devices, like any Yubikey FIDO2 tokens
-or most other modern FIDO2 authenticators.
-
-How it works - given the input like this on tool's stdin:
-
-    YXNk FEfi23suDGnj8XmU1uJBO8Kwcn3i/6V8op5esgnStsYNqmhTRxFvmKucppw=
-
-Decrypted version of that second string on the line gets printed to stdout:
-
-    The quick brown fox jumps over the lazy dog
-
-It's decoded using unique encryption key, derived from HMAC calculated
-on FIDO2 device, using specified "YXNk" salt value and unextractable key
-(barring side-channel hacks of the token).
-
-For any unique salt, there will be a single unique key, which can't be guessed
-or derived without hardware token and the usual presence-check (e.g. touch,
-biometrics, PIN) that such devices implement and require.
-
-Use-case is instead of storing "my-long-password!" in some list of auth info
-and notes for day-to-day logins, "fhd.ABCD.YUMt43HY9CEUoaHEK8iMRkQ=" can be
-stored instead, and decoded only when it is needed, with a hardware token
-and some physical confirmation (e.g. touching button on token or dropping
-it onto an NFC pad, and maybe [8-attempts-lockout PIN] too, if set).
-Usually activated by a [hotkey in an emacs buffer].
-
-[8-attempts-lockout PIN]: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
-[hotkey in an emacs buffer]: https://github.com/mk-fg/emacs-setup/blob/c2929a3/core/fg_sec.el#L178-L300
-
-Unique "salt" value makes it impossible to decrypt all stored secrets
-immediately, without authenticator checks for each one, to better protect
-against common remote compromise.
-
-Resident/discoverable credential can be generated/stored on the device like this:
-
-    % fido2-token -L
-    % fido2-cred -M -rh -i cred.req.txt -o cred.info.txt /dev/hidraw5 eddsa
-
-(or non-resident one without "-r", see [manpage for fido2-cred] for more info)
-
-[manpage for fido2-cred]: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
-
-Tool should be compiled with at least Relying Party ID parameter (-DFHD_RPID=):
-
-    % gcc -O2 -lfido2 -lcrypto -DFHD_RPID=fhd.mysite.com fido2-hmac-desalinate.c -o fhd
-    % strip fhd
-    % ./fhd -h
-
-But there are more compiled-in options supported there:
-
-    -DFHD_RPID=<hostname> - Relying Party ID string, e.g. fhd.mysite.com
-    (optional) -DFHD_TIMEOUT=30 - timeout for user presence check (touch)
-    (optional) -DFHD_UP=<y/n> - user presence check (touch), left up to device by default
-    (optional) -DFHD_UV=<y/n> - user verification via PIN, up to device settings by default
-    (optional) -DFHD_CID=<base64-blob> - Credential ID base64 blob from fido2-cred
-    (optional) -DFHD_DEV=<device> - default device, e.g. "/dev/yubikey" or "pcsc:#slot0"
-      NOTE: "pcsc://slot0" value is not allowed by C macro system, hence # replacing //
-    ...
-
-(they're all listed at the top of [fido2-hmac-desalinate.c] file)
-
-
-`-DFHD_CID=` and `-DFHD_DEV=` are useful in particular - CID allows to embed
-wrapped key returned by [fido2-cred] into binary, without needing Resident/Discoverable
-Key for that RPID value stored on the device (space on these is limited).
-
-[fido2-cred]: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
-
-DEV value allows to set default device path, which can be easily made static by
-udev rule, e.g. to make `/dev/yubikey` symlink and give user access permissions:
-
-    KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
-      ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0402", \
-      TAG+="uaccess", MODE="660", GROUP="myuser", SYMLINK+="yubikey"
-
-`-DFHD_DEV=pcsc:#slot0` should work for NFC-enabled tokens placed on the reader pad.
-
-Encryption uses HMAC as a PRF to produce uniformly-random stream to XOR with the
-input, so running the tool on plaintext will return ciphertext and vice-versa:
-
-``` console
-% fhd <<< "salt $(base64 <<< my-secret-password)" | base64
-SbSP8MJPHBSDK+5eIQyvI7EENg==
-
-% fhd <<< "salt SbSP8MJPHBSDK+5eIQyvI7EENg=="
-my-secret-password
-```
-
-Only requirement is for each ciphertext to have unique "salt" value, so that they
-can only be decrypted separately, even if stored in one big plaintext file together.
-
-Named like that because it separates hmac-salt from stuff.
-
-See general docs on FIDO2/Webauthn for more info on how it all works,
-and a ["FIDO2 hardware password/secret management" blog post] for more
-usage info/examples of this small tool.
-
-["FIDO2 hardware password/secret management" blog post]:
-  https://blog.fraggod.net/2023/01/04/fido2-hardware-passwordsecret-management.html
-
-<a name=hdr-fido2_hmac_boot.nim></a><a name=user-content-hdr-fido2_hmac_boot.nim></a>
-##### [fido2_hmac_boot.nim](fido2_hmac_boot.nim)
-
-Small tool similar to [fido2-hmac-desalinate.c] above, but intended to produce
-a file with a key derived from FIDO2 device, to use on early boot, e.g. unlock
-disk partitions with cryptsetup and such.
-
-Always prompts user on /dev/console, either for PIN or just to continue,
-assuming that it'd be accessible in that kind of early-boot scenario.
-
-Same as with fido2-hmac-desalinate.c, most options can be compiled-in,
-but can also be specified on the command-line here.
-
-Build with:
-`nim c -w=on -d:release -o=fhb fido2_hmac_boot.nim && strip fhb`
-
-Simple usage: `./fhb -r fhb.myhost.net -s ul0...5hA= --out-b64`
-
-CLI `-h/--help` option should print info on all compiled-in defaults,
-as well as runtime overrides.
-
-[fido2-token] and [fido2-cred] tools (part of libfido2) can be useful to
-initialize/manage the device and credentials for/on it. Written in [Nim]
-C-adjacent language, with no extra dependencies, builds and links against [libfido2].
-
-[fido2-token]: https://developers.yubico.com/libfido2/Manuals/fido2-token.html
-[Nim]: https://nim-lang.org/
-[libfido2]: https://developers.yubico.com/libfido2/
-
-There is a ["More FIDO2 hw auth/key uses" post] with more info
-on how to use this binary with a typical dracut/systemd boot process.
-
-["More FIDO2 hw auth/key uses" post]:
-  https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
-
-
 
 
 <a name=hdr-__dev___dev_tools></a><a name=user-content-hdr-__dev___dev_tools></a>
@@ -2942,6 +2804,157 @@ rotates directories instead of running any fs-specific snapshotting commands.
 Useful for generic "backup to a dir" scripts, where deduplication on
 fs level is handled somewhere else or unnecessary.
 
+
+
+<a name=hdr-_hsm_fido2_piv_etc_smartcard_stuff></a><a name=user-content-hdr-_hsm_fido2_piv_etc_smartcard_stuff></a>
+### [\[hsm\] FIDO2 / PIV / etc smartcard stuff](hsm)
+
+Tools for using Hardware Security Modules - usually USB FIDO2 and PIV smartcards
+(the kind that are often called "yubikeys"), mostly to derive or wrap/unwrap
+various keys and secrets using those, in a manner that can't be done remotely
+(requiring physical tap on the device to do some cryptographic operation).
+
+
+<a name=hdr-fido2-hmac-desalinate.c></a><a name=user-content-hdr-fido2-hmac-desalinate.c></a>
+#### [fido2-hmac-desalinate.c]
+[fido2-hmac-desalinate.c]: hsm/fido2-hmac-desalinate.c
+
+Small C tool to do short-string encryption/decryption, using hmac-secret
+extension of libfido2-supported devices, like any Yubikey FIDO2 tokens
+or most other modern FIDO2 authenticators.
+
+How it works - given the input like this on tool's stdin:
+
+    YXNk FEfi23suDGnj8XmU1uJBO8Kwcn3i/6V8op5esgnStsYNqmhTRxFvmKucppw=
+
+Decrypted version of that second string on the line gets printed to stdout:
+
+    The quick brown fox jumps over the lazy dog
+
+It's decoded using unique encryption key, derived from HMAC calculated
+on FIDO2 device, using specified "YXNk" salt value and unextractable key
+(barring side-channel hacks of the token).
+
+For any unique salt, there will be a single unique key, which can't be guessed
+or derived without hardware token and the usual presence-check (e.g. touch,
+biometrics, PIN) that such devices implement and require.
+
+Use-case is instead of storing "my-long-password!" in some list of auth info
+and notes for day-to-day logins, "fhd.ABCD.YUMt43HY9CEUoaHEK8iMRkQ=" can be
+stored instead, and decoded only when it is needed, with a hardware token
+and some physical confirmation (e.g. touching button on token or dropping
+it onto an NFC pad, and maybe [8-attempts-lockout PIN] too, if set).
+Usually activated by a [hotkey in an emacs buffer].
+
+[8-attempts-lockout PIN]: https://support.yubico.com/hc/en-us/articles/4402836718866-Understanding-YubiKey-PINs
+[hotkey in an emacs buffer]: https://github.com/mk-fg/emacs-setup/blob/c2929a3/core/fg_sec.el#L178-L300
+
+Unique "salt" value makes it impossible to decrypt all stored secrets
+immediately, without authenticator checks for each one, to better protect
+against common remote compromise.
+
+Resident/discoverable credential can be generated/stored on the device like this:
+
+    % fido2-token -L
+    % fido2-cred -M -rh -i cred.req.txt -o cred.info.txt /dev/hidraw5 eddsa
+
+(or non-resident one without "-r", see [manpage for fido2-cred] for more info)
+
+[manpage for fido2-cred]: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
+
+Tool should be compiled with at least Relying Party ID parameter (-DFHD_RPID=):
+
+    % gcc -O2 -lfido2 -lcrypto -DFHD_RPID=fhd.mysite.com fido2-hmac-desalinate.c -o fhd
+    % strip fhd
+    % ./fhd -h
+
+But there are more compiled-in options supported there:
+
+    -DFHD_RPID=<hostname> - Relying Party ID string, e.g. fhd.mysite.com
+    (optional) -DFHD_TIMEOUT=30 - timeout for user presence check (touch)
+    (optional) -DFHD_UP=<y/n> - user presence check (touch), left up to device by default
+    (optional) -DFHD_UV=<y/n> - user verification via PIN, up to device settings by default
+    (optional) -DFHD_CID=<base64-blob> - Credential ID base64 blob from fido2-cred
+    (optional) -DFHD_DEV=<device> - default device, e.g. "/dev/yubikey" or "pcsc:#slot0"
+      NOTE: "pcsc://slot0" value is not allowed by C macro system, hence # replacing //
+    ...
+
+(they're all listed at the top of [fido2-hmac-desalinate.c] file)
+
+
+`-DFHD_CID=` and `-DFHD_DEV=` are useful in particular - CID allows to embed
+wrapped key returned by [fido2-cred] into binary, without needing Resident/Discoverable
+Key for that RPID value stored on the device (space on these is limited).
+
+[fido2-cred]: https://developers.yubico.com/libfido2/Manuals/fido2-cred.html
+
+DEV value allows to set default device path, which can be easily made static by
+udev rule, e.g. to make `/dev/yubikey` symlink and give user access permissions:
+
+    KERNEL=="hidraw*", SUBSYSTEM=="hidraw", \
+      ATTRS{idVendor}=="1050", ATTRS{idProduct}=="0402", \
+      TAG+="uaccess", MODE="660", GROUP="myuser", SYMLINK+="yubikey"
+
+`-DFHD_DEV=pcsc:#slot0` should work for NFC-enabled tokens placed on the reader pad.
+
+Encryption uses HMAC as a PRF to produce uniformly-random stream to XOR with the
+input, so running the tool on plaintext will return ciphertext and vice-versa:
+
+``` console
+% fhd <<< "salt $(base64 <<< my-secret-password)" | base64
+SbSP8MJPHBSDK+5eIQyvI7EENg==
+
+% fhd <<< "salt SbSP8MJPHBSDK+5eIQyvI7EENg=="
+my-secret-password
+```
+
+Only requirement is for each ciphertext to have unique "salt" value, so that they
+can only be decrypted separately, even if stored in one big plaintext file together.
+
+Named like that because it separates hmac-salt from stuff.
+
+See general docs on FIDO2/Webauthn for more info on how it all works,
+and a ["FIDO2 hardware password/secret management" blog post] for more
+usage info/examples of this small tool.
+
+["FIDO2 hardware password/secret management" blog post]:
+  https://blog.fraggod.net/2023/01/04/fido2-hardware-passwordsecret-management.html
+
+
+<a name=hdr-fido2_hmac_boot.nim></a><a name=user-content-hdr-fido2_hmac_boot.nim></a>
+#### [fido2_hmac_boot.nim](hsm/fido2_hmac_boot.nim)
+
+Small tool similar to [fido2-hmac-desalinate.c] above, but intended to produce
+a file with a key derived from FIDO2 device, to use on early boot, e.g. unlock
+disk partitions with cryptsetup and such.
+
+Always prompts user on /dev/console, either for PIN or just to continue,
+assuming that it'd be accessible in that kind of early-boot scenario.
+
+Same as with fido2-hmac-desalinate.c, most options can be compiled-in,
+but can also be specified on the command-line here.
+
+Build with:
+`nim c -w=on -d:release -o=fhb fido2_hmac_boot.nim && strip fhb`
+
+Simple usage: `./fhb -r fhb.myhost.net -s ul0...5hA= --out-b64`
+
+CLI `-h/--help` option should print info on all compiled-in defaults,
+as well as runtime overrides.
+
+[fido2-token] and [fido2-cred] tools (part of libfido2) can be useful to
+initialize/manage the device and credentials for/on it. Written in [Nim]
+C-adjacent language, with no extra dependencies, builds and links against [libfido2].
+
+[fido2-token]: https://developers.yubico.com/libfido2/Manuals/fido2-token.html
+[Nim]: https://nim-lang.org/
+[libfido2]: https://developers.yubico.com/libfido2/
+
+There is a ["More FIDO2 hw auth/key uses" post] with more info
+on how to use this binary with a typical dracut/systemd boot process.
+
+["More FIDO2 hw auth/key uses" post]:
+  https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
 
 
 

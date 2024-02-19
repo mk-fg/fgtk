@@ -27,7 +27,7 @@
 
 
 #ifndef FHD_RPID
-#error -DFHD_RPID=... must be set to Replying Party ID (hostname) during compilation.
+#error -DFHD_RPID=... must be set to Relying Party ID (hostname) during compilation.
 #endif
 #ifndef FHD_DEV
 #define FHD_DEV
