@@ -136,6 +136,7 @@ Contents - links to doc section for each script here:
 
     - [fido2-hmac-desalinate.c](#hdr-fido2-hmac-desalinate.c)
     - [fido2_hmac_boot.nim](#hdr-fido2_hmac_boot.nim)
+    - [secret-token-backup](#hdr-secret-token-backup)
 
 - [\[desktop\] Linux desktop stuff](#hdr-__desktop___linux_desktop_stuff)
 
@@ -2924,7 +2925,7 @@ usage info/examples of this small tool.
 <a name=hdr-fido2_hmac_boot.nim></a><a name=user-content-hdr-fido2_hmac_boot.nim></a>
 #### [fido2_hmac_boot.nim](hsm/fido2_hmac_boot.nim)
 
-Small tool similar to [fido2-hmac-desalinate.c] above, but intended to produce
+Small tool similar to [fido2-hmac-desalinate] above, but intended to produce
 a file with a key derived from FIDO2 device, to use on early boot, e.g. unlock
 disk partitions with cryptsetup and such.
 
@@ -2946,6 +2947,7 @@ as well as runtime overrides.
 initialize/manage the device and credentials for/on it. Written in [Nim]
 C-adjacent language, with no extra dependencies, builds and links against [libfido2].
 
+[fido2-hmac-desalinate]: #hdr-fido2-hmac-desalinate.c
 [fido2-token]: https://developers.yubico.com/libfido2/Manuals/fido2-token.html
 [Nim]: https://nim-lang.org/
 [libfido2]: https://developers.yubico.com/libfido2/
@@ -2955,6 +2957,28 @@ on how to use this binary with a typical dracut/systemd boot process.
 
 ["More FIDO2 hw auth/key uses" post]:
   https://blog.fraggod.net/2023/01/26/more-fido2-hardware-authkey-uses-on-a-linux-machine-and-their-quirks.html
+
+
+<a name=hdr-secret-token-backup></a><a name=user-content-hdr-secret-token-backup></a>
+#### [secret-token-backup](hsm/secret-token-backup)
+
+Python wrapper around ["age" encryption tool] and sqlite to encrypt any tokens
+with optional comment strings to an sqlite db file, or retrieve/decrypt those.
+
+Stores fixed list of recipient keys in the db on its creation ("init" script
+command), and always uses those afterwards for all secrets stored there, using
+one neat self-contained file.
+
+My use-case for this is a simple asymmetric-encryption backup for secrets processed
+by [fido2-hmac-desalinate] tool above, where each one can be decrypted separately
+using some other PIV smartcard (with e.g. [age-plugin-yubikey] installed) or an
+offline backup secret key, if necessary.
+
+Robust single-file storage allows easy syncing, enumeration, import/export for
+re-encryption with different keys, etc. `-h/--help` output has all usage info/examples.
+
+["age" encryption tool]: https://github.com/FiloSottile/age
+[age-plugin-yubikey]: https://github.com/str4d/age-plugin-yubikey/
 
 
 
