@@ -2966,16 +2966,22 @@ Python wrapper around ["age" encryption tool] and sqlite to encrypt any tokens
 with optional comment strings to an sqlite db file, or retrieve/decrypt those.
 
 Stores fixed list of recipient keys in the db on its creation ("init" script
-command), and always uses those afterwards for all secrets stored there, using
-one neat self-contained file.
+command), and always uses those afterwards for all secrets stored there,
+in one neat self-contained file.
 
-My use-case for this is a simple asymmetric-encryption backup for secrets processed
-by [fido2-hmac-desalinate] tool above, where each one can be decrypted separately
-using some other PIV smartcard (with e.g. [age-plugin-yubikey] installed) or an
-offline backup secret key, if necessary.
+My use-case for this is a simple asymmetric-encryption backup for secrets
+processed by [fido2-hmac-desalinate] tool above (using "wrap" command to always
+run script around it), where each one can be decrypted separately using some
+other PIV smartcard capabile of public-key crypto (with e.g. [age-plugin-yubikey]
+installed) or an offline/fallback backup secret key, if necessary.
 
 Robust single-file storage allows easy syncing, enumeration, import/export for
 re-encryption with different keys, etc. `-h/--help` output has all usage info/examples.
+
+Can also be used on its own, as an asymmetric-crypto alternative (or read-only addition)
+to fido2-hmac-secret-based tools, not just as a wrapper/backup for those,
+e.g. to access secrets using any number of piv-yubikeys via shared db file
+with all those set as recipients.
 
 ["age" encryption tool]: https://github.com/FiloSottile/age
 [age-plugin-yubikey]: https://github.com/str4d/age-plugin-yubikey/
@@ -3462,14 +3468,15 @@ Trivial script to read \~/.dev-nodes.monitor.list with
     /dev/disk/by-id/wwn-0x... unplug some external hdd
     usb_wifi net-cut wifi temp usb ap
     /dev/fido2 fido2-pins-5 YubiKey has <5 pin-attempts left
+    /dev/yk yk-piv-pins-1234=3 Yubikey PIV serial-1234 has <3 pin-tries
 
 ...and issue persistent deduplicated desktop notifications if device needs to be
 unplugged, network interface removed, and such physical-manipulation reminders,
 to fix common "always forget about this thing" errors that are easily detectable
 and avoidable.
 
-Looks up either specific paths with "plug"/"unplug" and fido2-token checks,
-or network interfaces with "net-cut" or "net-connect".
+Looks up either specific paths with "plug"/"unplug" and other device-state checks
+(e.g. fido2/piv pin counts), or network interfaces with "net-cut" or "net-connect".
 
 Avoids creating duplicate notifications while one is already on-screen via
 `-w/--wait` option of notify-send (to monitor "notification closed" signals)
