@@ -103,7 +103,7 @@ int main(int argc, char *argv[]) {
 		printf(
 			"Tool to do short-string encryption and decryption,"
 			"\n using hmac-secret extension of libfido2-supported devices.\n"
-			"Reads ( hmac-salt || '.' || string ) line from stdin, with hmac-salt"
+			"Reads ( hmac-salt || ' ' || string ) line from stdin, with hmac-salt"
 			"\n and string base64-encoded, prints raw encrypted/decrypted string to stdout.\n"
 			"User checks: presence=%d verify=%d (empty - token default), with %ds timeout.\n"
 			"fido2-token-device argument, if any, is same as fido2-token tool uses.\n"
