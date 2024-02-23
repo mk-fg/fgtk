@@ -2963,10 +2963,10 @@ on how to use this binary with a typical dracut/systemd boot process.
 #### [secret-token-backup](hsm/secret-token-backup)
 
 Python wrapper around ["age" encryption tool] and sqlite to encrypt any tokens
-with optional comment strings to an sqlite db file, or retrieve/decrypt those.
+with optional comment strings to a db file, or retrieve/decrypt those later.
 
-Stores fixed list of recipient keys in the db on its creation ("init" script
-command), and always uses those afterwards for all secrets stored there,
+Stores fixed list of recipient keys in the database on its creation ("init"
+script command), and always uses those afterwards for all secrets stored there,
 in one neat self-contained file.
 
 My use-case for this is a simple asymmetric-encryption backup for secrets
