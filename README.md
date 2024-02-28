@@ -3466,6 +3466,7 @@ Trivial script to read \~/.dev-nodes.monitor.list with
 `<dev> <check> <dev name...>` lines like:
 
     /dev/disk/by-id/wwn-0x... unplug some external hdd
+    LABEL=pocket-usb unplug Green USB Stick
     usb_wifi net-cut wifi temp usb ap
     /dev/fido2 fido2-pins-5 YubiKey has <5 pin-attempts left
     /dev/yk yk-piv-pins-1234=3 Yubikey PIV serial-1234 has <3 pin-tries
