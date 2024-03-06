@@ -133,14 +133,17 @@ def md_check_quirks(md_lines, errs):
 def md_check_header_anchors(md_lines, errs, name_max_len=40):
 	'Check/return a list of header/anchor lines that needs some kind of fixing'
 	anchors, str_map = dict(), dict()
+	anchor_re = re.compile(r'<a name=((?:user-content-)?hdr(x?)-(\S+)>)</a>')
 	str_map.update((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
+	def _line_prev(last_offset):
+		if k - last_offset < 0: return ''
+		n_last, line_prev = md_lines[k - last_offset]
+		if n_last != n - last_offset: return '' # discontinuity = no prev line
+		return line_prev
 	for k, (n, line) in enumerate(md_lines):
 		if n == 1: continue # don't add anchor for first-line header, if any
 		if not (m := re.match(r'#+\s+(\S.*)', line)): continue
-		line_last, hdr = '', md_esc_strip(m[1].strip())
-		if k:
-			n_last, line_last = md_lines[k-1]
-			if n_last != n - 1: line_last = ''
+		ao, hdr = 0, md_esc_strip(m[1].strip())
 		for a, b, link in reversed(list(extract_toplevel(hdr, '[]', False))):
 			if urls := list(extract_toplevel(ls := hdr[b:], '()', False)):
 				ua, ub, url = urls[0]
@@ -151,29 +154,29 @@ def md_check_header_anchors(md_lines, errs, name_max_len=40):
 		if len(name) > name_max_len: name = re.sub(r'_+', '_', name)
 		if len(name) > name_max_len + 5: # truncate long-header anchor-names
 			name = name[:name_max_len] + '.' + b64_hash(name[name_max_len:], 4)
-		a_match = a_nolink = False
-		if a_exists := re.findall(
-				r'<a name=(?:user-content-)?hdr(x?)-(\S+)></a>', line_last ):
+		while (a_list := anchor_re.findall(_line_prev(ao := ao + 1))) and (an := n - ao):
 			# Multiple anchors are for diff renderers, e.g. github + codeberg
-			if len(set(a_exists)) != 1: a_nolink, name_chk = False, ''
-			else: a_nolink, name_chk = a_exists[0]
-			if not (a_match := (name_chk == name)):
-				errs.append(adict( n=n, t='link_anchor', s='Anchor-name'
-					f' mismatch for header [ {hdr} ]: new={name!r} old={name_chk!r}' ))
-		else: errs.append(adict( n=n, t='link_anchor',
-			s=f'Missing anchor before header [ {name} ]: {hdr}' ))
-		name = ('hdr-' if not a_nolink else 'hdrx-') + name
-		if a_chk := anchors.get(name):
+			if len(set(a[2] for a in a_list)) != 1: a_tag = a_nolink = a_name = ''
+			else: a_tag, a_nolink, a_name = a_list[0]
+			if not (a_match := (a_name == name)):
+				errs.append(adict( n=an, t='link_anchor', s='Anchor-name'
+					f' mismatch for header [ {hdr} ]: new={name!r} old={a_name!r}' ))
+			a_name = ('hdr-' if not a_nolink else 'hdrx-') + name
+			if a_chk := anchors.get(a_tag):
+				errs.append(adict( n=an, t='link_anchor',
+					s=f'Duplicate anchor with header on line-{a_chk.hdr_n}: {a_name}' ))
+			anchors[a_tag] = adict( n=n - ao, name=a_name,
+				hdr=hdr, hdr_n=n, exists=True, match=a_match, nolink=a_nolink )
+		if ao == 1:
 			errs.append(adict( n=n, t='link_anchor',
-				s=f'Duplicate anchor-name with header on line-{a_chk.n}: {name}' ))
-		anchors[name] = adict( n=n, name=name, hdr=hdr,
-			exists=a_exists, match=a_match, nolink=a_nolink )
-	anchor_map = dict((a.n-1, a) for a in anchors.values())
+				s=f'Missing anchor before header [ {name} ]: {hdr}' ))
+			anchors[a_name] = adict( n=n, name=(a_name := f'hdr-{name}'),
+				hdr=hdr, hdr_n=n, exists=False, match=False, nolink=False )
+	anchor_map = dict((a.n, a) for a in anchors.values())
 	for n, line in md_lines:
-		if not (m := re.search(r'<a name=hdrx?-\S+></a>', line)): continue
-		if n not in anchor_map:
-			errs.append(adict( n=n, t='link_anchor',
-				s=f'Bogus/leftover anchor-line without a header: {line}' ))
+		if n in anchor_map or not (m := anchor_re.search(line)): continue
+		errs.append(adict( n=n, t='link_anchor',
+			s=f'Bogus/leftover anchor-line without a header: {line}' ))
 	return anchor_map
 
 
@@ -351,13 +354,15 @@ def main(argv=None):
 			p_tmp = p.parent / f'{p.name}.md-checks.new'
 			try:
 				with p.open() as src, p_tmp.open('w') as dst:
+					ins_n = ins_name = None
 					for n, line in enumerate(src, 1):
-						if a := anchor_map.get(n):
-							if not a.exists: dst.write(line)
-							# Codeberg/gitea changes #-links to go to "user-content-<name>"
-							dst.write( f'<a name={a.name}></a>'
-								f'<a name=user-content-{a.name}></a>\n' )
-						else: dst.write(line)
+						if (a := anchor_map.get(n)) and not (a.exists and a.match):
+							ins_n, ins_name = a.hdr_n, a.name
+							if a.exists: continue
+						if n == ins_n: # Codeberg/gitea changes #-hrefs to "user-content-<name>"
+							dst.write( f'<a name={ins_name}></a>\n'
+								f'<a name=user-content-{ins_name}></a>\n' )
+						dst.write(line)
 				p_tmp.rename(p); p_tmp = None
 			finally:
 				if p_tmp: p_tmp.unlink(missing_ok=True)
