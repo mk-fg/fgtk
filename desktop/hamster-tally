@@ -278,7 +278,7 @@ def main(args=None):
 		if not tev.end: continue # activity-span is not running right now, log later when done
 		ts1, ts2 = map(dt.datetime.fromisoformat, [tev.start, tev.end])
 		if ts2 <= dt1: continue # in case export returns old events
-		desc = tev.activity
+		desc = tev.activity.replace(';', ',') # hamster >3.02 treats commas specially #753
 		if tev.description.strip(): desc += f' - {tev.description}'
 		evs, desc = None, desc.replace('\n', ' // ')
 		if ts1.date() != ts2.date(): # starts/ends on different days, split if ts2>dt2
