@@ -207,7 +207,6 @@ Contents - links to doc section for each script here:
     - [pacman-fsck](#hdr-pacman-fsck)
     - [tar-strap](#hdr-tar-strap)
     - [can-strap](#hdr-can-strap)
-    - [curl-cache](#hdr-curl-cache)
 
 - [\[alpine\] Alpine Linux](#hdr-__alpine___alpine_linux)
 
@@ -4270,29 +4269,6 @@ suitable to boot and log into with e.g. `systemd-nspawn -bn -M buildbot-32`.
 
 [archlinux-pkgbuilds]: https://github.com/mk-fg/archlinux-pkgbuilds
 [can-base PKGBUILD]: https://github.com/mk-fg/archlinux-pkgbuilds/blob/master/can-base/PKGBUILD
-
-<a name=hdr-curl-cache></a>
-<a name=user-content-hdr-curl-cache></a>
-#### [curl-cache](arch/curl-cache)
-
-XferCommand script to use in pacman.conf for trying package downloads from
-cache-servers (partial mirrors) first, using passed mirror URL as a fallback.
-
-Example usage in pacman.conf:
-
-    XferCommand = curl-cache %o %u https://cache-mirror.local/archlinux/x86_64
-
-Can include any number of cache URL prefixes as the trailing args.
-
-Before pacman-6.0, this was easy to use by simply putting all these
-cache-mirrors at the top of the mirrorlist file, but since 6.0 pacman
-auto-disables these after hardcoded 3 errors (incl. 404), so that no longer works.
-
-See related [FS#71084] and [FS#23407] tickets for upstream status on this,
-and `-h/--help` output from script for more options.
-
-[FS#71084]: https://bugs.archlinux.org/task/71084
-[FS#23407]: https://bugs.archlinux.org/task/23407
 
 
 
