@@ -153,7 +153,7 @@ Contents - links to doc section for each script here:
         - [toogg](#hdr-toogg)
         - [totty](#hdr-totty)
         - [split](#hdr-split)
-        - [audio_split_m4b](#hdr-audio_split_m4b)
+        - [audio-split-m4b](#hdr-audio-split-m4b)
         - [video-concat-xfade](#hdr-video-concat-xfade)
         - [pick-tracks](#hdr-pick-tracks)
         - [twitch_vod_fetch](#hdr-twitch_vod_fetch)
@@ -3231,17 +3231,17 @@ Uses ffprobe (ffmpeg) to get duration and ffmpeg with "-acodec copy -vn"
 (default, changed by passing these after duration arg) to grab only audio
 chunks from the source file.
 
-<a name=hdr-audio_split_m4b></a>
-<a name=user-content-hdr-audio_split_m4b></a>
-##### [audio_split_m4b](desktop/media/audio_split_m4b)
+<a name=hdr-audio-split-m4b></a>
+<a name=user-content-hdr-audio-split-m4b></a>
+##### [audio-split-m4b](desktop/media/audio-split-m4b)
 
-Splits m4b audiobook files on chapters (list of which are encoded into
-m4b as metadata) with ffprobe/ffmpeg.
+Splits audio files (typically m4b audiobooks) on chapters using ffprobe/ffmpeg,
+list of which should be encoded into file metadata.
 
-Chapter offsets and titles are detected via `ffprobe -v 0 -show_chapters`, and
-then each gets extracted with `ffmpeg -i ... -acodec copy -ss ... -to ...`,
-producing aac files with names corresponding to metadata titles (by default, can
-be controlled with --name-format, default is `{n:03d}__{title}.aac`).
+Chapter offsets and titles are detected via `ffprobe -v 0 -show_chapters`,
+and then each gets extracted with `ffmpeg -i ... -acodec copy -ss ... -to ...`,
+producing aac files with names corresponding to metadata titles
+(by default, can be controlled with --name-format, e.g. `{n:03d}__{title}.aac`).
 
 Doesn't do any transcoding, which can easily be performed later to e.g.
 convert resulting aac files to mp3 or ogg, if necessary.

@@ -132,9 +132,8 @@ def md_check_quirks(md_lines, errs):
 
 def md_check_header_anchors(md_lines, errs, name_max_len=40):
 	'Check/return a list of header/anchor lines that needs some kind of fixing'
-	anchors, str_map = dict(), dict()
-	anchor_re = re.compile(r'<a name=((?:user-content-)?hdr(x?)-(\S+)>)</a>')
-	str_map.update((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
+	anchors, anchor_re = dict(), re.compile(r'<a name=((?:user-content-)?hdr(x?)-(\S+)>)</a>')
+	str_map = dict((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
 	def _line_prev(last_offset):
 		if k - last_offset < 0: return ''
 		n_last, line_prev = md_lines[k - last_offset]
