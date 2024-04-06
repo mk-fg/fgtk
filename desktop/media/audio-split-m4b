@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os, sys, re, math, json, subprocess as sp, datetime as dt
+import os, sys, re, math, json, time, subprocess as sp, datetime as dt
 
 
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
@@ -33,33 +33,28 @@ def td_repr( ts, ts0=None, units_max=2, units_res=None, printf=None,
 	return res
 
 
-title_subs = {
-	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
-	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
-	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }
-
-def title_subs_apply(title, _res=list()):
-	if title_subs and not _res: _res.extend((re.compile(k), v) for k,v in title_subs.items())
-	for sub_re, sub in _res: title = sub_re.sub(sub, title)
-	return title
-
-
 def main(args=None):
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Split specified m4b audio file on chapters.'
-			' Does not do any transcoding, which can be done on resulting aac files afterwards.')
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Split specified m4b audio file on chapters.
+			Does not do any transcoding, which can be done on resulting aac files afterwards.'''))
 
 	parser.add_argument('path', help='Path to source m4b file.')
 
-	parser.add_argument('-n', '--name-format',
-		metavar='str.format', default='{n:03d}__{title}.aac',
-		help='Template for output filenames as python str.format template string.'
-			' Can contain following keys: n, id, title, title_raw, a, b. Default: %(default)s.')
+	parser.add_argument('-f', '--name-format',
+		metavar='str.format', default='{n:03d}__{title}.aac', help=dd('''
+			Template for output filenames as python str.format template string.'
+			Can contain following keys: n, id, title, title_raw, a, b. Default: %(default)s.'''))
 	parser.add_argument('--name-format-raw', action='store_true',
 		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
 
-	parser.add_argument('--dry-run', action='store_true',
+	parser.add_argument('-j', '--max-parallel', type=int, metavar='n', help=dd(f'''
+		Max number of processing jobs to run in parallel.
+		Default or 0 will be set to number of available cpu threads ({os.cpu_count()} here).'''))
+	parser.add_argument('-n', '--dry-run', action='store_true',
 		help='Do not slice the file, just print output filenames.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -67,7 +62,7 @@ def main(args=None):
 	import logging
 	logging.basicConfig(
 		datefmt='%Y-%m-%d %H:%M:%S',
-		format='%(asctime)s :: %(name)s %(levelname)s :: %(message)s',
+		format='%(asctime)s %(levelname)s :: %(message)s',
 		level=logging.DEBUG if opts.debug else logging.INFO )
 	log = logging.getLogger()
 
@@ -75,25 +70,47 @@ def main(args=None):
 		' '.join(cmd := [*'ffprobe -v 0 -output_format json -show_chapters'.split(), opts.path]) )
 	meta = json.loads(sp.run(cmd, stdout=sp.PIPE, check=True).stdout)
 	meta = sorted(( adict( id=c.id, a=float(c.start_time),
-			b=float(c.end_time), title=(c.get('tags') or dict()).get('title') )
+			b=float(c.end_time), title=(c.get('tags') or dict()).get('title') or str(c.id) )
 		for c in map(adict, meta['chapters']) ), key=lambda c: c.id)
 	log.debug('Parsed %s chapters from: %s', len(meta), opts.path)
 
-	ts_fmt = '{:f}'
 	try:
 		if not all(int(c.title) == n for n, c in enumerate(meta, 1)): raise ValueError
 		log.info('Auto-labelling number-only chapters as "cXYZ"')
 		for c in meta: c.title = f'c{int(c.title):03,d}'
-	except: raise
+	except: pass
+
+	if title_fn_fmt := not opts.name_format_raw:
+		title_subs = list({
+			r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
+			r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
+			r'[\'’`]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }.items())
+		for n, (rx, s) in enumerate(title_subs): title_subs[n] = re.compile(rx), s
+		def title_fn_fmt(title):
+			for sub_re, sub in title_subs: title = sub_re.sub(sub, title)
+			return title
+
+	procs, procs_max = dict(), opts.max_parallel or os.cpu_count()
+	def _procs_cycle(n=None, cmd=None, limit=procs_max):
+		while len(procs) >= limit:
+			for k, proc in list(procs.items()):
+				if proc.poll() is None: continue
+				if procs.pop(k).wait(): raise RuntimeError(f'ffmpeg failed for chapter #{k}')
+			time.sleep(0.1)
+		if n: procs[n] = sp.Popen(cmd)
+
+	ts_fmt = '{:f}'.format
 	for n, c in enumerate(meta, 1):
 		c.update(n=n, title_raw=c.title)
-		if not opts.name_format_raw: c.title = title_subs_apply(c.title)
+		if title_fn_fmt: c.title = title_fn_fmt(c.title)
 		dst_path = opts.name_format.format(**c)
-		log.info( 'Copying slice %s - %s [ start: %s, len: %s, title: %s ] to file: %s',
-			c.a, c.b, td_repr(c.a), td_repr(c.b - c.a), c.title_raw, dst_path )
-		if not opts.dry_run:
-			sp.run([ 'ffmpeg', '-loglevel', 'warning', '-y', '-i', opts.path, '-acodec', 'copy',
-				'-ss', ts_fmt.format(c.a), '-to', ts_fmt.format(c.b), dst_path ], check=True)
+		log.info(
+			'Copying chapter #%s %s - %s [ start: %s, len: %s, title: %s ] to file: %s',
+			n, c.a, c.b, td_repr(c.a), td_repr(c.b - c.a), c.title_raw, dst_path )
+		if opts.dry_run: continue
+		_procs_cycle(n, [ 'ffmpeg', '-loglevel', 'error', '-y', '-i', opts.path,
+			'-acodec', 'copy', '-ss', ts_fmt(c.a), '-to', ts_fmt(c.b), dst_path ])
+	_procs_cycle(limit=1)
 
 	log.debug('Finished')
 
