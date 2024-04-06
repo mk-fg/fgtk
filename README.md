@@ -144,12 +144,6 @@ Contents - links to doc section for each script here:
 
     - [\[desktop/media\]](#hdr-__desktop_media__)
 
-        - [parec_from_flash](#hdr-parec_from_flash)
-        - [pa_track_history](#hdr-pa_track_history)
-        - [pa_modtoggle](#hdr-pa_modtoggle)
-        - [mpv_icy_track_history](#hdr-mpv_icy_track_history)
-        - [icy_record](#hdr-icy_record)
-        - [radio](#hdr-radio)
         - [toogg](#hdr-toogg)
         - [totty](#hdr-totty)
         - [split](#hdr-split)
@@ -3105,86 +3099,8 @@ like passing magnet: links to transmission, or processing .torrent files.
 <a name=user-content-hdr-__desktop_media__></a>
 #### [\[desktop/media\]](desktop/media)
 
-Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with (or
-process) various media files and streams.
-
-<a name=hdr-parec_from_flash></a>
-<a name=user-content-hdr-parec_from_flash></a>
-##### [parec_from_flash](desktop/media/parec_from_flash)
-
-Creates null-sink in pulseaudio and redirects browser flash plugin audio output
-stream to it, also starting "parec" and oggenc to record/encode whatever happens
-there.
-
-Can be useful to convert video to podcast if downloading flv is tricky for
-whatever reason.
-
-<a name=hdr-pa_track_history></a>
-<a name=user-content-hdr-pa_track_history></a>
-##### [pa_track_history](desktop/media/pa_track_history)
-
-Queries pa sinks for specific pid (which it can start) and writes "media.name"
-(usually track name) history, which can be used to record played track names
-from e.g. online radio stream in player-independent fashion.
-
-<a name=hdr-pa_modtoggle></a>
-<a name=user-content-hdr-pa_modtoggle></a>
-##### [pa_modtoggle](desktop/media/pa_modtoggle)
-
-Script to toggle - load or unload - pulseaudio module.
-
-For example, to enable/disable forwarding sound over network (e.g. to be played
-in vlc as rtp://224.0.0.56:9875):
-
-    % pa_modtoggle module-rtp-send \
-      source=alsa-speakers.monitor destination=224.0.0.56 port=9875
-    Loaded: [31] module-rtp-send source=alsa-speakers.monitor destination=224.0.0.56 port=9875
-
-Same exact command will unload the module (matching it by module name only), if necessary.
-
-Optional `-s/--status` flag can be used to print whether module is currently loaded.
-
-Uses/requires [pulsectl module], python.
-
-[pulsectl module]: https://github.com/mk-fg/python-pulse-control/
-
-<a name=hdr-mpv_icy_track_history></a>
-<a name=user-content-hdr-mpv_icy_track_history></a>
-##### [mpv_icy_track_history](desktop/media/mpv_icy_track_history)
-
-Same as pa_track_history above, but gets tracks when [mpv] dumps icy-\* tags
-(passed in shoutcast streams) to stdout, which should be at the start of every
-next track.
-
-More efficient and reliable than pa_track_history, but obviously mpv-specific.
-
-[mpv]: https://mpv.io/
-
-<a name=hdr-icy_record></a>
-<a name=user-content-hdr-icy_record></a>
-##### [icy_record](desktop/media/icy_record)
-
-Simple script to dump "online radio" kind of streams to a bunch of separate
-files, split when stream title (as passed in icy StreamTitle metadata) changes.
-
-By default, filenames will include timestamp of recording start, sequence
-number, timestamp of a track start and a stream title (in a filename-friendly form).
-
-Sample usage: `icy_record --debug -x https://pub5.di.fm/di_vocaltrance`
-
-Note that by default dumped streams will be in some raw adts format (as streamed
-over the net), so maybe should be converted (with e.g. ffmpeg) afterwards.
-
-This doesn't seem to be an issue for at least mp3 streams though, which work
-fine as "MPEG ADTS, layer III, v1" even in dumb hardware players.
-
-<a name=hdr-radio></a>
-<a name=user-content-hdr-radio></a>
-##### [radio](desktop/media/radio)
-
-Wrapper around mpv_icy_track_history to pick and play hard-coded radio streams
-with appropriate settings, generally simplified ui, logging and echoing what's
-being played, with a mute button (on SIGQUIT button from terminal).
+Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with
+(or process) various media files and streams.
 
 <a name=hdr-toogg></a>
 <a name=user-content-hdr-toogg></a>
