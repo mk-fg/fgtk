@@ -132,6 +132,7 @@ def md_check_quirks(md_lines, errs):
 
 def md_check_header_anchors(md_lines, errs, name_max_len=40):
 	'Check/return a list of header/anchor lines that needs some kind of fixing'
+	# gitea/forgejo/codeberg used to prefix rendered a-names with "user-content-"
 	anchors, anchor_re = dict(), re.compile(r'<a name=((?:user-content-)?hdr(x?)-(\S+)>)</a>')
 	str_map = dict((c, c) for c in string.ascii_lowercase + string.digits + '-._~')
 	def _line_prev(last_offset):
@@ -358,9 +359,7 @@ def main(argv=None):
 						if (a := anchor_map.get(n)) and not (a.exists and a.match):
 							ins_n, ins_name = a.hdr_n, a.name
 							if a.exists: continue
-						if n == ins_n: # Codeberg/gitea changes #-hrefs to "user-content-<name>"
-							dst.write( f'<a name={ins_name}></a>\n'
-								f'<a name=user-content-{ins_name}></a>\n' )
+						if n == ins_n: dst.write(f'<a name={ins_name}></a>\n')
 						dst.write(line)
 				p_tmp.rename(p); p_tmp = None
 			finally:
