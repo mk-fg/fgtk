@@ -199,11 +199,16 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 			continue
 		yield msgpath, msg
 
+def mail_header_decode(line):
+	dec = list()
+	for chunk, enc in email.header.decode_header(line):
+		if isinstance(chunk, str): dec.append(chunk); continue
+		try: dec.append(chunk.decode(enc or 'utf-8', 'replace'))
+		except: dec.append(repr(chunk)[2:-1]) # enc can be bogus too
+	return ' '.join(dec)
+
 def mail_header(msg, k):
-	decode = lambda line: ' '.join(
-		(val if isinstance(val, str) else val.decode(enc or 'utf-8', 'replace'))
-		for val, enc in email.header.decode_header(line) )
-	res, header = list(), decode(msg.get(k, ''))
+	res, header = list(), mail_header_decode(msg.get(k, ''))
 	# email.header.decode_header misses some badly-concatenated stuff
 	while True:
 		m = re.search('=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
@@ -211,7 +216,7 @@ def mail_header(msg, k):
 			res.append(header)
 			break
 		start, end = m.span(0)
-		try: m = decode(header[start:end])
+		try: m = mail_header_decode(header[start:end])
 		except email.errors.HeaderParseError: pass
 		res.extend([header[:start], m])
 		header = header[end:]
