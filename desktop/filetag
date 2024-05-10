@@ -8,7 +8,7 @@ p_err = lambda msg,*a,**k: print(msg, *a, **k, file=sys.stderr, flush=True)
 
 
 conf_path_default = '~/.filetag.ini'
-conf_example = '''
+conf_example = r'''
 ;;;; This is an example INI file with specific sections/options.
 ;; For format description and examples, see:
 ;;   https://docs.python.org/3/library/configparser.html#supported-ini-file-structure
@@ -86,21 +86,21 @@ tag_map = dict(
 		'kml': 'kml', 'sgml|dtd': 'sgml',
 		'patch|diff|pat': 'diff', r'(ba|z|k|c|fi)?sh|env|exheres-\d+|ebuild|initd?': 'sh',
 		'sql': 'sql', 'p(l|m|erl|od)|al': 'perl', 'ph(p[s45t]?|tml)': 'php',
-		'[cej]l|li?sp|rkt|sc[mh]|stk|ss': 'lisp', 'el(\.gz)?': 'el', 'ml': 'ml ocaml',
+		'[cej]l|li?sp|rkt|sc[mh]|stk|ss': 'lisp', r'el(\.gz)?': 'el', 'ml': 'ml ocaml',
 		'hs': 'haskell', 'rb': 'ruby', 'lua': 'lua', 'awk': 'awk', 'tcl': 'tcl', 'java': 'java',
 		'mk?d|markdown': 'md', 're?st': 'rst', 'te?xt': 'txt', 'log': 'log',
 		'rdf': 'rdf', 'xul': 'xul', 'po': 'po', 'csv': 'csv',
 		'f(or)?': 'fortran', 'p(as)?': 'pascal', 'dpr': 'delphi', 'ad[abs]|ad[bs].dg': 'ada',
 		'ya?ml': 'yaml', r'jso?n(\.txt)?': 'json', 'do': 'redo', 'm[k4c]|a[cm]|cmake': 'make' },
 	code_ext_suff = r'(\.(in|tpl|(src-)?bak|old|tmp|\d+'
-		'|backup|default|example|sample|dist|\w+-new)|_t)*',
-	code_shebang = '(?i)^#!((/usr/bin/env)?\s+)?(/.*/)?(?P<bin>\S+)',
+		r'|backup|default|example|sample|dist|\w+-new)|_t)*',
+	code_shebang = r'(?i)^#!((/usr/bin/env)?\s+)?(/.*/)?(?P<bin>\S+)',
 	code_bin = {
-		'lua[-\d.]': 'lua', 'php\d?': 'php',
-		'j?ruby(\d\.\d)?|rbx': 'ruby',
-		'[jp]ython(\d(\.\d+)?)?': 'py',
+		r'lua[-\d.]': 'lua', r'php\d?': 'php',
+		r'j?ruby(\d\.\d)?|rbx': 'ruby',
+		r'[jp]ython(\d(\.\d+)?)?': 'py',
 		'[gnm]?awk': 'awk',
-		'(mini)?perl(\d(\.\d+)?)?': 'perl',
+		r'(mini)?perl(\d(\.\d+)?)?': 'perl',
 		'wishx?|tcl(sh)?': 'tcl',
 		'scm|guile|clisp|racket|(sb)?cl|emacs': 'lisp',
 		'([bdo]?a|t?c|k|z)?sh': 'sh' },
