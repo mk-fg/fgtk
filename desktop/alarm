@@ -178,7 +178,7 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='Send notification at a certain future point in time.',
-		epilog='Sending SIGQUIT (Ctrl+\ [Ctrl + backslash] from'
+		epilog=r'Sending SIGQUIT (Ctrl+\ [Ctrl + backslash] from'
 			' terminal) to the process will print time left until notification to stdout.')
 
 	parser.add_argument('time', nargs='?',

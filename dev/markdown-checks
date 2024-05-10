@@ -127,7 +127,7 @@ def md_check_quirks(md_lines, errs):
 		if line.strip().startswith(r'\['):
 			# \[stuff\] at BOL translates into centered "stuff" line on codeberg
 			errs.append(adict( n=n, t='quirks',
-				s=f'Line starting with \[ can turn into some weird centered-text thing' ))
+				s=fr'Line starting with \[ can turn into some weird centered-text thing' ))
 
 
 def md_check_header_anchors(md_lines, errs, name_max_len=40):
