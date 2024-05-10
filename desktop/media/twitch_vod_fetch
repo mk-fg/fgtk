@@ -776,7 +776,7 @@ def main(args=None, conf=None):
 			Use youtube-dl output filename template.
 			Passed to youtube-dl --get-filename as the
 				--output argument to get the final file name for the video.
-			If option is used, but no format is specified, youtube-dl\s default format will be used.'''))
+			If option is used, but no format is specified, youtube-dl's default format will be used.'''))
 	group.add_argument('-a', '--aria2c-opts',
 		action='append', metavar='opts', help=dd('''
 			Extra options to store in aria2c configuration file.
@@ -803,7 +803,7 @@ def main(args=None, conf=None):
 
 	logging.basicConfig(
 		datefmt='%Y-%m-%d %H:%M:%S',
-		format='%(asctime)s :: {}%(levelname)s :: %(message)s'\
+		format='%(asctime)s :: {}%(levelname)s :: %(message)s'
 			.format('%(name)s ' if opts.debug else ''),
 		level=logging.DEBUG if opts.debug else logging.INFO )
 	logging.getLogger('charset_normalizer').setLevel(logging.WARNING) # noisy aiohttp dep
