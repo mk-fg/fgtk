@@ -2,8 +2,8 @@
 
 import itertools as it, operator as op, functools as ft
 import datetime as dt, collections as cs, pathlib as pl
-import os, sys, re, logging, math, contextlib, asyncio, signal, json, tempfile, shutil
-from asyncio import subprocess as sp
+import os, sys, re, logging, math, contextlib, signal, json, tempfile, shutil
+import asyncio, asyncio.subprocess as sp
 
 
 class LogMessage:
@@ -30,7 +30,7 @@ _td_s = dict( h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1, ms=1e-3 )
 _td_usort = lambda d: sorted(
 	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
-_td_re = re.compile('(?i)^[-+]?\s*' + ''.join(
+_td_re = re.compile(r'(?i)^[-+]?\s*' + ''.join(
 	fr'(?P<{k}>\d+(?:\.\d+)?{k}\s*)?' for k, v in
 	[*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
 
@@ -74,15 +74,20 @@ def td_repr( ts, ts0=None, units_max=2, units_res=None,
 		s -= val * unit_s
 	return ' '.join(res) if res else '<1s'
 
-class Path(pl.PosixPath): pass # subclassing pl.Path has issues
-
+async def aio_proc_close(proc, timeout=2.0):
+	try:
+		proc.terminate()
+		try: await asyncio.wait_for(proc.wait(), timeout)
+		except TimeoutError: proc.kill()
+	except OSError: pass
+	finally: await proc.wait()
 
 
 class FFProc:
 
 	proc = finished = None
 	stream_reader_limit = 32 * 2**10
-	prefix, crop_mark = '', '... ¯\_(ツ)_/¯'
+	prefix, crop_mark = '', r'... ¯\_(ツ)_/¯'
 
 	def __init__( self, loop, src, cmd,
 			stream_len=None, progress_func=None, prefix=None, limit=None, **kws ):
@@ -91,7 +96,7 @@ class FFProc:
 		self.term_width = shutil.get_terminal_size()[0] - 2
 		if prefix: self.prefix = prefix
 		self.line_max_len = self.kws['limit'] = limit or self.stream_reader_limit
-		self.cmd_repr = ' '.join((v if len(v.split()) == 1 else repr(v)) for v in cmd)
+		self.cmd_repr = ' '.join((v if len(str(v).split()) == 1 else repr(v)) for v in cmd)
 
 	async def __aenter__(self):
 		await self.run(wait=False)
@@ -130,6 +135,7 @@ class FFProc:
 			if progress_task and not progress_task.done():
 				progress_task.cancel()
 				with contextlib.suppress(asyncio.CancelledError): await progress_task
+			if self.proc.returncode is None: await aio_proc_close(self.proc)
 
 
 	async def readline(self, stream=None, sep=b'\n',
@@ -222,16 +228,26 @@ class AudioConvJob:
 		for k,v in it.chain(zip(self.__slots__, args), kws.items()): setattr(self, k, v)
 
 
-class AudioConvSubResult(Path): pass
+class AudioConvPath:
+	def __init__(self, src):
+		self.p = pl.Path(src) if not isinstance(src, AudioConvPath) else src.p
+	def __hash__(self): return hash(self.p)
+
+class AudioConvSubResult(AudioConvPath): pass
 
 class AudioConvProbed(AudioConvSubResult):
 
-	def __new__(cls, path, cleanup=False, duration=None, codec=None, label=None):
-		if isinstance(path, AudioConvProbed): return path
-		self = super().__new__(cls, path)
-		self.label = label or self.name
-		self.cleanup, self.duration, self.codec = cleanup, duration, codec
+	@classmethod
+	def ensure(cls, src):
+		self = cls(src)
+		if isinstance(src, cls):
+			for k in 'cleanup duration codec label'.split(): setattr(self, k, getattr(src, k))
 		return self
+
+	def __init__(self, src, cleanup=False, duration=None, codec=None, label=None):
+		super().__init__(src)
+		self.label = label or self.p.name
+		self.cleanup, self.duration, self.codec = cleanup, duration, codec
 
 	def _repr(self, ext=''):
 		return ( f'<{self.__class__.__name__} {self.label!r}'
@@ -240,20 +256,17 @@ class AudioConvProbed(AudioConvSubResult):
 
 class AudioConvChunk(AudioConvProbed):
 
-	def __new__(cls, path, dst, start, duration=None, codec=None, label=None):
-		self = super().__new__(cls, str(path), False, duration, codec, label)
+	def __init__(self, src, dst, start, duration=None, codec=None, label=None):
+		super().__init__(src, False, duration, codec, label)
 		self.dst, self.start = dst, start
-		return self
 
 	def _repr(self, ext=''): return super()._repr(f' ss={self.start}')
 
-class AudioConvChunkDir(Path):
+class AudioConvChunkDir(AudioConvPath):
 
-	def __new__(cls, path, src, chunks, cleanup=False):
-		self = super().__new__(cls, path)
+	def __init__(self, path, src, chunks, cleanup=False):
+		super().__init__(path)
 		self.src, self.chunks, self.cleanup = src, chunks, cleanup
-		return self
-
 
 
 class AudioConv:
@@ -297,14 +310,15 @@ class AudioConv:
 			if self.chunks_beep_task:
 				self.chunks_beep_task.cancel()
 				with contextlib.suppress(asyncio.CancelledError): await self.chunks_beep_task
-			self.chunks_beep = self.chunks_beep.unlink(missing_ok=True)
+			beep, self.chunks_beep = self.chunks_beep, None
+			if isinstance(beep, pl.Path): beep.unlink(missing_ok=True)
 		if self.chunk_dirs:
-			for p in self.chunk_dirs:
-				chunks_done = self.src_done.get(p.src, set())
-				if chunks_done != p.chunks:
+			for cd in self.chunk_dirs:
+				chunks_done = self.src_done.get(cd.src, set())
+				if chunks_done != cd.chunks:
 					for c in chunks_done: c.unlink(missing_ok=True)
-				with contextlib.suppress(OSError): p.rmdir()
-				if p.cleanup: p.src.unlink(missing_ok=True)
+				with contextlib.suppress(OSError): cd.p.rmdir()
+				if cd.cleanup: cd.src.unlink(missing_ok=True)
 			self.chunk_dirs.clear()
 
 	async def run(self):
@@ -353,7 +367,7 @@ class AudioConv:
 			try:
 				with tempfile.NamedTemporaryFile( dir=p_dir,
 						prefix='toogg.chunks-beep.', suffix='.tmp.ogg', delete=False ) as tmp:
-					p = Path(tmp.name)
+					p = pl.Path(tmp.name)
 				proc = await asyncio.create_subprocess_exec(
 					*'ffmpeg -v error -hide_banner -y -f lavfi -i'.split(),
 					"aevalsrc='sin(PI/t^3)':s=44100:d=0.4,afade=in:st=0:d=0.2,afade=out:st=0.2:d=0.2",
@@ -361,7 +375,7 @@ class AudioConv:
 				await proc.wait()
 				if proc.returncode != 0 or not p.stat().st_size > 0:
 					raise AudioConvError('ffmpeg failed to generate chunks-beep audio file')
-				p_new = Path(str(p).rsplit('.', 2)[0] + '.ogg')
+				p_new = pl.Path(str(p).rsplit('.', 2)[0] + '.ogg')
 				p.rename(p_new)
 				self.chunks_beep = p_new
 				fut.set_result(p_new)
@@ -370,11 +384,7 @@ class AudioConv:
 				fut.set_exception(err)
 				raise
 			finally:
-				if proc:
-					with contextlib.suppress(OSError): proc.terminate()
-					try: await asyncio.wait_for(proc.wait(), 2)
-					except asyncio.TimeoutError:
-						with contextlib.suppress(OSError): proc.kill()
+				if proc: await aio_proc_close(proc)
 				p.unlink(missing_ok=True)
 			return self.chunks_beep
 		elif isinstance(self.chunks_beep, asyncio.Future): return await self.chunks_beep
@@ -419,18 +429,19 @@ class AudioConv:
 
 		while True:
 			# Processing sequence:
-			#  str or Path
+			#  str or pl.Path or AudioConvPath
 			#  if str (ytdl url): [ -(conv_ytdl)-> AudioConvSubResult ]
 			#  -(conv_probe)-> AudioConvProbed
 			#  if chunks: [ -> N x AudioConvChunk ]
 			#  -(conv_src)-> dst
-			# All AudioConvSubResult types are Path subclasses with metadata.
+			# All AudioConvPath subtypes have .p path + metadata.
 
 			while src_stack and len(self.conv_jobs) < self.max_parallel:
 				src = src_stack.pop()
 				start, length = self.start, self.length
 
-				if not isinstance(src, Path):
+				if isinstance(src, pl.Path): src = AudioConvPath(src)
+				if not isinstance(src, AudioConvPath):
 					conv = self.conv_ytdl(src, self.ytdl_opts)
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
@@ -442,20 +453,20 @@ class AudioConv:
 						raise AudioConvError( 'Cannot split src'
 							f' into chunks due to unknown duration: {src}' )
 					src_chunks, chunk_len = list(), self.chunks
-					dst_name = dst_name_format(src.name)
+					dst_name = dst_name_format(src.p.name)
 					start, length = start or 0, length or src.duration
 					length_total = length
 					dst_dir = ( dst_name if not self.inplace
-						else (str(src.parent.resolve()).strip(os.sep) + f'/{dst_name}') )
+						else (str(src.p.parent.resolve()).strip(os.sep) + f'/{dst_name}') )
 					dst_dir = AudioConvChunkDir(dst_dir, src, src_chunks, cleanup=src.cleanup)
-					dst_dir.mkdir(parents=True, exist_ok=True)
+					dst_dir.p.mkdir(parents=True, exist_ok=True)
 					while length > 0:
 						n = len(src_chunks) + 1
 						dst_file = self.chunks_fn_tpl.format(n=n, name=dst_name)
 						src_chunks.append(AudioConvChunk(
-							src, dst_dir / dst_file, start, min(chunk_len, length), src.codec, dst_file ))
+							src, dst_dir.p / dst_file, start, min(chunk_len, length), src.codec, dst_file ))
 						start += chunk_len; length -= chunk_len
-					dst_dir.chunks = set(Path(c.dst) for c in dst_dir.chunks)
+					dst_dir.chunks = set(AudioConvPath(c.dst) for c in dst_dir.chunks)
 					self.chunk_dirs.add(dst_dir)
 					src_stack.extend(reversed(src_chunks))
 					print( f'Splitting {src.label!r}: {len(src_chunks)} chunks'
@@ -465,12 +476,12 @@ class AudioConv:
 					if isinstance(src, AudioConvChunk):
 						dst, start, length = src.dst, src.start, src.duration
 					else:
-						dst_base = dst_name_format(src.name)
-						if self.inplace: dst_base = str(src.parent.resolve()).strip(os.sep) + f'/{dst_base}'
-						dst = Path(dst_base + '.ogg')
-						if dst.resolve() == src.resolve():
+						dst_base = dst_name_format(src.p.name)
+						if self.inplace: dst_base = str(src.p.parent.resolve()).strip(os.sep) + f'/{dst_base}'
+						dst = AudioConvPath(dst_base + '.ogg')
+						if dst.resolve() == src.p.resolve():
 							for n in it.chain([''], range(2**30)):
-								dst = Path(f'{dst_base}.copy{n}.ogg')
+								dst = AudioConvPath(f'{dst_base}.copy{n}.ogg')
 								if not dst.exists(): break
 							else: raise AudioConvError(f'Failed to generate copy-path for dst: {dst}')
 						dst.parent.mkdir(parents=True, exist_ok=True)
@@ -492,7 +503,7 @@ class AudioConv:
 					' dst-file={!r}) for src: {!r}', int(dst_sub), dst_path, src )
 				await self.conv_cleanup(res.task_id, raise_errors=True)
 				if dst_sub: src_stack.append(dst_path)
-				else: self.src_done.setdefault(res.src, set()).add(Path(dst_path))
+				else: self.src_done.setdefault(res.src, set()).add(AudioConvPath(dst_path))
 
 		if not self.probe:
 			assert len(self.src_done) == len(self.src_list)
@@ -502,10 +513,10 @@ class AudioConv:
 			for src, dst_set in self.src_done.items():
 				if len(dst_set) == 1:
 					dst = list(dst_set)[0]
-					if dst.resolve() == src.resolve(): src = None
+					if dst.resolve() == src.p.resolve(): src = None
 					elif ( self.inplace
-							and dst.parent.resolve() == src.parent.resolve()
-							and src.name.lower().endswith('.ogg') ):
+							and dst.parent.resolve() == src.p.parent.resolve()
+							and src.p.name.lower().endswith('.ogg') ):
 						os.rename(dst, src) # special case for .copyX.ogg files in the same dir
 						src = None
 				if src: os.unlink(src)
@@ -542,13 +553,13 @@ class AudioConv:
 			await proc.finished
 		if not src or '\n' in src:
 			raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-		src = Path(src)
-		if len(src.name) > self.conv_ytdl_name_len_max:
-			src = src.parent / self.conv_ytdl_fix_name(src.name, self.conv_ytdl_name_len_max)
-		src_part = Path(src.parent) / f'{src.name}.part'
+		src = AudioConvPath(src)
+		if len(src.p.name) > self.conv_ytdl_name_len_max:
+			src = src.p.parent / self.conv_ytdl_fix_name(src.p.name, self.conv_ytdl_name_len_max)
+		src_part = AudioConvPath(src.p.parent) / f'{src.p.name}.part'
 		ytdl_opts.extend(['-o', str(src).replace('%', '%%')])
 		try:
-			async with YTDLProc( self.loop, src.name,
+			async with YTDLProc( self.loop, src.p.name,
 					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
 				await proc.finished
 		finally: src_part.unlink(missing_ok=True)
@@ -556,12 +567,11 @@ class AudioConv:
 
 
 	async def conv_probe(self, src, start=None, length=None):
-		src_name, src_cleanup = src.name, isinstance(src, AudioConvSubResult)
+		src_name, src_cleanup = src.p.name, isinstance(src, AudioConvSubResult)
 		async with FFProc( self.loop, src_name,
 				[ 'ffprobe', '-v', 'fatal', '-show_entries',
 					'stream=codec_type,codec_name,channels,duration:format=duration',
-					'-print_format', 'json', str(src) ],
-				stdout=sp.PIPE ) as proc:
+					'-print_format', 'json', str(src.p) ], stdout=sp.PIPE ) as proc:
 			src_info = (await proc.stdout.read()).decode()
 			await proc.finished
 			src_duration = src_codec = src_chans = None
@@ -587,16 +597,11 @@ class AudioConv:
 
 
 	async def conv_src(self, src, dst, start=None, length=None):
-		paths = {dst}
-		src = AudioConvProbed(src)
-		if src.cleanup: paths.add(src)
+		paths, src = {dst}, AudioConvProbed.ensure(src)
+		if src.cleanup: paths.add(src.p)
+		def tmp_file(ext): paths.add(p := f'{dst}.{ext}'); return p
 
-		def tmp_file(ext):
-			p = f'{dst}.{ext}'
-			paths.add(p)
-			return p
-
-		job = AudioConvJob(src.label, src, dst, start, length, tmp_file)
+		job = AudioConvJob(src.label, src.p, dst, start, length, tmp_file)
 		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y -progress pipe:1'.split()
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, job.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
@@ -781,7 +786,7 @@ def main(args=None):
 	src_list = list()
 	for src in opts.src:
 		if ':' in src and not os.path.exists(src): src_list.append(src); continue
-		try: src_list.append(Path(src).resolve(strict=True))
+		try: src_list.append(pl.Path(src).resolve(strict=True))
 		except FileNotFoundError:
 			parser.error(f'Source path is missing or inaccessible: {src}')
 
@@ -792,16 +797,15 @@ def main(args=None):
 			name_filter = list(ft.partial(fnmatch.fnmatch, pat=pat) for pat in name_filter)
 		src_list, src_list_old = list(), src_list
 		for p in src_list_old:
-			if not isinstance(p, Path):
+			if not isinstance(p, pl.Path):
 				parser.error(f'Source arg is not a path (with --inplace specified): {p}')
 			if p.is_dir():
-				for root, dirs, files, dir_fd in os.fwalk(p, follow_symlinks=True):
-					root = Path(root)
-					for p in files:
-						if name_filter and not any(m(p) for m in name_filter):
-							log.debug('Skipping file due to fnmatch=false: {}', root / p)
+				for root, dirs, files in p.walk(follow_symlinks=True):
+					for fn in files:
+						if name_filter and not any(m(fn) for m in name_filter):
+							log.debug('Skipping file due to fnmatch=false: {}', root / fn)
 							continue
-						src_list.append(root / p)
+						src_list.append(pl.Path(root / fn))
 			else: src_list.append(p)
 		os.chdir(opts.dst_dir or '/')
 	elif opts.dst_dir: os.chdir(opts.dst_dir)
