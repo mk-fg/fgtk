@@ -128,9 +128,8 @@ class FFProc:
 			if progress_task: await progress_task
 			if self.proc.returncode != 0:
 				cmd_repr = '' if not self.cmd_repr else f': {self.cmd_repr}'
-				raise AudioConvError(
-					f'Command for src {self.src!r} exited with'
-						f' non-zero status ({self.proc.returncode}){cmd_repr}' )
+				raise AudioConvError( f'Command for src {self.src!r}'
+					f' exited with non-zero status ({self.proc.returncode}){cmd_repr}' )
 		finally:
 			if progress_task and not progress_task.done():
 				progress_task.cancel()
@@ -141,11 +140,11 @@ class FFProc:
 	async def readline(self, stream=None, sep=b'\n',
 			decode_enc='utf-8', decode_err='replace', crop_to=8 * 2**10, crop_mark=None):
 		'''Similar to StreamReader.readline, but also:
-				- Decodes all lines (with `decode_enc` and `decode_err` opts).
-				- Lines that are longer than `crop_to` (after decoding)
-					are cropped to that limit and `crop_mark` is appended.
-				- StreamReader `limit` is not an issue -
-					line tails above that are cropped-out and discarded.'''
+			- Decodes all lines (with `decode_enc` and `decode_err` opts).
+			- Lines that are longer than `crop_to` (after decoding)
+				are cropped to that limit and `crop_mark` is appended.
+			- StreamReader `limit` is not an issue -
+				line tails above that are cropped-out and discarded.'''
 		if not stream: stream = self.stdout
 		elif isinstance(stream, str): stream = getattr(self, stream)
 		assert crop_to <= self.line_max_len
@@ -231,7 +230,6 @@ class AudioConvJob:
 class AudioConvPath:
 	def __init__(self, src):
 		self.p = pl.Path(src) if not isinstance(src, AudioConvPath) else src.p
-	def __hash__(self): return hash(self.p)
 
 class AudioConvSubResult(AudioConvPath): pass
 
@@ -292,16 +290,15 @@ class AudioConv:
 		self.status_lines, self.chunk_dirs = dict(), set()
 
 	async def __aenter__(self):
-		self.conv_jobs = cs.OrderedDict()
+		self.conv_jobs = dict()
 		self.status_line_task = self.chunks_beep_task = None
-		self.success, self.src_done, self.exit_sig = False, cs.OrderedDict(), None
+		self.success, self.src_done, self.exit_sig = False, dict(), None
 		if self.chunks_beep and not self.probe:
 			self.chunks_beep_task = self.loop.create_task(self.chunks_beep_path())
 		return self
 
 	async def __aexit__(self, *err):
-		if self.conv_jobs:
-			await self.conv_cleanup()
+		if self.conv_jobs: await self.conv_cleanup()
 		if self.status_line_task:
 			self.status_line_task.cancel()
 			await self.status_line_task
@@ -314,11 +311,11 @@ class AudioConv:
 			if isinstance(beep, pl.Path): beep.unlink(missing_ok=True)
 		if self.chunk_dirs:
 			for cd in self.chunk_dirs:
-				chunks_done = self.src_done.get(cd.src, set())
-				if chunks_done != cd.chunks:
-					for c in chunks_done: c.unlink(missing_ok=True)
+				chunk_files = set(chunk.dst for chunk in cd.chunks)
+				if chunk_files != self.src_done.get(cd.src.p, set()):
+					for p in chunk_files: p.unlink(missing_ok=True)
 				with contextlib.suppress(OSError): cd.p.rmdir()
-				if cd.cleanup: cd.src.unlink(missing_ok=True)
+				if cd.cleanup: cd.src.p.unlink(missing_ok=True)
 			self.chunk_dirs.clear()
 
 	async def run(self):
@@ -395,11 +392,11 @@ class AudioConv:
 	async def conv_cleanup(self, *task_ids, raise_errors=False):
 		if not task_ids: task_ids = list(self.conv_jobs.keys())
 		for task_id in task_ids:
-			conv = self.conv_jobs.pop(task_id)
-			conv.cancel()
+			(conv := self.conv_jobs.pop(task_id)).cancel()
 			try: await conv
 			except asyncio.CancelledError: pass
 			except Exception as err:
+				if self.exit_sig: log.debug('conv-job interrupted/failed: {}', err_fmt(err)); continue
 				log.exception('conv-job failed: {}', err_fmt(err))
 				if raise_errors: raise
 
@@ -423,12 +420,13 @@ class AudioConv:
 		for name in sorted(map(os.path.basename, self.src_list)):
 			dst_name_map[dst_name_format(name)].append(name)
 		for dst_name, name_list in dst_name_map.items():
+			nf = str(len(str(len(name_list))))
 			for n, name in enumerate(name_list, 1):
 				dst_name_aliases[name] = ( dst_name
-					if len(name_list) == 1 else f'{dst_name}.{n:02d}' )
+					if len(name_list) == 1 else ('{}.{:0'+nf+'d}').format(dst_name, n) )
 
 		while True:
-			# Processing sequence:
+			# Processing sequence via src_stack:
 			#  str or pl.Path or AudioConvPath
 			#  if str (ytdl url): [ -(conv_ytdl)-> AudioConvSubResult ]
 			#  -(conv_probe)-> AudioConvProbed
@@ -437,12 +435,10 @@ class AudioConv:
 			# All AudioConvPath subtypes have .p path + metadata.
 
 			while src_stack and len(self.conv_jobs) < self.max_parallel:
-				src = src_stack.pop()
-				start, length = self.start, self.length
+				src, start, length = src_stack.pop(), self.start, self.length
 
 				if isinstance(src, pl.Path): src = AudioConvPath(src)
-				if not isinstance(src, AudioConvPath):
-					conv = self.conv_ytdl(src, self.ytdl_opts)
+				if not isinstance(src, AudioConvPath): conv = self.conv_ytdl(src, self.ytdl_opts)
 				elif not isinstance(src, AudioConvProbed):
 					conv = self.conv_probe(src, self.start, self.length)
 				elif self.probe:
@@ -466,7 +462,6 @@ class AudioConv:
 						src_chunks.append(AudioConvChunk(
 							src, dst_dir.p / dst_file, start, min(chunk_len, length), src.codec, dst_file ))
 						start += chunk_len; length -= chunk_len
-					dst_dir.chunks = set(AudioConvPath(c.dst) for c in dst_dir.chunks)
 					self.chunk_dirs.add(dst_dir)
 					src_stack.extend(reversed(src_chunks))
 					print( f'Splitting {src.label!r}: {len(src_chunks)} chunks'
@@ -490,24 +485,23 @@ class AudioConv:
 				if conv:
 					log.debug('Scheduling new conv-job for src: {}', src)
 					conv = self.loop.create_task(conv)
-					conv.src, conv.task_id = src, id(conv)
+					conv.task_src, conv.task_id = src, id(conv)
 					self.conv_jobs[conv.task_id] = conv
 			if not self.conv_jobs: break
 
 			done, pending = await asyncio.wait(
 				self.conv_jobs.values(), return_when=asyncio.FIRST_COMPLETED )
 			for res in done:
-				dst_path = await res
-				dst_sub = isinstance(dst_path, AudioConvSubResult)
+				dst_sub = isinstance(dst_path := await res, AudioConvSubResult)
 				log.debug( 'conv-job done (sub={},'
 					' dst-file={!r}) for src: {!r}', int(dst_sub), dst_path, src )
 				await self.conv_cleanup(res.task_id, raise_errors=True)
-				if dst_sub: src_stack.append(dst_path)
-				else: self.src_done.setdefault(res.src, set()).add(AudioConvPath(dst_path))
+				if dst_sub: src_stack.append(dst_path) # keep processing it
+				else: self.src_done.setdefault(res.task_src.p, set()).add(dst_path)
 
 		if not self.probe:
 			assert len(self.src_done) == len(self.src_list)
-			assert all((self.src_done[p.src] == p.chunks) for p in self.chunk_dirs)
+			assert all((len(self.src_done[cd.src.p]) == len(cd.chunks)) for cd in self.chunk_dirs)
 
 		if self.remove_src:
 			for src, dst_set in self.src_done.items():
@@ -737,6 +731,7 @@ def main(args=None):
 		Will be split on spaces, unless option is used multiple times.'''))
 	group.add_argument('-n', '--name', metavar='tpl', help=dd('''
 		Template to rename resulting file(s), instead of default "{name}.ogg".
+		Names are deduplicated with number-suffix when multiple sources are used.
 		Substituted keys: "name" - source filename without extension.'''))
 
 	group = parser.add_argument_group('Volume normalization')
@@ -785,10 +780,9 @@ def main(args=None):
 
 	src_list = list()
 	for src in opts.src:
-		if ':' in src and not os.path.exists(src): src_list.append(src); continue
+		if ':' in src and not os.path.exists(src): src_list.append(src); continue # urls
 		try: src_list.append(pl.Path(src).resolve(strict=True))
-		except FileNotFoundError:
-			parser.error(f'Source path is missing or inaccessible: {src}')
+		except FileNotFoundError: parser.error(f'Source path missing/inaccessible: {src}')
 
 	if opts.inplace:
 		name_filter = opts.inplace_name_filter or list()
