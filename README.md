@@ -3322,20 +3322,26 @@ Example uses:
 
     % streamdump twitch.tv/user dump
     % streamdump --hls-live-edge=8 -- 720p,best youtube.com/... dump
+    % streamdump +3h youtube.com/... dump
 
 Will create "dump.000.mp4", "dump.001.mp4" and so on for each stream restart.
 
 Automatically waits for streams and uses a bunch of other options that are
-generally good defaults, printed in -h/--help output.
+generally good defaults, printed in `-h/--help` output.\
 Detects (via youtube-dl, and exits on) "stream ended" live_status values
 for YouTube streams to avoid dumping whole stream from the beginning
-(e.g. on retries), as streamlink seem to do in these cases.
+(e.g. on retries), as streamlink seem to do in these cases.\
+Has `+<systemd-timespan>` first argument to stop after specified time
+(using same [systemd.time format] as e.g. `systemd-analyze timespan`).
 
 Intended use is for unreliable streams which go down and back up again in a
-minute or few, or working around whatever streamlink quirks and fatal errors.
+minute or few, or working around whatever streamlink quirks and fatal errors,
+which are very common.
+
 Should never stop trying on its own, unless failing to start immediately.
 
 [streamlink]: https://github.com/streamlink/streamlink
+[systemd.time format]: https://man.archlinux.org/man/systemd.time.7
 
 <a name=hdr-image-compact></a>
 <a name=user-content-hdr-image-compact></a>

@@ -8,11 +8,12 @@ yt_check_interval=3m
 
 bin=$(basename $0)
 usage() {
-	echo >&2 "Usage: $bin [-x|--dry-run] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
+	echo >&2 "Usage: $bin [+runtime] [-x|--dry-run] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
 	echo >&2
 	echo >&2 "Examples:"
 	echo >&2 "  $bin twitch.tv/userX userX-stream1"
-	echo >&2 "  $bin --hls-live-edge=8 -- 720p,720p60,480p,best youtube.com/... vid.mp4"
+	echo >&2 "  $bin +2h30m twitch.tv/userX userX-stream1"
+	echo >&2 "  $bin +3h --hls-live-edge=8 -- 720p,720p60,480p,best youtube.com/... vid.mp4"
 	echo >&2 "  $bin -x youtube.com/... somevideo"
 	echo >&2
 	echo >&2 "Wrapper for 'streamlink ... url fmt -fo dump.mp4' to retry it endlessly"
@@ -20,6 +21,7 @@ usage() {
 	echo >&2 "Creates sequential filenames like: dump.000.mp4 dump.001.mp4 dump.002.mp4 ..."
 	echo >&2 "Detects YT links and runs youtube-dl to check/abort on post_live/was_live status."
 	echo >&2 "Example use-case: stream that ends 'cleanly' due to tech issues and restarts in 1min."
+	echo >&2 "Optional +<systemd-timespan> prefix-arg will stop the process after specified time."
 	echo >&2
 	echo >&2 "Default formats (overidden via cli): $slink_fmt"
 	echo >&2 -e "Default streamlink options (always added to ones on cli):\n  ${slink_opts[@]}"
@@ -29,6 +31,12 @@ usage() {
 [[ -z "$1" || "$1" = -h || "$1" = --help ]] && usage
 grep -Pq '(^| -)(h|-help)( |$)' <<< "$*" && usage
 set -eo pipefail
+
+[[ "$1" != +X ]] && cg_run= || { cg_run=t; shift; }
+[[ -n "$cg_run" || "${1:0:1}" != + ]] || { # re-run within .scope with a timer to stop it
+	u=streamdump.$$
+	systemd-run -qGd --user --on-active="${1:1}" -u $u -- systemctl --user stop $u.scope
+	shift; systemd-run -qGd --user --slice-inherit --scope -u $u -- "$0" +X "$@"; exit; }
 
 [[ "$1" != -x && "$1" != --dry-run ]] && dry_run= || { dry_run=t; shift; }
 
