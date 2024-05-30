@@ -14,8 +14,9 @@ _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
 	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
 
 def ts_parse(ts_str, ts_now=None):
-	ts, ts_str = None, ts_str.replace('_', ' ')
 	if ts_now is None: ts_now = dt.datetime.now()
+	try: ts = ts_now + dt.timedelta(seconds=float(ts_str))
+	except: ts = None
 	if not ts and ( # short time offset like "3d 5h"
 			(m := _td_re.search(ts_str)) and any(m.groups()) ):
 		delta = list()
@@ -112,7 +113,7 @@ def main(argv=None):
 		help='Countdown timer update interval, in seconds. Default: %(default)ss')
 	opts = parser.parse_args()
 
-	ts_str = ' '.join(opts.time_spec)
+	ts_str = ' '.join(' '.join(opts.time_spec).replace('_', ' ').split())
 	ts_now = dt.datetime.now().replace(microsecond=0)
 	ts = ts_parse(ts_str, ts_now)
 	if ts < ts_now:
