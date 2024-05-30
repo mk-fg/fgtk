@@ -231,6 +231,9 @@ class AudioConvPath:
 	def __init__(self, src):
 		self.p = pl.Path(src) if not isinstance(src, AudioConvPath) else src.p
 
+	def _repr(self, ext=''): return f'<{self.__class__.__name__} [ {self.p} ]>'
+	def __repr__(self): return self._repr()
+
 class AudioConvSubResult(AudioConvPath): pass
 
 class AudioConvProbed(AudioConvSubResult):
@@ -250,7 +253,6 @@ class AudioConvProbed(AudioConvSubResult):
 	def _repr(self, ext=''):
 		return ( f'<{self.__class__.__name__} {self.label!r}'
 			f' [del={self.cleanup} d={self.duration} c={self.codec}{ext}]>' )
-	def __repr__(self): return self._repr()
 
 class AudioConvChunk(AudioConvProbed):
 
@@ -473,11 +475,9 @@ class AudioConv:
 					else:
 						dst_base = dst_name_format(src.p.name)
 						if self.inplace: dst_base = str(src.p.parent.resolve()).strip(os.sep) + f'/{dst_base}'
-						dst = AudioConvPath(dst_base + '.ogg')
-						if dst.resolve() == src.p.resolve():
+						if (dst := pl.Path(f'{dst_base}.ogg')).resolve() == src.p.resolve():
 							for n in it.chain([''], range(2**30)):
-								dst = AudioConvPath(f'{dst_base}.copy{n}.ogg')
-								if not dst.exists(): break
+								if not (dst := f'{dst_base}.copy{n}.ogg').exists(): break
 							else: raise AudioConvError(f'Failed to generate copy-path for dst: {dst}')
 						dst.parent.mkdir(parents=True, exist_ok=True)
 					conv = self.conv_src(src, dst, start, length)
@@ -513,7 +513,7 @@ class AudioConv:
 							and src.p.name.lower().endswith('.ogg') ):
 						os.rename(dst, src) # special case for .copyX.ogg files in the same dir
 						src = None
-				if src: os.unlink(src)
+				if src: src.p.unlink()
 
 		self.success = True
 
