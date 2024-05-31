@@ -1,20 +1,20 @@
 #!/bin/bash
 
-slink_opts=(
-	--retry-streams 120 --retry-open 99999
+slink_opts=( --retry-streams 120 --retry-open 3
 	--twitch-disable-hosting --twitch-disable-ads --twitch-disable-reruns )
 slink_fmt=720p,720p60,480p,best
 yt_check_interval=3m
+yt_check_interval_done=10m
+dry_run=
 
 bin=$(basename $0)
 usage() {
-	echo >&2 "Usage: $bin [+runtime] [-x|--dry-run] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
+	echo >&2 "Usage: $bin [+runtime] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
 	echo >&2
 	echo >&2 "Examples:"
 	echo >&2 "  $bin twitch.tv/userX userX-stream1"
 	echo >&2 "  $bin +2h30m twitch.tv/userX userX-stream1"
 	echo >&2 "  $bin +3h --hls-live-edge=8 -- 720p,720p60,480p,best youtube.com/... vid.mp4"
-	echo >&2 "  $bin -x youtube.com/... somevideo"
 	echo >&2
 	echo >&2 "Wrapper for 'streamlink ... url fmt -fo dump.mp4' to retry it endlessly"
 	echo >&2 "  with new (indexed) filename when/if it quits for whatever reason."
@@ -32,14 +32,6 @@ usage() {
 grep -Pq '(^| -)(h|-help)( |$)' <<< "$*" && usage
 set -eo pipefail
 
-[[ "$1" != +X ]] && cg_run= || { cg_run=t; shift; }
-[[ -n "$cg_run" || "${1:0:1}" != + ]] || { # re-run within .scope with a timer to stop it
-	u=streamdump.$$
-	systemd-run -qGd --user --on-active="${1:1}" -u $u -- systemctl --user stop $u.scope
-	shift; systemd-run -qGd --user --slice-inherit --scope -u $u -- "$0" +X "$@"; exit; }
-
-[[ "$1" != -x && "$1" != --dry-run ]] && dry_run= || { dry_run=t; shift; }
-
 fmt=$slink_fmt cmd=( streamlink "${slink_opts[@]}" )
 while [[ "$#" -gt 2 ]]; do
 	arg=$1; shift
@@ -51,6 +43,14 @@ url=$1 fn=$2
 [[ "$fn" =~ ^(.*)\.([^.]+)$ ]] \
 	&& { fn_base=${BASH_REMATCH[1]}; fn_ext=${BASH_REMATCH[2]}; } \
 	|| { fn_base=$fn; fn_ext=mp4; }
+scope=streamdump.$(echo -n "$fn" | md5sum | cut -b-5)
+
+# Main loop always runs within known scope, to be able to terminate it cleanly
+[[ "$1" != +X ]] && shift || {
+	systemctl -q --user stop "$scope".scope &>/dev/null ||:
+	[[ "${1:0:1}" != + ]] || { shift; systemd-run -qGd --user \
+		--on-active="${1:1}" -u $scope -- systemctl --user stop $scope.scope; }
+	systemd-run -qGd --user --slice-inherit --scope -u $scope -- "$0" +X "$@"; exit; }
 
 n=0
 while :; do
@@ -59,25 +59,47 @@ while :; do
 	[[ -z "$dry_run" ]] || { echo "${fn_cmd[@]}"; exit; }
 	echo "[$bin] --- dump [$n]: $url -> $fn $fmt"
 
-	[[ ! "${url,,}" =~ ^(https?://)?((www\.|m\.)?youtube\.com|youtu\.be)/ ]] || {
-		echo "[$bin] Detecting/waiting-for youtube stream-live status ($yt_check_interval checks)..."
-		while :; do
-			{ out= out_err= err=
-					IFS=$'\n' read -r -d '' out_err; IFS=$'\n' read -r -d '' out
-					IFS=$'\n' read -r -d '' err; } < <(( printf '\0%s\0%d\0' \
-				"$(youtube-dl -O live_status "$url")" "$?" 1>&2 ) 2>&1)
-			[[ "$err" -eq 0 ]] || {
-				[[ ! "$out_err" =~ 'This live event will begin in' ]] || {
-					echo "[$bin] Running streamlink to wait for stream: $out_err"; break; }
-				echo "[$bin] Failed to get live-status, will retry in $yt_check_interval: $out_err"
-				sleep "$yt_check_interval"; continue; }
-			[[ "$out" != post_live && "$out" != was_live ]] || {
-				# YT streams with this status get re-downloaded from the start - must be skipped
-				sleep "$yt_check_interval"; continue; }
-			break # not an ended stream - all-good to dump
-		done; }
+	stream_type=generic
+	[[ ! "${url,,}" =~ ^(https?://)?((www\.|m\.)?youtube\.com|youtu\.be)/ ]] || stream_type=yt
 
-	eval -- "${fn_cmd[@]}" ||:
+	if [[ "$stream_type" != yt ]]; then eval -- "${fn_cmd[@]}" ||: # simple case for non-yt
+	else
+		# With YouTube streamlink will re-download whole thing for ended stream
+		# It will also fail in all sorts of random ways on non-started streams, hence separate checks
+		st= st_err= st_code=
+		set_stream_status() {
+			{ st= st_err= st_code=
+					IFS=$'\n' read -r -d '' st_err; IFS=$'\n' read -r -d '' st
+					IFS=$'\n' read -r -d '' st_code; } < <(( printf '\0%s\0%d\0' \
+				"$(youtube-dl -O live_status "$url")" "$?" 1>&2 ) 2>&1); }
+
+		echo "[$bin] Detecting/waiting-for youtube stream-live status ($yt_check_interval checks)..."
+		while :; do # for ended streams, script should be stuck in this loop forever
+			set_stream_status
+			[[ "$st_code" -eq 0 ]] || {
+				[[ ! "$st_err" =~ 'This live event will begin in' ]] || {
+					echo "[$bin] Running streamlink to wait for stream: $st_err"; break; }
+				echo "[$bin] Failed to get live-status, will retry in $yt_check_interval: $st_err"
+				sleep "$yt_check_interval"; continue; }
+			[[ "$st" != post_live && "$st" != was_live ]] || {
+				echo "[$bin] Detected post_live/was_live stream status"
+				sleep "$yt_check_interval"; continue; }
+			echo "[$bin] Stream status [ $st ] - starting streamlink dump..."
+			break # not an ended stream - all-good to dump
+		done
+
+		u=$scope.slink
+		( while :; do # inf-loop to stop streamlink scope when stream is marked as ended
+			stop=; sleep "$yt_check_interval_done"; set_stream_status
+			if [[ "$st_code" -ne 0 ]]
+				then [[ ! "$st_err" =~ 'This live event has ended' ]] || stop=t
+				else [[ "$st" != post_live && "$st" != was_live ]] || stop=t; fi
+			[[ -z "$stop" ]] || systemctl --user stop $u.scope; done ) &
+		stream_end_check_pid=$!
+		systemd-run -qGd --user --slice-inherit --scope -u $u -- "${fn_cmd[@]}" ||:
+		kill "$stream_end_check_pid" &>/dev/null && wait ||:
+	fi
+
 	n=$(( $n + 1 ))
 	sleep 1
 done
