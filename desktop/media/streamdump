@@ -32,6 +32,8 @@ usage() {
 grep -Pq '(^| -)(h|-help)( |$)' <<< "$*" && usage
 set -eo pipefail
 
+[[ "${1:0:1}" != + ]] || { cg_arg=${1:1}; shift; }
+
 fmt=$slink_fmt cmd=( streamlink "${slink_opts[@]}" )
 while [[ "$#" -gt 2 ]]; do
 	arg=$1; shift
@@ -46,10 +48,12 @@ url=$1 fn=$2
 scope=streamdump.$(echo -n "$fn" | md5sum | cut -b-5)
 
 # Main loop always runs within known scope, to be able to terminate it cleanly
-[[ "$1" != +X ]] && shift || {
+[[ "$cg_arg" = X ]] || {
 	systemctl -q --user stop "$scope".scope &>/dev/null ||:
-	[[ "${1:0:1}" != + ]] || { shift; systemd-run -qGd --user \
-		--on-active="${1:1}" -u $scope -- systemctl --user stop $scope.scope; }
+	[[ -z "$cg_arg" ]] || {
+		systemctl -q --user stop "$scope".timer &>/dev/null ||:
+		systemd-run -qGd --user \
+			--on-active="$cg_arg" -u $scope -- systemctl --user stop $scope.scope; }
 	systemd-run -qGd --user --slice-inherit --scope -u $scope -- "$0" +X "$@"; exit; }
 
 n=0
