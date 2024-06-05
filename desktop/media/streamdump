@@ -5,11 +5,10 @@ slink_opts=( --retry-streams 120 --retry-open 3
 slink_fmt=720p,720p60,480p,best
 yt_check_interval=3m
 yt_check_interval_done=10m
-dry_run=
 
 bin=$(basename $0)
 usage() {
-	echo >&2 "Usage: $bin [+runtime] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
+	echo >&2 "Usage: $bin [+runtime] [-x|--dry-run] [streamlink-opts] [-- [fmt]] url dump[.mp4]"
 	echo >&2
 	echo >&2 "Examples:"
 	echo >&2 "  $bin twitch.tv/userX userX-stream1"
@@ -33,6 +32,7 @@ grep -Pq '(^| -)(h|-help)( |$)' <<< "$*" && usage
 set -eo pipefail
 
 [[ "${1:0:1}" != + ]] || { cg_arg=${1:1}; shift; }
+[[ "$1" != -x && "$1" != --dry-run ]] && dry_run= || { dry_run=t; shift; }
 
 fmt=$slink_fmt cmd=( streamlink "${slink_opts[@]}" )
 while [[ "$#" -gt 2 ]]; do
