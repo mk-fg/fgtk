@@ -1,0 +1,111 @@
+#!/usr/bin/env python
+
+import os, sys, re, pathlib as pl, itertools as it
+
+
+def fn_split(fn):
+	'Simpler and more consistent version of stem/suffixes kinda like in pl.Path'
+	if hasattr(fn, 'name'): fn = fn.name
+	if '.' not in fn: return fn, list()
+	fn = fn.split('.')
+	return fn[0], fn[1:]
+
+def fn_trunc(fn_stem, fn_suffixes=list(), max_len=240, el='…'):
+	'Return name composed from stem/suffixes truncated to max_len'
+	stem, suff = fn_stem, '.'.join(fn_suffixes)
+	stem_n, suff_n = len(stem.encode()), len(suff.encode())
+	while stem and len(stem.encode()) + suff_n + 1 > max_len:
+		stem = stem[:-1].strip()
+	if stem: return f'{stem}{el}.{suff}'
+
+	stem, suff_list = fn_stem, fn_suffixes
+	while any(suff_list) and len(suff.encode()) + stem_n + 1 > max_len:
+		s_len, sn = sorted((len(v.encode()), n) for n, v in enumerate(suff_list))[-1]
+		if s_len: suff_list[sn] = suff_list[sn][:-1]
+		suff = '.'.join(suff_list).strip()
+	if suff: return f'{stem}.{el}{suff}'
+
+	suff = '.'.join(fn_suffixes)
+	while (stem or suff) and len(f'{stem}.{suff}'.encode()) > max_len:
+		stem, suff = stem and stem[:-1].strip(), suff and suff[1:].strip()
+	if not stem and not suff: raise ValueError([fn_stem, fn_suffixes])
+	return f'{stem}{el}.{suff}'
+
+def run_renames(p_top, max_len=240, ignore_suff=False, dry_run=True, quiet=False):
+	'Walk (depth-first) and report/rename all long file/dir names under specified path'
+	max_len_src, max_len = max_len, max_len - len((el := '…').encode())
+	n, len_repr = 0, lambda fn: ( f'{len(fn):,d} B'
+		if len(fn) == len(fn.encode()) else f'{len(fn)}c/{len(fn.encode()):,d}B' )
+	fnt = lambda st, suff=list(), ml=max_len: fn_trunc(st, suff, max_len=ml, el=el)
+
+	for root, dirs, files in p_top.walk(top_down=False):
+		for name in it.chain(dirs, files):
+			if len(name.encode()) <= max_len_src: continue
+			name_src, p = name, root / name
+
+			if not ignore_suff:
+				st, suffs = fn_split(p)
+				if sum(map(len, suffs)) > len(st):
+					st, suffs = p.name.rsplit('.', 1); suffs = [suffs]
+			else: st, suffs = p.name, list()
+			name = fnt(st, suffs)
+
+			if not quiet:
+				if n: print()
+				n += 1
+				print(
+					f'Rename #{n} [ {len_repr(name_src)} -> {len_repr(name)} ] in [ {p.parent} ]:'
+					f'\n    {p.name!r}\n -> {name!r}')
+
+			if name_src == name: raise ValueError(p)
+			m, dst = 0, root / name
+			while dst.exists() and m <= 99:
+				m += 1; name = fnt(st, suffs, ml=max_len - 4)
+				name += f'.{m:02d}'; dst = root / name
+			if m >= 99: raise ValueError(p)
+			if len(name.encode()) > max_len_src: raise ValueError(p)
+			if not dry_run: p.rename(dst)
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Truncate file/dir names recursively under a specified dir(s).
+			Uses unicode names to the best of its ability,
+				but should fallback to splitting bytes if name doesn't decode properly.
+			Default operation mode is dry-run, just to be safe -
+				use -x/--execute flag to actually make script rename stuff.
+			Any error should stop the script with a traceback.'''))
+
+	parser.add_argument('paths', nargs='*', help=dd('''
+		Directories to scan for long names to truncate.
+		Both files and directories are renamed, in what should be a safe order.'''))
+
+	parser.add_argument('-l', '--max-len', metavar='bytes', type=int, default=240, help=dd('''
+		Max length for all resulting file/directory names, in bytes.
+		For sanity reasons, should be >50B. Default: %(default)s'''))
+	parser.add_argument('--ignore-suffixes', action='store_true', help=dd('''
+		Do not try to truncate names preserving dot-separated suffixes/extensions.
+		Default is to try truncating suffix-less "name" part first, then suffixes.'''))
+	parser.add_argument('-q', '--quiet', action='store_true', help=dd('''
+		Do not print (potential) renames to stdout.'''))
+	parser.add_argument('-x', '--execute', action='store_true', help=dd('''
+		Actually rename files/dirs that are printed without this and -q/--quiet flags.
+		Script runs in dry-run mode only finding/printing long names by default.'''))
+
+	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+	if opts.max_len < 50: parser.error('-l/--max-len should be >50B')
+	paths = list(pl.Path(p) for p in opts.paths)
+	for p in paths: p.resolve(strict=True) # make sure all paths exist first
+	for p in paths: run_renames( p, ignore_suff=opts.ignore_suffixes,
+		max_len=opts.max_len, quiet=opts.quiet, dry_run=not opts.execute )
+
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)

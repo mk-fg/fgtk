@@ -28,6 +28,7 @@ Contents - links to doc section for each script here:
         - [docker-ln](#hdr-docker-ln)
         - [fast-disk-wipe](#hdr-fast-disk-wipe)
         - [lsx](#hdr-lsx)
+        - [trunc-filenames](#hdr-trunc-filenames)
 
     - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
@@ -475,6 +476,26 @@ For example, to print `-a/--adjacent` files (w/ some ordering):
 ```
 
 Simple python script with no extra dependencies.
+
+<a name=hdr-trunc-filenames></a>
+<a name=user-content-hdr-trunc-filenames></a>
+##### [trunc-filenames](trunc-filenames)
+
+Python script to recursively shorten (truncate) file/directory names
+under specified byte-limit, respecting typical filename format, suffixes
+and multibyte encodings.
+
+Useful for transferring files from NTFS and similar filesystems
+to POSIX/linux ones that have strict 255-byte filename-length limit,
+where non-english paths can get very long fast bytewise.
+
+Truncates names decoded to unicode characters to avoid splitting those,
+has somewhat complicated rules for how to truncate filenames with dot-suffixes
+and multiple dots in them, disambiguates rename destinations on conflicts,
+always keeps longest filename possible under `-l/--max-len` limit,
+inserts unicode-ellipsis (…) character to indicate where truncation was made.
+
+Defaults to dry-run mode for safety, only printing all renames to be made.
 
 
 
