@@ -507,13 +507,13 @@ class AudioConv:
 			for src, dst_set in self.src_done.items():
 				if len(dst_set) == 1:
 					dst = list(dst_set)[0]
-					if dst.resolve() == src.p.resolve(): src = None
+					if dst.resolve() == src.resolve(): src = None
 					elif ( self.inplace
-							and dst.parent.resolve() == src.p.parent.resolve()
-							and src.p.name.lower().endswith('.ogg') ):
+							and dst.parent.resolve() == src.parent.resolve()
+							and src.name.lower().endswith('.ogg') ):
 						os.rename(dst, src) # special case for .copyX.ogg files in the same dir
 						src = None
-				if src: src.p.unlink()
+				if src: src.unlink()
 
 		self.success = True
 
