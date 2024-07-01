@@ -198,11 +198,11 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 				prop_sub = None
 
 		if props is not None:
-			m = re.search(r'^(\s+)-> (Exec\w+):$', line)
+			m = re.search(r'^(\s+)(->|→) (Exec\w+):$', line)
 			if m:
-				prop_sub = m.group(2), m.group(1), dict()
+				prop_sub = m.group(3), m.group(1), dict()
 				continue
-			m = re.search(r'^(\s+)-> Job (\d+):$', line)
+			m = re.search(r'^(\s+)(->|→) Job (\d+):$', line)
 			if m:
 				prop_sub = None, m.group(1), dict() # discarded later
 				continue
@@ -220,13 +220,13 @@ def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 			props = None
 
 		if props is None:
-			m = re.search(r'^-> Job (\d+):$', line)
+			m = re.search(r'^(->|→) Job (\d+):$', line)
 			if m: unit, props = None, dict() # discarded later
 
 		if props is None:
-			m = re.search(r'^-> Unit (.*):$', line)
+			m = re.search(r'^(->|→) Unit (.*):$', line)
 			if not m: raise ValueError(repr(line))
-			unit, props = m.group(1), dict()
+			unit, props = m.group(2), dict()
 			unit = re.sub( br'\\x([\da-f]{2})',
 				lambda m: chr(int(m.group(1), 16)).encode(),
 				unit.encode() ).decode()
