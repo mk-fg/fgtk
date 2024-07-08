@@ -536,8 +536,8 @@ class AudioConv:
 
 	async def conv_ytdl(self, url, ytdl_opts=None):
 		if not ytdl_opts:
-			# Preference should be for something with vorbis-encoded audio,
-			#  but audio-only downloads are very slow for whatever reason (caching? throttling?)
+			# Preference should be for something with vorbis-encoded audio, but YT
+			#  audio-only dls can also be slower due to throttling, or give 403 errors
 			ytdl_opts = ['-f', '43/18/480p/bestaudio[ext=ogg]/bestaudio[ext=webm]/bestaudio/best']
 		ytdl_opts = ['youtube-dl', '--newline'] + ytdl_opts
 		async with YTDLProc( self.loop, url,
@@ -547,16 +547,16 @@ class AudioConv:
 			await proc.finished
 		if not src or '\n' in src:
 			raise AudioConvError(f'Weird output from "youtube-dl --get-filename": {src!r}')
-		src = AudioConvPath(src)
-		if len(src.p.name) > self.conv_ytdl_name_len_max:
-			src = src.p.parent / self.conv_ytdl_fix_name(src.p.name, self.conv_ytdl_name_len_max)
-		src_part = AudioConvPath(src.p.parent) / f'{src.p.name}.part'
-		ytdl_opts.extend(['-o', str(src).replace('%', '%%')])
+		src = pl.Path(src)
+		if len(src.name) > self.conv_ytdl_name_len_max:
+			src = src.parent / self.conv_ytdl_fix_name(src.name, self.conv_ytdl_name_len_max)
+		src, src_part = AudioConvPath(src), AudioConvPath(src.parent / f'{src.name}.part')
+		ytdl_opts.extend(['-o', str(src.p).replace('%', '%%')])
 		try:
 			async with YTDLProc( self.loop, src.p.name,
 					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
 				await proc.finished
-		finally: src_part.unlink(missing_ok=True)
+		finally: src_part.p.unlink(missing_ok=True)
 		return AudioConvSubResult(src)
 
 
