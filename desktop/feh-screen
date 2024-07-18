@@ -3,7 +3,7 @@
 import os, sys, re, signal, tempfile, time, subprocess as sp
 
 feh_cmd_default = (
-	'feh-ext -ZNxsrd. --on-last-slide hold -B checks'.split()
+	'feh-ext -ZNxsrd. --conversion-timeout 10 --on-last-slide hold -B checks'.split()
 	+ ['--info', 'echo -e " [ %t %wx%h %Ppx %SB %z%% ]\\n"'] )
 
 
