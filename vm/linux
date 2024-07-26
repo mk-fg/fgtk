@@ -298,8 +298,9 @@ qemu_opts=(
 	-cpu host
 	-smp "$smp"
 	-m "$mem"
-	"${video[@]}"
+	-device virtio-balloon,deflate-on-oom=on
 
+	"${video[@]}"
 	"${net_opts[@]}"
 	"${root_opts[@]}"
 
