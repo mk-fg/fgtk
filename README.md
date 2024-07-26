@@ -3864,12 +3864,15 @@ or other code mirrors listed at the top somewhere).
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
 
-These include starting simple vde-based networking, syncing kernels and
-initramfs images out of vms (where needed), doing suspend/resume for running vms
-easily, etc.
+These include starting simple vde-based networking, helper daemons like
+virtiofsd or vhost-user-gpu, syncing kernels and initramfs images out
+of vms (where needed), doing suspend/resume for running vms easily, etc.
 
-Don't really need abstractions libvirt (and stuff using it) provide on top of
-qemu/kvm, as latter already have decent enough interfaces to work with.
+Don't really need abstractions that libvirt (and stuff using it) provide on top
+of qemu/kvm, as latter already have decent enough CLI to work with.
+
+Scripts use cgrc tool from this repo to manage systemd user scopes for helpers,
+under shared vm.slice.
 
 
 

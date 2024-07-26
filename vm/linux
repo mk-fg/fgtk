@@ -6,13 +6,13 @@
 
 script_info='Generic linux distro VM with grub and partitioned disk img.'
 ins=1 smp=4 mem=4G nets=1 root_opts_file=()
-img=() dev_ro=() dev=() vfs= efi= iso=
+img=() dev_ro=() dev=() efi= iso=
 
 read -r -d '' script_usage <<EOF
 Usage: $0 [-r|--root] [ {-i|--instance} $ins ]
 	[ {-t|--smp} $smp ] [ {-m|--mem} $mem ] [ {-o|--opts} file.opts ]
 	[ {-q|--img} file.qcow2 +] [ {-s|--dev-ro} disk.img +] [ {-d|--dev} /dev/xyz +]
-	[ {-v|--vfs} dir ] [ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
+	[ {-e|--efi} [copy of /usr/share/ovmf/x64/OVMF_VARS.fd].bin ]
 	[ --iso image.iso ] [-c|--console] [-g|--gtk] [-nX|--nets=X]
 	[ { d | dump } [path] | { r | restore } [-i] [path] | { m | monitor } | { n | net-only } ]
 (note: ordering of options matters)
@@ -35,65 +35,42 @@ Cheatsheet to init new cloudimg:
 	 && touch /mnt/nbd/etc/cloud/cloud-init.disabled
 	 && rm -rf /mnt/nbd/etc/systemd/system/cloud-init.target.wants
 	 && umount /mnt/nbd && qemu-nbd -d /dev/nbd0
-
-Cheatsheet for Virtio-FS (to use -v/--vfs option and "vfs" dir):
-
-	-- Initial install to qemu-img
-		qemu-img create -f qcow2 install.qcow2 10G
-		./ubuntu --img install.qcow2 --iso ubuntu/ubuntu-18.04-desktop-amd64.iso
-
-	-- ubuntu 19.X - add virtiofs.ko to initramfs (likely not needed later)
-		# needs kernel-5.4+ - https://kernel.ubuntu.com/~kernel-ppa/mainline/
-		echo virtiofs >> /etc/initramfs-tools/modules
-		update-initramfs -k all -c
-
-	-- rsync from nbd to shared fs/mount
-		modprobe nbd
-		qemu-nbd -c /dev/nbd0 install.qcow2
-		fsck -a /dev/nbd0p1
-		mount /dev/nbd0p1 /mnt/nbd
-
-		rsync -HaAxXS /mnt/nbd/. vfs/
-		: > vfs/etc/fstab && rm vfs/swapfile
-
-		umount /mnt/nbd
-		qemu-nbd -d /dev/nbd0
-
-	-- $(awk '!/^#/ {p=0} /^### virtiofsd/ {
-		p=1; sub(/^#+ ?/,"")} p {sub(/^#+ ?/,"  "); print}' $0)
-
-	-- run from virtio-fs: $0 --vfs vfs
 EOF
 script_info_ext=${script_info_ext//	/  }
 
-video=( -vga std )
-# video=( -display vnc 0 )
-
 [[ "$1" = -r || "$1" = --root || "$UID" -ne 0 ]] || {
 	echo >&2 "ERROR: running as uid=0 but no -r/--root specified"; exit 1; }
-
 [[ "$1" = -i || "$1" = --instance ]] && { ins=$2; shift; shift; }
+
+video=( -vga std ) video_vhost=
+root=$(dirname "$BASH_SOURCE")
+dst="$root"/live.dump
+telnet_port=$(( 8200 + $ins ))
+vde_mac_tail=54:00:12:34:$(( 60 + $ins )) # missing first (even) octet
+sock_path="$XDG_RUNTIME_DIR"/vm
+dump_inc= restore= net_only=
+
 [[ "$1" = -t || "$1" = --smp ]] && { smp=$2; shift; shift; }
 [[ "$1" = -m || "$1" = --mem ]] && { mem=$2; shift; shift; }
 [[ "$1" = -o || "$1" = --opts ]] && { declare -a root_opts_file="($(<"$2"))"; shift; shift; }
 while [[ "$1" = -q || "$1" = --img ]]; do img+=( "$(realpath "$2")" ); shift; shift; done
 while [[ "$1" = -s || "$1" = --dev-ro ]]; do dev_ro+=( "$(realpath "$2")" ); shift; shift; done
 while [[ "$1" = -d || "$1" = --dev ]]; do dev+=( "$(realpath "$2")" ); shift; shift; done
-[[ "$1" = -v || "$1" = --vfs ]] && { vfs=$(realpath "$2"); shift; shift; }
 [[ "$1" = -e || "$1" = --efi ]] && { efi=$(realpath "$2"); shift; shift; }
 [[ "$1" = --iso ]] && { iso=$(realpath "$2"); shift; shift; }
-[[ "$1" = -c || "$1" = --console ]] && { video=( -nographic ); shift; }
+[[ "$1" = -c || "$1" = --console ]] && { video=( -vga none -nographic ); shift; }
 [[ "$1" = -g || "$1" = --gtk ]] && {
-	video=( -vga virtio -display gtk,gl=on ); shift; }
+	# https://www.kraxel.org/blog/2019/09/display-devices-in-qemu/
+	video=( -display gtk,gl=on,show-tabs=on -device virtio-gpu-gl ); shift; }
+	## vhost-user-gpu-pci - not sure if this might only be for vfio
+	# video_vhost="$sock_path"/gpu.sock video=(
+	# 	-display gtk,gl=on,zoom-to-fit=on
+	# 	-chardev socket,id=vgpu,path="$video_vhost"
+	# 	-device vhost-user-gpu-pci,chardev=vgpu ); shift; }
 [[ "$1" = -n2 || "$1" = --nets=2 ]] && { nets=2; shift; }
 [[ "$1" = -n3 || "$1" = --nets=3 ]] && { nets=3; shift; }
 
-root=$(dirname "$BASH_SOURCE")
-dst="$root"/live.dump
-telnet_port=$(( 8200 + $ins ))
-vde_mac_tail=54:00:12:34:$(( 60 + $ins )) # missing first (even) octet
-vde_path="$HOME"/tmp/vde
-dump_inc= restore= net_only=
+bsleep() { read -rt "$1" <> <(:) || :; } # built-in sleep alternative
 
 
 ### Management and one-off commands
@@ -123,7 +100,7 @@ EOF
 				ls -lah "$dst"
 				exit 0
 			}
-			sleep 1 || exit 1
+			bsleep 1 || exit 1
 		done ;;
 
 	r|restore)
@@ -157,73 +134,46 @@ modprobe kvm-amd 2>/dev/null || (( err += 1 ))
 [[ "$err" -lt 2 ]] || { echo >&2 "ERROR: failed to probe intel/amd kvm modules"; exit 1; }
 
 
-### VDE
+### VDE helpers
 # Tend to break terminal for some reason, hence &>/dev/null on start
 
 pid1=$$ pid2=$$
-mkdir -p "$vde_path"
+mkdir -pm700 "$sock_path"
 
 cgrc -rcu vde && {
-	rm -rf "$vde_path"/link.sock
+	rm -rf "$sock_path"/link.sock
 	cgrc -ru vde vm -- vde_switch \
-		-s "$vde_path"/link.sock -M "$vde_path"/mgmt.sock &>/dev/null &
+		-s "$sock_path"/link.sock -M "$sock_path"/mgmt.sock &>/dev/null &
 	pid1=$!; }
 
-for n in {0..50}; do
-	[[ -e "$vde_path"/link.sock ]] && break
-	sleep 0.1
-done
+for n in {0..50}; do [[ -e "$sock_path"/link.sock ]] && break; bsleep 0.1; done
 [[ $n -lt 50 ]] || { echo >&2 "ERROR: vde switch startup failed"; exit 1; }
 
 cgrc -rcu vde-tap && {
 	cgrc -ru vde-tap vm -- \
-		sudo -n vde_plug2tap -s "$vde_path"/link.sock vde &>/dev/null &
+		sudo -n vde_plug2tap -s "$sock_path"/link.sock vde &>/dev/null &
 	pid2=$!; }
 
 # Add a little delay if vde stuff is just starting
-kill -0 "$pid1" "$pid2" || { echo >&2 "ERROR: vde failed to start"; exit 1; }
 for n in {0..5}; do
+	kill -0 "$pid1" "$pid2" || { echo >&2 "ERROR: vde pids failed to start"; exit 1; }
 	err=t; ip link show vde &>/dev/null && { err=; break; }
-	sleep 0.1
+	bsleep 0.1
 done
 [[ -z "$err" ]] || { echo >&2 "ERROR: vde failed to start (no iface)"; exit 1; }
 
 [[ -n "$net_only" ]] && exit 0
 
 
-### virtiofsd daemon - has to run as root:
-# # uid=root is to allow access to local uid=root files
-# # Note: SETLKW (fcntl wait for lock) is still not supported.
-# #   Workaround: bind-mount files that require it from /run, see this script for example .service.
-#
-# /usr/lib/qemu/virtiofsd -f \
-#  -o source=$(realpath fs) --socket-path=vfs.sock \
-#  -o cache=always,writeback,xattr,flock,posix_lock &
-# chmod 666 vfs.sock
+### Use separate vhost-user-gpu helper process
 
-## setup-setlkw-hacks.service workaround for SETLKW in dpkg and such
-# [Unit]
-# DefaultDependencies=no
-# After=local-fs.target run.mount
-#
-# # Anything requiring SETLKW on these files should be listed here
-# Before=systemd-sysusers.service
-#
-# [Service]
-# Type=oneshot
-# RemainAfterExit=yes
-#
-# ExecStart=bash -c '\
-# 	mkdir -m700 /run/setlkw ; cd /run/setlkw ;\
-# 	touch dpkg-triggers ; mount -o bind dpkg-triggers /var/lib/dpkg/triggers/Lock ;\
-# 	touch passwd /etc/.pwd.lock ; mount -o bind passwd /etc/.pwd.lock ;\
-# '
-# ExecStop=bash -c '\
-# 	umount -l /var/lib/dpkg/triggers/Lock /etc/.pwd.lock ;\
-# '
-#
-# [Install]
-# WantedBy=multi-user.target
+[[ -z "$video_vhost" ]] || {
+	cgrc -rcu vhost-gpu && cgrc -ru vhost-gpu vm -- \
+		/usr/lib/qemu/vhost-user-gpu --virgl -s "$video_vhost" &
+	for n in {0..50}; do [[ -e "$video_vhost" ]] && break; bsleep 0.1; done
+	[[ $n -lt 50 ]] || cgrc -rcu vhost-gpu || {
+		echo >&2 "ERROR: vhost-user-gpu startup failed"; exit 1; } }
+
 
 
 ### img/iso options
@@ -255,23 +205,6 @@ add_disk() {
 	-drive if=pflash,format=raw,readonly,file=/usr/share/ovmf/x64/OVMF_CODE.fd
 	-drive if=pflash,format=raw,file="$efi" )
 
-[[ -z "$vfs" ]] || {
-	root_opts+=(
-		-chardev socket,id=vfs-root,path="$vfs".sock
-		-device vhost-user-fs-pci,queue-size=1024,chardev=vfs-root,tag=vio-root,cache-size=2G
-		-object memory-backend-file,id=vfs-mem,size=4G,mem-path=/dev/shm,share=on
-		-numa node,memdev=vfs-mem )
-	root_opts_str="${root_opts[*]}"
-	# -o/--opts file can be used as alternative to these hardcoded opts
-	# Fix access to these: chmod a+r fs/boot/*
-	[[ $root_opts_str =~ (^|\ )-kernel\  ]] \
-		|| root_opts+=( -kernel "$vfs"/boot/vmlinuz )
-	[[ $root_opts_str =~ (^|\ )-append\  ]] \
-		|| root_opts+=( -initrd "$vfs"/boot/initrd.img )
-	[[ $root_opts_str =~ (^|\ )-initrd\  ]] \
-		|| root_opts+=( -append 'root=vio-root rootfstype=virtiofs rw quiet splash' )
-}
-
 
 ### net options
 
@@ -279,7 +212,7 @@ mac_head=52 net_opts=()
 while [[ "$nets" -gt 0 ]]; do
 	net_opts+=(
 		-device virtio-net-pci,mac=${mac_head}:${vde_mac_tail},netdev=vde_${mac_head}
-		-netdev vde,sock="$vde_path"/link.sock,id=vde_${mac_head} )
+		-netdev vde,sock="$sock_path"/link.sock,id=vde_${mac_head} )
 	(( nets -= 1 )); (( mac_head += 2 ))
 done
 
