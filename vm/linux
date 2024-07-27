@@ -61,7 +61,7 @@ while [[ "$1" = -d || "$1" = --dev ]]; do dev+=( "$(realpath "$2")" ); shift; sh
 [[ "$1" = -c || "$1" = --console ]] && { video=( -vga none -nographic ); shift; }
 [[ "$1" = -g || "$1" = --gtk ]] && {
 	# https://www.kraxel.org/blog/2019/09/display-devices-in-qemu/
-	video=( -display gtk,gl=on,show-tabs=on -device virtio-gpu-gl ); shift; }
+	video=( -display gtk,gl=on -device virtio-gpu-gl ); shift; }
 	## vhost-user-gpu-pci - not sure if this might only be for vfio
 	# video_vhost="$sock_path"/gpu.sock video=(
 	# 	-display gtk,gl=on,zoom-to-fit=on
