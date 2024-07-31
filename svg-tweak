@@ -1,0 +1,104 @@
+#!/usr/bin/env python
+
+import pathlib as pl, contextlib as cl
+import os, sys, tempfile, stat, errno, re
+
+
+p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True) or 1
+
+@cl.contextmanager
+def safe_replacement(path, *open_args, mode=None, xattrs=None, **open_kws):
+	'Context to atomically create/replace file-path in-place unless errors are raised'
+	path, xattrs = str(path), None
+	if mode is None:
+		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
+		except FileNotFoundError: pass
+	if xattrs is None and getattr(os, 'getxattr', None): # MacOS
+		try: xattrs = dict((k, os.getxattr(path, k)) for k in os.listxattr(path))
+		except FileNotFoundError: pass
+		except OSError as err:
+			if err.errno != errno.ENOTSUP: raise
+	open_kws.update( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	if not open_args: open_kws.setdefault('mode', 'w')
+	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			if xattrs:
+				for k, v in xattrs.items(): os.setxattr(path, k, v)
+			yield tmp
+			if not tmp.closed: tmp.flush()
+			try: os.fdatasync(tmp)
+			except AttributeError: pass # MacOS
+			os.rename(tmp.name, path)
+		finally:
+			try: os.unlink(tmp.name)
+			except FileNotFoundError: pass
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(usage='%(prog)s [options] [svg-file]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Tool to change something in an SVG file, according to specified options.'''))
+	parser.add_argument('svg_file', nargs='?', help=dd('''
+		SVG file to process and change in-place.
+		Default is to read SVG from stdin stream and
+			output resulting one to stdout, same as if "-" is specified.'''))
+
+	parser.add_argument('-b', '--add-bg-color', metavar='color',
+		help=dd('''
+			Add background rectangle element with a solid color,
+				removing transparency from the image that way.
+			Useful to control when image viewers use backgrounds that
+				make transparent SVG illegible, e.g. white-on-white or black-on-black.
+			Pre-existing background elements are NOT removed, if any - only adds stuff.'''))
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	@cl.contextmanager
+	def in_file(path):
+		if not path or path == '-': return (yield sys.stdin)
+		with open(path) as src: yield src
+
+	@cl.contextmanager
+	def out_func(path):
+		if not path or path == '-': return (yield lambda s,end='': print(s, end=end))
+		else: dst_file = safe_replacement(path)
+		with dst_file as dst: yield lambda s,end='': print(s, file=dst, end=end)
+
+	with in_file(opts.svg_file) as src, out_func(opts.svg_file) as out:
+		out_buff = list()
+
+		def src_read(a=0, n=10 * 2**20, tail=True):
+			offset, out, buff = 0, list(), list(reversed(out_buff))
+			while buff and n:
+				if not (chunk := buff.pop()): continue
+				offset += (m := len(chunk))
+				if m <= a: a -= m; continue
+				else: a, chunk = 0, chunk[a:]
+				n -= len(chunk := chunk[:n])
+				out.append(chunk)
+			if n and tail: out.append(src.read(n))
+			return ''.join(out)
+
+		if opts.add_bg_color:
+			s = src_read(n=50 * 2**10)
+			for rx in r'</\s*defs\s*>', r'<\s*defs\s*/>', r'<svg\s*.*?>':
+				if not (m := re.search(rx, s)): continue
+				out_buff[:] = [ s[:m.end()],
+					f'<rect fill="{opts.add_bg_color}" width="100%" height="100%" />',
+					s[m.end():], src_read(len(s), tail=False) ]
+				break
+			else: return p_err('Failed to find <defs> or <svg> at the start of the file')
+
+		out_buff.append(src_read(sum(len(c) for c in out_buff)))
+		for s in out_buff: out(s)
+
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)

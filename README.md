@@ -107,6 +107,7 @@ Contents - links to doc section for each script here:
         - [sys-wait](#hdr-sys-wait)
         - [yt-feed-to-email](#hdr-yt-feed-to-email)
         - [color-b64sort](#hdr-color-b64sort)
+        - [svg-tweak](#hdr-svg-tweak)
 
 - [\[dev\] Dev tools](#hdr-__dev___dev_tools)
 
@@ -2354,6 +2355,17 @@ but using pypy instead of cpython can speed that up a lot.
 
 ["i want hue"]: https://medialab.github.io/iwanthue/
 [colormath]: https://python-colormath.readthedocs.io/
+
+<a name=hdr-svg-tweak></a>
+##### [svg-tweak](svg-tweak)
+
+Small python script to change SVG files, according to specified options.
+
+For example, if an image viewer displays transparent SVG with back text on a black
+background (as one solid-black rectangle), `svg-tweak -b '#fff' file.svg` can fix it.
+
+SVGs are XML text, so aren't difficult to change like that, but old unix cli tools
+like sed and awk aren't great for that, and tend to require a bunch of extra logic.
 
 
 
