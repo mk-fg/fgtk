@@ -108,6 +108,7 @@ Contents - links to doc section for each script here:
         - [yt-feed-to-email](#hdr-yt-feed-to-email)
         - [color-b64sort](#hdr-color-b64sort)
         - [svg-tweak](#hdr-svg-tweak)
+        - [unix-socket-links](#hdr-unix-socket-links)
 
 - [\[dev\] Dev tools](#hdr-__dev___dev_tools)
 
@@ -2366,6 +2367,20 @@ background (as one solid-black rectangle), `svg-tweak -b '#fff' file.svg` can fi
 
 SVGs are XML text, so aren't difficult to change like that, but old unix cli tools
 like sed and awk aren't great for that, and tend to require a bunch of extra logic.
+
+<a name=hdr-unix-socket-links></a>
+##### [unix-socket-links](unix-socket-links)
+
+Python wrapper around `ss -xp` output, processing disjointed unix socket
+connection table (with pids on only one end of those), into more readable
+aggregated `<socket-path> :: <listening-pid> :: <clients...>` list.
+
+A bit like running `ss -x`, and then `ss -xp src <socket>` on each socket from
+the left column there, aggregating all client pids into a single per-socket line.
+
+Use-case is to quickly check what's connected to some socket path you don't
+remember exactly, by printing a short list of all of them with listener/client
+pids, when some connection hangs or ssh-agent asks for fido2 touch-check unexpectedly.
 
 
 
