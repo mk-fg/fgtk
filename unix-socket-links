@@ -1,9 +1,78 @@
 #!/usr/bin/env python
 
-import os, sys, subprocess as sp, collections as cs
+import os, sys, re, subprocess as sp, collections as cs
+
+
+conn_t = cs.namedtuple('Conn', 'src srcn dst dstn st rx tx pids')
+
+def parse_pids(pids) -> [str]:
+	'Parse ss "users:(...)" info to a list of "<cmd>[<pid>]" strings'
+	if not (m := re.fullmatch(r'users:\((.+)\)', pids)): return [pids]
+	pid_list, m = list(), m[1]
+	while m:
+		if not (mp := re.match(r',*\("([^"]+)",pid=(\d+),fd=\d+\)', m)): break
+		m = m[mp.end():]
+		pid_list.append(f'{mp[1]}[{mp[2]}]')
+	return pid_list if not m else [pids]
+
+def parse_ss_conns(out) -> [conn_t]:
+	'Parse "ss -xp" output string into normalized connection info tuples'
+	out = list(reversed(out.strip('\r\n').splitlines()))
+	err_cmp_fmt, sx = '  Actual:   {}\n  Expected: {}'.format, lambda s: ' '.join(s.split())
+	if (hdr := sx(hdr_raw := out.pop())) != ( hdr_chk :=
+			'Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process' ):
+		raise ValueError(f'Unrecognized "ss" output format:\n{err_cmp_fmt(hdr, hdr_chk)}')
+	a, s, b = hdr_raw.partition(':'); n_src = len(a)
+	a, s, b = b.partition(':'); n_dst = len(a)
+	conns, ep = list(), lambda s: '' if s == '*' else s
+	for line in out:
+		src, s1, dst = line[:n_src], line[n_src], line[n_src+1:]
+		dst, s2, pids = dst[:n_dst], dst[n_dst], dst[n_dst+1:]
+		if not (s1 == s2 == ' '):
+			raise ValueError(f'ss line format error:\n{err_cmp_fmt(line, hdr_raw)}')
+		netid, st, q_rx, q_tx, src = src.split(None, 4)
+		if netid not in ['u_str', 'u_dgr', 'u_seq']:
+			raise ValueError(f'ss socket type error:\n  {sx(line)}')
+		srcn, dst = dst.split(None, 1)
+		if dst != '*':
+			raise ValueError(f'Unexpected "Peer Address" value: {dst!r}\n  {sx(line)}')
+		dstn, pids = (pids[0], '') if len(pids := pids.strip().split(None, 1)) == 1 else pids
+		conns.append(conn := conn_t( ep(src), srcn := int(srcn),
+			ep(dst), dstn := int(dstn), st, int(q_rx), int(q_tx), parse_pids(pids) ))
+	return conns
+
+
+conn_pids_t = cs.namedtuple('ConnPIDs', 'c s st')
+
+def format_status(conn, peer) -> str:
+	'Detect/format any odd conn-status info as suffix, empty str otherwise'
+	st = [conn.st]
+	if peer.st != conn.st: st[0] += f'-{peer.st}'
+	if st[0] == 'ESTAB': st[0] = ''
+	for k in 'rx', 'tx':
+		if v := getattr(conn, k): st.append(f's{k}={v}')
+		if v := getattr(peer, k): st.append(f'c{k}={v}')
+	return (st := ' '.join(st).strip()) and f' [ {st} ]'
+
+def parse_sock_pids(conns) -> {str: [conn_pids_t]}:
+	'Parse/format connection states, link pids into {socket: src -> dst tuples}'
+	sock_pids, srcn_idx = cs.defaultdict(list), cs.defaultdict(list)
+	for conn in conns: srcn_idx[conn.srcn].append(conn)
+	for conn in sorted(conns, key=lambda c: c.src):
+		if not conn.src: continue
+		if not conn.dstn and conn.st == 'LISTEN': continue
+		# Can be a cycle: @xxx/bus/systemd/bus-system [10896 -> 8141]
+		#   connected to /run/dbus/system_bus_socket [8141 -> 10896]
+		peers = srcn_idx[conn.dstn].copy()
+		if not peers: peers = [conn_t('', conn.dstn, '', 0, conn.st, 0, 0, '')]
+		for p in peers:
+			if not (p.pids or conn.pids): continue
+			sock_pids[conn.src].append(conn_pids_t(p.pids, conn.pids, format_status(conn, p)))
+	return sock_pids
+
 
 def main(args=None):
-	import argparse, textwrap, re
+	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(usage='%(prog)s [options] [socket]',
@@ -22,83 +91,23 @@ def main(args=None):
 		Multiple pids can still be printed on one line, if connection fd is shared.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if sock := opts.socket: sock = os.path.realpath(sock, strict=True)
-	ss = sp.run( ['ss', '-xp'], check=True,
-		stdout=sp.PIPE ).stdout.decode('utf-8', 'backslashreplace')
-	ss_out = list(reversed(ss.strip('\r\n').splitlines()))
-	conn_t = cs.namedtuple('Conn', 'src srcn dst dstn st rx tx pid')
-	err_cmp_fmt, sx = '  Actual:   {}\n  Expected: {}'.format, lambda s: ' '.join(s.split())
+	if (sock_filter := opts.socket) and os.path.exists(sock_filter):
+		sock_filter = os.path.realpath(sock_filter, strict=True)
 
-	if (hdr := sx(hdr_raw := ss_out.pop())) != ( hdr_chk :=
-			'Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process' ):
-		parser.error(f'Unrecognized "ss" output format:\n{err_cmp_fmt(hdr, hdr_chk)}')
-
-	a, s, b = hdr_raw.partition(':'); n_src = len(a)
-	a, s, b = b.partition(':'); n_dst = len(a)
-	ss, ep = list(), lambda s: '' if s == '*' else s
-	srcn_idx = cs.defaultdict(list)
-	for line in ss_out:
-		src, s1, dst = line[:n_src], line[n_src], line[n_src+1:]
-		dst, s2, pid = dst[:n_dst], dst[n_dst], dst[n_dst+1:]
-		if not (s1 == s2 == ' '):
-			raise ValueError(f'ss line format error:\n{err_cmp_fmt(line, hdr_raw)}')
-		netid, st, q_rx, q_tx, src = src.split(None, 4)
-		if netid not in ['u_str', 'u_dgr', 'u_seq']:
-			raise ValueError(f'ss socket type error:\n  {sx(line)}')
-		srcn, dst = dst.split(None, 1)
-		if dst != '*':
-			raise ValueError(f'Unexpected "Peer Address" value: {dst!r}\n  {sx(line)}')
-		dstn, pid = (pid[0], '') if len(pid := pid.strip().split(None, 1)) == 1 else pid
-		if m := re.fullmatch(r'users:\((.+)\)', pid): # parse to "<cmd>[<pid>], ..."
-			pid_list, m = list(), m[1]
-			while m:
-				if not (mp := re.match(r',*\("([^"]+)",pid=(\d+),fd=\d+\)', m)): break
-				m = m[mp.end():]
-				pid_list.append(f'{mp[1]}[{mp[2]}]')
-			if not m: pid = pid_list
-
-		ss.append(conn := conn_t( ep(src), srcn := int(srcn),
-			ep(dst), dstn := int(dstn), st, int(q_rx), int(q_tx), pid ))
-		srcn_idx[srcn].append(conn)
-
-	sock_pids, conn_pids_t = cs.defaultdict(list), cs.namedtuple('ConnPIDs', 'c s st')
-	for conn in sorted(ss, key=lambda c: c.src):
-		if not conn.src: continue
-		if not conn.dstn and conn.st == 'LISTEN': continue
-		if sock and conn.src != sock: continue
-
-		cst = list()
-		for k in 'rx', 'tx':
-			if v := getattr(conn, k): cst.append(f's{k}={v}')
-
-		# Can be a cycle: @xxx/bus/systemd/bus-system [10896 -> 8141]
-		#   connected to /run/dbus/system_bus_socket [8141 -> 10896]
-		peers = srcn_idx[conn.dstn].copy()
-		if not peers: peers = [conn_t('', conn.dstn, '', 0, conn.st, 0, 0, '')]
-
-		for p in peers:
-			st = conn.st # detect/print any odd conn-status info
-			if p.st != conn.st: st += f'-{peer.st}'
-			if st == 'ESTAB': st = ''
-			st = [st] + cst
-			for k in 'rx', 'tx':
-				if v := getattr(p, k): st.append(f'c{k}={v}')
-			st = ' '.join(st).strip()
-			if st: st = f' [ {st} ]'
-
-			pc, ps = (([pp] if isinstance(pp, str) else pp) for pp in [p.pid, conn.pid])
-			if not (p.pid or conn.pid): continue
-			sock_pids[conn.src].append(conn_pids_t(pc, ps, st))
+	conns = parse_ss_conns(sp.run( ['ss', '-xp'], check=True,
+		stdout=sp.PIPE ).stdout.decode('utf-8', 'backslashreplace'))
+	sock_pids = parse_sock_pids(conns)
 
 	nx, ns = '?', lambda s: s if '::' not in s else ns(s.replace('::', ';'))
 	for sock, pid_tuples in sock_pids.items():
+		if sock_filter and sock != sock_filter: continue
 		if not opts.conns:
 			pc, ps = set(), set()
 			for pids in pid_tuples: pc.update(pids.c); ps.update(pids.s)
 			pid_tuples = [conn_pids_t(pc, ps, '')]
 		for pids in pid_tuples:
 			pc, ps = (ns(', '.join(sorted(set(pp)))) for pp in [pids.c, pids.s])
-			print(f'{sock} :: {ps or nx} :: {pc or nx}{st}')
+			print(f'{sock} :: {ps or nx}{pids.st} :: {pc or nx}')
 
 if __name__ == '__main__':
 	try: sys.exit(main())
