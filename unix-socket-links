@@ -98,7 +98,7 @@ def main(args=None):
 		stdout=sp.PIPE ).stdout.decode('utf-8', 'backslashreplace'))
 	sock_pids = parse_sock_pids(conns)
 
-	nx, ns = '?', lambda s: s if '::' not in s else ns(s.replace('::', ';'))
+	nx, ns = '?', lambda s: s if '::' not in s else ns(s.replace('::', ':').replace(' ', '_'))
 	for sock, pid_tuples in sock_pids.items():
 		if sock_filter and sock != sock_filter: continue
 		if not opts.conns:
@@ -106,7 +106,7 @@ def main(args=None):
 			for pids in pid_tuples: pc.update(pids.c); ps.update(pids.s)
 			pid_tuples = [conn_pids_t(pc, ps, '')]
 		for pids in pid_tuples:
-			pc, ps = (ns(', '.join(sorted(set(pp)))) for pp in [pids.c, pids.s])
+			pc, ps = (ns(' '.join(sorted(set(pp)))) for pp in [pids.c, pids.s])
 			print(f'{sock} :: {ps or nx}{pids.st} :: {pc or nx}')
 
 if __name__ == '__main__':
