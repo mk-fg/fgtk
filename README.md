@@ -2375,12 +2375,14 @@ Python wrapper around `ss -xp` output, processing disjointed unix socket
 connection table (with pids on only one end of those), into more readable
 aggregated `<socket-path> :: <listening-pid> :: <clients...>` list.
 
-A bit like running `ss -x`, and then `ss -xp src <socket>` on each socket from
-the left column there, aggregating all client pids into a single per-socket line.
+`ss -xp src <socket>` is closest to this functionality, but doesn't actually list
+clients connected there, e.g. for X11 socket it lists same Xorg process uselessly
+for each connection, instead of actual X apps connected to that socket.
 
-Use-case is to quickly check what's connected to some socket path you don't
-remember exactly, by printing a short list of all of them with listener/client
-pids, when some connection hangs or ssh-agent asks for fido2 touch-check unexpectedly.
+Use-case is to quickly check what's connected to some socket path
+(which maybe you don't remember exactly), by printing a short list of all
+of them with listener/client pids, when some connection hangs or ssh-agent
+asks for fido2 touch-check unexpectedly.
 
 
 
