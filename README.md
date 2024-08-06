@@ -2384,6 +2384,9 @@ Use-case is to quickly check what's connected to some socket path
 of them with listener/client pids, when some connection hangs or ssh-agent
 asks for fido2 touch-check unexpectedly.
 
+Has more human-readable `-p/--pretty` mode and more traditional disaggregated
+`-c/--conns` mode for listing specific connections instead of just processes.
+
 
 
 <a name=hdr-__dev___dev_tools></a>

@@ -3,17 +3,18 @@
 import os, sys, re, subprocess as sp, collections as cs
 
 
-conn_t = cs.namedtuple('Conn', 'src srcn dst dstn st rx tx pids')
+conn_t = cs.namedtuple('Conn', 'src srcn dst dstn st rx tx procs')
+proc_t = cs.namedtuple('Proc', 'name pid')
 
-def parse_pids(pids) -> [str]:
-	'Parse ss "users:(...)" info to a list of "<cmd>[<pid>]" strings'
-	if not (m := re.fullmatch(r'users:\((.+)\)', pids)): return [pids]
-	pid_list, m = list(), m[1]
+def parse_procs(procs) -> [proc_t]:
+	'Parse ss "users:(...)" info to a list of processes'
+	if not (m := re.fullmatch(r'users:\((.+)\)', procs)): return [proc_t(procs, 0)]
+	proc_list, m = list(), m[1]
 	while m:
 		if not (mp := re.match(r',*\("([^"]+)",pid=(\d+),fd=\d+\)', m)): break
 		m = m[mp.end():]
-		pid_list.append(f'{mp[1]}[{mp[2]}]')
-	return pid_list if not m else [pids]
+		proc_list.append(proc_t(mp[1], int(mp[2])))
+	return proc_list if not m else [proc_t(procs, 0)]
 
 def parse_ss_conns(out) -> [conn_t]:
 	'Parse "ss -xp" output string into normalized connection info tuples'
@@ -27,7 +28,7 @@ def parse_ss_conns(out) -> [conn_t]:
 	conns, ep = list(), lambda s: '' if s == '*' else s
 	for line in out:
 		src, s1, dst = line[:n_src], line[n_src], line[n_src+1:]
-		dst, s2, pids = dst[:n_dst], dst[n_dst], dst[n_dst+1:]
+		dst, s2, procs = dst[:n_dst], dst[n_dst], dst[n_dst+1:]
 		if not (s1 == s2 == ' '):
 			raise ValueError(f'ss line format error:\n{err_cmp_fmt(line, hdr_raw)}')
 		netid, st, q_rx, q_tx, src = src.split(None, 4)
@@ -36,13 +37,14 @@ def parse_ss_conns(out) -> [conn_t]:
 		srcn, dst = dst.split(None, 1)
 		if dst != '*':
 			raise ValueError(f'Unexpected "Peer Address" value: {dst!r}\n  {sx(line)}')
-		dstn, pids = (pids[0], '') if len(pids := pids.strip().split(None, 1)) == 1 else pids
+		dstn, procs = ( (procs[0], '')
+			if len(procs := procs.strip().split(None, 1)) == 1 else procs )
 		conns.append(conn := conn_t( ep(src), srcn := int(srcn),
-			ep(dst), dstn := int(dstn), st, int(q_rx), int(q_tx), parse_pids(pids) ))
+			ep(dst), dstn := int(dstn), st, int(q_rx), int(q_tx), parse_procs(procs) ))
 	return conns
 
 
-conn_pids_t = cs.namedtuple('ConnPIDs', 'c s st')
+conn_procs_t = cs.namedtuple('ConnProcs', 'c s st')
 
 def format_status(conn, peer) -> str:
 	'Detect/format any odd conn-status info as suffix, empty str otherwise'
@@ -54,9 +56,9 @@ def format_status(conn, peer) -> str:
 		if v := getattr(peer, k): st.append(f'c{k}={v}')
 	return (st := ' '.join(st).strip()) and f' [ {st} ]'
 
-def parse_sock_pids(conns) -> {str: [conn_pids_t]}:
-	'Parse/format connection states, link pids into {socket: src -> dst tuples}'
-	sock_pids, srcn_idx = cs.defaultdict(list), cs.defaultdict(list)
+def parse_sock_procs(conns) -> {str: [conn_procs_t]}:
+	'Parse/format connection states, link procs into {socket: src -> dst tuples}'
+	sock_procs, srcn_idx = cs.defaultdict(list), cs.defaultdict(list)
 	for conn in conns: srcn_idx[conn.srcn].append(conn)
 	for conn in sorted(conns, key=lambda c: c.src):
 		if not conn.src: continue
@@ -64,11 +66,12 @@ def parse_sock_pids(conns) -> {str: [conn_pids_t]}:
 		# Can be a cycle: @xxx/bus/systemd/bus-system [10896 -> 8141]
 		#   connected to /run/dbus/system_bus_socket [8141 -> 10896]
 		peers = srcn_idx[conn.dstn].copy()
-		if not peers: peers = [conn_t('', conn.dstn, '', 0, conn.st, 0, 0, '')]
+		if not peers: peers = [conn_t('', conn.dstn, '', 0, conn.st, 0, 0, list())]
 		for p in peers:
-			if not (p.pids or conn.pids): continue
-			sock_pids[conn.src].append(conn_pids_t(p.pids, conn.pids, format_status(conn, p)))
-	return sock_pids
+			if not (p.procs or conn.procs): continue
+			sock_procs[conn.src].append(conn_procs_t(
+				p.procs, conn.procs, format_status(conn, p) ))
+	return sock_procs
 
 
 def main(args=None):
@@ -88,7 +91,11 @@ def main(args=None):
 			instead of printing only a single line for each socket by default.
 		Default is to print src/dst processes for sockets,
 			merging and deduplicating process info from connections.
-		Multiple pids can still be printed on one line, if connection fd is shared.'''))
+		Multiple processes can still be printed on one line, if connection fd is shared.'''))
+	parser.add_argument('-p', '--pretty', action='store_true', help=dd('''
+		Listed aggregated/deduplicated processes one-per-line,
+			to hopefully make it a bit more human-readable in the terminal.
+		Also separates pids from process names by spaces, so they'd be easier to copy.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if (sock_filter := opts.socket) and os.path.exists(sock_filter):
@@ -96,18 +103,37 @@ def main(args=None):
 
 	conns = parse_ss_conns(sp.run( ['ss', '-xp'], check=True,
 		stdout=sp.PIPE ).stdout.decode('utf-8', 'backslashreplace'))
-	sock_pids = parse_sock_pids(conns)
+	sock_procs = parse_sock_procs(conns)
+
+	out = out1 = list()
+	if opts.pretty: out1 = list() # separate buffer for oneliners
 
 	nx, ns = '?', lambda s: s if '::' not in s else ns(s.replace('::', ':').replace(' ', '_'))
-	for sock, pid_tuples in sock_pids.items():
+	for sock, proc_tuples in sock_procs.items():
 		if sock_filter and sock != sock_filter: continue
 		if not opts.conns:
 			pc, ps = set(), set()
-			for pids in pid_tuples: pc.update(pids.c); ps.update(pids.s)
-			pid_tuples = [conn_pids_t(pc, ps, '')]
-		for pids in pid_tuples:
-			pc, ps = (ns(' '.join(sorted(set(pp)))) for pp in [pids.c, pids.s])
-			print(f'{sock} :: {ps or nx}{pids.st} :: {pc or nx}')
+			for procs in proc_tuples: pc.update(procs.c); ps.update(procs.s)
+			proc_tuples = [conn_procs_t(pc, ps, '')]
+
+		for procs in proc_tuples:
+			if not opts.pretty or len(procs.c) == 1:
+				pc, ps = (ns( ' '.join(f'{p.name}[{p.pid}]'
+					for p in sorted(set(pp))) ) for pp in [procs.c, procs.s])
+				out1.append(f'{sock} :: {ps or nx}{procs.st} :: {pc or nx}'); continue
+
+			ps = ns(' + '.join(f'{p.name} {p.pid}' for p in sorted(set(procs.s))))
+			si = [f'{sock} :: {ps or nx}{procs.st}']
+			if not procs.c: out1.append(si[0]); continue
+			pc = cs.defaultdict(set)
+			for p in procs.c: pc[p.name].add(p.pid)
+			si.extend(( f'  {name} ' +
+				' '.join(map(str, pids)) ) for name, pids in sorted(pc.items()))
+			out.append('\n'.join(si))
+
+	if not opts.pretty: return print('\n'.join(out))
+	if out1: print('\n'.join(out1), end='\n\n')
+	print('\n\n'.join(out))
 
 if __name__ == '__main__':
 	try: sys.exit(main())
