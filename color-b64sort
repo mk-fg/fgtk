@@ -29,7 +29,7 @@ def main(args=None):
 				https://medialab.github.io/iwanthue/ and intended background color,
 				removes colors that are too close to latter, then orders them by
 				"random, but different from last ones" criteria, also discarding close ones.
-			Encodes resulting colors into base64 for more compact representation.'''))
+			Encodes resulting colors (3-byte RGBs) into base64 for a compact representation.'''))
 	parser.add_argument('colors_file', nargs='?', help=dd('''
 		File with many hex-encoded colors separated by any kind of spaces.
 		Default is to read the list from stdin stream, same as if "-" is specified.'''))

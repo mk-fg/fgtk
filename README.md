@@ -872,7 +872,7 @@ For cases when `xmllint --format` fail and/or break such kinda-ML-but-not-XML fi
 <a name=hdr-hashname></a>
 ##### [hashname](hashname)
 
-Script to add base32-encoded content hash to filenames.
+Script to add simple/distinctive base32-encoded content hash to filenames.
 
 For example:
 
@@ -887,6 +887,9 @@ wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
 
 For collecting files with commonly-repeated names into some dir,
 like random "wallpaper.jpg" or "image.jpg" images above from the internets.
+
+Can also be used with -t/--tag option to update names for changed files,
+which is handy in web-accessible dirs for changing URLs to invalidate caches.
 
 Use -h/--help for info on more useful options.
 

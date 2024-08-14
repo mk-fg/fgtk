@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 
-import itertools as it, operator as op, functools as ft
-import os, sys, base64, pathlib as pl, hashlib as hl, shutil as su
+import pathlib as pl, itertools as it, functools as ft, hashlib as hl, shutil as su
+import os, sys, base64, re
 
 
-it_adjacent = lambda seq, n: it.zip_longest(*([iter(seq)] * n))
+# Crockford's base32 is used to be simple, and yet visually distinctive
 _b32_abcs = dict(zip(
 	# Python base32 - "Table 3: The Base 32 Alphabet" from RFC3548
 	'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
 	# Crockford's base32 - http://www.crockford.com/wrmg/base32.html
 	'0123456789ABCDEFGHJKMNPQRSTVWXYZ' ))
 _b32_abcs['='] = ''
-
 def b32encode( v, chunk=4, simple=False,
 		_trans=str.maketrans(_b32_abcs),
 		_check=''.join(_b32_abcs.values()) + '*~$=U' ):
@@ -19,13 +18,14 @@ def b32encode( v, chunk=4, simple=False,
 	for c in bytearray(v): chksum = chksum << 8 | c
 	res = base64.b32encode(v).decode().strip().translate(_trans)
 	if simple: return res.lower()
-	res = '-'.join(''.join(filter(None, s)) for s in it_adjacent(res, chunk))
+	res = '-'.join(''.join(s) for s in it.batched(res, chunk))
 	return '{}-{}'.format(res, _check[chksum % 37].lower())
 
 
 hash_person = b'hashname.1'
 hash_size = 8
 hash_chunk = 1 * 2**20 # 1 MiB
+tag_len, tag_fmt = 4, r'={}'
 
 def get_hash(p, enc_func=ft.partial(b32encode, simple=True)):
 	p_hash = hl.blake2b(digest_size=hash_size, person=hash_person)
@@ -35,22 +35,40 @@ def get_hash(p, enc_func=ft.partial(b32encode, simple=True)):
 
 
 def main(args=None):
-	import argparse
+	global tag_len
+
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Give file(s) distinctive names using hash of their content.'
-			' Default naming scheme is "{name}.{hash}.{ext}".')
+		formatter_class=argparse.RawTextHelpFormatter, description=dd(f'''
+		Give file(s) distinctive names using hash of their content.
+		Default naming scheme is "{{name}}.{{hash}}.{{ext}}",
+			using {hash_size}B crockford-base32-encoded {{hash}} output in there.'''))
 	parser.add_argument('files', nargs='+', help='File(s) to rename.')
 	parser.add_argument('-p', '--dry-run',
 		action='store_true', help='Print renames but not actually do it.')
-	parser.add_argument('-m', '--move', metavar='dir',
+	parser.add_argument('-d', '--move-dir', metavar='dir',
 		help='Move renamed files to specified dir.')
 	parser.add_argument('-r', '--replace', action='store_true',
 		help='Replace name with hash, i.e. use "{name}.{ext}" template.')
+	parser.add_argument('-t', '--tag', action='store_true', help=dd('''
+		Use "{name}.{hash-tag}.{ext}" naming scheme, with shorter
+			and distinctive tag instead of hash, replacing it if detected in filename.
+		This is useful to re-run the tool on changed images, to replace
+			hash part of the name instead of appending extra hash each time.'''))
+	parser.add_argument('-T', '--tag-len', type=int, metavar='nchars', help=dd(f'''
+		Number of (crocks-base32) characters that hash part of tag should be using.
+		Default is {tag_len} characters. If this option is specified, -t/--tag is implied too.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	p_mv = pl.Path(opts.move) if opts.move else None
-	if p_mv and not p_mv.is_dir():
-		parser.error(f'-m/--move path is not a directory: {p_mv}')
+	if (p_mv := opts.move_dir and pl.Path(opts.move_dir)) and not p_mv.is_dir():
+		parser.error(f'-d/--move-dir path is not a directory: {p_mv}')
+	if opts.tag_len:
+		tag_len, opts.tag = opts.tag_len, True
+	if opts.tag:
+		b32_abcs = ''.join(_b32_abcs.values())
+		tag_rx = tag_fmt.format(f'[{b32_abcs}]{{{tag_len}}}')
 
 	exit_code = 0
 	def p_err(*args):
@@ -59,18 +77,23 @@ def main(args=None):
 		exit_code = 1
 
 	for p in opts.files:
-		p = pl.Path(p)
-		try: p_hash = get_hash(p)
+		try: p_hash = get_hash(p := pl.Path(p))
 		except OSError as err:
 			p_err(f'failed to process path [{p}]: {err}')
 			continue
-		name, ext = name if len(name := p.name.rsplit('.', 1)) == 2 else (name[0], '')
+
+		name, ext = name if len( name :=
+			(name_old := p.name).rsplit('.', 1) ) == 2 else (name[0], '')
+		if opts.tag:
+			if m := re.search(fr'(?i)\.{tag_rx}$', name): name = name[:m.start()]
+			p_hash = tag_fmt.format(p_hash[:tag_len])
 		name_new = [name, p_hash, ext] if not opts.replace else [p_hash, ext]
 		name_new = '.'.join(filter(None, name_new))
+		if name_old == name_new: continue # same tag
 		print(p.name, '->', name_new)
 		if not opts.dry_run:
 			try:
-				if not opts.move: p.rename(p.parent / name_new)
+				if not opts.move_dir and name_old != name_new: p.rename(p.parent / name_new)
 				else: su.move(p, p_mv / name_new)
 			except OSError as err:
 				p_err(f'failed to rename/move path [{p}]: {err}')
