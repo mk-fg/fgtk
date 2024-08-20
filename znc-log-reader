@@ -274,7 +274,7 @@ def open_log_iterators(ctx, log_map, ts_a, ts_b):
 				if not (line_iter := IterLog(p, ts, ts_a, ts_b).get_iter()): continue
 				ctx.enter_context(line_iter)
 				# id value is there to make sure sort never reaches iterators
-				logs.append((net, chan, line_iter.ts0, id(line_iter), line_iter))
+				logs.append((net or '', chan or '', line_iter.ts0, id(line_iter), line_iter))
 	logs.sort()
 	return list((net, chan, line_iter) for net, chan, ts0, iter_id, line_iter in logs)
 
