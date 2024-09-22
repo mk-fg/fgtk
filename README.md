@@ -184,6 +184,7 @@ Contents - links to doc section for each script here:
         - [exclip](#hdr-exclip)
         - [xdpms](#hdr-xdpms)
         - [xiwait](#hdr-xiwait)
+        - [xkbledq](#hdr-xkbledq)
         - [rss-get](#hdr-rss-get)
         - [qr](#hdr-qr)
         - [gtk-color-calc](#hdr-gtk-color-calc)
@@ -3756,6 +3757,19 @@ user is doing anything, by catching first XInput event and exiting immediately.
 Build with: `gcc -O2 -lX11 -lXi -Wall xiwait.c -o xiwait && strip xiwait`
 
 Also same as xdpms - should probably only work on Xorg systems, not wayland.
+
+<a name=hdr-xkbledq></a>
+##### [xkbledq](desktop/xkbledq.c)
+
+Very simple C binary to query X11 keyboard (XKB) LED state(s),
+either printing them or returning state via exit code=43 if LED is enabled.
+
+Build with: `gcc -O2 -lX11 -Wall xkbledq.c -o xkbledq && strip xkbledq`\
+Usage: `xkbledq` (print enabled LEDs), `xkbledq scroll` (return 43 if scroll lock enabled).
+
+Intended for checking whether specific mode should be enabled depending on
+user-visible keyboard LED state (if/when it's used as a simple indicator),
+e.g. swap xmodmap layout depending on Scroll Lock mode.
 
 <a name=hdr-rss-get></a>
 ##### [rss-get](desktop/rss-get)
