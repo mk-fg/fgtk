@@ -2,18 +2,70 @@
 
 import os, sys, io, re, contextlib as cl
 
+
 ep_map_default = '''
 	# "<prefix/net/addr> <replacement>" pairs go here, newline/comma separated
 	# Exact-match full address should end with "/". Example: 1.2 mynet, 1.2.3.4/ myaddr
 	127.0.0. lo4., :: lo6.'''
+
+
+class Highlight:
+
+	hue = dict((c, 30+n) for n, c in enumerate(
+		'black red green yellow blue magenta cyan white'.split() ))
+	mod = dict(
+		bold=lambda c,mods: (c, mods+[1]),
+		bright=lambda c,mods: (c+60 if c and c < 60 else c, mods) )
+	aliases = dict(v.split('=') for v in ( 'bk=black rd=red gn=green'
+		' ye=yellow bu=blue pink=magenta pk=magenta turquoise=cyan'
+		' tq=cyan wh=white br=bright bt=bright bo=bold bd=bold' ).split())
+	reset = '\033[0m'
+
+	def __init__(self, enabled=True):
+		self.enabled, self.glyphs = enabled, dict()
+		g = self.glyphs['reset'] = '\ue000'; self.glyphs[g] = self.reset
+
+	def glyph(self, spec):
+		if not spec: return ''
+		if spec in self.glyphs: return self.glyphs[spec]
+		sc, smods = list(), list()
+		for c in spec.lower().split('-'):
+			for c in c, self.aliases.get(c):
+				if hue := self.hue.get(c): sc.append(hue)
+				if mod := self.mod.get(c): smods.append(mod)
+		c, mods = sc and sc[-1], list()
+		for mod in smods: c, mods = mod(c, mods)
+		if c: mods.append(c)
+		s = ('\033[' + ';'.join(map(str, mods)) + 'm') if mods else ''
+		g = self.glyphs[spec] = chr(0xe000 + len(self.glyphs)); self.glyphs[g] = s
+		return g
+
+	def wrap(self, spec, s):
+		'Wraps s into unicode-glyph-colors to set/reset spec-color'
+		if not (hl := self.glyph(spec)): return s
+		return hl + s + self.glyph('reset')
+
+	def term(self, s, trunc=9_999):
+		'Decode unicode-glyph-colors to terminal ansi sequences, truncate as-needed'
+		if not self.enabled: return s[:trunc]
+		if len(s) <= trunc: return ''.join(self.glyphs.get(c, c) for c in s)
+		n, out, reset = trunc, list(), None
+		for c in s: # truncation doesn't count invisible color-glyphs
+			out.append(self.glyphs.get(c, c))
+			if 0xe000 <= (cn := ord(c)) <= 0xf8ff: reset = cn == 0xe000
+			else:
+				n -= 1
+				if n == 0: break
+		if reset is False: out.append(self.glyphs['\ue000'])
+		return ''.join(out)
+
 
 def main(args=None):
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter,
-		usage='%(prog)s [opts] [lines]',
+		formatter_class=argparse.RawTextHelpFormatter, usage='%(prog)s [opts] [lines]',
 		description=dd('''
 			Regexp-replacer for addrs/nets in tcpdump output for regular packets.
 			Expects "tcpdump -ln" output piped to stdin, passing it through to stdout.
@@ -33,7 +85,11 @@ def main(args=None):
 		Example patterns:
 			127.0.0 lo4 # 127.0.0.1 -> lo4.1, 127.0.0.37 -> lo4.37, etc
 			:: lo6. # ::1 -> lo6.1, ::37 -> lo6.37, fe80::123 - no match, doesn't start with ::
-			1.2.3.4/ me # 1.2.3.4 -> me, but won't match 1.2.3.44 due to / at the end'''))
+			1.2.3.4/ me # 1.2.3.4 -> me, but won't match 1.2.3.44 due to / at the end
+		Extra <!highlight> element can be added after replacement,
+			e.g. "1.2.3.4/ me !bold-red" to set terminal font style/color there.
+		Supported color/style specs: bk/black rd/red gn/green ye/yellow bu/blue
+			pk/pink/ma/magenta tq/turquoise/cn/cyan wh/white br/bt/bright bo/bd/bold.'''))
 	parser.add_argument('-f', '--filter', action='store_true', help=dd('''
 		Print only lines that match TCP/UDP/ICMP packets and some pattern in -m/--map-file.
 		Intended for filtering tcpdump output by a list of known addrs/nets easily.'''))
@@ -41,6 +97,8 @@ def main(args=None):
 		Fail on first <translate-fail> error, instead of passing those through with suffix.'''))
 	parser.add_argument('-t', '--truncate', type=int, metavar='chars', help=dd('''
 		Truncate all passed-through lines to specified length. Default: terminal width.'''))
+	parser.add_argument('-C', '--no-color', action='store_true', help=dd('''
+		Disable colors, if used in -m/--map-file. Same as setting NO_COLOR env variable.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	@cl.contextmanager
@@ -59,23 +117,30 @@ def main(args=None):
 	ep_map = '\n'.join(filter(None, ep_map)).replace(',', '\n').split('\n')
 	for n, ls in enumerate(ep_map):
 		if not ls: continue
-		try: pre, repl = ls.split()
-		except: parser.error(f'Invalid "<addr/net> <repl>" line in -m/--map-file: {ls!r}')
-		ep_map[n] = pre, repl
+		try:
+			try: pre, repl = ls.split(); hl = ''
+			except:
+				pre, repl, hl = ls.split()
+				if hl[0] != '!': raise ValueError(ls, hl)
+				else: hl = hl[1:]
+		except: parser.error(f'Invalid "<addr/net> <repl> [!hl]" spec in -m/--map-file: {ls!r}')
+		ep_map[n] = pre, repl, hl
 	ep_map.sort(key=lambda ab: (len(ab[0]), ab), reverse=True)
 
 	if not opts.lines: tcpdump = sys.stdin.buffer
 	else: tcpdump = io.BytesIO('\n'.join(opts.lines).encode()); tcpdump.seek(0)
-
 	trunc = opts.truncate
-	if not trunc: trunc = os.get_terminal_size().columns
+	if not trunc:
+		try: trunc = os.get_terminal_size().columns
+		except OSError: trunc = 9_999
+	hl = Highlight(enabled=not (opts.no_color or os.environ.get('NO_COLOR')))
 
 	def _ep(addr, has_port=False):
 		if has_port: addr, port = addr.rsplit('.', 1)
 		addr += '/'
-		for pre, repl in ep_map:
+		for pre, repl, hls in ep_map:
 			if addr.startswith(pre): addr = repl + addr[len(pre):]; break
-		addr = addr.rstrip('/')
+		addr = hl.wrap(hls, addr.rstrip('/'))
 		if has_port: addr += f'.{port}'
 		return addr
 
@@ -98,15 +163,17 @@ def main(args=None):
 			addrs = f' {m["af"]} {src} > {dst}:'
 			line = m.expand(fr'\g<ts>\g<any>{addrs}\g<p>\g<tail>')
 			if m['proto'] in ['ICMP', 'ICMP6'] and (m2 := re_icmp.search(line)):
-				try: addr = _ep(m2['addr'])
+				addr0 = addr = m2['addr']
+				try:
+					addr = _ep(addr)
+					ep_match = ep_match or addr != addr0
 				except:
 					if opts.err_fail: raise
 					suff = ' <icmp-translate-fail>'
-				ep_match = ep_match or addr != m2['addr']
 				line = line[:m2.start()] + m2.expand(f'{m2[1]} {addr},') + line[m2.end():]
-			if suff: line += suff; ep_match = True
+			if suff: line = hl.wrap('br-red', f'{line}{suff}'); ep_match = True
 		if opts.filter and not ep_match: continue
-		print(line[:trunc])
+		print(hl.term(line, trunc))
 
 if __name__ == '__main__':
 	try: sys.exit(main())

@@ -2395,27 +2395,27 @@ Has more human-readable `-p/--pretty` mode and more traditional disaggregated
 <a name=hdr-tcpdump-translate></a>
 ##### [tcpdump-translate](tcpdump-translate)
 
-Wrapper script for running `tcpdump -ln` (unbuffered lines, no dns),
-to translate and optionally filter-by specified addresses and network prefixes.
+Wrapper script for running `tcpdump -ln` (unbuffered lines, no dns), to translate,
+color-highlight and optionally filter-by specified addresses and network prefixes.
 
 Intended use is to match known hosts or networks in the output, while leaving
 all other addresses intact, without going to DNS PTR records or anything like that.
 
 For example, with the following `ipv6-debug.tt` file:
 ```
-# "<prefix/net/addr> <replacement>" pairs go here, newline/comma separated
+# "<prefix/net/addr> <replacement> [!<highlight>]" specs, newline/comma separated
 # Exact-match full address should end with "/". Example: 1.2 mynet, 1.2.3.4/ myaddr
 
 2a01:4f8:c27:34c2:   A.net:
 2a01:4f8:c27:34c2::2/ [A]
 
-2a01:4f8:c27:34c2:8341:8768:e26:83ff/ [A.ns]
+2a01:4f8:c27:34c2:8341:8768:e26:83ff/ [A.ns] !red
 
 2a02:13d1:22:6a0      B.net
 2a02:13d1:22:6a01::1/ [B]
 
-2a02:13d1:22:6a00:2a10:6f67:8c0:60ae/ [B.host-X]
-2a02:13d1:22:6a00:de8a:12c8:e85:235f/ [B.laptop]
+2a02:13d1:22:6a00:2a10:6f67:8c0:60ae/ [B.host-X] !bold-green
+2a02:13d1:22:6a00:de8a:12c8:e85:235f/ [B.laptop] !bold-bright-yellow
 
 127.0.0. lo4., :: lo6.
 ```
