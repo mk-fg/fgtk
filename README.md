@@ -109,6 +109,7 @@ Contents - links to doc section for each script here:
         - [color-b64sort](#hdr-color-b64sort)
         - [svg-tweak](#hdr-svg-tweak)
         - [unix-socket-links](#hdr-unix-socket-links)
+        - [tcpdump-translate](#hdr-tcpdump-translate)
 
 - [\[dev\] Dev tools](#hdr-__dev___dev_tools)
 
@@ -2390,6 +2391,73 @@ asks for fido2 touch-check unexpectedly.
 
 Has more human-readable `-p/--pretty` mode and more traditional disaggregated
 `-c/--conns` mode for listing specific connections instead of just processes.
+
+<a name=hdr-tcpdump-translate></a>
+##### [tcpdump-translate](tcpdump-translate)
+
+Wrapper script for running `tcpdump -ln` (unbuffered lines, no dns),
+to translate and optionally filter-by specified addresses and network prefixes.
+
+Intended use is to match known hosts or networks in the output, while leaving
+all other addresses intact, without going to DNS PTR records or anything like that.
+
+For example, with the following `ipv6-debug.tt` file:
+```
+# "<prefix/net/addr> <replacement>" pairs go here, newline/comma separated
+# Exact-match full address should end with "/". Example: 1.2 mynet, 1.2.3.4/ myaddr
+
+2a01:4f8:c27:34c2:   A.net:
+2a01:4f8:c27:34c2::2/ [A]
+
+2a01:4f8:c27:34c2:8341:8768:e26:83ff/ [A.ns]
+
+2a02:13d1:22:6a0      B.net
+2a02:13d1:22:6a01::1/ [B]
+
+2a02:13d1:22:6a00:2a10:6f67:8c0:60ae/ [B.host-X]
+2a02:13d1:22:6a00:de8a:12c8:e85:235f/ [B.laptop]
+
+127.0.0. lo4., :: lo6.
+```
+
+And then running e.g. `tcpdump -i eth0 | ./tcpdump-translate -m ipv6-debug.tt`
+will produce translated output (also truncated to terminal width by default):
+```
+11:40:00.641680 IP6 A.net:8341:865e:e26:8401.31788 > [B.laptop].31788: UDP, length 32
+11:41:49.868243 IP6 [A.ns].31788 > B.net0:de8c::28f1.31788: UDP, length 148
+11:41:51.148385 IP6 [A.ns].31788 > B.net0:de8c::28f2.31788: UDP, length 148
+...
+11:42:23.735140 IP6 [A.ns].31788 > [B.laptop].31788: UDP, length 148
+11:42:24.801590 IP6 [A.ns].31788 > [B].11446: UDP, length 148
+11:42:26.286887 IP6 [B.host-X].31788 > [A.ns].31788: UDP, length 32
+11:42:26.287739 IP6 [B.host-X].31788 > [A.ns].31788: UDP, length 148
+11:42:26.288301 IP6 [A.ns].31788 > [B.host-X].31788: UDP, length 92
+11:42:26.350673 IP6 [B.host-X].31788 > [A.ns].31788: UDP, length 32
+11:42:29.068373 IP6 [A.ns].31788 > [B.laptop].31788: UDP, length 148
+11:42:29.573134 IP6 [A.ns].47504 > [B].80: Flags [S], seq 3249847667, win 33120,
+11:42:29.638883 IP6 [B].80 > [A.ns].47504: Flags [S.], seq 271826300, ack 324984
+11:42:29.639081 IP6 [A.ns].47504 > [B].80: Flags [.], ack 1, win 259, options
+...
+11:42:29.705541 IP6 [A.ns].47504 > [B].80: Flags [F.], seq 75, ack 375, win 257,
+11:42:29.770506 IP6 [B].80 > [A.ns].47504: Flags [F.], seq 375, ack 76, win 251,
+11:42:29.770583 IP6 [A.ns].47504 > [B].80: Flags [.], ack 376, win 257, options
+11:42:29.921720 IP6 [A.ns].31788 > [B].11446: UDP, length 148
+```
+
+Where replacements are done either for full addresses or their string prefixes
+(not CIDR prefixes, simple string match-replace).
+
+Without this, IPv6es in output above are hard to parse visually, and filtering
+via chaining tcpdump BPF "host ..." directives on the command line is painful to
+adjust, compared to commenting-out addr/net lines in a simple text file.
+
+(plus on top of that, "host ..." misses stuff like IPv4 ARP and IPv6 NDPs
+for addresses, so is worse than a grep for debug purposes)
+
+Mostly useful for debugging "what's going on" and "where do these packets get
+dropped" type of simple connectivity issues in-between running pings and whatever
+configuration tweaks.
+Not a replacement for wireshark or tcpdump firehose-filters.
 
 
 
