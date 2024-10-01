@@ -56,7 +56,7 @@ def list_adjacent(paths, specs, files_only=False):
 				p_out[p].update(ps[max(0, n-nb):n])
 				p_out[p].update(ps[n+1:n+na+1])
 
-	ps_seen, sort_func = set(), dict(
+	ps_print, sort_func = dict(), dict(
 		n=lambda p: p.name,
 		t=lambda p: stats[p].st_mtime,
 		s=lambda p: stats[p].st_size )[op_out_sort or 'n']
@@ -64,12 +64,12 @@ def list_adjacent(paths, specs, files_only=False):
 		p_out[p] = sorted(ps, key=sort_func)
 	for ps in p_out.values():
 		for p in ps:
-			if p in ps_seen: continue
+			if p in ps_print: continue
 			if not (st := stats.get(p)):
 				try: st = stats[p] = p.stat()
 				except OSError: continue
-			print(p)
-			ps_seen.add(p)
+			ps_print[p] = None
+	return list(ps_print.keys())
 
 
 def main(argv=None):
@@ -88,6 +88,8 @@ def main(argv=None):
 
 	parser.add_argument('-f', '--files', action='store_true',
 		help='Print only files, not dirs or any other stuff.')
+	parser.add_argument('-0', '--null', action='store_true',
+		help='Print null-terminated list, instead of default newline-terminated.')
 
 	parser.add_argument('-a', '--adjacent', metavar='opts', action='append', help=dd('''
 		Show specified file/dir path, and also N files/dirs adjacent to it.
@@ -108,16 +110,27 @@ def main(argv=None):
 
 	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
+	pp_first, pp_nullsep = True, opts.null
+	def _pp(p):
+		nonlocal pp_first
+		p, (cc, cn) = str(p), ('\n', 'newline') if not pp_nullsep else ('\0', 'null-char')
+		if cc in p: p_err(f'Skipping entry with {cn} in it: {p!r}')
+		if not pp_nullsep: p = f'{p}\n'
+		elif not pp_first: p = f'\0{p}'
+		else: pp_first = False
+		sys.stdout.write(p)
+
 	paths = list(pl.Path(p) for p in opts.paths)
 
 	if opts.adjacent:
-		list_adjacent(paths, opts.adjacent, opts.files)
+		ps = list_adjacent(paths, opts.adjacent, opts.files)
+		for p in ps: _pp(p)
 
 	else: # no options - print filtered input paths back
 		for p in paths:
 			if p.exists():
 				if opts.files and not p.is_file(): continue
-				print(p)
+				_pp(p)
 			else: p_err(f'path inaccessible [ {p} ]')
 
 if __name__ == '__main__':

@@ -86,7 +86,7 @@ def main(args=None):
 			127.0.0 lo4 # 127.0.0.1 -> lo4.1, 127.0.0.37 -> lo4.37, etc
 			:: lo6. # ::1 -> lo6.1, ::37 -> lo6.37, fe80::123 - no match, doesn't start with ::
 			1.2.3.4/ me # 1.2.3.4 -> me, but won't match 1.2.3.44 due to / at the end
-		Extra <!highlight> element can be added after replacement,
+		Extra <!highlight> element can be added after <replacement>,
 			e.g. "1.2.3.4/ me !bold-red" to set terminal font style/color there.
 		Supported color/style specs: bk/black rd/red gn/green ye/yellow bu/blue
 			pk/pink/ma/magenta tq/turquoise/cn/cyan wh/white br/bt/bright bo/bd/bold.'''))
