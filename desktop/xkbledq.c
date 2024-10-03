@@ -11,10 +11,12 @@
 #define err_unless(chk) if (!(chk)) { err = "'" #chk "' failed"; goto cleanup; }
 
 int main(int argc, char *argv[]) {
+	for (int n = 0; n < argc; n++)
+		if (!strcmp(argv[n], "-h") || !strcmp(argv[n], "--help")) { argc = 3; break; }
 	if (argc > 2) {
 		printf("Usage: %s [-h/--help] [led]\n", argv[0]);
-		printf("Show/query named keyboard LED state(s).\n");
-		printf( "When querying, returns 1 for e.g."
+		printf("Show/query named keyboard LED state(s): caps, num, scroll.\n");
+		printf( "When querying, returns 43 for e.g."
 			" \"%s scroll\" if scroll lock LED is lit, 0 otherwise.\n", argv[0] );
 		return 1; }
 	char *query = "";
@@ -32,11 +34,11 @@ int main(int argc, char *argv[]) {
 	char leds[][7] = {"caps", "num", "scroll"};
 
 	Bool st;
-	for (size_t n = 0; n <= 2; n++) {
+	for (int n = 0; n <= 2; n++) {
 		XkbGetNamedIndicator(dpy, XInternAtom(dpy, atoms[n], False), NULL, &st, NULL, NULL);
-		if (!st) continue;
-		if (strlen(query)) { if (!strcmp(query, leds[n])) return 43; }
-		else puts(leds[n]); }
+		if (strlen(query)) { if (!strcmp(query, leds[n])) return st ? 43 : 0; }
+		else if (st) puts(leds[n]); }
+	if (strlen(query)) err = "Failed to match specified LED name";
 
 	cleanup:
 	if (dpy) XCloseDisplay(dpy);
