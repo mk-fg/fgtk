@@ -2392,11 +2392,21 @@ asks for fido2 touch-check unexpectedly.
 Has more human-readable `-p/--pretty` mode and more traditional disaggregated
 `-c/--conns` mode for listing specific connections instead of just processes.
 
+See ["List connected processes for unix sockets" blog post] for some usage examples.
+
+["List connected processes for unix sockets" blog post]:
+  https://blog.fraggod.net/2024/08/06/list-connected-processes-for-unix-sockets-on-linux.html
+
 <a name=hdr-tcpdump-translate></a>
 ##### [tcpdump-translate](tcpdump-translate)
 
 Wrapper script for running `tcpdump -ln` (unbuffered lines, no dns), to translate,
 color-highlight and optionally filter-by specified addresses and network prefixes.
+
+There are couple images showing what it does in ["Adding color to tcpdump" blog post].
+
+["Adding color to tcpdump" blog post]:
+  https://blog.fraggod.net/2024/09/30/adding-color-to-tcpdump-makes-a-ton-of-difference.html
 
 Intended use is to match known hosts or networks in the output, while leaving
 all other addresses intact, without going to DNS PTR records or anything like that.

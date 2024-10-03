@@ -121,17 +121,12 @@ def main(argv=None):
 		sys.stdout.write(p)
 
 	paths = list(pl.Path(p) for p in opts.paths)
-
 	if opts.adjacent:
-		ps = list_adjacent(paths, opts.adjacent, opts.files)
-		for p in ps: _pp(p)
-
+		for p in list_adjacent(paths, opts.adjacent, opts.files): _pp(p)
 	else: # no options - print filtered input paths back
 		for p in paths:
-			if p.exists():
-				if opts.files and not p.is_file(): continue
-				_pp(p)
-			else: p_err(f'path inaccessible [ {p} ]')
+			if not p.exists(): p_err(f'path inaccessible [ {p} ]'); continue
+			if not opts.files or p.is_file(): _pp(p)
 
 if __name__ == '__main__':
 	try: sys.exit(main())
