@@ -225,7 +225,7 @@ def main(args=None):
 			if not opts.list:
 				ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
 				ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
-				print(f'--- [{n: 2d}] {e.title}')
+				print(f'--- [{n: >2d}] {e.title}')
 				print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
 				if url := e.get('link'): print(f'    {url}')
 				for url in enc_urls: print(f'    {url}')
