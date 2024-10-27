@@ -458,15 +458,22 @@ See head of the file for build and usage info.
 
 More functionality similar to common "ls" tool, to list files in some specific
 ways that are occasionally useful. All those are available via various options -
-see `-h/--help` for a full list of those.
+see `-h/--help` for a full list.
 
-For example, to print `-a/--adjacent` files (w/ some ordering):
-
+For example, to print up to N `-a/--adjacent` files (within some specific ordering):
 ``` console
 % lsx -aS data/chunk-12345.bin  # default up to 10 before/after, w/ S=size ordering
 % lsx -a 50as data/chunk-13.bin # only 50 files larger than specified one
 % lsx -a 5bt myapp/state.log    # up to 5 logs right before state.log by mtime
 % lsx -fa a3 logs/20230515.log  # 3 log-files (-f/--files) with names after that one
+```
+
+Or files within `-t/--mtime` vicinity/ranges:
+``` console
+% lsx -t 1h cache/a/bcdefg.json # files created/changed within 1h of that one
+% lsx -t 5d/10d cache/*/*       # mtime in 5d-10d ago range
+% lsx -rt 2024-10-20/2024-10-25 # between those dates in the current dir
+% lsx -rt 1am/3:30 logs         # logs changed from 1am to 3:30am earlier today
 ```
 
 Simple python script with no extra dependencies.

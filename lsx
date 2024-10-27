@@ -227,7 +227,7 @@ def main(argv=None):
 			If delta (relative time) is specified, files/dirs within that vicinity from
 				other file/dir command-line arguments are listed (and at least one is required).
 			If time range is specified (two absolute or relative timestamps in any order),
-				then either files/dirs that have mtime within that range are listed, either in the
+				then files/dirs that have mtime within that range are listed, either in the
 				current dir, or among/within specified file/dir arguments (see -r/--recursive option).
 			Multiple time ranges can be specified.
 			Results are ordered by mtime, pipe through "sort" for alphabetic ordering.
@@ -254,11 +254,13 @@ def main(argv=None):
 
 	if opts.mtime:
 		no_opts, td = False, mtime_parse(opts.mtime, parser.error)
-		if opts.recursive and not paths: paths = [pl.Path('.')]
 		if td.vicinity:
+			if not paths: parser.error(
+				'At least one path argument required for -t/--mtime time-delta' )
 			for p in mtime_list(paths, td): _pp(p)
 		else:
 			ps = list()
+			if opts.recursive and not paths: paths = [pl.Path('.')]
 			for p in paths:
 				if not p.exists(): p_err(f'path inaccessible [ {p} ]'); continue
 				if opts.recursive and p.is_dir(): ps.extend(p.iterdir())
