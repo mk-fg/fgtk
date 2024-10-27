@@ -4,11 +4,6 @@ import os, sys, stat, re, pathlib as pl, collections as cs
 
 p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True)
 
-class adict(dict):
-	def __init__(self, *args, **kws):
-		super().__init__(*args, **kws)
-		self.__dict__ = self
-
 
 def list_adjacent(paths, specs, files_only=False):
 	p_dirs, stats, p_out = dict(), dict(), dict()
@@ -156,26 +151,27 @@ def mtime_parse(mtimes, err_func):
 			if not isinstance(td := _ts_parse(ts_str, rel=True), dt.timedelta):
 				err_func(f'Absolute -t/--mtime specs can only be used in A/B ranges: {ts_str}')
 			mtimes[n] = td.total_seconds()
-	return adict(mtimes=mtimes, vicinity=not ranges)
+	return mtimes, not ranges
 
-def mtime_list(paths, td):
-	ps = list()
-	if td.vicinity:
-		td = max(td.mtimes)
-		for p in paths:
-			try: ps.append((ts := p.stat().st_mtime, p))
-			except OSError: p_err(f'path inaccessible [ {p} ]'); continue
-			for p2 in p.parent.iterdir():
-				try: ts2 = p2.stat().st_mtime
-				except OSError: continue
-				if abs(ts - ts2) <= td: ps.append((ts2, p2))
-	else:
-		for p in paths:
-			try: ts = p.stat().st_mtime
+def mtime_list_vicinity(paths, mtimes):
+	ps, td = list(), max(mtimes)
+	for p in paths:
+		try: ps.append((ts := p.stat().st_mtime, p))
+		except OSError: p_err(f'path inaccessible [ {p} ]'); continue
+		for p2 in p.parent.iterdir():
+			try: ts2 = p2.stat().st_mtime
 			except OSError: continue
-			for a, b in td.mtimes:
-				if a <= ts <= b: ps.append((ts, p))
-	return list(p for ts, p in sorted(ps))
+			if abs(ts - ts2) <= td: ps.append((ts2, p2))
+	return list(dict.fromkeys(p for ts, p in sorted(ps)))
+
+def mtime_list_ranges(paths, mtimes):
+	ps = list()
+	for p in paths:
+		try: ts = p.stat().st_mtime
+		except OSError: continue
+		for a, b in mtimes:
+			if a <= ts <= b: ps.append((ts, p))
+	return list(dict.fromkeys(p for ts, p in sorted(ps)))
 
 
 def main(argv=None):
@@ -221,11 +217,11 @@ def main(argv=None):
 	parser.add_argument('-t', '--mtime',
 		metavar='delta-or-range', action='append', help=dd('''
 			List files/dirs that have modification time within specified range or vicinity.
-			Either time delta or time range can be specified with this option:
+			Either time delta or time range(s) can be specified with this option:
 				delta examples: 1h30m, 1d, 2w 3d 4h, 4:10:20, 55s, 55, ...
 				range examples: 5d/8d, 1d/now, 2024-10-20 4:10:20 / 2mo, 1:00/6:00, ...
-			If delta (relative time) is specified, files/dirs within that vicinity from
-				other file/dir command-line arguments are listed (and at least one is required).
+			If delta (relative time) is specified, adjacent files/dirs within mtime-vicinity
+				from file/dir command-line arguments are listed (and at least one is required).
 			If time range is specified (two absolute or relative timestamps in any order),
 				then files/dirs that have mtime within that range are listed, either in the
 				current dir, or among/within specified file/dir arguments (see -r/--recursive option).
@@ -253,11 +249,11 @@ def main(argv=None):
 		no_opts = False
 
 	if opts.mtime:
-		no_opts, td = False, mtime_parse(opts.mtime, parser.error)
-		if td.vicinity:
+		no_opts, (tds, td_vicinity) = False, mtime_parse(opts.mtime, parser.error)
+		if td_vicinity:
 			if not paths: parser.error(
 				'At least one path argument required for -t/--mtime time-delta' )
-			for p in mtime_list(paths, td): _pp(p)
+			for p in mtime_list_vicinity(paths, tds): _pp(p)
 		else:
 			ps = list()
 			if opts.recursive and not paths: paths = [pl.Path('.')]
@@ -265,7 +261,7 @@ def main(argv=None):
 				if not p.exists(): p_err(f'path inaccessible [ {p} ]'); continue
 				if opts.recursive and p.is_dir(): ps.extend(p.iterdir())
 				elif not opts.files or p.is_file(): ps.append(p)
-			for p in mtime_list(ps, td): _pp(p)
+			for p in mtime_list_ranges(ps, tds): _pp(p)
 
 	if no_opts: # no options - print filtered input paths back
 		if opts.recursive and not paths: paths = [pl.Path('.')]
