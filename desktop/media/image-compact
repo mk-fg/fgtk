@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sz=1600
+sz=1920x1440
 
 usage() {
 	local bin=$(basename $0)
@@ -9,6 +9,7 @@ usage() {
 	echo
 	echo "SZ env-var can be a size for square to fit image into, or WxH spec"
 	echo "  for rectangle with max width/height. Scaling is always proportional."
+	echo "Uses imagemagick with jpg destination and quality=80, and jpegoptim on that."
 	exit ${1:-1}; }
 [[ "$1" = -h || "$1" = --help ]] && usage 0
 [[ "$#" -ge 1 ]] || usage 1
@@ -28,8 +29,8 @@ for p in "$@"; do
 		echo >&2 "ERROR: temp-file from earlier bug - $p.fix.jpg"; exit 1; }
 
 	du1=$(du_hs "$p")
-	convert "$p" -resize "${sz}>" "$p".fix.jpg
-	jpegoptim -q --strip-all --all-normal "$p".fix.jpg
+	magick "$p" -resize "${sz}>" -quality 80 "$p".fix.jpg
+	jpegoptim -q --strip-all --all-normal --force "$p".fix.jpg
 	mv "$p".fix.jpg "$p"
 	du2=$(du_hs "$p")
 	echo "$p :: $du1 -> $du2"
