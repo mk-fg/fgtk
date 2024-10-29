@@ -31,7 +31,15 @@ for p in "$@"; do
 	du1=$(du_hs "$p")
 	magick "$p" -resize "${sz}>" -quality 80 "$p".fix.jpg
 	jpegoptim -q --strip-all --all-normal --force "$p".fix.jpg
+	touch -m --reference="$p" "$p".fix.jpg
 	mv "$p".fix.jpg "$p"
+
+	ext="${p##*.}"
+	[[ "$ext" = jpg ]] && ext= || {
+		if [[ ${#ext} -gt 4 ]]
+		then echo >&2 "WARN: no proper filename.ext on [ $p ]"; ext=" :: $ext ???"
+		else mv "$p" "${p%.*}.jpg"; ext=" :: $ext -> jpg"; fi; }
+
 	du2=$(du_hs "$p")
-	echo "$p :: $du1 -> $du2"
+	echo "$p :: $du1 -> $du2$ext"
 done
