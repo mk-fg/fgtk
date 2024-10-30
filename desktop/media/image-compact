@@ -20,7 +20,7 @@ du_hs() {
 	read -ra du dup < <(du -hs "$1" || kill -INT $$)
 	printf '%s' "$du"; }
 
-[[ -z "$SZ" ]] || SZ=$sz
+[[ -z "$SZ" ]] || sz=$SZ
 [[ "$sz" == *x* ]] || sz="${sz}x${sz}"
 
 for p in "$@"; do
