@@ -151,6 +151,7 @@ def md_check_header_anchors(md_lines, errs, name_max_len=40):
 			hdr = hdr[:a] + link + hdr[b:] # strip link syntax and urls
 		hdr = md_esc_restore(hdr)
 		name = ''.join(str_map.get(c, '_') for c in hdr.lower())
+		name = name.lstrip('_') # for "--- Header" and such custom prefixes
 		if len(name) > name_max_len: name = re.sub(r'_+', '_', name)
 		if len(name) > name_max_len + 5: # truncate long-header anchor-names
 			name = name[:name_max_len] + '.' + b64_hash(name[name_max_len:], 4)
@@ -238,7 +239,7 @@ def md_check_files(p_base, p_git, git_files, link_map, errs):
 	for url, links in link_map.items():
 		if re.match(r'(?i)(#|https?://)', url): continue
 		p_weird = not re.match(r'[\w]', url)
-		p_nx = not (p := (p_base / url).resolve()).exists()
+		p_nx = not (p := (p_base / url.split('#', 1)[0]).resolve()).exists()
 		p_nogit = p not in git_files
 		for link in links:
 			if p_weird:
