@@ -123,7 +123,7 @@ def main(args=None):
 			for u in json.loads(sp.run(
 				['systemctl', 'list-units', '-ao', 'json'],
 				check=True, stdout=sp.PIPE ).stdout)
-			if unit_st(u) == ('loaded', 'active', 'running') and
+			if unit_st(u)[:2] == ('loaded', 'active') and
 				fnmatch.fnmatch(u['unit'], opts.unit_fnmatch) )
 
 	for sig in signal.SIGINT, signal.SIGTERM:
