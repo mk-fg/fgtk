@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import subprocess as sp, operator as op, collections as cs, pathlib as pl
-import os, sys, io, time, fnmatch, json, signal, logging, logging.handlers
+import os, sys, re, io, time, fnmatch, json, signal, select, logging, logging.handlers
 
 import systemd.journal as sdj # official systemd python bindings package
 
@@ -21,12 +21,15 @@ def size_parse(size):
 	else: raise ValueError('Unrecognized units: {} (value: {!r})'.format(size[-1], size))
 	return float(size[:-1]) * u1
 
-def journal_unit_tracker_iter(match, ev_map, unit_set=set()):
+def journal_unit_tracker_iter(unit_pat, ev_map, unit_set=set()):
 	'''Expects ts_max inputs for wait() delays,
 		and yields same set of currently-active units matching wildcard.'''
 	with sdj.Reader() as jj:
 		jj.seek_tail()
-		jj.get_next(10) # not sure why this is needed to avoid it returning junk first
+		jj.get_previous()
+		jjp, jjp_errs = select.poll(), 0
+		for e in 'ERR HUP RDHUP NVAL'.split(): jjp_errs |= getattr(select, f'POLL{e}')
+		jjp.register(jj, jj.get_events())
 		for msg_id in ev_map:
 			jj.add_match(f'MESSAGE_ID={msg_id.replace("-", "")}')
 			jj.add_disjunction()
@@ -34,14 +37,17 @@ def journal_unit_tracker_iter(match, ev_map, unit_set=set()):
 			ts_max = yield unit_set
 			if not ts_max: break
 			while (delay := ts_max - time.monotonic()) > 0:
-				if jj.wait(delay) == sdj.NOP: continue
-				if not (e := jj.get_next()) or ( ('systemd', 1, 'init.scope') !=
-					tuple(e.get(k) for k in ['_COMM', '_PID', '_SYSTEMD_UNIT']) ): continue
-				if not (ev := ev_map.get(str(e.get('MESSAGE_ID', '')))): continue
-				if not fnmatch.fnmatch(unit := e.get('UNIT', ''), match): continue
-				if ev.start: unit_set.add(unit)
-				if ev.stop: unit_set.discard(unit)
-				break # to log start/stop immediately
+				if not (e := jjp.poll(delay * 1000)): continue # timeout
+				if any(e[1] & jjp_errs for e in e): raise RuntimeError('sd-journal fd poll failed')
+				if jj.process() != sdj.APPEND: continue
+				for e in jj:
+					if ( ('systemd', 1, 'init.scope') !=
+						tuple(e.get(k) for k in ['_COMM', '_PID', '_SYSTEMD_UNIT']) ): continue
+					if not (ev := ev_map.get(str(e.get('MESSAGE_ID', '')).replace('-', ''))): continue
+					if not fnmatch.fnmatch(unit := e.get('UNIT', ''), unit_pat): continue
+					if ev.start: unit_set.add(unit)
+					if ev.stop: unit_set.discard(unit)
+					break # to log start/stop immediately
 
 def poll_cg_stats(cg, dev_cache=dict()):
 	stats, errs = dict(), 0
@@ -85,8 +91,11 @@ def main(args=None):
 		description='Log cgroup stats and systemd events for specified unit files until stopped.')
 	parser.add_argument('log_file',
 		metavar=f'log_file[:bytes={ev_log_bs}[:backups={ev_log_n}]]',
-		help='File to use for json data/events with an optional'
-			f' [:bytes[:backups] suffix (default :{ev_log_bs}:{ev_log_n}).')
+		help=dd(f'''
+			File to use for json data/events with an optional
+				[:bytes[:backups]] suffix (default :{ev_log_bs}:{ev_log_n}).
+			Can be e.g. %%3 to output to file descriptor 3, or '-' for stdout.
+			Won't be rotated if dev, fd or non-seekable, resolved to realpath if symlink.'''))
 	parser.add_argument('unit_fnmatch', help='fnmatch pattern for systemd unit name(s) to monitor.')
 	parser.add_argument('-i', '--poll-interval',
 		type=float, metavar='seconds', default=3.0,
@@ -94,8 +103,9 @@ def main(args=None):
 	parser.add_argument('-n', '--new', action='store_true',
 		help='Only monitor unit(s) that get started after this script, not pre-exising ones.')
 	parser.add_argument('-s', '--stop', action='store_true',
-		help='Stop after all monitored units exit.'
-			' Can be used with --new to log data for a single unit start/stop lifecycle.')
+		help=dd('''
+			Stop after all monitored units exit.
+			Can be used with --new to log data for a single unit start/stop lifecycle.'''))
 	opts = parser.parse_args(args if args is not None else sys.argv[1:])
 
 	logging.basicConfig(level=logging.WARNING, format='{levelname} :: {message}', style="{")
@@ -106,15 +116,25 @@ def main(args=None):
 		if ':' in ev_log_bs: ev_log_bs, ev_log_n = ev_log_bs.split(':', 1)
 	ev_log_bs, ev_log_n = size_parse(ev_log_bs), int(ev_log_n)
 
-	ev_log = logging.getLogger('cglog.ev')
-	try:
-		with open(ev_log_file, 'a') as dst: dst.tell()
-	except io.UnsupportedOperation:
-		log.warning( 'Specified log file path is'
-			' not seekable, disabling rotation: %s', ev_log_file )
+	ev_handler = None
+	if ev_log_file == '-': ev_handler = logging.StreamHandler(sys.stdout)
+	elif ev_log_file.startswith('%') and (fd := ev_log_file[1:]).isdigit():
+		ev_handler = logging.StreamHandler(open(int(fd), 'a'))
+	elif (p := pl.Path(ev_log_file)).exists() and not p.is_file():
 		ev_handler = logging.FileHandler(ev_log_file)
-	else: ev_handler = logging.handlers.RotatingFileHandler(
-		ev_log_file, maxBytes=ev_log_bs, backupCount=ev_log_n )
+	elif p.exists() and p.is_symlink(): p = p.resolve(True)
+	if not ev_handler:
+		try:
+			with p.open('a') as dst: dst.tell()
+		except io.UnsupportedOperation:
+			log.warning( 'Specified log file path is'
+				' not seekable, disabling rotation: %s', p )
+			ev_handler = logging.FileHandler(p)
+		else:
+			ev_handler = logging.handlers.RotatingFileHandler(
+				p, maxBytes=ev_log_bs, backupCount=ev_log_n )
+
+	ev_log = logging.getLogger('cglog.ev')
 	ev_handler.setLevel(logging.DEBUG)
 	ev_handler.setFormatter(logging.Formatter('%(message)s'))
 	ev_log.addHandler(ev_handler)
@@ -135,9 +155,10 @@ def main(args=None):
 	for sig in signal.SIGINT, signal.SIGTERM:
 		signal.signal(sig, lambda sig,frm: sys.exit())
 
-	tracker_ev_map = { # not sure if these stay same between releases
-		'39f53479-d3a0-45ac-8e11-786248231fbf': adict(start=1, stop=0),
-		'7ad2d189-f7e9-4e70-a38c-781354912448': adict(start=0, stop=1) }
+	tracker_ev_map = { # not sure if these stay same between releases, check journalctl
+		'39f53479d3a045ac8e11786248231fbf': adict(start=1, stop=0),
+		'7ad2d189f7e94e70a38c781354912448': adict(start=0, stop=1),
+		'9d1aaa27d60140bd96365438aad20286': adict(start=0, stop=1) }
 	tracker = journal_unit_tracker_iter(opts.unit_fnmatch, tracker_ev_map, unit_set)
 	next(tracker)
 
