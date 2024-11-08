@@ -57,6 +57,7 @@ usage() {
 	echo >&2 "  cgrc -v cpu.max app-pacman"
 	echo >&2 "  cgrc -v cpu.max='2M 500K' app-pacman"
 	echo >&2 "  cgrc -sru pulseaudio"
+	echo >&2 'Basic no-slice scope: systemd-run -q --user --scope --unit=test.$$ -- ...'
 	echo >&2
 	exit ${1:-1}
 }
