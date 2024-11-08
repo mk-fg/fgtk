@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 import subprocess as sp, operator as op, collections as cs, pathlib as pl
-import os, sys, time, fnmatch, json, signal, logging, logging.handlers
+import os, sys, io, time, fnmatch, json, signal, logging, logging.handlers
 
-import systemd.journal as sdj
+import systemd.journal as sdj # official systemd python bindings package
 
 
 log = logging.getLogger('cglog')
@@ -69,7 +69,7 @@ def poll_cg_stats(cg, dev_cache=dict()):
 			except: errs += 1
 	if errs > 2: # either random or parser bugs
 		cg_files = ' '.join(f'{k}={src.name}' for k, src in cg.items())
-		log.warninig('Too many errors [%s] when parsing cg stats: %s', errs, cg_files)
+		log.warning('Too many errors [%s] when parsing cg stats: %s', errs, cg_files)
 	return stats
 
 
@@ -107,7 +107,13 @@ def main(args=None):
 	ev_log_bs, ev_log_n = size_parse(ev_log_bs), int(ev_log_n)
 
 	ev_log = logging.getLogger('cglog.ev')
-	ev_handler = logging.handlers.RotatingFileHandler(
+	try:
+		with open(ev_log_file, 'a') as dst: dst.tell()
+	except io.UnsupportedOperation:
+		log.warning( 'Specified log file path is'
+			' not seekable, disabling rotation: %s', ev_log_file )
+		ev_handler = logging.FileHandler(ev_log_file)
+	else: ev_handler = logging.handlers.RotatingFileHandler(
 		ev_log_file, maxBytes=ev_log_bs, backupCount=ev_log_n )
 	ev_handler.setLevel(logging.DEBUG)
 	ev_handler.setFormatter(logging.Formatter('%(message)s'))
