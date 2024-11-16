@@ -238,7 +238,7 @@ def md_check_links(md_lines, errs):
 def md_check_files(p_base, p_git, git_files, link_map, errs):
 	for url, links in link_map.items():
 		if re.match(r'(?i)(#|https?://)', url): continue
-		p_weird = not re.match(r'[\w]', url)
+		p_weird = not re.match(r'[\w.]', url)
 		p_nx = not (p := (p_base / url.split('#', 1)[0]).resolve()).exists()
 		p_nogit = p not in git_files
 		for link in links:
