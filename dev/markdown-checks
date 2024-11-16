@@ -56,8 +56,8 @@ md_esc_restore = lambda s: md_esc_strip(s, True)
 
 def md_clean(md, code_re, errs):
 	'Return markdown with all code-blocks stripped'
-	st = adict( list_level=0, sep=None,
-		code=None, code_inline=None, code_prefix=None )
+	st = adict( list_level=0, list_start=False,
+		sep=None, code=None, code_inline=None, code_prefix=None )
 	lines_cut, lines = list(), f'\n{md}'.splitlines() # \n to skip line-number=0 easily
 
 	def _find_code_start(n, line):
@@ -97,13 +97,15 @@ def md_clean(md, code_re, errs):
 	for n, line in enumerate(lines):
 		if not line.strip(): st.sep = True; continue
 		if '\t' in line: errs.append(adict(n=n, t='tabs', s='Tab character(s)'))
+		if st.sep or st.code: st.list_start = False
 
 		if not st.code:
 			if st.list_level > 0:
 				level = st.list_level
 				while level and line.startswith(' '*4): line = line[4:]; level -= 1
+				if st.list_start and level == 1 and line.startswith('  '): level -= 1
 				st.list_level -= level
-			if line.startswith('- '): st.list_level += 1
+			if line.startswith('- '): st.list_level += 1; st.list_start = True
 			_find_code_start(n, line)
 
 		else:
