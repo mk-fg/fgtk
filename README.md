@@ -16,7 +16,7 @@ Repository URLs:
 
 Contents - links to doc section for each script here:
 
-- [\[-root-\] Various CLI/system things](#hdr-__-root-___various_cli_system_things)
+- [\[-root-\] Various CLI/system things](#hdr--root-___various_cli_system_things)
 
     - [File/dir/fs management](#hdr-file_dir_fs_management)
 
@@ -111,7 +111,7 @@ Contents - links to doc section for each script here:
         - [unix-socket-links](#hdr-unix-socket-links)
         - [tcpdump-translate](#hdr-tcpdump-translate)
 
-- [\[dev\] Dev tools](#hdr-__dev___dev_tools)
+- [\[dev\] Dev tools](#hdr-dev___dev_tools)
 
     - [indent-replace](#hdr-indent-replace)
     - [indent-braces](#hdr-indent-braces)
@@ -128,7 +128,7 @@ Contents - links to doc section for each script here:
     - [git-prepare-commit-msg-hook](#hdr-git-prepare-commit-msg-hook)
     - [markdown-checks](#hdr-markdown-checks)
 
-- [\[backup\] Backup helpers](#hdr-__backup___backup_helpers)
+- [\[backup\] Backup helpers](#hdr-backup___backup_helpers)
 
     - [ssh-r-sync / ssh-r-sync-recv](#hdr-ssh-r-sync___ssh-r-sync-recv)
     - [ssh-dump](#hdr-ssh-dump)
@@ -136,17 +136,17 @@ Contents - links to doc section for each script here:
     - [btrfs-snapper](#hdr-btrfs-snapper)
     - [dir-snapper](#hdr-dir-snapper)
 
-- [\[hsm\] FIDO2 / PIV / etc smartcard stuff](#hdr-_hsm_fido2_piv_etc_smartcard_stuff)
+- [\[hsm\] FIDO2 / PIV / etc smartcard stuff](#hdr-hsm___fido2___piv___etc_smartcard_stuff)
 
     - [fido2-hmac-desalinate.c](#hdr-fido2-hmac-desalinate.c)
     - [fido2_hmac_boot.nim](#hdr-fido2_hmac_boot.nim)
     - [secret-token-backup](#hdr-secret-token-backup)
 
-- [\[desktop\] Linux desktop stuff](#hdr-__desktop___linux_desktop_stuff)
+- [\[desktop\] Linux desktop stuff](#hdr-desktop___linux_desktop_stuff)
 
-    - [\[desktop/uri_handlers\]](#hdr-__desktop_uri_handlers__)
+    - [\[desktop/uri_handlers\]](#hdr-desktop_uri_handlers__)
 
-    - [\[desktop/media\]](#hdr-__desktop_media__)
+    - [\[desktop/media\]](#hdr-desktop_media__)
 
         - [toogg](#hdr-toogg)
         - [totty](#hdr-totty)
@@ -159,7 +159,7 @@ Contents - links to doc section for each script here:
         - [streamdump](#hdr-streamdump)
         - [image-compact](#hdr-image-compact)
 
-    - [\[desktop/notifications\]](#hdr-__desktop_notifications__)
+    - [\[desktop/notifications\]](#hdr-desktop_notifications__)
 
         - [exec](#hdr-exec)
         - [power](#hdr-power)
@@ -169,7 +169,7 @@ Contents - links to doc section for each script here:
         - [aqm-alerts](#hdr-aqm-alerts)
         - [dev-nodes](#hdr-dev-nodes)
 
-    - [\[desktop\] others](#hdr-__desktop___others)
+    - [\[desktop\] others](#hdr-desktop___others)
 
         - [vfat_shuffler](#hdr-vfat_shuffler)
         - [fan_control](#hdr-fan_control)
@@ -193,11 +193,11 @@ Contents - links to doc section for each script here:
         - [hamster-tally](#hdr-hamster-tally)
         - [feh-screen](#hdr-feh-screen)
 
-- [\[vm\] VM scripts](#hdr-__vm___vm_scripts)
+- [\[vm\] VM scripts](#hdr-vm___vm_scripts)
 
-- [\[bpf\] Linux eBPF filters](#hdr-__bpf___linux_ebpf_filters)
+- [\[bpf\] Linux eBPF filters](#hdr-bpf___linux_ebpf_filters)
 
-- [\[arch\] ArchLinux(+ARM)](#hdr-__arch___archlinux__arm_)
+- [\[arch\] ArchLinux(+ARM)](#hdr-arch___archlinux__arm_)
 
     - [elf-deps](#hdr-elf-deps)
     - [pacman-manifest](#hdr-pacman-manifest)
@@ -207,11 +207,11 @@ Contents - links to doc section for each script here:
     - [tar-strap](#hdr-tar-strap)
     - [can-strap](#hdr-can-strap)
 
-- [\[alpine\] Alpine Linux](#hdr-__alpine___alpine_linux)
+- [\[alpine\] Alpine Linux](#hdr-alpine___alpine_linux)
 
     - [manifest](#hdr-manifest)
 
-- [\[metrics\] Charts and metrics](#hdr-__metrics___charts_and_metrics)
+- [\[metrics\] Charts and metrics](#hdr-metrics___charts_and_metrics)
 
     - [rrd-sensors-logger](#hdr-rrd-sensors-logger)
     - [graphite-scratchpad](#hdr-graphite-scratchpad)
@@ -224,14 +224,14 @@ Contents - links to doc section for each script here:
     - [prometheus-grafana-simplejson-aggregator](#hdr-prometheus-grafana-simplejson-aggregator)
     - [systemd-cglog](#hdr-systemd-cglog)
 
-- [\[cron-checks\] Diff/alert checks for crontab](#hdr-_cron-checks_things_to_run_from_crontab_.VYkK)
+- [\[cron-checks\] Diff/alert checks for crontab](#hdr-cron-checks_things_to_run_from_crontab_s.0UQD)
 
     - [df](#hdr-df)
     - [attrs](#hdr-attrs)
     - [git-manifest](#hdr-git-manifest)
     - [systemd](#hdr-systemd)
 
-- [\[scraps\]](#hdr-__scraps__)
+- [\[scraps\]](#hdr-scraps__)
 
     - [rsync-diff](#hdr-rsync-diff)
     - [pcap-process](#hdr-pcap-process)
@@ -259,7 +259,7 @@ Contents - links to doc section for each script here:
 
 
 
-<a name=hdr-__-root-___various_cli_system_things></a>
+<a name=hdr--root-___various_cli_system_things></a>
 ### \[-root-\] Various CLI/system things
 
 
@@ -2478,7 +2478,7 @@ Not a replacement for wireshark or tcpdump firehose-filters.
 
 
 
-<a name=hdr-__dev___dev_tools></a>
+<a name=hdr-dev___dev_tools></a>
 ### [\[dev\] Dev tools](dev)
 
 Minor things I tend to use when writing code and stuff.
@@ -2824,7 +2824,7 @@ where otherwise nothing will indicate any potential issues.
 
 
 
-<a name=hdr-__backup___backup_helpers></a>
+<a name=hdr-backup___backup_helpers></a>
 ### [\[backup\] Backup helpers](backup)
 
 Various dedicated backup tools and snippets.
@@ -2941,7 +2941,7 @@ fs level is handled somewhere else or unnecessary.
 
 
 
-<a name=hdr-_hsm_fido2_piv_etc_smartcard_stuff></a>
+<a name=hdr-hsm___fido2___piv___etc_smartcard_stuff></a>
 ### [\[hsm\] FIDO2 / PIV / etc smartcard stuff](hsm)
 
 Tools for using Hardware Security Modules - usually USB FIDO2 and PIV smartcards
@@ -3122,20 +3122,20 @@ with all those set as recipients.
 
 
 
-<a name=hdr-__desktop___linux_desktop_stuff></a>
+<a name=hdr-desktop___linux_desktop_stuff></a>
 ### [\[desktop\] Linux desktop stuff](desktop)
 
 Helpers for more interactive (client) machine, DE and apps there.
 
 
-<a name=hdr-__desktop_uri_handlers__></a>
+<a name=hdr-desktop_uri_handlers__></a>
 #### [\[desktop/uri_handlers\]](desktop/uri_handlers)
 
 Scripts to delegate downloads from browser to more sensible download managers,
 like passing magnet: links to transmission, or processing .torrent files.
 
 
-<a name=hdr-__desktop_media__></a>
+<a name=hdr-desktop_media__></a>
 #### [\[desktop/media\]](desktop/media)
 
 Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with
@@ -3384,7 +3384,7 @@ Can be used as `image-compact image.jpg` for default "fit into 1600x square"
 mode, or with optional SZ= env-var to scale it differently, but always preserving
 the aspect ratio.
 
-<a name=hdr-__desktop_notifications__></a>
+<a name=hdr-desktop_notifications__></a>
 #### [\[desktop/notifications\]](desktop/notifications)
 
 A bunch of tools to issue various desktop notifications.
@@ -3554,7 +3554,7 @@ notification-bubble monitor pids around.
 
 
 
-<a name=hdr-__desktop___others></a>
+<a name=hdr-desktop___others></a>
 #### [\[desktop\] others](desktop)
 
 <a name=hdr-vfat_shuffler></a>
@@ -3993,7 +3993,7 @@ or other code mirrors listed at the top somewhere).
 
 
 
-<a name=hdr-__vm___vm_scripts></a>
+<a name=hdr-vm___vm_scripts></a>
 ### [\[vm\] VM scripts](vm)
 
 Scripts to start and manage qemu/kvm based VMs I use for various dev purposes.
@@ -4011,7 +4011,7 @@ under shared vm.slice.
 
 
 
-<a name=hdr-__bpf___linux_ebpf_filters></a>
+<a name=hdr-bpf___linux_ebpf_filters></a>
 ### [\[bpf\] Linux eBPF filters](bpf)
 
 eBPF at this point is kinda like generic "extension language" in linux,
@@ -4028,7 +4028,7 @@ See head of specific .c files for compilation/loading/usage instructions.
 
 
 
-<a name=hdr-__arch___archlinux__arm_></a>
+<a name=hdr-arch___archlinux__arm_></a>
 ### [\[arch\] ArchLinux(+ARM)](arch)
 
 Tools for automating various Arch Linux tasks.
@@ -4201,7 +4201,7 @@ suitable to boot and log into with e.g. `systemd-nspawn -bn -M buildbot-32`.
 
 
 
-<a name=hdr-__alpine___alpine_linux></a>
+<a name=hdr-alpine___alpine_linux></a>
 ### [\[alpine\] Alpine Linux](alpine)
 
 Various helper tools for automating Alpine Linux OS-level tasks.
@@ -4238,7 +4238,7 @@ new/unnecessary/forgotten `/usr/local` stuff, etc.
 
 
 
-<a name=hdr-__metrics___charts_and_metrics></a>
+<a name=hdr-metrics___charts_and_metrics></a>
 ### [\[metrics\] Charts and metrics](metrics)
 
 Tools for working with various time-series databases and metrics-monitoring
@@ -4558,7 +4558,7 @@ Idea here is just to gather all useful numbers over time.
 
 
 
-<a name=hdr-_cron-checks_things_to_run_from_crontab_.VYkK></a>
+<a name=hdr-cron-checks_things_to_run_from_crontab_s.0UQD></a>
 ### [\[cron-checks\] Things to run from crontab scripts for diffs/alerts](cron-checks)
 
 Typically templates for simple host-specific scripts that run from cron
@@ -4643,7 +4643,7 @@ Symlink to a [systemd-dashboard] script - it kinda belongs here too.
 
 
 
-<a name=hdr-__scraps__></a>
+<a name=hdr-scraps__></a>
 ### [\[scraps\]](scraps)
 
 Misc prefabs and *really* ad-hoc scripts,
