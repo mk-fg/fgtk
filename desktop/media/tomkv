@@ -95,13 +95,15 @@ def main(args=None):
 	parser.add_argument('-n', '--name',
 		metavar='tpl', default='{name}.mkv', help=dd('''
 			Template to rename resulting file(s), instead of default: %(default)s
+			Can be used to set non-mkv container format, e.g. mp4.
+				ffmpeg auto-detects it from extension, so it must be something conventional.
 			Names are deduplicated with number-suffix when multiple sources are used.
 			Substituted keys: "name" - source filename without extension.'''))
 	parser.add_argument('-r', '--rm-list', metavar='file[:factor]', help=dd('''
 		Generate a list of files to cleanup after conversion, one per line.
-		It's realpath of all source files by default, unless but factor number
+		It's realpath of all source files by default, unless factor number
 			(float in 0-1.0 range) is also specified, colon-separated after filename.
-		With factor number, filename on the list is be picked
+		With factor number, filename on the list is picked
 			from either source or destination after each operation,
 			based on resulting filesize difference - source if resulting size
 			is larger than source*factor, otherwise destination.
@@ -111,7 +113,7 @@ def main(args=None):
 	parser.add_argument('-s', '--skip-n', metavar='n', type=int, help=dd('''
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
-			"wc -l" on -r/--rm-list or printed n/m count after ffmpeg finishes.'''))
+			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list()
@@ -192,7 +194,7 @@ def main(args=None):
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
-			c in a for c in '\'" ') else a) for a in cmd), end='\n\n')
+			c in a for c in '\'" ') else a) for a in cmd), end='\n\n', flush=True)
 		if dry_run: continue
 
 		sp.run(cmd, check=True, stdin=sp.DEVNULL)
@@ -224,6 +226,6 @@ def main(args=None):
 		else: st += ( f' :: {m-n} file(s) / {sz_repr(sz)}'
 			f' left to process :: {sz_repr(szx_a)}-{sz_repr(szx_b)} to add'
 			f' in {td_repr((m-nd) * td/nd)} (est. ~{sz_repr(sz1+szx_b)} final)' )
-		print(st)
+		print(st, flush=True)
 
 if __name__ == '__main__': sys.exit(main())
