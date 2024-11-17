@@ -149,6 +149,7 @@ Contents - links to doc section for each script here:
     - [\[desktop/media\]](#hdr-desktop_media__)
 
         - [toogg](#hdr-toogg)
+        - [tomkv](#hdr-tomkv)
         - [totty](#hdr-totty)
         - [split](#hdr-split)
         - [audio-split-m4b](#hdr-audio-split-m4b)
@@ -3144,7 +3145,7 @@ Scripts - mostly wrappers around ffmpeg and pulseaudio - to work with
 <a name=hdr-toogg></a>
 ##### [toogg](desktop/media/toogg)
 
-Any-media-to-ogg convertor, using ffmpeg, encoding stuff in parallel,
+Any-media-to-ogg converter, using ffmpeg, encoding stuff in parallel,
 optionally cutting and splitting files, adding chapter-marks, using ffmpeg
 [loudnorm filter] (EBU R128 loudness normalization) in double-pass mode, etc.
 
@@ -3157,6 +3158,20 @@ uses python/asyncio.
 Needs youtube-dl installed if URLs are specified instead of regular files.
 
 [loudnorm filter]: https://ffmpeg.org/ffmpeg-all.html#loudnorm
+
+<a name=hdr-tomkv></a>
+##### [tomkv](desktop/media/tomkv)
+
+Script to batch-convert video files to efficient A/V codecs and downscale
+to ~720p h265 and 2-channel 96k opus audio, which is useful for modern systems
+that have no trouble playing these codecs and take 2x+ less space than common h264.
+
+ffprobe is run on the files first to detect ones which won't benefit from
+conversion or have any kind of ambiguity/errors not handled by this script
+(e.g. multiple A/V tracks), which is also where script stops by default,
+listing any problems, files to convert and ffmpeg commands it'll run for those.
+
+Converts everything sequentially, without any explicit hw optimization flags.
 
 <a name=hdr-totty></a>
 ##### [totty](desktop/media/totty)

@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+
+import pathlib as pl, subprocess as sp, collections as cs
+import os, sys, json, re
+
+
+class adict(dict):
+	@classmethod
+	def rec_make(cls, *args, _rec=id, **kws):
+		v, ids, rec_key = (
+			_rec if _rec is not id else (dict(*args, **kws), adict(), id) )
+		if isinstance(v, (dict, list)):
+			if (vid := id(v)) in ids: raise ValueError(
+				f'Recursive data at [ {".".join(map(str, ids.values()))} ]' )
+			if rec_key is not id: ids = adict(ids); ids[rec_key] = vid
+			if isinstance(v, dict): v = cls(
+				(k, cls.rec_make(_rec=(v, ids, k))) for k,v in v.items() )
+			elif isinstance(v, list): v = list(
+				cls.rec_make(_rec=(v, ids, f'[{n}]')) for n,v in enumerate(v) )
+		return v
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+
+def src_probe(p):
+	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
+		'stream', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
+	probe = adict.rec_make(json.loads(probe.stdout))
+	video = audio = subs = None; errs = list()
+	for s in probe.streams:
+		if s.codec_type == 'video':
+			if video: return adict(t='video', msg='Multiple streams detected')
+			video = adict(c=s.codec_name, w=s.width, h=s.height)
+		if s.codec_type == 'audio':
+			if audio: return adict(t='audio', msg='Multiple streams detected')
+			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
+			audio = adict(c=c, chans=s.channels, br=br)
+		if s.codec_type == 'subtitle':
+			if subs: errs.append(adict(t='subs', msg='Multiple tracks detected'))
+			subs = adict(c=s.codec_name)
+	return adict(v=video, a=audio, s=subs, errs=errs)
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [options] src [src ...]', description=dd('''
+			ffprobe-check and convert source file(s)
+				to a more compact video format, as needed, into current dir.
+			Encodes to h265/opus/mkv, downscaling video/audio to ~720p/96k-stereo.
+			Initial ffprobe is intended to detect files that might already be
+				converted or won't benefit from it as much, and skip those by default,
+				as well as any files that can't be handled by this script correctly
+				(e.g. ones that have multiple A/V streams or errors of any kind).
+			Does not run conversion by default, only prints actions to be done.'''))
+	parser.add_argument('src', nargs='+', help='File(s) to convert.')
+	parser.add_argument('-x', '--convert', action='store_true', help=dd('''
+		Run ffmpeg commands to convert all files not
+			listed as PROBLEM or SKIP (unless -f/--force is used).'''))
+	parser.add_argument('-f', '--force', action='store_true', help=dd('''
+		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
+	parser.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
+		Existing path to store resulting files in. Defaults to current dir.'''))
+	parser.add_argument('-n', '--name',
+		metavar='tpl', default='{name}.mkv', help=dd('''
+			Template to rename resulting file(s), instead of default: %(default)s
+			Names are deduplicated with number-suffix when multiple sources are used.
+			Substituted keys: "name" - source filename without extension.'''))
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	src_list = list()
+	for src in opts.src:
+		try: src_list.append(pl.Path(src).resolve(strict=True))
+		except FileNotFoundError: parser.error(f'Source path missing/inaccessible: {src}')
+	if opts.dst_dir: os.chdir(opts.dst_dir)
+
+	# Disambiguation for dst filenames
+	dst_name_aliases, dst_name_map = dict(), cs.defaultdict(list)
+	def dst_name_format(name):
+		if dst_name := dst_name_aliases.get(nn := str(name)): return dst_name
+		dst_name, fn = opts.name, os.path.basename(nn).rsplit('.', 1)[0]
+		dst_name = dst_name_aliases[nn] = dst_name.format(name=fn) if dst_name else nn
+		return dst_name
+	for name in sorted(src_list, key=lambda s: s.name):
+		dst_name_map[dst_name_format(nn := str(name))].append(nn)
+	for dst_name, name_list in dst_name_map.items():
+		nf = str(len(str(len(name_list))))
+		for n, name in enumerate(name_list, 1):
+			if len(name_list) == 1: continue
+			if '.' not in dst_name: fn, ext = dst_name, ''
+			else: fn, ext = dst_name.rsplit('.'); ext = f'.{ext}'
+			dst_name_aliases[name] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
+
+	# ffprobe pass
+	for n, src in enumerate(src_list):
+		p, dst, src_list[n] = src_probe(src), dst_name_format(src), None
+		if (errs := p.get('errs')) is None:
+			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
+		if p.v.c == 'hevc' and p.v.w <= 1400:
+			errs.append(adict(t='video', msg='Already encoded to <1280px hevc'))
+		if p.v.w > 1400: p.v.scale = True
+		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
+			errs.append(adict( t='audio', warn=1,
+				msg='Already encoded in <200k 2ch opus, will copy it as-is' ))
+			p.a.clone = True
+		if errs:
+			try: skip = err = next(err for err in errs if not err.get('warn'))
+			except: err = errs[skip := 0]
+			err_verdict = lambda: 'WARN' if err.get('warn') or opts.force else 'SKIP'
+			if len(errs) > 1:
+				print(f'\n{dst} :: {err_verdict()}'.rstrip())
+				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+			else: print(f'\n{dst} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+			if skip: continue
+		p.src, p.dst = src, dst
+		src_list[n] = p
+
+	# ffmpeg conversion
+	dry_run, src_list = not opts.convert, list(filter(None, src_list))
+	if dry_run: print()
+	for n, p in enumerate(src_list, 1):
+		scale = ( [] if not p.v.get('scale') else
+			['-filter:v', "scale='min(1280,iw)':-2,setsar=1:1"] )
+		if p.a.get('clone'): ac = ['-c:a', 'copy']
+		else:
+			ac = ['-c:a', 'libopus', '-b:a', '96k']
+			if p.a.chans > 2: ac = [ '-filter:a',
+				'pan=stereo|c0=0.5*c2+0.707*c0+0.707*c4+0.5*c3'
+				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
+			elif p.a.chans < 2: ac = ['-ac', '2'] + ac
+		movflags = ( ['-movflags', '+faststart']
+			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
+		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *scale,
+			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
+		msg = f'\n\n- ----- [ {n} / {len(src_list)} ] :: {p.src} :->: {p.dst}\n\n'
+		if dry_run: msg = msg.strip()
+		print(msg); print(' '.join((repr(a) if any(
+			c in a for c in '\'" ') else a) for a in cmd), end='\n\n')
+		if not dry_run: sp.run(cmd, check=True, stdin=sp.DEVNULL)
+
+if __name__ == '__main__': sys.exit(main())

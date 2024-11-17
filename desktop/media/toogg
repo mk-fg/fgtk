@@ -411,21 +411,22 @@ class AudioConv:
 
 		dst_name_aliases = dict()
 		def dst_name_format(name):
-			dst_name = dst_name_aliases.get(name)
-			if not dst_name:
-				dst_name, name = self.dst_name_tpl, name.rsplit('.', 1)[0]
-				dst_name = dst_name.format(name=name) if dst_name else name
+			if dst_name := dst_name_aliases.get(nn := str(name)): return dst_name
+			dst_name, fn = opts.name, os.path.basename(nn).rsplit('.', 1)[0]
+			dst_name = dst_name_aliases[nn] = dst_name.format(name=fn) if dst_name else nn
 			return dst_name
 
 		# Make disambiguation map for same dst names
 		dst_name_map = cs.defaultdict(list)
-		for name in sorted(map(os.path.basename, self.src_list)):
-			dst_name_map[dst_name_format(name)].append(name)
+		for name in sorted(self.src_list, key=os.path.basename):
+			dst_name_map[dst_name_format(nn := str(name))].append(nn)
 		for dst_name, name_list in dst_name_map.items():
 			nf = str(len(str(len(name_list))))
 			for n, name in enumerate(name_list, 1):
-				dst_name_aliases[name] = ( dst_name
-					if len(name_list) == 1 else ('{}.{:0'+nf+'d}').format(dst_name, n) )
+				if len(name_list) == 1: continue
+				if '.' not in dst_name: fn, ext = dst_name, ''
+				else: fn, ext = dst_name.rsplit('.'); ext = f'.{ext}'
+				dst_name_aliases[name] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
 
 		while True:
 			# Processing sequence via src_stack:
@@ -451,7 +452,7 @@ class AudioConv:
 						raise AudioConvError( 'Cannot split src'
 							f' into chunks due to unknown duration: {src}' )
 					src_chunks, chunk_len = list(), self.chunks
-					dst_name = dst_name_format(src.p.name)
+					dst_name = dst_name_format(src.p)
 					start, length = start or 0, length or src.duration
 					length_total = length
 					dst_dir = ( dst_name if not self.inplace
@@ -473,7 +474,7 @@ class AudioConv:
 					if isinstance(src, AudioConvChunk):
 						dst, start, length = src.dst, src.start, src.duration
 					else:
-						dst_base = dst_name_format(src.p.name)
+						dst_base = dst_name_format(src.p)
 						if self.inplace: dst_base = str(src.p.parent.resolve()).strip(os.sep) + f'/{dst_base}'
 						if (dst := pl.Path(f'{dst_base}.ogg')).resolve() == src.p.resolve():
 							for n in it.chain([''], range(2**30)):
