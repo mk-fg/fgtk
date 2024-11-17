@@ -22,16 +22,33 @@ class adict(dict):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
 
-def size_human(size, _units=list(
+def size_repr(size, _units=list(
 		reversed(list((u, 2 ** (n * 10)) for n, u in enumerate('BKMGT'))) )):
 	for u, u1 in _units:
 		if size > u1: break
 	if u1 > 1: size = f'{size/u1:.1f}'
 	return f'{size}{u}'
 
+def td_repr(delta, units_max=2, units_res=None, _units=dict(
+		h=3600, m=60, s=1, y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	return ' '.join(res) if res else '<1s'
+
+
 def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
-		'stream', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
+		'stream:format=duration', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = subs = None; errs = list()
 	for s in probe.streams:
@@ -45,8 +62,8 @@ def src_probe(p):
 		if s.codec_type == 'subtitle':
 			if subs: errs.append(adict(t='subs', msg='Multiple tracks detected'))
 			subs = adict(c=s.codec_name)
-	if not (audio and video): return adict(t='container', msg='Missing A/V streams')
-	return adict(v=video, a=audio, s=subs, errs=errs)
+	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
+	return adict(v=video, a=audio, s=subs, td=float(probe.format.duration), errs=errs)
 
 
 def main(args=None):
@@ -158,7 +175,8 @@ def main(args=None):
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *scale,
 			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
-		msg = f'\n\n- ----- [ {n} / {len(src_list)} ] :: {p.src} :->: {p.dst}\n\n'
+		msg = ( f'\n\n- ----- [ {n} / {len(src_list)} ]'
+			f' :: {p.src} :-[ {td_repr(p.td)} ]->: {p.dst}\n\n' )
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
 			c in a for c in '\'" ') else a) for a in cmd), end='\n\n')
@@ -176,6 +194,6 @@ def main(args=None):
 				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
 		print(
 			f'- --- {p.dst} :: 100% -> {round((b/a) * 100)}%'
-			f'{target} :: {size_human(a)} -> {size_human(b)}' )
+			f'{target} :: {size_repr(a)} -> {size_repr(b)}' )
 
 if __name__ == '__main__': sys.exit(main())
