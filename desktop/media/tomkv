@@ -108,6 +108,10 @@ def main(args=None):
 		Intended use is to make an easy-to-use list of files to
 			rm when replacing old ones with converted versions,
 			without unnecessary replacement if there's not enough benefit.'''))
+	parser.add_argument('-s', '--skip-n', metavar='n', type=int, help=dd('''
+		Skip first N files that'd have been processed otherwise.
+		Can be used to resume a long operation, using number from
+			"wc -l" on -r/--rm-list or printed n/m count after ffmpeg finishes.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list()
@@ -120,6 +124,7 @@ def main(args=None):
 		rm_list, rm_list_factor = ( (rm_list, math.inf)
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
+	skip_n = max(0, opts.skip_n or 0)
 
 	# Deduplication of dst filenames
 	dst_name_aliases, dst_name_map = dict(), dict()
@@ -185,6 +190,7 @@ def main(args=None):
 		msg = ( f'\n\n- {dt} --- [ {n} / {len(src_list)} ]'
 			f' :: {p.src} :-[ {td_repr(p.td)} ]->: {p.dst}\n\n' )
 		if dry_run: msg = msg.strip()
+		if skip_n: skip_n -= 1; continue
 		print(msg); print(' '.join((repr(a) if any(
 			c in a for c in '\'" ') else a) for a in cmd), end='\n\n')
 		if dry_run: continue
