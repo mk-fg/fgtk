@@ -170,7 +170,7 @@ def main(args=None):
 
 	# Main ffmpeg conversion loop
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
-	ts0, sz0, sz1, m = time.monotonic(), 0, 0, len(src_list)
+	ts0, sz_src_done, sz_dst_done, m = time.monotonic(), 0, 0, len(src_list)
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
 		filters = list()
@@ -188,9 +188,8 @@ def main(args=None):
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
-		dt = time.strftime('%Y-%m-%d %H:%M:%S')
-		msg = ( f'\n\n- {dt} --- [ {n} / {m} ]'
-			f' :: {p.src} :-[ {td_repr(p.td)} ]->: {p.dst}\n\n' )
+		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
+		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n\n'
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
@@ -199,33 +198,41 @@ def main(args=None):
 
 		sp.run(cmd, check=True, stdin=sp.DEVNULL)
 
-		# Size check, stats, rm-list export
-		if nx and (nd := n-nx) == 1: # add dst files into stats, if they all exist
-			try:
+		# Per-file stats, compression check, rm-list export
+		if nx and (nd := n-nx) == 1:
+			try: # add skipped dst-files into stats, if they all exist
 				for nc, p in enumerate(src_list, 1):
 					if nc == n: break
-					sz0 += p.sz; sz1 += os.stat(p.dst).st_size
+					sz_src_done += p.sz; sz_dst_done += os.stat(p.dst).st_size
 				nsz = 0
-			except: sz0 = sz1 = 0
-		target = ''; sz0 += (a := p.sz); sz1 += (b := os.stat(p.dst).st_size)
+			except: sz_src_done = sz_dst_done = 0
+		target = ''
+		sz_src_done += (sz_src := p.sz);
+		sz_dst_done += (sz_dst := os.stat(p.dst).st_size)
 		if rm_list:
-			improved = b/a < rm_list_factor
+			improved = sz_dst/sz_src < rm_list_factor
 			rm_list.write(f'{p.src if improved else p.dst}\n'); rm_list.flush()
 			if rm_list_factor is not math.inf:
 				target = 'better' if improved else 'WORSE'
 				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
-		dt, td = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic() - ts0
-		sz = sum(p.sz for nc, p in enumerate(src_list, 1) if nc > n)
-		szx_a, szx_b = sorted([(sz1 / (n-nsz)) * (m-n), sz * sz1/sz0])
-		print( f'- {dt} --- {p.dst} :: 100% ->'
-			f' {round(100*b/a)}%{target} :: {sz_repr(a)} -> {sz_repr(b)}' )
-		st = ( f'- --- [ {n} / {m} ] {sz_repr(sz0)} ->'
-			f' {sz_repr(sz1)} [ {round(100*sz1/sz0)}% ] in {td_repr(td)}' )
-		if nx: st += f' (first {nx} skipped)'
-		if n == m: st += ' :: all done'
-		else: st += ( f' :: {m-n} file(s) / {sz_repr(sz)}'
-			f' left to process :: {sz_repr(szx_a)}-{sz_repr(szx_b)} to add'
-			f' in {td_repr((m-nd) * td/nd)} (est. ~{sz_repr(sz1+szx_b)} final)' )
-		print(st, flush=True)
+		dt, td = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic() - ts1
+		print( f'- {dt} --- [ {n} / {m} ] :: {p.dst}'
+			f' :: 100% -> {round(100*sz_dst/sz_src)}%{target}'
+			f' :: {sz_repr(sz_src)} -> {sz_repr(sz_dst)}'
+			f' :: encoded {td_repr(p.td)} in {td_repr(td)}, at {td/p.td:.2f}x speed' )
+
+		# Total stats and estimates
+		sz_src_left = sum(p.sz for nc, p in enumerate(src_list, 1) if nc > n)
+		sz_dst_left = sz_src_left * (sz_factor := sz_dst_done/sz_src_done)
+		td_left = sz_src_left / (sz_src_done / (td := time.monotonic() - ts0))
+		st = ( f'- --- Processed so far :: {sz_repr(sz_src_done)} ->'
+			f' {sz_repr(sz_dst_done)} [ {round(100*sz_factor)}% ] in {td_repr(td)}' )
+		if nx: st += f' (first {nx} files skipped)'
+		print(st)
+		if n == m: print('- --- all done', flush=True)
+		else: print(
+			f'- --- Left to process :: {m-n} file(s) / {sz_repr(sz_src_left)}'
+			f' -> additional ~{sz_repr(sz_dst_left)} in {td_repr(td_left)}'
+			f' (est. ~{sz_repr(sz_dst_done+sz_dst_left)} final total)', flush=True )
 
 if __name__ == '__main__': sys.exit(main())
