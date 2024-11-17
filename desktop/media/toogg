@@ -281,7 +281,7 @@ class AudioConv:
 			probe=None, inplace=False, remove_src=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop = asyncio.get_running_loop()
-		self.src_list, self.dst_name_tpl = src_list, dst_name_tpl
+		self.src_list, self.dst_name_tpl = src_list, dst_name_tpl or ''
 		self.max_parallel = max_parallel or os.cpu_count()
 		self.start, self.length, self.probe = start, length, probe
 		self.chunks, self.chunks_beep = chunks, chunks_beep
@@ -409,24 +409,22 @@ class AudioConv:
 				f'  {src}' for src in src_set if src_stack.count(src) > 1 ))
 			raise AudioConvError(f'Duplicate source paths detected:\n{src_dup}')
 
-		dst_name_aliases = dict()
-		def dst_name_format(name):
-			if dst_name := dst_name_aliases.get(nn := str(name)): return dst_name
-			dst_name, fn = opts.name, os.path.basename(nn).rsplit('.', 1)[0]
-			dst_name = dst_name_aliases[nn] = dst_name.format(name=fn) if dst_name else nn
-			return dst_name
-
-		# Make disambiguation map for same dst names
-		dst_name_map = cs.defaultdict(list)
-		for name in sorted(self.src_list, key=os.path.basename):
-			dst_name_map[dst_name_format(nn := str(name))].append(nn)
-		for dst_name, name_list in dst_name_map.items():
-			nf = str(len(str(len(name_list))))
-			for n, name in enumerate(name_list, 1):
-				if len(name_list) == 1: continue
+		# Deduplication of dst filenames
+		dst_name_aliases, dst_name_map = dict(), cs.defaultdict(list)
+		def dst_name_base(p): # returns name without extension, incl. for dirs
+			if not (fn := dst_name_aliases.get(ps := str(p))):
+				fn = os.path.basename(ps).rsplit('.', 1)[0]
+				fn = dst_name_aliases[ps] = self.dst_name_tpl.format(name=fn) or fn
+			return fn
+		for p in sorted(self.src_list, key=lambda p: (os.path.basename(p), str(p))):
+			dst_name_map[dst_name_base(ps := str(p))].append(ps)
+		for dst_name, pss in dst_name_map.items():
+			if len(pss) == 1: continue
+			nf = str(len(str(len(pss))))
+			for n, ps in enumerate(pss, 1):
 				if '.' not in dst_name: fn, ext = dst_name, ''
 				else: fn, ext = dst_name.rsplit('.'); ext = f'.{ext}'
-				dst_name_aliases[name] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
+				dst_name_aliases[ps] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
 
 		while True:
 			# Processing sequence via src_stack:
@@ -452,7 +450,7 @@ class AudioConv:
 						raise AudioConvError( 'Cannot split src'
 							f' into chunks due to unknown duration: {src}' )
 					src_chunks, chunk_len = list(), self.chunks
-					dst_name = dst_name_format(src.p)
+					dst_name = dst_name_base(src.p)
 					start, length = start or 0, length or src.duration
 					length_total = length
 					dst_dir = ( dst_name if not self.inplace
@@ -474,7 +472,7 @@ class AudioConv:
 					if isinstance(src, AudioConvChunk):
 						dst, start, length = src.dst, src.start, src.duration
 					else:
-						dst_base = dst_name_format(src.p)
+						dst_base = dst_name_base(src.p)
 						if self.inplace: dst_base = str(src.p.parent.resolve()).strip(os.sep) + f'/{dst_base}'
 						if (dst := pl.Path(f'{dst_base}.ogg')).resolve() == src.p.resolve():
 							for n in it.chain([''], range(2**30)):
@@ -731,7 +729,7 @@ def main(args=None):
 			but leave -o unspecified (i.e. use default or config file).
 		Will be split on spaces, unless option is used multiple times.'''))
 	group.add_argument('-n', '--name', metavar='tpl', help=dd('''
-		Template to rename resulting file(s), instead of default "{name}.ogg".
+		Template to rename resulting file(s), instead of default "{name}".
 		Names are deduplicated with number-suffix when multiple sources are used.
 		Substituted keys: "name" - source filename without extension.'''))
 
