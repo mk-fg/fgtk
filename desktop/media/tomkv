@@ -47,14 +47,18 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 
 
 def src_probe(p):
-	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
-		'stream:format=duration', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
+	probe = sp.run( [ 'ffprobe', '-v', 'fatal', '-show_entries',
+			'stream:format=duration', '-print_format', 'json', str(p) ],
+		check=True, stdout=sp.PIPE )
 	probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = subs = None; errs = list()
 	for s in probe.streams:
 		if s.codec_type == 'video':
 			if video: return adict(t='video', msg='Multiple streams detected')
-			video = adict(c=s.codec_name, w=s.width, h=s.height)
+			if fps := s.get('avg_frame_rate') or 0:
+				if '/' not in fps: fps = float(fps)
+				else: a, b = map(float, fps.split('/')); fps = a/b
+			video = adict(c=s.codec_name, w=s.width, h=s.height, fps=fps)
 		if s.codec_type == 'audio':
 			if audio: return adict(t='audio', msg='Multiple streams detected')
 			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
@@ -75,7 +79,7 @@ def main(args=None):
 		usage='%(prog)s [options] src [src ...]', description=dd('''
 			ffprobe-check and convert source file(s)
 				to a more compact video format, as needed, into current dir.
-			Encodes to h265/opus/mkv, downscaling video/audio to ~720p/96k-stereo.
+			Encodes to h265/opus/mkv, downscaling video/audio to ~720p30/96k-stereo.
 			Initial ffprobe is intended to detect files that might already be
 				converted or won't benefit from it as much, and skip those by default,
 				as well as any files that can't be handled by this script correctly
@@ -140,9 +144,9 @@ def main(args=None):
 		p, dst, src_list[n] = src_probe(src), dst_name_format(src), None
 		if (errs := p.get('errs')) is None:
 			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
-		if p.v.c == 'hevc' and p.v.w <= 1400:
-			errs.append(adict(t='video', msg='Already encoded to <1280x hevc'))
-		if p.v.w > 1400: p.v.scale = True
+		p.v.scale, p.v.resample = p.v.w > 1400, p.v.fps > 35
+		if p.v.c == 'hevc' and not p.v.scale and not p.v.resample:
+			errs.append(adict(t='video', msg='Already encoded to <1280x 30fps hevc'))
 		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
 			errs.append(adict( t='audio', warn=1,
 				msg='Already encoded in <200k 2ch opus, will copy it as-is' ))
@@ -162,18 +166,20 @@ def main(args=None):
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
-		scale = ( [] if not p.v.get('scale') else
-			['-filter:v', "scale='min(1280,iw)':-2,setsar=1:1"] )
+		filters = list()
+		if p.v.resample: filters.extend(['-r', '30'])
+		if p.v.scale: filters.extend([
+			'-filter:v', "scale='min(1280,iw)':-2,setsar=1:1" ])
 		if p.a.get('clone'): ac = ['-c:a', 'copy']
 		else:
 			ac = ['-c:a', 'libopus', '-b:a', '96k']
-			if p.a.chans > 2: ac = [ '-filter:a',
+			if p.a.chans == 6: ac = [ '-filter:a', # -ac2 discards sw channel
 				'pan=stereo|c0=0.5*c2+0.707*c0+0.707*c4+0.5*c3'
 				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
-			elif p.a.chans < 2: ac = ['-ac', '2'] + ac
+			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
 		movflags = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
-		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *scale,
+		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
 		msg = ( f'\n\n- ----- [ {n} / {len(src_list)} ]'
 			f' :: {p.src} :-[ {td_repr(p.td)} ]->: {p.dst}\n\n' )

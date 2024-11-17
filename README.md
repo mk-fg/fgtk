@@ -3163,8 +3163,9 @@ Needs youtube-dl installed if URLs are specified instead of regular files.
 ##### [tomkv](desktop/media/tomkv)
 
 Script to batch-convert video files to efficient A/V codecs and downscale
-to ~720p h265 and 2-channel 96k opus audio, which is useful for modern systems
-that have no trouble playing these codecs and take 2x+ less space than common h264.
+to ~720p30 h265 and 2-channel 96k opus audio, which is useful for modern systems
+that have no trouble playing these codecs and take 2x+ less space than common h264,
+or even less than that if downscaling/downsampling is also involved.
 
 ffprobe is run on the files first to detect ones which won't benefit from
 conversion or have any kind of ambiguity/errors not handled by this script
@@ -3173,9 +3174,12 @@ listing any problems, files to convert and ffmpeg commands it'll run for those.
 
 Converts everything sequentially, without any explicit hw optimization flags.
 
-Can generate a list of files to remove afterwards with `-r/--rm-list` option,
-optionally checking compression factor to list destination file there instead
-of source, if it doesn't improve enough on resulting file size.
+Can generate a list of files to remove afterwards with `-r/--rm-list`,
+optionally checking compression factor to put destination file there
+instead of source, if it doesn't improve enough on resulting file size.
+
+Idea here is to avoid storing placebo-quality media when 720p30/opus-96k A/V
+is good enough, and anything beyond that is a pointless waste of space.
 
 <a name=hdr-totty></a>
 ##### [totty](desktop/media/totty)
