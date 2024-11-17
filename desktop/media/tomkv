@@ -21,7 +21,7 @@ class adict(dict):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
 
-def size_repr(size, _units=list(
+def sz_repr(size, _units=list(
 		reversed(list((u, 2 ** (n * 10)) for n, u in enumerate('BKMGT'))) )):
 	for u, u1 in _units:
 		if size > u1: break
@@ -46,9 +46,8 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 
 
 def src_probe(p):
-	probe = sp.run( [ 'ffprobe', '-v', 'fatal', '-show_entries',
-			'stream:format=duration', '-print_format', 'json', str(p) ],
-		check=True, stdout=sp.PIPE )
+	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
+		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = subs = None; errs = list()
 	for s in probe.streams:
@@ -66,7 +65,8 @@ def src_probe(p):
 			if subs: errs.append(adict(t='subs', msg='Multiple tracks detected'))
 			subs = adict(c=s.codec_name)
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
-	return adict(v=video, a=audio, s=subs, td=float(probe.format.duration), errs=errs)
+	return adict( v=video, a=audio, s=subs, errs=errs,
+		td=float(probe.format.duration), sz=int(probe.format.size) )
 
 
 def main(args=None):
@@ -163,6 +163,7 @@ def main(args=None):
 
 	# Main ffmpeg conversion loop
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
+	ts0, sz0, sz1 = time.monotonic(), 0, 0
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
 		filters = list()
@@ -190,7 +191,7 @@ def main(args=None):
 
 		sp.run(cmd, check=True, stdin=sp.DEVNULL)
 
-		# Size check, rm-list export
+		# Size check, stats, rm-list export
 		target, a, b = '', os.stat(p.src).st_size, os.stat(p.dst).st_size
 		if rm_list:
 			improved = b/a < rm_list_factor
@@ -198,9 +199,14 @@ def main(args=None):
 			if rm_list_factor is not math.inf:
 				target = 'better' if improved else 'WORSE'
 				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
-		dt = time.strftime('%Y-%m-%d %H:%M:%S')
-		print(
-			f'- {dt} -- {p.dst} :: 100% -> {round((b/a) * 100)}%'
-			f'{target} :: {size_repr(a)} -> {size_repr(b)}' )
+		dt, td = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic() - ts0
+		sz0 += a; sz1 += b; sz = sum(p.sz for m, p in enumerate(src_list, 1) if m > n)
+		szx_a, szx_b = sorted([(sz1 / n) * ((m := len(src_list)) - n), sz * sz1/sz0])
+		print( f'- {dt} --- {p.dst} :: 100% ->'
+			f' {round(100*b/a)}%{target} :: {sz_repr(a)} -> {sz_repr(b)}' )
+		if m > n: print( f'- --- [ {n} / {m} ] {sz_repr(sz0)} -> {sz_repr(sz1)}'
+			f' [ {round(100*sz1/sz0)}% ] in {td_repr(td)} :: {m-n} file(s) / {sz_repr(sz)}'
+			f' left to process :: {sz_repr(szx_a)}-{sz_repr(szx_b)} to add'
+			f' in {td_repr((m-n) * td/n)} (est. ~{sz_repr(sz1+szx_b)} final)' )
 
 if __name__ == '__main__': sys.exit(main())
