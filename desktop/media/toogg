@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-import itertools as it, operator as op, functools as ft
-import datetime as dt, collections as cs, pathlib as pl
+import itertools as it, operator as op, functools as ft, datetime as dt, pathlib as pl
 import os, sys, re, logging, math, contextlib, signal, json, tempfile, shutil
 import asyncio, asyncio.subprocess as sp
 
@@ -410,14 +409,14 @@ class AudioConv:
 			raise AudioConvError(f'Duplicate source paths detected:\n{src_dup}')
 
 		# Deduplication of dst filenames
-		dst_name_aliases, dst_name_map = dict(), cs.defaultdict(list)
+		dst_name_aliases, dst_name_map = dict(), dict()
 		def dst_name_base(p): # returns name without extension, incl. for dirs
 			if not (fn := dst_name_aliases.get(ps := str(p))):
 				fn = os.path.basename(ps).rsplit('.', 1)[0]
 				fn = dst_name_aliases[ps] = self.dst_name_tpl.format(name=fn) or fn
 			return fn
 		for p in sorted(self.src_list, key=lambda p: (os.path.basename(p), str(p))):
-			dst_name_map[dst_name_base(ps := str(p))].append(ps)
+			dst_name_map.setdefault(dst_name_base(ps := str(p)), list()).append(ps)
 		for dst_name, pss in dst_name_map.items():
 			if len(pss) == 1: continue
 			nf = str(len(str(len(pss))))

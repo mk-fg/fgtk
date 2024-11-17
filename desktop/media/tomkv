@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-import pathlib as pl, subprocess as sp, collections as cs
-import os, sys, json, re, math, time
+import os, sys, json, re, math, time, pathlib as pl, subprocess as sp
 
 
 class adict(dict):
@@ -123,14 +122,14 @@ def main(args=None):
 		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
 
 	# Deduplication of dst filenames
-	dst_name_aliases, dst_name_map = dict(), cs.defaultdict(list)
+	dst_name_aliases, dst_name_map = dict(), dict()
 	def dst_name_format(p):
 		if not (fn := dst_name_aliases.get(p)):
 			fn = p.name.rsplit('.', 1)[0]
 			fn = dst_name_aliases[p] = opts.name.format(name=fn) or f'{fn}.mkv'
 		return fn
 	for p in sorted(src_list, key=lambda p: (p.name, str(p))):
-		dst_name_map[dst_name_format(p)].append(p)
+		dst_name_map.setdefault(dst_name_format(p), list()).append(p)
 	for dst_name, ps in dst_name_map.items():
 		if len(ps) == 1: continue
 		nf = str(len(str(len(ps))))
