@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib as pl, subprocess as sp, collections as cs
-import os, sys, json, re, math
+import os, sys, json, re, math, time
 
 
 class adict(dict):
@@ -181,7 +181,8 @@ def main(args=None):
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
-		msg = ( f'\n\n- ----- [ {n} / {len(src_list)} ]'
+		dt = time.strftime('%Y-%m-%d %H:%M:%S')
+		msg = ( f'\n\n- {dt} --- [ {n} / {len(src_list)} ]'
 			f' :: {p.src} :-[ {td_repr(p.td)} ]->: {p.dst}\n\n' )
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
@@ -198,8 +199,9 @@ def main(args=None):
 			if rm_list_factor is not math.inf:
 				target = 'better' if improved else 'WORSE'
 				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
+		dt = time.strftime('%Y-%m-%d %H:%M:%S')
 		print(
-			f'- --- {p.dst} :: 100% -> {round((b/a) * 100)}%'
+			f'- {dt} -- {p.dst} :: 100% -> {round((b/a) * 100)}%'
 			f'{target} :: {size_repr(a)} -> {size_repr(b)}' )
 
 if __name__ == '__main__': sys.exit(main())
