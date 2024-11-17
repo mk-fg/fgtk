@@ -3173,6 +3173,10 @@ listing any problems, files to convert and ffmpeg commands it'll run for those.
 
 Converts everything sequentially, without any explicit hw optimization flags.
 
+Can generate a list of files to remove afterwards with `-r/--rm-list` option,
+optionally checking compression factor to list destination file there instead
+of source, if it doesn't improve enough on resulting file size.
+
 <a name=hdr-totty></a>
 ##### [totty](desktop/media/totty)
 

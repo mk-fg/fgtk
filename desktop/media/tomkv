@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib as pl, subprocess as sp, collections as cs
-import os, sys, json, re
+import os, sys, json, re, math
 
 
 class adict(dict):
@@ -22,6 +22,12 @@ class adict(dict):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
 
+def size_human(size, _units=list(
+		reversed(list((u, 2 ** (n * 10)) for n, u in enumerate('BKMGT'))) )):
+	for u, u1 in _units:
+		if size > u1: break
+	if u1 > 1: size = f'{size/u1:.1f}'
+	return f'{size}{u}'
 
 def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
@@ -39,6 +45,7 @@ def src_probe(p):
 		if s.codec_type == 'subtitle':
 			if subs: errs.append(adict(t='subs', msg='Multiple tracks detected'))
 			subs = adict(c=s.codec_name)
+	if not (audio and video): return adict(t='container', msg='Missing A/V streams')
 	return adict(v=video, a=audio, s=subs, errs=errs)
 
 
@@ -70,13 +77,29 @@ def main(args=None):
 			Template to rename resulting file(s), instead of default: %(default)s
 			Names are deduplicated with number-suffix when multiple sources are used.
 			Substituted keys: "name" - source filename without extension.'''))
+	parser.add_argument('-r', '--rm-list', metavar='file[:factor]', help=dd('''
+		Generate a list of files to cleanup after conversion, one per line.
+		It's realpath of all source files by default, unless but factor number
+			(float in 0-1.0 range) is also specified, colon-separated after filename.
+		With factor number, filename on the list is be picked
+			from either source or destination after each operation,
+			based on resulting filesize difference - source if resulting size
+			is larger than source*factor, otherwise destination.
+		Intended use is to make an easy-to-use list of files to
+			rm when replacing old ones with converted versions,
+			without unnecessary replacement if there's not enough benefit.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list()
 	for src in opts.src:
-		try: src_list.append(pl.Path(src).resolve(strict=True))
+		try: src_list.append(src := pl.Path(src).resolve(strict=True))
 		except FileNotFoundError: parser.error(f'Source path missing/inaccessible: {src}')
+		if '\n' in str(src): parser.error(f'Source path with newline in it: {src!r}')
 	if opts.dst_dir: os.chdir(opts.dst_dir)
+	if rm_list := opts.rm_list:
+		rm_list, rm_list_factor = ( (rm_list, math.inf)
+			if ':' not in rm_list else rm_list.rsplit(':', 1) )
+		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
 
 	# Disambiguation for dst filenames
 	dst_name_aliases, dst_name_map = dict(), cs.defaultdict(list)
@@ -95,13 +118,13 @@ def main(args=None):
 			else: fn, ext = dst_name.rsplit('.'); ext = f'.{ext}'
 			dst_name_aliases[name] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
 
-	# ffprobe pass
+	# ffprobe checks
 	for n, src in enumerate(src_list):
 		p, dst, src_list[n] = src_probe(src), dst_name_format(src), None
 		if (errs := p.get('errs')) is None:
 			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		if p.v.c == 'hevc' and p.v.w <= 1400:
-			errs.append(adict(t='video', msg='Already encoded to <1280px hevc'))
+			errs.append(adict(t='video', msg='Already encoded to <1280x hevc'))
 		if p.v.w > 1400: p.v.scale = True
 		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
 			errs.append(adict( t='audio', warn=1,
@@ -116,10 +139,9 @@ def main(args=None):
 				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			else: print(f'\n{dst} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip: continue
-		p.src, p.dst = src, dst
-		src_list[n] = p
+		src_list[n], p.src, p.dst = p, src, dst
 
-	# ffmpeg conversion
+	# Main ffmpeg conversion loop
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
@@ -140,6 +162,20 @@ def main(args=None):
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
 			c in a for c in '\'" ') else a) for a in cmd), end='\n\n')
-		if not dry_run: sp.run(cmd, check=True, stdin=sp.DEVNULL)
+		if dry_run: continue
+
+		sp.run(cmd, check=True, stdin=sp.DEVNULL)
+
+		# Size check, rm-list export
+		target, a, b = '', os.stat(p.src).st_size, os.stat(p.dst).st_size
+		if rm_list:
+			improved = b/a < rm_list_factor
+			rm_list.write(f'{p.src if improved else p.dst}\n'); rm_list.flush()
+			if rm_list_factor is not math.inf:
+				target = 'better' if improved else 'WORSE'
+				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
+		print(
+			f'- --- {p.dst} :: 100% -> {round((b/a) * 100)}%'
+			f'{target} :: {size_human(a)} -> {size_human(b)}' )
 
 if __name__ == '__main__': sys.exit(main())
