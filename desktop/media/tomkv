@@ -126,7 +126,7 @@ def main(args=None):
 		rm_list, rm_list_factor = ( (rm_list, math.inf)
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
-	nx = nsz = max(0, opts.skip_n or 0)
+	nx = max(0, opts.skip_n or 0)
 
 	# Deduplication of dst filenames
 	dst_name_aliases, dst_name_map = dict(), dict()
@@ -170,7 +170,8 @@ def main(args=None):
 
 	# Main ffmpeg conversion loop
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
-	ts0, sz_src_done, sz_dst_done, m = time.monotonic(), 0, 0, len(src_list)
+	m, ts0 = len(src_list), time.monotonic()
+	sz_src_done = sz_src_proc = sz_dst_done = 0
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
 		filters = list()
@@ -200,14 +201,12 @@ def main(args=None):
 
 		# Per-file stats, compression check, rm-list export
 		if nx and (nd := n-nx) == 1:
-			try: # add skipped dst-files into stats, if they all exist
-				for nc, p in enumerate(src_list, 1):
-					if nc == n: break
-					sz_src_done += p.sz; sz_dst_done += os.stat(p.dst).st_size
-				nsz = 0
-			except: sz_src_done = sz_dst_done = 0
+			for nc, pc in enumerate(src_list, 1): # add skipped dst-files into stats
+				if nc == n: break
+				try: sz_dst_done += os.stat(pc.dst).st_size; sz_src_done += pc.sz
+				except: pass
 		target = ''
-		sz_src_done += (sz_src := p.sz);
+		sz_src_done += (sz_src := p.sz); sz_src_proc += sz_src
 		sz_dst_done += (sz_dst := os.stat(p.dst).st_size)
 		if rm_list:
 			improved = sz_dst/sz_src < rm_list_factor
@@ -219,15 +218,15 @@ def main(args=None):
 		print( f'- {dt} --- [ {n} / {m} ] :: {p.dst}'
 			f' :: 100% -> {round(100*sz_dst/sz_src)}%{target}'
 			f' :: {sz_repr(sz_src)} -> {sz_repr(sz_dst)}'
-			f' :: encoded {td_repr(p.td)} in {td_repr(td)}, at {td/p.td:.2f}x speed' )
+			f' :: encoded {td_repr(p.td)} in {td_repr(td)}, at {p.td/td:.2f}x speed' )
 
 		# Total stats and estimates
-		sz_src_left = sum(p.sz for nc, p in enumerate(src_list, 1) if nc > n)
+		sz_src_left = sum(pc.sz for nc, pc in enumerate(src_list, 1) if nc > n)
 		sz_dst_left = sz_src_left * (sz_factor := sz_dst_done/sz_src_done)
-		td_left = sz_src_left / (sz_src_done / (td := time.monotonic() - ts0))
+		td_left = sz_src_left / (sz_src_proc / (td := time.monotonic() - ts0))
 		st = ( f'- --- Processed so far :: {sz_repr(sz_src_done)} ->'
 			f' {sz_repr(sz_dst_done)} [ {round(100*sz_factor)}% ] in {td_repr(td)}' )
-		if nx: st += f' (first {nx} files skipped)'
+		if nx: st += f', with first {nx} file(s) skipped on this run'
 		print(st)
 		if n == m: print('- --- all done', flush=True)
 		else: print(
