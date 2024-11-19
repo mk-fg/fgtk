@@ -45,23 +45,22 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 	return ' '.join(res) if res else '<1s'
 
 
-def parse_pixfmts():
-	'Returns a set of known-excessive pixel formats to convert, from e.g. 10b video'
+def parse_rgb10_pixfmts():
 	probe = sp.run(['ffmpeg', '-v', 'fatal', '-pix_fmts'], check=True, stdout=sp.PIPE)
-	parse, pxfmt_conv = False, set()
+	parse, pxfmt_set = False, set()
 	for line in probe.stdout.decode().splitlines():
 		if not (line := line.strip()): continue
 		if not parse:
 			if line == '-----': parse = True
 			continue
 		try:
-			flags, fmt, nc, nb, nds = line.split()
-			nc, nb, nds = int(nc), int(nb), max(map(int, nds.split('-')))
+			flags, fmt, nc, nb, cbits = line.split()
+			nc, nb = int(nc), int(nb)
 		except: raise RuntimeError(f'Failed to decode "ffmpeg -pix_fmts" line: {line!r}')
 		if flags[0] != 'I': continue
-		if nc > 3 or nb > 12 or nds > 8: pxfmt_conv.add(fmt)
+		if nc == 3 and nb <= 15 and cbits == '10-10-10': pxfmt_set.add(fmt)
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
-	return pxfmt_conv
+	return pxfmt_set
 
 def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
@@ -74,7 +73,8 @@ def src_probe(p):
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a/b
-			video = adict(c=s.codec_name, w=s.width, h=s.height, fps=fps, pxf=s.pix_fmt)
+			video = adict( c=s.codec_name, fps=fps, w=s.width,
+				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 		if s.codec_type == 'audio':
 			if audio: return adict(t='audio', msg='Multiple streams detected')
 			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
@@ -96,7 +96,7 @@ def main(args=None):
 		usage='%(prog)s [options] src [src ...]', description=dd('''
 			ffprobe-check and convert source file(s)
 				to a more compact video format, as needed, into current dir.
-			Encodes to h265/opus/mkv, downscaling video/audio to ~720p30/96k-stereo.
+			Encodes to av1/opus/mkv, downscaling to ~720p30b10/96k-stereo.
 			Initial ffprobe is intended to detect files that might already be
 				converted or won't benefit from it as much, and skip those by default,
 				as well as any files that can't be handled by this script correctly
@@ -145,7 +145,7 @@ def main(args=None):
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
 	nx = max(0, opts.skip_n or 0)
-	pxfmt_conv = parse_pixfmts()
+	pxfmt_set = parse_rgb10_pixfmts()
 
 	# Deduplication of dst filenames
 	dst_name_aliases, dst_name_map = dict(), dict()
@@ -169,10 +169,10 @@ def main(args=None):
 		p, dst, src_list[n] = src_probe(src), dst_name_format(src), None
 		if (errs := p.get('errs')) is None:
 			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
-		p.v.scale, p.v.resample = p.v.w > 1400, p.v.fps > 35
-		p.v.pxconv = p.v.pxf in pxfmt_conv
-		if p.v.c == 'hevc' and not p.v.scale and not p.v.resample:
-			errs.append(adict(t='video', msg='Already encoded to <1280x 30fps hevc'))
+		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
+		p.v.pxconv = p.v.pxf not in pxfmt_set
+		if p.v.c in ['hevc', 'av1'] and not p.v.scale and not p.v.resample and p.v.br < 2.5e6:
+			errs.append(adict(t='video', msg=f'Already encoded to <1280x <30fps {p.v.c}'))
 		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
 			errs.append(adict( t='audio', warn=1,
 				msg='Already encoded in <200k 2ch opus, will copy it as-is' ))
@@ -195,10 +195,12 @@ def main(args=None):
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
 		filters = list()
-		if p.v.resample: filters.extend(['-r', '30'])
-		if p.v.pxconv: filters.extend(['-pix_fmt', 'yuv420p'])
-		if p.v.scale: filters.extend([
-			'-filter:v', "scale='min(1280,iw)':-2,setsar=1:1" ])
+		if p.v.resample: filters.append('fps=30')
+		if p.v.scale: filters.append(
+			"scale='if(gte(iw,ih),min(1280,iw),-2)"
+			":if(lt(iw,ih),min(1280,ih),-2)',setsar=1:1" )
+		if filters: filters = ['-filter:v', ','.join(filters)]
+		if p.v.pxconv: filters.extend(['-pix_fmt', 'yuv420p10le'])
 		if p.a.get('clone'): ac = ['-c:a', 'copy']
 		else:
 			ac = ['-c:a', 'libopus', '-b:a', '96k']
@@ -209,16 +211,17 @@ def main(args=None):
 		movflags = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
-			'-c:v', 'libx265', '-preset', 'slow', *movflags, *ac, '-y', p.dst ]
+			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *movflags, *ac, '-y', p.dst ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
-		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n\n'
+		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n'
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
 			c in a for c in '\'" ') else a) for a in cmd), end='\n\n', flush=True)
 		if dry_run: continue
 
-		sp.run(cmd, check=True, stdin=sp.DEVNULL)
+		sp.run( cmd, check=True,
+			env=dict(os.environ, SVT_LOG='2'), stdin=sp.DEVNULL )
 
 		# Per-file stats, compression check, rm-list export
 		if nx and (nd := n-nx) == 1:
