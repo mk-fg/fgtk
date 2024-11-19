@@ -26,7 +26,7 @@ usage() {
 	echo >&2 "--system/--user mode detected from uid (--system for root, --user otherwise)."
 	echo >&2
 	echo >&2 "Options:"
-	echo >&2 "-u name - scope unit name, with \$basename.\$pid from command by default."
+	echo >&2 '-u name - scope unit name, with $basename.$pid from command by default.'
 	echo >&2 "   Starting scope with same unit name as already running one will fail."
 	echo >&2 "   With -l/-c list/check opts, restricts check to that scope instead of slice."
 	echo >&2 "-o - same as -p/--property in systemd-run, to pass any unit parameters."
@@ -77,7 +77,7 @@ while getopts xhclqsrpi:t:u:o:E:v: a; do case $a in
 	E) props="$props -E $OPTARG" ;;
 	v) value=$OPTARG ;;
 	x) set -x ;;
-	\?) usage ;;
+	'?') usage ;;
 	esac
 done
 shift $(($OPTIND - 1))
