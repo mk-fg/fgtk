@@ -45,6 +45,24 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 	return ' '.join(res) if res else '<1s'
 
 
+def parse_pixfmts():
+	'Returns a set of known-excessive pixel formats to convert, from e.g. 10b video'
+	probe = sp.run(['ffmpeg', '-v', 'fatal', '-pix_fmts'], check=True, stdout=sp.PIPE)
+	parse, pxfmt_conv = False, set()
+	for line in probe.stdout.decode().splitlines():
+		if not (line := line.strip()): continue
+		if not parse:
+			if line == '-----': parse = True
+			continue
+		try:
+			flags, fmt, nc, nb, nds = line.split()
+			nc, nb, nds = int(nc), int(nb), max(map(int, nds.split('-')))
+		except: raise RuntimeError(f'Failed to decode "ffmpeg -pix_fmts" line: {line!r}')
+		if flags[0] != 'I': continue
+		if nc > 3 or nb > 12 or nds > 8: pxfmt_conv.add(fmt)
+	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
+	return pxfmt_conv
+
 def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
@@ -56,7 +74,7 @@ def src_probe(p):
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a/b
-			video = adict(c=s.codec_name, w=s.width, h=s.height, fps=fps)
+			video = adict(c=s.codec_name, w=s.width, h=s.height, fps=fps, pxf=s.pix_fmt)
 		if s.codec_type == 'audio':
 			if audio: return adict(t='audio', msg='Multiple streams detected')
 			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
@@ -127,6 +145,7 @@ def main(args=None):
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
 	nx = max(0, opts.skip_n or 0)
+	pxfmt_conv = parse_pixfmts()
 
 	# Deduplication of dst filenames
 	dst_name_aliases, dst_name_map = dict(), dict()
@@ -151,6 +170,7 @@ def main(args=None):
 		if (errs := p.get('errs')) is None:
 			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		p.v.scale, p.v.resample = p.v.w > 1400, p.v.fps > 35
+		p.v.pxconv = p.v.pxf in pxfmt_conv
 		if p.v.c == 'hevc' and not p.v.scale and not p.v.resample:
 			errs.append(adict(t='video', msg='Already encoded to <1280x 30fps hevc'))
 		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
@@ -176,6 +196,7 @@ def main(args=None):
 	for n, p in enumerate(src_list, 1):
 		filters = list()
 		if p.v.resample: filters.extend(['-r', '30'])
+		if p.v.pxconv: filters.extend(['-pix_fmt', 'yuv420p'])
 		if p.v.scale: filters.extend([
 			'-filter:v', "scale='min(1280,iw)':-2,setsar=1:1" ])
 		if p.a.get('clone'): ac = ['-c:a', 'copy']
