@@ -5,6 +5,14 @@ import os, sys, stat, re, pathlib as pl, collections as cs
 p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True)
 
 
+def sz_repr(size, _units=list(
+		reversed(list((u, 2 ** (n * 10)) for n, u in enumerate('BKMGT'))) )):
+	for u, u1 in _units:
+		if size > u1: break
+	if u1 > 1: size = f'{size/u1:.1f}'
+	return f'{size}{u}'.rstrip('B')
+
+
 def list_adjacent(paths, specs, files_only=False):
 	p_dirs, stats, p_out = dict(), dict(), dict()
 	op_out_sort = None
@@ -196,6 +204,12 @@ def main(argv=None):
 		help='Print null-terminated list, instead of default newline-terminated.')
 	parser.add_argument('-r', '--recursive', action='store_true',
 		help='Recurse into specified directories, if other options support that.')
+	parser.add_argument('-s', '--size', action='store_true', help=dd('''
+		Print file size space-separated on the left, human-readable
+			with IEC 1024-base units (KiB, MiB, etc), with a decimal digit.
+		Always prints "0" for anything other than regular files (dirs, symlinks, etc).
+		Intended to be less ambiguous and more precise compared to other tools.
+		Works with "sort -h" to order output by that size column.'''))
 
 	parser.add_argument('-a', '--adjacent', metavar='opts', action='append', help=dd('''
 		List specified file/dir path, and also N files/dirs adjacent to it.
@@ -237,6 +251,9 @@ def main(argv=None):
 		nonlocal pp_first
 		p, (cc, cn) = str(p), ('\n', 'newline') if not pp_nullsep else ('\0', 'null-char')
 		if cc in p: p_err(f'Skipping entry with {cn} in it: {p!r}')
+		if opts.size:
+			sz = s.st_size if stat.S_ISREG((s := os.stat(p)).st_mode) else 0
+			p = f'{sz and sz_repr(sz)} {p}'
 		if not pp_nullsep: p = f'{p}\n'
 		elif not pp_first: p = f'\0{p}'
 		else: pp_first = False
