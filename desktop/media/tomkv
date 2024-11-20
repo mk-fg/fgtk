@@ -166,7 +166,10 @@ def main(args=None):
 
 	# ffprobe checks
 	for n, src in enumerate(src_list):
-		p, dst, src_list[n] = src_probe(src), dst_name_format(src), None
+		try: p = src_probe(src)
+		except Exception as err: p = adict( t='probe',
+			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
+		src_list[n], dst = None, dst_name_format(src)
 		if (errs := p.get('errs')) is None:
 			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
