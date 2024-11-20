@@ -117,17 +117,23 @@ def main(args=None):
 				ffmpeg auto-detects it from extension, so it must be something conventional.
 			Names are deduplicated with number-suffix when multiple sources are used.
 			Substituted keys: "name" - source filename without extension.'''))
-	parser.add_argument('-r', '--rm-list', metavar='file[:factor]', help=dd('''
+	parser.add_argument('-r', '--rm-list', metavar='file[:ratio]', help=dd('''
 		Generate a list of files to cleanup after conversion, one per line.
-		It's realpath of all source files by default, unless factor number
+		It will have realpath of all source files by default, unless ratio number
 			(float in 0-1.0 range) is also specified, colon-separated after filename.
-		With factor number, filename on the list is picked
+		With ratio number, filename on the list is picked
 			from either source or destination after each operation,
-			based on resulting filesize difference - source if resulting size
-			is larger than source*factor, otherwise destination.
+			based on resulting filesize difference - source if
+			resulting size is larger than source*ratio, otherwise destination.
 		Intended use is to make an easy-to-use list of files to
 			rm when replacing old ones with converted versions,
-			without unnecessary replacement if there's not enough benefit.'''))
+			without unnecessary replacement if there's not enough benefit.
+		Specified list file is always overwritten.'''))
+	parser.add_argument('-R', '--rm-list-regen', action='store_true', help=dd('''
+		When using -s/--skip-n or similar options,
+			still check file sizes when they exist, and put them on the list.
+		Can be used to make -r/--rm-list with new compression ratio target,
+			by re-running script at any time with -s/--skip-n covering processed files.'''))
 	parser.add_argument('-s', '--skip-n', metavar='n', type=int, help=dd('''
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
@@ -141,9 +147,9 @@ def main(args=None):
 		if '\n' in str(src): parser.error(f'Source path with newline in it: {src!r}')
 	if opts.dst_dir: os.chdir(opts.dst_dir)
 	if rm_list := opts.rm_list:
-		rm_list, rm_list_factor = ( (rm_list, math.inf)
+		rm_list, rm_list_ratio = ( (rm_list, math.inf)
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
-		rm_list, rm_list_factor = open(rm_list, 'w'), float(rm_list_factor)
+		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
 	nx = max(0, opts.skip_n or 0)
 	pxfmt_set = parse_rgb10_pixfmts()
 
@@ -189,12 +195,24 @@ def main(args=None):
 				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			else: print(f'\n{dst} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip: continue
-		src_list[n], p.src, p.dst = p, src, dst
+		src_list[n], p.src, p.dst, p.tmp = p, src, dst, f'_tmp.{dst}'
 
 	# Main ffmpeg conversion loop
 	dry_run, src_list = not opts.convert, list(filter(None, src_list))
-	m, ts0 = len(src_list), time.monotonic()
+	m = len(src_list); nx, ts0 = min(nx, m), time.monotonic()
+
 	sz_src_done = sz_src_proc = sz_dst_done = 0
+	def _skipped_stats_catchup(n):
+		nonlocal sz_src_done, sz_dst_done
+		for nc, pc in enumerate(src_list, 1):
+			if nc == n: break
+			try: sz_dst = os.stat(pc.dst).st_size
+			except FileNotFoundError: continue
+			sz_src_done += (sz_src := pc.sz); sz_dst_done += sz_dst
+			if rm_list and opts.rm_list_regen:
+				improved = sz_dst/sz_src < rm_list_ratio
+				print(pc.src if improved else pc.dst, file=rm_list)
+
 	if dry_run: print()
 	for n, p in enumerate(src_list, 1):
 		filters = list()
@@ -211,12 +229,13 @@ def main(args=None):
 				'pan=stereo|c0=0.5*c2+0.707*c0+0.707*c4+0.5*c3'
 				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
-		movflags = ( ['-movflags', '+faststart']
+		mov = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
-			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *movflags, *ac, '-y', p.dst ]
+			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *mov, *ac, '-y', p.tmp ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
 		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n'
+		if n == nx and not dry_run: _skipped_stats_catchup(n+1)
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join((repr(a) if any(
@@ -225,22 +244,18 @@ def main(args=None):
 
 		sp.run( cmd, check=True,
 			env=dict(os.environ, SVT_LOG='2'), stdin=sp.DEVNULL )
+		os.rename(p.tmp, p.dst)
 
-		# Per-file stats, compression check, rm-list export
-		if nx and (nd := n-nx) == 1:
-			for nc, pc in enumerate(src_list, 1): # add skipped dst-files into stats
-				if nc == n: break
-				try: sz_dst_done += os.stat(pc.dst).st_size; sz_src_done += pc.sz
-				except: pass
+		# Stats/rm-list for last processed file
 		target = ''
 		sz_src_done += (sz_src := p.sz); sz_src_proc += sz_src
 		sz_dst_done += (sz_dst := os.stat(p.dst).st_size)
 		if rm_list:
-			improved = sz_dst/sz_src < rm_list_factor
-			rm_list.write(f'{p.src if improved else p.dst}\n'); rm_list.flush()
-			if rm_list_factor is not math.inf:
+			improved = sz_dst/sz_src < rm_list_ratio
+			print(p.src if improved else p.dst, file=rm_list, flush=True)
+			if rm_list_ratio is not math.inf:
 				target = 'better' if improved else 'WORSE'
-				target = f' [ {target} than {round(rm_list_factor*100)}% target ]'
+				target = f' [ {target} than {round(rm_list_ratio*100)}% target ]'
 		dt, td = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic() - ts1
 		print( f'- {dt} --- [ {n} / {m} ] :: {p.dst}'
 			f' :: 100% -> {round(100*sz_dst/sz_src)}%{target}'
@@ -249,10 +264,10 @@ def main(args=None):
 
 		# Total stats and estimates
 		sz_src_left = sum(pc.sz for nc, pc in enumerate(src_list, 1) if nc > n)
-		sz_dst_left = sz_src_left * (sz_factor := sz_dst_done/sz_src_done)
+		sz_dst_left = sz_src_left * (sz_ratio := sz_dst_done/sz_src_done)
 		td_left = sz_src_left / (sz_src_proc / (td := time.monotonic() - ts0))
 		st = ( f'- --- Processed so far :: {sz_repr(sz_src_done)} ->'
-			f' {sz_repr(sz_dst_done)} [ {round(100*sz_factor)}% ] in {td_repr(td)}' )
+			f' {sz_repr(sz_dst_done)} [ {round(100*sz_ratio)}% ] in {td_repr(td)}' )
 		if nx: st += f', with first {nx} file(s) skipped on this run'
 		print(st)
 		if n == m: print('- --- all done', flush=True)
