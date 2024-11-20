@@ -379,6 +379,7 @@ def main(argv=None):
 		for url, links in link_map.items():
 			if not (name := (url or '')).startswith('#'): continue
 			if not (a := anchor_names.get(name := name[1:])):
+				if not re.search(r'^hdrx?-', name): continue # link to non-header target
 				for link in links: errs.append(adict( n=link.n,
 					t='link_anchor_match', s=f'Link to a non-existing header-anchor: {url}' ))
 			else: a.setdefault('c', 0); a.c += 1
