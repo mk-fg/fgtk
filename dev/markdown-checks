@@ -182,6 +182,15 @@ def md_check_header_anchors(md_lines, errs, name_max_len=40):
 			s=f'Bogus/leftover anchor-line without a header: {line}' ))
 	return anchor_map
 
+def md_parse_misc_anchors(md_lines, anchor_map):
+	'Find/return a list of anchors unrelated to headers'
+	anchors, anchor_re = dict(), re.compile(r'<a name=(\S+)></a>')
+	for n, line in md_lines:
+		if n in anchor_map or not (m := anchor_re.search(line)): continue
+		if re.match(r'(user-content-)?hdrx?-', name := m[1]): continue
+		anchors[n] = adict(name=name, n=n)
+	return anchors
+
 
 def md_check_links(md_lines, errs):
 	'''Parse/check links in a cleaned-up/numbered md lines without code blocks.
@@ -375,17 +384,18 @@ def main(argv=None):
 
 		link_map = md_check_links(md_lines, errs)
 
-		anchor_names = dict((a.name, a) for n, a in anchor_map.items())
+		anchor_names = dict((a.name, a) for a in anchor_map.values())
+		anchor_names.update( (a.name, a) for a in
+			md_parse_misc_anchors(md_lines, anchor_map).values() )
 		for url, links in link_map.items():
 			if not (name := (url or '')).startswith('#'): continue
 			if not (a := anchor_names.get(name := name[1:])):
-				if not re.search(r'^hdrx?-', name): continue # link to non-header target
 				for link in links: errs.append(adict( n=link.n,
-					t='link_anchor_match', s=f'Link to a non-existing header-anchor: {url}' ))
+					t='link_anchor_match', s=f'Link to a non-existing anchor: {url}' ))
 			else: a.setdefault('c', 0); a.c += 1
 		for name, a in anchor_names.items():
-			if not a.get('c') and not a.nolink: errs.append(adict( n=a.n,
-				t='link_anchor_match', s=f'Header-anchor with no links to it: {name}' ))
+			if not a.get('c') and not a.get('nolink'): errs.append(adict(
+				n=a.n, t='link_anchor_match', s=f'Anchor with no links to it: {name}' ))
 
 		p_git, git_files = get_git_repo_files(p)
 		if p_git and not git_files:
