@@ -167,7 +167,7 @@ def main(args=None):
 		nf = str(len(str(len(ps))))
 		for n, p in enumerate(ps, 1):
 			if '.' not in dst_name: fn, ext = dst_name, ''
-			else: fn, ext = dst_name.rsplit('.'); ext = f'.{ext}'
+			else: fn, ext = dst_name.rsplit('.', 1); ext = f'.{ext}'
 			dst_name_aliases[p] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
 
 	# ffprobe checks
