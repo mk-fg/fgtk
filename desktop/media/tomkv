@@ -62,7 +62,7 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p, stream1=False):
+def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
@@ -73,7 +73,6 @@ def src_probe(p, stream1=False):
 		if s.codec_type == 'video':
 			if video:
 				if s.codec_name == 'mjpeg': continue # as long as it's not the first stream
-				if not stream1: return adict(t='video', msg='Multiple streams detected')
 				multistream = True; continue
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
@@ -81,9 +80,7 @@ def src_probe(p, stream1=False):
 			video = adict( c=s.codec_name, fps=fps, w=s.width,
 				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 		if s.codec_type == 'audio':
-			if audio:
-				if not stream1: return adict(t='audio', msg='Multiple streams detected')
-				multistream = True; continue
+			if audio: multistream = True; continue
 			audio = adict(c=s.codec_name, chans=s.channels)
 		if s.codec_type == 'subtitle': subs += 1
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
@@ -163,10 +160,12 @@ def main(args=None):
 
 	# ffprobe checks
 	for n, src in enumerate(src_list):
-		try: p = src_probe(src, stream1=opts.force_stream1)
+		src_list[n] = None
+		try: p = src_probe(src)
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
-		src_list[n] = None
+		if p.get('ms') and not opts.force_stream1:
+			p = adict(t='format', msg='Multiple A/V streams detected')
 		if (errs := p.get('errs')) is None:
 			print(f'\n{src.name} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
