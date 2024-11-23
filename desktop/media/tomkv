@@ -71,21 +71,20 @@ def src_probe(p, stream1=False):
 		return adict(t='format', msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
 		if s.codec_type == 'video':
-			if s.codec_name == 'mjpeg': continue
 			if video:
+				if s.codec_name == 'mjpeg': continue # as long as it's not the first stream
 				if not stream1: return adict(t='video', msg='Multiple streams detected')
 				multistream = True; continue
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
-				else: a, b = map(float, fps.split('/')); fps = a/b
+				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
 			video = adict( c=s.codec_name, fps=fps, w=s.width,
 				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 		if s.codec_type == 'audio':
 			if audio:
 				if not stream1: return adict(t='audio', msg='Multiple streams detected')
 				multistream = True; continue
-			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
-			audio = adict(c=c, chans=s.channels, br=br)
+			audio = adict(c=s.codec_name, chans=s.channels)
 		if s.codec_type == 'subtitle': subs += 1
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
 	return adict( v=video, a=audio, s=subs, ms=multistream,
@@ -115,6 +114,8 @@ def main(args=None):
 		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
 	parser.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
 		Process files with multiple A/V streams, encoding first stream from those.'''))
+	parser.add_argument('-q', '--quiet', action='store_true', help=dd('''
+		Don't print any WARN/SKIP info about files that seem to be encoded properly.'''))
 	parser.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
 		Existing path to store resulting files in. Defaults to current dir.'''))
 	parser.add_argument('-n', '--name',
@@ -172,18 +173,19 @@ def main(args=None):
 		p.v.pxconv = p.v.pxf not in pxfmt_set
 		if p.v.c in ['hevc', 'av1'] and not p.v.scale and not p.v.resample and p.v.br < 2.5e6:
 			errs.append(adict(t='video', msg=f'Already encoded to <1280x <30fps {p.v.c}'))
-		if p.a.c == 'opus' and p.a.chans <= 2 and p.a.br and p.a.br < 200_000:
+		if p.a.c == 'opus' and p.a.chans <= 2:
 			errs.append(adict( t='audio', warn=1,
 				msg='Already encoded in <200k 2ch opus, will copy it as-is' ))
 			p.a.clone = True
 		if errs:
 			try: skip = err = next(err for err in errs if not err.get('warn'))
 			except: err = errs[skip := 0]
-			err_verdict = lambda: 'WARN' if err.get('warn') or opts.force else 'SKIP'
-			if len(errs) > 1:
-				print(f'\n{src.name} :: {err_verdict()}'.rstrip())
-				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-			else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+			if not opts.quiet:
+				err_verdict = lambda: 'WARN' if err.get('warn') or opts.force else 'SKIP'
+				if len(errs) == 1:
+					print(f'\n{src.name} :: {err_verdict()}'.rstrip())
+					for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+				else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip: continue
 		src_list[n], p.src = p, src
 
