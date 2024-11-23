@@ -62,30 +62,34 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p):
+def src_probe(p, stream1=False):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = subs = 0; errs = list()
+	video = audio = subs = 0; errs, multistream = list(), False
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
 		if s.codec_type == 'video':
 			if s.codec_name == 'mjpeg': continue
-			if video: return adict(t='video', msg='Multiple streams detected')
+			if video:
+				if not stream1: return adict(t='video', msg='Multiple streams detected')
+				multistream = True; continue
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a/b
 			video = adict( c=s.codec_name, fps=fps, w=s.width,
 				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 		if s.codec_type == 'audio':
-			if audio: return adict(t='audio', msg='Multiple streams detected')
+			if audio:
+				if not stream1: return adict(t='audio', msg='Multiple streams detected')
+				multistream = True; continue
 			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
 			audio = adict(c=c, chans=s.channels, br=br)
 		if s.codec_type == 'subtitle': subs += 1
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
-	return adict( v=video, a=audio, s=subs, errs=errs,
-		td=float(probe.format.duration), sz=int(probe.format.size) )
+	return adict( v=video, a=audio, s=subs, ms=multistream,
+		errs=errs, td=float(probe.format.duration), sz=int(probe.format.size) )
 
 
 def main(args=None):
@@ -109,6 +113,8 @@ def main(args=None):
 			listed as PROBLEM or SKIP (unless -f/--force is used).'''))
 	parser.add_argument('-f', '--force', action='store_true', help=dd('''
 		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
+	parser.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
+		Process files with multiple A/V streams, encoding first stream from those.'''))
 	parser.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
 		Existing path to store resulting files in. Defaults to current dir.'''))
 	parser.add_argument('-n', '--name',
@@ -156,7 +162,7 @@ def main(args=None):
 
 	# ffprobe checks
 	for n, src in enumerate(src_list):
-		try: p = src_probe(src)
+		try: p = src_probe(src, stream1=opts.force_stream1)
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
 		src_list[n] = None
@@ -234,7 +240,9 @@ def main(args=None):
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
 		fmt = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
-		if p.s > 1: fmt.extend('-map 0:v:0 -map 0:a:0 -map 0:s'.split())
+		if p.s > 1 or p.ms:
+			fmt.extend('-map 0:v:0 -map 0:a:0'.split())
+			if p.s: fmt.extend(['-map', '0:s'])
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *ac, *fmt, '-y', p.tmp ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
