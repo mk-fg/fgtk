@@ -66,9 +66,12 @@ def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = subs = None; errs = list()
+	video = audio = subs = 0; errs = list()
+	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
+		return adict(t='format', msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
 		if s.codec_type == 'video':
+			if s.codec_name == 'mjpeg': continue
 			if video: return adict(t='video', msg='Multiple streams detected')
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
@@ -79,9 +82,7 @@ def src_probe(p):
 			if audio: return adict(t='audio', msg='Multiple streams detected')
 			br = (c := s.codec_name) == 'opus' and int(s.get('bit_rate')) or 0
 			audio = adict(c=c, chans=s.channels, br=br)
-		if s.codec_type == 'subtitle':
-			if subs: errs.append(adict(t='subs', msg='Multiple tracks detected'))
-			subs = adict(c=s.codec_name)
+		if s.codec_type == 'subtitle': subs += 1
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
 	return adict( v=video, a=audio, s=subs, errs=errs,
 		td=float(probe.format.duration), sz=int(probe.format.size) )
@@ -153,31 +154,14 @@ def main(args=None):
 	nx = max(0, opts.skip_n or 0)
 	pxfmt_set = parse_rgb10_pixfmts()
 
-	# Deduplication of dst filenames
-	dst_name_aliases, dst_name_map = dict(), dict()
-	def dst_name_format(p):
-		if not (fn := dst_name_aliases.get(p)):
-			fn = p.name.rsplit('.', 1)[0]
-			fn = dst_name_aliases[p] = opts.name.format(name=fn) or f'{fn}.mkv'
-		return fn
-	for p in sorted(src_list, key=lambda p: (p.name, str(p))):
-		dst_name_map.setdefault(dst_name_format(p), list()).append(p)
-	for dst_name, ps in dst_name_map.items():
-		if len(ps) == 1: continue
-		nf = str(len(str(len(ps))))
-		for n, p in enumerate(ps, 1):
-			if '.' not in dst_name: fn, ext = dst_name, ''
-			else: fn, ext = dst_name.rsplit('.', 1); ext = f'.{ext}'
-			dst_name_aliases[p] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
-
 	# ffprobe checks
 	for n, src in enumerate(src_list):
 		try: p = src_probe(src)
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
-		src_list[n], dst = None, dst_name_format(src)
+		src_list[n] = None
 		if (errs := p.get('errs')) is None:
-			print(f'\n{dst} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
+			print(f'\n{src.name} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
 		p.v.pxconv = p.v.pxf not in pxfmt_set
 		if p.v.c in ['hevc', 'av1'] and not p.v.scale and not p.v.resample and p.v.br < 2.5e6:
@@ -191,15 +175,34 @@ def main(args=None):
 			except: err = errs[skip := 0]
 			err_verdict = lambda: 'WARN' if err.get('warn') or opts.force else 'SKIP'
 			if len(errs) > 1:
-				print(f'\n{dst} :: {err_verdict()}'.rstrip())
+				print(f'\n{src.name} :: {err_verdict()}'.rstrip())
 				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-			else: print(f'\n{dst} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+			else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip: continue
-		src_list[n], p.src, p.dst, p.tmp = p, src, dst, f'_tmp.{dst}'
+		src_list[n], p.src = p, src
+
+	# Deduplication of dst filenames
+	dst_name_aliases, dst_name_map = dict(), dict()
+	def dst_name_format(p):
+		if not (fn := dst_name_aliases.get(p)):
+			fn = p.name.rsplit('.', 1)[0]
+			fn = dst_name_aliases[p] = opts.name.format(name=fn) or f'{fn}.mkv'
+		return fn
+	src_list = list(filter(None, src_list))
+	for p in sorted(src_list, key=lambda p: (p.src.name, str(p.src))):
+		dst_name_map.setdefault(dst_name_format(p.src), list()).append(p.src)
+	for dst_name, ps in dst_name_map.items():
+		if len(ps) == 1: continue
+		nf = str(len(str(len(ps))))
+		for n, p in enumerate(ps, 1):
+			if '.' not in dst_name: fn, ext = dst_name, ''
+			else: fn, ext = dst_name.rsplit('.', 1); ext = f'.{ext}'
+			dst_name_aliases[p] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
+	for p in src_list: p.dst, p.tmp = (dst := dst_name_format(p.src)), f'_tmp.{dst}'
 
 	# Main ffmpeg conversion loop
-	dry_run, src_list = not opts.convert, list(filter(None, src_list))
-	m = len(src_list); nx, ts0 = min(nx, m), time.monotonic()
+	dry_run, m = not opts.convert, len(src_list)
+	nx, ts0 = min(nx, m), time.monotonic()
 
 	sz_src_done = sz_src_proc = sz_dst_done = 0
 	def _skipped_stats_catchup(n):
@@ -229,10 +232,11 @@ def main(args=None):
 				'pan=stereo|c0=0.5*c2+0.707*c0+0.707*c4+0.5*c3'
 				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
-		mov = ( ['-movflags', '+faststart']
+		fmt = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
+		if p.s > 1: fmt.extend('-map 0:v:0 -map 0:a:0 -map 0:s'.split())
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
-			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *mov, *ac, '-y', p.tmp ]
+			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *ac, *fmt, '-y', p.tmp ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
 		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n'
 		if n == nx and not dry_run: _skipped_stats_catchup(n+1)
