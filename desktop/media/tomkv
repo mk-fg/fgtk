@@ -115,7 +115,7 @@ def main(args=None):
 		Don't print any WARN/SKIP info about files that seem to be encoded properly.'''))
 	parser.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
 		Existing path to store resulting files in. Defaults to current dir.'''))
-	parser.add_argument('-n', '--name',
+	parser.add_argument('--name',
 		metavar='tpl', default='{name}.mkv', help=dd('''
 			Template to rename resulting file(s), instead of default: %(default)s
 			Can be used to set non-mkv container format, e.g. mp4.
@@ -135,11 +135,11 @@ def main(args=None):
 			without unnecessary replacement if there's not enough benefit.
 		Specified list file is always overwritten.'''))
 	parser.add_argument('-R', '--rm-list-regen', action='store_true', help=dd('''
-		When using -s/--skip-n or similar options,
+		When using -n/--skip-n or similar options,
 			still check file sizes when they exist, and put them on the list.
 		Can be used to make -r/--rm-list with new compression ratio target,
-			by re-running script at any time with -s/--skip-n covering processed files.'''))
-	parser.add_argument('-s', '--skip-n', metavar='n', type=int, help=dd('''
+			by re-running script at any time with -n/--skip-n covering processed files.'''))
+	parser.add_argument('-n', '--skip-n', metavar='n', type=int, help=dd('''
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
 			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
