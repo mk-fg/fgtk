@@ -251,8 +251,8 @@ def main(args=None):
 		if n == nx and not dry_run: _skipped_stats_catchup(n+1)
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
-		print(msg); print(' '.join((repr(a) if any(
-			c in a for c in '\'" ') else a) for a in cmd), end='\n\n', flush=True)
+		print(msg); print(' '.join((repr(a) if any( c in a for c in
+			r' \'"|*?!&$`{}[];' ) else a) for a in cmd), end='\n\n', flush=True)
 		if dry_run: continue
 
 		sp.run( cmd, check=True,
