@@ -70,7 +70,8 @@ def src_probe(p):
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
-		if s.codec_type == 'video':
+		if not (ct := s.get('codec_type')): continue
+		if ct == 'video':
 			if video:
 				if s.codec_name == 'mjpeg': continue # as long as it's not the first stream
 				multistream = True; continue
@@ -79,10 +80,10 @@ def src_probe(p):
 				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
 			video = adict( c=s.codec_name, fps=fps, w=s.width,
 				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
-		if s.codec_type == 'audio':
+		if ct == 'audio':
 			if audio: multistream = True; continue
 			audio = adict(c=s.codec_name, chans=s.channels)
-		if s.codec_type == 'subtitle':
+		if ct == 'subtitle':
 			if s.codec_name == 'dvd_subtitle':
 				return adict(t='subs', msg='Has bitmap subtitles (large, need special handling)')
 			subs += 1
