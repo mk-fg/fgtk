@@ -66,7 +66,7 @@ def src_probe(p):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = subs = 0; errs, multistream = list(), False
+	video = audio = sub = 0; errs, subs, multistream = list(), list(), None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
@@ -84,10 +84,12 @@ def src_probe(p):
 			if audio: multistream = True; continue
 			audio = adict(c=s.codec_name, chans=s.channels)
 		if ct == 'subtitle':
+			sub += 1
 			if s.codec_name in ['dvd_subtitle', 'hdmv_pgs_subtitle']:
-				return adict(t='subs', msg='Has bitmap subtitles (large, need special handling)')
-			subs += 1
+				errs.append(adict(t='subs', msg='Has bitmap subtitles'))
+			else: subs.append(sub-1)
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
+	if sub or subs: subs.append(sub)
 	return adict( v=video, a=audio, s=subs, ms=multistream,
 		errs=errs, td=float(probe.format.duration), sz=int(probe.format.size) )
 
@@ -189,7 +191,7 @@ def main(args=None):
 					print(f'\n{src.name} :: {err_verdict()}'.rstrip())
 					for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 				else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-			if skip: continue
+			if skip and not opts.force: continue
 		src_list[n], p.src = p, src
 
 	# Deduplication of dst filenames
@@ -245,9 +247,11 @@ def main(args=None):
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
 		fmt = ( ['-movflags', '+faststart']
 			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
-		if p.s > 1 or p.ms:
+		if p.s or p.ms:
 			fmt.extend('-map 0:v:0 -map 0:a:0'.split())
-			if p.s: fmt.extend(['-map', '0:s'])
+			if p.s and (sn := (subs := p.s.copy()).pop()):
+				if subs == list(range(sn)): fmt.extend(['-map', '0:s']); subs.clear()
+				for n in subs: fmt.extend(['-map', f'0:s:{n}'])
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *ac, *fmt, '-y', p.tmp ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
