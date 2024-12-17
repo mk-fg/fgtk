@@ -11,7 +11,7 @@ class adict(dict):
 		self.__dict__ = self
 
 def td_repr( ts, ts0=None, units_max=2, units_res=None, printf=None,
-		_units=dict(h=3600,m=60,s=1,y=365.25*86400,mo=30.5*86400,w=7*86400,d=1*86400) ):
+		_units=dict(h=3600,m=60,s=1,y=365.2422*86400,mo=30.5*86400,w=7*86400,d=1*86400) ):
 	if ts0 is None and isinstance(ts, dt.datetime): ts0 = dt.datetime.now()
 	delta = ts if ts0 is None else (ts - ts0)
 	if isinstance(delta, dt.timedelta): delta = delta.total_seconds()

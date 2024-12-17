@@ -101,7 +101,7 @@ def get_dbus_notify_func(**defaults):
 
 def naturaltime_diff( ts, ts0, ext=None,
 		_units=dict( h=3600, m=60, s=1,
-			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+			y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	delta = abs((ts - ts0) if not getattr(ts, 'total_seconds', False) else ts)
 
 	res, s = list(), delta.total_seconds()

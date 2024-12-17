@@ -29,7 +29,7 @@ def sz_repr(size, _units=list(
 	return f'{size}{u}'
 
 def td_repr(delta, units_max=2, units_res=None, _units=dict(
-		h=3600, m=60, s=1, y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
+		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
 	res, s, n_last = list(), abs(delta), units_max - 1
 	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
 	for unit, unit_s in units:

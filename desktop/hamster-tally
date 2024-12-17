@@ -26,8 +26,8 @@ class adict(dict):
 		self.__dict__ = self
 
 
-_td_days = dict( y=365.25, yr=365.25,
-	year=365.25, mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_days = dict( y=365.2422, yr=365.2422,
+	year=365.2422, mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
 _td_s = dict( h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1 )
 def _td_re():
@@ -66,7 +66,7 @@ def td_parse(td_str, to_float=True):
 
 def td_repr( ts, ts0=None, units_max=2, units_res=None,
 		_units=dict( h=3600, m=60, s=1,
-			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+			y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	delta = ts if ts0 is None else (ts - ts0)
 	if isinstance(delta, dt.timedelta): delta = delta.total_seconds()
 	res, s, n_last = list(), abs(delta), units_max - 1

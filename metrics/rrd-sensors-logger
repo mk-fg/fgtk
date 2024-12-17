@@ -309,7 +309,7 @@ def _data_hash(data, as_bencode=False, as_hex=False):
 
 class TSValueError(Exception): pass
 
-_short_ts_days = dict(y=365.25, yr=365.25, mo=30.5, w=7, d=1)
+_short_ts_days = dict(y=365.2422, yr=365.2422, mo=30.5, w=7, d=1)
 _short_ts_s = dict(h=3600, hr=3600, m=60, min=60, s=1, sec=1)
 
 def _short_ts_regexp():
@@ -345,7 +345,7 @@ def ts_diff_parse(spec, t=float, as_td_obj=False):
 
 def ts_diff_repr( ts_or_delta, ts0=None, ext=None, absolute_diff=False,
 		_units=dict( h=3600, m=60, s=1,
-			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+			y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	if isinstance(ts0, (int, float)): ts0 = dt.datetime.fromtimestamp(ts_or_delta)
 	assert ts0 is None or isinstance(ts0, (int, float, dt.datetime)), ts0
 	if isinstance(ts_or_delta, (int, float)):
