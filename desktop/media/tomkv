@@ -149,13 +149,20 @@ def main(args=None):
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
 			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
+	parser.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
+		Apply and strip ffmpeg params stored in filenames.
+		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
+		Where "<opts>" part can have any number of following options, concatenated:
+			+ss=<time> - translated to "-ss <time>" for ffmpeg command.
+			+to=<time> - "-to <time>" for ffmpeg - stop time to cut video short at.
+		Filename example: video.tomkv+ss=1:23+to=4:56.mp4'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src_list = list()
 	for src in opts.src:
-		try: src_list.append(src := pl.Path(src).resolve(strict=True))
+		try: src_list.append((src := pl.Path(src), srcx := src.resolve(strict=True)))
 		except FileNotFoundError: parser.error(f'Source path missing/inaccessible: {src}')
-		if '\n' in str(src): parser.error(f'Source path with newline in it: {src!r}')
+		if '\n' in f'{src} {srcx}': parser.error(f'Source path with newline in it: {src!r}')
 	if opts.dst_dir: os.chdir(opts.dst_dir)
 	if rm_list := opts.rm_list:
 		rm_list, rm_list_ratio = ( (rm_list, math.inf)
@@ -164,16 +171,27 @@ def main(args=None):
 	nx = max(0, opts.skip_n or 0)
 	pxfmt_set = parse_rgb10_pixfmts()
 
-	# ffprobe checks
-	for n, src in enumerate(src_list):
+	## ffprobe checks
+	for n, (src, srcx) in enumerate(src_list):
 		src_list[n] = None
-		try: p = src_probe(src)
+		try: p = src_probe(srcx)
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
 		if p.get('ms') and not opts.force_stream1:
 			p = adict(t='format', msg='Multiple A/V streams detected')
+		# Parse fnopts, format dst filename
+		fn = (opts.name or '{name}.mkv').format(name=src.name.rsplit('.', 1)[0])
+		p.fn, p.ext = fn.rsplit('.', 1) if '.' in fn else (fn, '')
+		if opts.fn_opts and (m := re.search(r'\.tomkv(\+\S+)?$', p.fn)):
+			p.fn, fnopts = fn[:m.start()], m[1] or ''
+			try:
+				p.opts = dict(opt.split('=', 1) for opt in fnopts.split('+') if opt)
+				if set(p.opts) - {'ss', 'to'}: raise ValueError
+			except: p = adict(t='file', msg=f'Failed to parse -F/--fn-opts: {fnopts!r}')
+		# Last check for any unfixable issues
 		if (errs := p.get('errs')) is None:
 			print(f'\n{src.name} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
+		# Check for warnings and skippable issues
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
 		p.v.pxconv = p.v.pxf not in pxfmt_set
 		if p.v.c in ['hevc', 'av1'] and not p.v.scale and not p.v.resample and p.v.br < 2.5e6:
@@ -182,6 +200,7 @@ def main(args=None):
 			errs.append(adict( t='audio', warn=1,
 				msg='Already encoded in <200k 2ch opus, will copy it as-is' ))
 			p.a.clone = True
+		# Last check for non-fatal errors
 		if errs:
 			try: skip = err = next(err for err in errs if not err.get('warn'))
 			except: err = errs[skip := 0]
@@ -192,28 +211,22 @@ def main(args=None):
 					for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 				else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip and not opts.force: continue
-		src_list[n], p.src = p, src
+		src_list[n], p.src = p, srcx
 
-	# Deduplication of dst filenames
-	dst_name_aliases, dst_name_map = dict(), dict()
-	def dst_name_format(p):
-		if not (fn := dst_name_aliases.get(p)):
-			fn = p.name.rsplit('.', 1)[0]
-			fn = dst_name_aliases[p] = opts.name.format(name=fn) or f'{fn}.mkv'
-		return fn
+	## Deduplication of dst filenames
+	dst_name_aliases, dst_name_map, ext = dict(), dict(), p.ext and f'.{p.ext}'
+	dst_name_fmt = lambda p: dst_name_aliases.setdefault(p.src, p.fn + ext)
 	src_list = list(filter(None, src_list))
-	for p in sorted(src_list, key=lambda p: (p.src.name, str(p.src))):
-		dst_name_map.setdefault(dst_name_format(p.src), list()).append(p.src)
+	for p in sorted(src_list, key=lambda p: (p.fn, str(p.src))):
+		dst_name_map.setdefault(dst_name_fmt(p), list()).append(p)
 	for dst_name, ps in dst_name_map.items():
 		if len(ps) == 1: continue
 		nf = str(len(str(len(ps))))
 		for n, p in enumerate(ps, 1):
-			if '.' not in dst_name: fn, ext = dst_name, ''
-			else: fn, ext = dst_name.rsplit('.', 1); ext = f'.{ext}'
-			dst_name_aliases[p] = ('{}.{:0'+nf+'d}{}').format(fn, n, ext)
-	for p in src_list: p.dst, p.tmp = (dst := dst_name_format(p.src)), f'_tmp.{dst}'
+			dst_name_aliases[p.src] = ('{}.{:0'+nf+'d}{}').format(p.fn, n, ext)
+	for p in src_list: p.dst, p.tmp = (dst := dst_name_fmt(p)), f'_tmp.{dst}'
 
-	# Main ffmpeg conversion loop
+	## Main ffmpeg conversion loop
 	dry_run, m = not opts.convert, len(src_list)
 	nx, ts0 = min(nx, m), time.monotonic()
 
@@ -237,6 +250,8 @@ def main(args=None):
 			"scale='if(gte(iw,ih),min(1280,iw),-2)"
 			":if(lt(iw,ih),min(1280,ih),-2)',setsar=1:1" )
 		if filters: filters = ['-filter:v', ','.join(filters)]
+		if fnopts := p.get('opts'):
+			filters = sum(([f'-{k}', v] for k, v in fnopts.items()), []) + filters
 		if p.v.pxconv: filters.extend(['-pix_fmt', 'yuv420p10le'])
 		if p.a.get('clone'): ac = ['-c:a', 'copy']
 		else:
@@ -245,8 +260,7 @@ def main(args=None):
 				'pan=stereo|c0=0.5*c2+0.707*c0+0.707*c4+0.5*c3'
 				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
-		fmt = ( ['-movflags', '+faststart']
-			if p.dst.rsplit('.', 1)[-1].lower() in ['mp4', 'mov', 'm4v'] else [] )
+		fmt = ['-movflags', '+faststart'] if p.ext.lower() in ['mp4', 'mov', 'm4v'] else []
 		if p.s or p.ms:
 			fmt.extend('-map 0:v:0 -map 0:a:0'.split())
 			if p.s and (sn := (subs := p.s.copy()).pop()):
