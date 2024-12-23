@@ -77,7 +77,7 @@ qr=()
 [[ "${#qr[@]}" -gt 0 ]] || { echo >&2 "ERROR: no parameters to encode specified"; exit 1; }
 
 [[ -z "$verbose" ]] || echo "${qr[@]}"
-qrencode -o "$dst" "${opts[@]}" "${qr[@]}" \
+qrencode -o "$dst" "${opts[@]}" -- "${qr[@]}" \
 	|| { err=$?; echo >&2 "ERROR: qrencode operation failed"; exit $err; }
 if [[ -z "$display" ]]
 then [[ -n "$out" ]] || echo "$dst"
