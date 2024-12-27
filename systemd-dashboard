@@ -159,9 +159,10 @@ def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/', **parse_kws):
 	for name, state_str in state_map_str.items():
 		try: machine_state = ssd_parse_machine(state_str, **parse_kws)
 		except Exception as err:
+			machine = f'machine {name!r}' if name != '_host' else 'host'
 			print(
 				f'ERROR: Failed to parse state-dump ({len(state_str):,d} B)'
-				f' for machine {name!r}]: [{err.__class__.__name__}] {err}', file=sys.stderr )
+				f' for {machine}: [{err.__class__.__name__}] {err}', file=sys.stderr )
 			raise
 		prefix = prefix_fmt.format(name=name)
 		for unit, props in machine_state.items():
@@ -173,7 +174,7 @@ def systemd_state_dump_parse(state_map_str, prefix_fmt='{name}/', **parse_kws):
 def ssd_parse_machine(state_str, filter_prop=None, filter_unit=None):
 	state_lines = iter(state_str.splitlines())
 	state_lines = it.dropwhile(lambda line: re.search(
-		r'^(Manager:|Features:|Timestamp) ', line ), state_lines)
+		r'^(Manager:|Features:|Subscribed:|Timestamp) ', line ), state_lines)
 	if not filter_prop: filter_prop = lambda k: True
 	if not filter_unit: filter_unit = lambda u: True
 
