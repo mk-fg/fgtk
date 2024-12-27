@@ -127,18 +127,14 @@ def create_ssh_tunnel(ctx, conf, dst, port, name, rsync_info):
 			[ 'ssh', *(conf.ssh_opts or list()),
 				'-R', f'{conf.recv_port_bind}:{tun_port}:{conf.rsync_bind}:{rsync_port}',
 				*([f'-p{port}'] if port else []), dst ],
-			stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr )
-		ssh_recv = open(ssh.stdout.fileno(), 'rb', 0)
-		ssh_send = open(ssh.stdin.fileno(), 'wb', 0)
+			bufsize=0, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr )
+		ssh_recv, ssh_send = ssh.stdout, ssh.stdin
 		with hs_timeout_ctx(): hello = ssh_recv.readline().rstrip(b'\n')
-		if hello:
-			ctx.callback(proc_close, ssh)
-			ssh = None
-			break
+		if hello: ssh = ctx.callback(proc_close, ssh); break
+		else: proc_close(ssh)
 	else: raise SSHRsyncError('SSH connection failed')
-	if hello != conf.hs_hello:
-		raise SSHRsyncError( 'Hello-string mismatch:'
-			' local={!r} remote={!r}', conf.hs_hello, hello )
+	if hello != conf.hs_hello: raise SSHRsyncError(
+		'Hello-string mismatch: local={!r} remote={!r}', conf.hs_hello, hello )
 
 	key = os.urandom(conf.hs_key_size)
 	info = dict( name=name, port=tun_port,
