@@ -85,7 +85,7 @@ def src_probe(p):
 			audio = adict(c=s.codec_name, chans=s.channels)
 		if ct == 'subtitle':
 			sub += 1
-			if s.codec_name in ['dvd_subtitle', 'hdmv_pgs_subtitle']:
+			if s.codec_name in ['dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle']:
 				errs.append(adict(t='subs', msg='Has bitmap subtitles'))
 			else: subs.append(sub-1)
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
