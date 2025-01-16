@@ -330,8 +330,9 @@ def main(args=None):
 
 	jinja_env.filters['dns'] = tpl_resolve
 	jinja_env.globals.update(
-		it=it, dns=tpl_resolve, _v_=lambda v: v and ' {} '.format(v),
-		_v=lambda v: v and ' {}'.format(v), v_=lambda v: v and '{} '.format(v) )
+		it=it, zip=zip, szip=lambda a,b: zip(a.split(), b.split()),
+		dns=tpl_resolve, _v_=lambda v: v and f' {v} ',
+		_v=lambda v: v and f' {v}', v_=lambda v: v and f'{v} ' )
 
 	hosts = tpl_parse_hosts(sorted(k for k,v in dict(
 		(flag.lstrip('+-'), not flag.startswith('-'))
