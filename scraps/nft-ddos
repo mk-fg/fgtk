@@ -1,0 +1,141 @@
+#!/bin/bash
+
+## Some relevant docs:
+# https://man.archlinux.org/man/nft.8#SET_STATEMENT
+# https://wiki.nftables.org/wiki-nftables/index.php/Sets
+# https://wiki.nftables.org/wiki-nftables/index.php/Counters
+# https://wiki.nftables.org/wiki-nftables/index.php/Meters
+# https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/
+#   8/html/securing_networks/getting-started-with-nftables_securing-networks
+
+nft_table='inet filter'
+nft_dynamic=tc.pre.ddos
+nft_backstop=tc.pre.ddos.backstop
+nft_set_bh4=set.inet-bots4
+nft_set_rate4=set.inet-bots4.rate
+nft_set_bh6=set.inet-bots6
+nft_set_rate6=set.inet-bots6.rate
+nft_cnt_bh=cnt.inet-bots.blackhole
+nft_cnt_pass=cnt.inet-bots.pass
+count_sec=100
+
+usage() {
+	local bin=${0##*/}
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo; echo "Usage: $bin [action...]"
+	[[ $1 -ne 0 ]] && { echo; echo 'Run with -h/--help option for more info'; } || {
+		echo
+		echo 'Script to dynamically tweak/update/toggle specific nftables chains.'
+		echo 'Intended for testing tricky anti-ddos rules, enabling/disabling them on-demand.'
+		echo
+		echo 'Consists of two main actions - "backstop" block-all chain and "dynamic" one.'
+		echo ' "backstop" is intended to block all traffic, allowing to test dynamic rules'
+		echo '  and populate their nft sets without too much hassle from non-blocked traffic.'
+		echo ' "dynamic" chain before "backstop" is used to filter traffic via rate-limiting rules.'
+		echo ' Both chains are flushed/updated separately, via different script actions.'
+		echo 'NFT Set objects are NOT changed in this script in any way.'
+		echo 'NFT Counter objects are reset during "count" op, but not changed otherwise.'; }
+	echo
+	echo 'Default action - backstop - block all inbound public-service traffic.'
+	echo 'Other actions:'
+	echo '  list - show rules that are currently in place in relevant chains.'
+	echo '  dynamic - remove "block all" backstop rules, opposite of "backstop".'
+	echo '  update - update dynamic rules, does not affect "backstop" policy.'
+	echo '  stats[=ip] - show info on used nft sets and counters, + optionally on IP addr in sets.'
+	echo "  count[=sec] - reset/sample counters for n seconds (default $count_sec)"
+	echo '  unblock=ip - remove specified IP address from any relevant sets.'
+	echo
+	echo "nftables tables/chains/sets configured in this script: table = [ $nft_table ],"
+	echo "  dynamic-blocks chain = [ $nft_dynamic ], backstop chain = [ $nft_backstop ],"
+	echo "  IPv4 sets: blackhole = [ $nft_set_bh4 ], dynamic rate-limits = [ $nft_set_rate4 ]"
+	echo "  IPv6 sets: blackhole = [ $nft_set_bh6 ], dynamic rate-limits = [ $nft_set_rate6 ]"
+	echo "  Counters: blackhole = [ $nft_cnt_bh ], pre-backstop/pass = [ $nft_cnt_pass ]"
+	echo; exit ${1:-1}; }
+[[ "$1" != -h && "$1" != --help ]] || usage 0
+
+set -eEo pipefail
+trap 'echo "FAILURE ${err_pos:-line $LINENO: $BASH_COMMAND}"' ERR
+
+acts=( $@ )
+[[ ${#acts[@]} -gt 0 ]] || acts+=( backstop )
+for act in "${acts[@]}"; do
+echo; echo "---------- [ $(date -Is) ] action: $act"
+case "$act" in
+
+
+backstop) nft -f- <<EOF
+flush chain $nft_table $nft_backstop
+add rule $nft_table $nft_backstop counter name $nft_cnt_pass drop
+EOF
+;;
+
+
+dynamic) nft -f- <<EOF
+flush chain $nft_table $nft_backstop
+add rule $nft_table $nft_backstop counter name $nft_cnt_pass
+EOF
+;;
+
+
+update) nft -f- <<EOF
+flush chain $nft_table $nft_dynamic
+add rule $nft_table $nft_dynamic \
+	ip saddr @$nft_set_bh4 counter name $nft_cnt_bh drop
+add rule $nft_table $nft_dynamic \
+	ip6 saddr @$nft_set_bh6 counter name $nft_cnt_bh drop
+add rule $nft_table $nft_dynamic \
+	update @$nft_set_rate4 { ip saddr limit rate over 3/minute burst 20 packets } \
+	add @$nft_set_bh4 { ip saddr } drop
+add rule $nft_table $nft_dynamic \
+	update @$nft_set_rate6 { ip6 saddr limit rate over 3/minute burst 20 packets } \
+	add @$nft_set_bh6 { ip6 saddr } drop
+EOF
+;;
+
+
+list)
+nft -at list chain $nft_table $nft_dynamic
+nft -at list chain $nft_table $nft_backstop
+;;
+
+
+stats|stats=*)
+[[ "$act" =~ ^stats= ]] && addr=${act#stats=} || addr=
+for nft_set in $nft_set_bh4 $nft_set_rate4 $nft_set_bh6 $nft_set_rate6 ; do
+	nft_set_n=$(nft -j list set $nft_table $nft_set | python /dev/fd/3 3<<'EOF'
+import sys, json
+for block in json.loads(sys.stdin.read())['nftables']:
+	if not (nft_set := block.get('set')): continue
+	print(f'{len(nft_set.get("elem", list())):,d}'); break
+EOF
+)
+	echo "---- Set [ $nft_set ] elements: $nft_set_n"
+	[[ -z "$addr" ]] || nft get element $nft_table $nft_set "{ $addr }" ||:
+done
+echo "--- Counters"
+nft list counters table $nft_table
+;;
+
+
+count|count=*)
+[[ "$act" =~ ^count= ]] && n=${act#count=} || n=$count_sec
+echo "--- Counter sampling for ${n}s"
+nft reset counters table $nft_table >/dev/null
+sleep "$n"
+nft list counters table $nft_table
+;;
+
+
+unblock=*)
+addr=${act#unblock=}
+for nft_set in $nft_set_bh4 $nft_set_rate4 $nft_set_bh6 $nft_set_rate6 ; do
+	echo "-- Set [ $nft_set ]"
+	nft delete element $nft_table $nft_set "{ $addr }" ||:
+done
+;;
+
+
+*) echo >&2 "ERROR: Unrecognized action - '$act'"
+esac
+
+done

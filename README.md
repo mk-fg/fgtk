@@ -248,10 +248,10 @@ Contents - links to doc section for each script here:
     - [gpm-track](#hdr-gpm-track)
     - [rsyslogs](#hdr-rsyslogs)
     - [relp-test](#hdr-relp-test)
-    - [ccc-dl](#hdr-ccc-dl)
     - [exec.c](#hdr-exec.c)
     - [sqlite-python-concurrency-test](#hdr-sqlite-python-concurrency-test)
     - [numfmt.awk](#hdr-numfmt.awk)
+    - [nft-ddos](#hdr-nft-ddos)
 
 
 
@@ -4903,23 +4903,6 @@ Run binary without args to get more usage info and/or see .c file header for tha
 
 [librelp]: https://github.com/rsyslog/librelp
 
-<a name=hdr-ccc-dl></a>
-#### [ccc-dl](scraps/ccc-dl)
-
-Script to download Chaos Communication Congress (ccc/c3) videos as simple .mp4
-files from a given fahrplan or media.ccc.de link (at least rc3 2020 ones).
-
-Kinda surprised how needlessly complicated it is otherwise, as there are
-separate URLs for re-live streams, hd/sd videos, etc, none of which are easy to find.
-
-Frontend URLs there just tend to show useless crappy player and not allow to download
-anything, and you have to either grab the URL from browser request debugger or
-navigate http file listings of their archives and find/match the talk in one of these.
-
-This script simplifies it to one command, querying their JSON APIs under the hood,
-using all proper IDs and such, which is still like 3-4 complicated json-parsing requests,
-hence the need for a proper script to do it.
-
 <a name=hdr-exec.c></a>
 #### [exec.c](scraps/exec.c)
 
@@ -5031,6 +5014,22 @@ blog post also has these funcs as 3-liners to embed into shell scripts more easi
 [AWK script to convert long integers to human-readable number format and back]:
   https://blog.fraggod.net/2022/11/18/awk-script-to-convert-long-integers-to-human-readable-number-format-and-back.html
 
+<a name=hdr-nft-ddos></a>
+#### [nft-ddos](scraps/nft-ddos)
+
+Helper script for tweaking/replacing chains of [nftables] rules easily
+and atomically, fine-tuning rate-limits there, monitoring/querying sets
+of blocked IPs, various named counters inserted into those chains.
+
+Thought to finally make one to use for joke-DDoS'es going around internet
+nowadays, where it's useful to adjust parts of nftables configuration on-the-fly,
+without nuking buildup of bot IPs in the sets or whatever other stateful objects.
+
+See [nftables rate-limiting against low-effort DDoS attacks] blog post for more info.
+
+[nftables]: https://wiki.nftables.org/
+[nftables rate-limiting against low-effort DDoS attacks]:
+  https://blog.fraggod.net/2025/01/16/nftables-rate-limiting-against-low-effort-ddos-attacks.html
 
 
 
