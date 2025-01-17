@@ -82,6 +82,8 @@ Contents - links to doc section for each script here:
 
         - [adhocapd](#hdr-adhocapd)
         - [wpa-systemd-wrapper](#hdr-wpa-systemd-wrapper)
+        - [timed-ble-beacon](#hdr-timed-ble-beacon)
+        - [timed-ble-beacon-mpy-led](#hdr-timed-ble-beacon-mpy-led)
 
     - [Misc](#hdr-misc)
 
@@ -1710,6 +1712,78 @@ Python/asyncio, requires python-systemd installed, use `-h/--help`
 and `-d/--debug` opts for more info.
 
 [wpa_supplicant]: https://w1.fi/wpa_supplicant/
+
+<a name=hdr-timed-ble-beacon></a>
+##### [timed-ble-beacon](timed-ble-beacon)
+
+Python script to broadcast [Bluetooth Low Energy (BLE)] beacons
+for specified amount of time, with a time countdown in them,
+using standard linux [BlueZ bluetooth stack].
+
+Broadcasts are done using Primary Advertising mechanism (ADV\_SCAN\_IND PDUs),
+not marked as "discoverable", intended be picked-up by passive scans on recipient.
+All data is embedded in "Manufacturer Specific Data" bytes, where in addition to
+countdown, there's also replay counter and keyed HMAC, to prevent replays or a
+simple forgery.
+
+Both sender (broadcaster) and recipient (observer) should share configured keys
+for communication to work.
+
+Intended to be used to temporarily enable/disable something while BLE beacons
+are being broadcast, receiving/checking those on cheap [micropython] controllers -
+kinda like a smart-home remotely-controlled switch, but automatically reverting
+to default state on its own, standalone, and much simpler.
+
+[timed-ble-beacon-mpy-led micropython script] is the receiver side,
+intended to run on a cheap [RPi Pico W] board with rp2040 microcontroller.
+There can be any number of senders/receivers at the same time - just use
+different `--mid` and `-s/--secret` values for different control-domains.
+
+Uses [python-dbus] and [python-gobject] modules to work
+with bluez over dbus within glib eventloop.
+
+[BlueZ bluetooth stack]: https://www.bluez.org/
+[Bluetooth Low Energy (BLE)]: https://en.wikipedia.org/wiki/Bluetooth_Low_Energy
+[micropython]: https://docs.micropython.org/en/latest/
+[RPi Pico W]: https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#picow-technical-specification
+[timed-ble-beacon-mpy-led micropython script]: #hdr-timed-ble-beacon-mpy-led
+[python-dbus]: https://dbus.freedesktop.org/doc/dbus-python/
+[python-gobject]: https://pygobject.gnome.org/
+
+<a name=hdr-timed-ble-beacon-mpy-led></a>
+##### [timed-ble-beacon-mpy-led](timed-ble-beacon-mpy-led)
+
+Micopython script to passively scan for [Bluetooth Low Energy (BLE)] beacons
+with specific HMAC-authenticated payload, and trigger some action while those
+are active, reverting back to default state otherwise.
+
+Intended to run on [RPi Pico W] microcontroller, but should work on ESP32s
+or anything else supported by [micropython], and to just blink connected LEDs
+in a configured pattern, as an indicator/notification.
+
+[timed-ble-beacon script] above can be used to broadcast BLE beacons in question.
+Must be configured with at least mid/key parameters at the top of the script,
+unless just testing defaults in both of these scripts.
+
+To setup/run this on a ttyUSB-connected microcontroller board:
+
+``` console
+## Upload micropython firmware to the device, install "mpremote" tool
+
+% nano timed-ble-beacon-mpy-led
+## Set parameters like ble_mid and ble_secret at the top of the script
+
+% mpremote run timed-ble-beacon-mpy-led
+## Should either work or print some errors to console
+
+## To setup this script to run on board boot from now on
+% mpremote cp timed-ble-beacon-mpy-led :main.py
+% mpremote reset
+```
+
+See timed-ble-beacon script and its `-h/--help` output for more details.
+
+[timed-ble-beacon script]: #hdr-timed-ble-beacon
 
 
 
