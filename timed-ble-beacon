@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import os, sys, re, signal, hmac, hashlib as hl, traceback as tb
-import math, time, datetime as dt
+import struct, base64, math, time, datetime as dt
 
 import dbus, dbus.service, dbus.exceptions, dbus.mainloop.glib # python-dbus
 from gi.repository import GLib # python-gobject
@@ -103,18 +103,17 @@ class BLEAdMsg(dbus.service.Object): # see man org.bluez.LEAdvertisement
 	m = ( lambda si='',so='',iface='org.freedesktop.DBus.Properties':
 		dbus.service.method(iface, in_signature=si, out_signature=so) )
 
-	def __init__(self, bus, idx):
-		self.idx, self.bus = idx, bus
-		self.path = f'/org/bluez/example/advertisement/{idx}'
-		super().__init__(self.bus, self.path)
-
-	def set_payload(self, mid, secret, td, n=None):
+	def __init__(self, bus, mid, secret, td, n=None):
 		n, td = n or int(time.time() - 1_735_689_600), round(td / 100)
-		p(f'-- ad update [ {self.path} ]: ( {mid:,d}, {td:,d} {n:,d} {secret} )')
-		msg = td.to_bytes(2, 'little') + n.to_bytes(4, 'little')
-		mac = hmac.HMAC(secret, msg, digestmod=hl.sha512).digest()[:20]
+		msg = struct.pack('<HL', td, n)
+		mac = hmac.HMAC(secret, msg, digestmod=hl.sha256).digest()[:20]
+		ad_name = base64.urlsafe_b64encode(mac).decode()
+		ad_name = ad_name.translate(dict(zip(b'_-=', 'qQX'))) # dbus name limits
+		self.bus, self.path = bus, f'/org/bluez/example/advertisement/{ad_name}'
+		p(f'-- new BLE ad [ {self.path} ]: ( {mid:,d}, {td:,d} {n:,d} {secret} )')
 		self.data = dbus.Dictionary( # uint16 key, <=27B value
 			{mid: dbus.Array(msg + mac, signature='y')}, signature='qv' )
+		super().__init__(self.bus, self.path)
 
 	@m('s', 'a{sv}')
 	def GetAll(self, iface):
@@ -138,24 +137,22 @@ def run_ad(mid, secret, td_updates, td_total):
 	ad_mgr = dbus.Interface(bus.get_object('org.bluez', adapter), iface)
 
 	ad = None
-	def _ad_update(close=False, idx=-1):
+	def _ad_update(close=False):
 		nonlocal ad
 		try:
 			if ad:
-				idx = ad.idx
 				try:
 					ad_mgr.UnregisterAdvertisement(ad)
 					dbus.service.Object.remove_from_connection(ad)
 				except: pass
 				if close: return
 			if not (td := max(0, ts_end - time.monotonic())): return loop.quit()
-			ad = BLEAdMsg(bus, idx + 1)
-			ad.set_payload(mid, secret, td)
+			ad = BLEAdMsg(bus, mid, secret, td)
 			ad_mgr.RegisterAdvertisement( ad.path, {},
 				reply_handler=lambda: None, error_handler=lambda err:
 					(p_err(f'BLE ad setup/update failed - {err}' ), loop.quit()) )
+			return True # for glib to run this again after interval
 		except: tb.print_exc(file=sys.stderr); sys.stderr.flush(); loop.quit()
-		return True
 
 	ts_start = dt.datetime.now().isoformat(sep=' ', timespec='seconds')
 	p( f'loop: Setup start=[ {ts_start} ]'

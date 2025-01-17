@@ -8,11 +8,13 @@ class Conf:
 	ble_mid = 61_634 # uint16 manufacturer id to match in broadcasts
 	ble_secret = b'timed-beacon-test'
 
-	idle_sample_interval = 5.0 * 60
-	idle_sample_time = 3.0
-	blinky_sample_interval = 20.0
-	blinky_sample_time = 4.0
+	# "clear" is the normal state, "beacon" is a state when those are detected
+	clear_sample_interval = 20.0
+	clear_sample_time = 4.0
+	beacon_sample_interval = 5.0 * 60
+	beacon_sample_time = 3.0
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
+	beacon_span_checks = 6 # do N checks within timespan sent in the beacon
 
 
 class BLEH:
@@ -61,39 +63,37 @@ async def main():
 	# XXX: LED task
 	conf = Conf()
 
-	# XXX: rename states to beacon/clear
-	st_idle, st_blinky, timings = 0, 1, list(
-		(round(s1*1000), round(s2*1000)) for s1, s2 in [
-			(conf.idle_sample_interval, conf.idle_sample_time),
-			(conf.blinky_sample_interval, conf.blinky_sample_time) ] )
-	beacons = {st_blinky: False, st_idle: True}
+	st_beacon, st_clear = (states := ('beacon', 'clear'))
+	timings = dict(zip(states, (
+		(round(s1*1000), round(s2*1000)) for s1, s2 in (
+			(conf.beacon_sample_interval, conf.beacon_sample_time),
+			(conf.clear_sample_interval, conf.clear_sample_time) ) )))
 	beacon_grace_td = round(conf.beacon_repeat_grace * 1000)
-	st_names = {st_blinky: 'blinky', st_idle: 'idle'}
 	p_log = conf.verbose and (lambda *a: print('[main]', *a))
 
 	p_log and p_log('Starting main loop...')
 	bleh, counter = BLEH(), 0
-	st = st_idle; td_sleep, td_sample = timings[st]
-	td_st, td_st_split, td_st_left = 0, 3, list() # XXX: configurable
+	st = st_beacon; td_sleep, td_sample = timings[st]
+	td_st, td_st_split, td_st_left = 0, conf.beacon_span_checks, list()
 	beacon, beacon_ts = False, 0
 	while True:
+		beacon_expected = st == st_beacon
 
-		if beacon != beacons[st]:
-			st_new = int(not st)
-			p_log and p_log( 'State change'
-				f' (beacon={beacon}): {st_names[st]} -> {st_names[st_new]}' )
+		if beacon != beacon_expected:
+			st_new = st_beacon if beacon else st_clear
+			p_log and p_log(f'State change (beacon={int(beacon)}): {st} -> {st_new}')
 			st = st_new; td_sleep, td_sample = timings[st]
 
 		else:
 			td = td_sleep
-			if st == st_idle and beacon: # use td_st + with N rare checks in-between
+			if beacon_expected and beacon: # use td_st + with N rare checks in-between
 				if abs(sum(td_st_left) - td_st) > td*2: td_st_left.clear() # changed/drifted
 				if not td_st_left: # split td_st into chunks, check on those
 					if (td_st_chunk := td_st / td_st_split) > td:
 						td_st_left = [td_st_chunk + td / td_st_split] * td_st_split
-				if td_st_left: td = round(td_st_left.pop() * 1000)
+				if td_st_left: td = round(td_st_left.pop())
 			elif td_st_left: td_st_left.clear() # beacon went away
-			p_log and p_log(f'Delay (state={st_names[st]}): {td:,d}ms')
+			p_log and p_log(f'Delay (state={st}): {td:,d}ms')
 			await asyncio.sleep_ms(td)
 
 		p_log and p_log(f'Scanning for broadcasts ({td_sample:,d}ms)...')
@@ -101,9 +101,9 @@ async def main():
 		grace = (beacon_grace_td - time.ticks_diff(ts := time.ticks_ms(), beacon_ts)) > 0
 		with bleh: data = await bleh.sample_broadcasts(conf.ble_mid, 26, td_sample)
 		if not data: continue
-		td_st, n = struct.unpack('<HL', data); td_st *= 100
+		td_st, n = struct.unpack('<HL', data); td_st *= 100_000
 		p_log and p_log(f'Scan data #{n:,d} {td_st:,d}s [ {data} ]')
-		if (grace and n < counter) or n <= counter: # repeats within beacon_grace_td
+		if (grace and n < counter) or (not grace and n <= counter):
 			p_log and p_log(f'Replayed/reset counter: #{n:,d} <= old #{counter:,d}')
 			continue
 		counter, hmac = n, data[6:]
