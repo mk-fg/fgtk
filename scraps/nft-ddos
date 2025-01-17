@@ -44,6 +44,7 @@ usage() {
 	echo '  stats[=ip] - show info on used nft sets and counters, + optionally on IP addr in sets.'
 	echo "  count[=sec] - reset/sample counters for n seconds (default $count_sec)"
 	echo '  unblock=ip - remove specified IP address from any relevant sets.'
+	echo '  export[=json] - export used address sets, to be merged back via "nft -f ...".'
 	echo
 	echo "nftables tables/chains/sets configured in this script: table = [ $nft_table ],"
 	echo "  dynamic-blocks chain = [ $nft_dynamic ], backstop chain = [ $nft_backstop ],"
@@ -131,6 +132,14 @@ addr=${act#unblock=}
 for nft_set in $nft_set_bh4 $nft_set_rate4 $nft_set_bh6 $nft_set_rate6 ; do
 	echo "-- Set [ $nft_set ]"
 	nft delete element $nft_table $nft_set "{ $addr }" ||:
+done
+;;
+
+
+export|export=json)
+[[ "$act" = export=json ]] && opts=( -j ) || opts=()
+for nft_set in $nft_set_bh4 $nft_set_rate4 $nft_set_bh6 $nft_set_rate6
+do nft "${opts[@]}" list set $nft_table $nft_set
 done
 ;;
 
