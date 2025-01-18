@@ -8,6 +8,10 @@ class Conf:
 	ble_mid = 61_634 # uint16 manufacturer id to match in broadcasts
 	ble_secret = b'timed-beacon-test'
 
+	scan_duration_ms = 5_000
+	scan_interval_us = 60_000
+	scan_window_us = 30_000
+
 	# "clear" is the normal state, "beacon" is a state when those are detected
 	clear_sample_interval = 20.0
 	clear_sample_time = 4.0
@@ -17,39 +21,46 @@ class Conf:
 	beacon_span_checks = 6 # do N checks within timespan sent in the beacon
 
 
-class BLEH:
+class BLE_MSE_Scanner:
 
-	def __init__(self):
-		self.ble = bluetooth.BLE()
-		self.ble.irq(self.irq_handler)
-		self.scan_done = asyncio.ThreadSafeFlag()
+	def __init__(self, duration_ms, interval_us, window_us):
+		self.ble, self.scan_args = bluetooth.BLE(), (duration_ms, interval_us, window_us)
+		self.ble.irq(self._irq_handler)
+		self.scan, self.queue, self.check = False, list(), asyncio.ThreadSafeFlag()
 
-	def __enter__(self): self.ble.active(True)
-	def __exit__(self, *err): self.ble.active(False)
+	def __enter__(self):
+		if self.scan: raise RuntimeError('Concurrent scans not allowed')
+		self.scan = True; self.queue.clear(); self.check.clear()
+		self.ble.active(True); self.ble.gap_scan(*self.scan_args)
 
-	def irq_handler(self, ev, data):
+	def __exit__(self, *err):
+		self.scan = False; self.check.set(); self.ble.active(False)
+
+	async def get_data(self):
+		while True:
+			await self.check.wait()
+			data = None; self.check.clear()
+			try:
+				while self.queue: # get first adv_type_manufacturer data
+					if data := self._decode_field(self.queue.pop(), 0xff): break
+			finally:
+				if self.queue: self.check.set()
+			if not data and self.scan: continue
+			return data
+
+	def _irq_handler(self, ev, data):
+		if not self.scan: return
 		if ev == 5: # scan_result
 			addr_type, addr, adv_type, rssi, adv_data = data
 			if adv_type != 3: return # only need adv_scan_ind
-			field = self.decode_field(adv_data, 0xff) # adv_type_manufacturer
-			if not field or int.from_bytes(field[:2], 'little') != self.scan_mid: return
-			if len(data := bytes(field[2:])) != self.scan_data_len: return
-			# XXX: should decode and check hmac here, return first **correct** packet
-			self.scan_data = data; self.scan_done.set()
-		elif ev == 6: self.scan_done.set() # scan_done
+			self.queue.append(bytes(adv_data)); self.check.set()
+		elif ev == 6: self.scan = False; self.check.set() # scan_done
 
-	def decode_field(self, pkt, ft, n=0):
+	def _decode_field(self, pkt, ft, n=0):
 		if not pkt: return
 		while n + 1 < len(pkt):
 			if pkt[n + 1] == ft: return pkt[n + 2 : n + pkt[n] + 1]
 			n += 1 + pkt[n]
-
-	async def sample_broadcasts( self, mid, data_len,
-			duration_ms=5_000, interval_us=60_000, window_us=30_000 ):
-		self.scan_mid, self.scan_data_len = mid, data_len
-		self.scan_data = self.scan_done.clear()
-		self.ble.gap_scan(duration_ms, interval_us, window_us)
-		await self.scan_done.wait(); return self.scan_data
 
 
 def hmac_sha256(key, msg):
@@ -70,10 +81,11 @@ async def main():
 			(conf.clear_sample_interval, conf.clear_sample_time) ) )))
 	beacon_grace_td = round(conf.beacon_repeat_grace * 1000)
 	p_log = conf.verbose and (lambda *a: print('[main]', *a))
+	ble_scan = BLE_MSE_Scanner(
+		conf.scan_duration_ms, conf.scan_interval_us, conf.scan_window_us )
 
 	p_log and p_log('Starting main loop...')
-	bleh, counter = BLEH(), 0
-	st = st_beacon; td_sleep, td_sample = timings[st]
+	counter, st = 0, st_beacon; td_sleep, td_sample = timings[st]
 	td_st, td_st_split, td_st_left = 0, conf.beacon_span_checks, list()
 	beacon, beacon_ts = False, 0
 	while True:
@@ -98,18 +110,23 @@ async def main():
 
 		p_log and p_log(f'Scanning for broadcasts ({td_sample:,d}ms)...')
 		beacon = False
-		grace = (beacon_grace_td - time.ticks_diff(ts := time.ticks_ms(), beacon_ts)) > 0
-		with bleh: data = await bleh.sample_broadcasts(conf.ble_mid, 26, td_sample)
+
+		with ble_scan: # scan until first hmac-match
+			while data := await ble_scan.get_data():
+				if len(data) != 28 or int.from_bytes(data[:2], 'little') != conf.ble_mid: continue
+				data, hmac = data[2:8], data[8:]
+				td_st, n = struct.unpack('<HL', data); td_st *= 100_000
+				p_log and p_log(f'Scan data #{n:,d} {td_st:,d}ms [ {data} ]')
+				if (hmac_chk := hmac_sha256(conf.ble_secret, data)[:20]) == hmac: break
+				p_log and p_log(f'Bad HMAC: #{n} expected={hmac_chk} actual={hmac}')
+		p_log and p_log('Scan done' + (', no relevant data found' if not data else ''))
 		if not data: continue
-		td_st, n = struct.unpack('<HL', data); td_st *= 100_000
-		p_log and p_log(f'Scan data #{n:,d} {td_st:,d}s [ {data} ]')
+
+		grace = (beacon_grace_td - time.ticks_diff(ts := time.ticks_ms(), beacon_ts)) > 0
 		if (grace and n < counter) or (not grace and n <= counter):
 			p_log and p_log(f'Replayed/reset counter: #{n:,d} <= old #{counter:,d}')
 			continue
-		counter, hmac = n, data[6:]
-		if (hmac_chk := hmac_sha256(conf.ble_secret, data[:6])[:20]) != hmac:
-			p_log and p_log(f'Bad HMAC: #{n} expected={hmac_chk} actual={hmac}'); continue
-		beacon, beacon_ts = True, time.ticks_ms() # all matched
+		counter, beacon, beacon_ts = n, True, time.ticks_ms()
 
 	p_log and p_log('Finished')
 
