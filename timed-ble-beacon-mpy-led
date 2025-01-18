@@ -24,9 +24,9 @@ class Conf:
 	# led_time values are scanned with random chance, interval picked from min-max
 	_tdt = cs.namedtuple('LEDtdt', 'chance time_min time_max')
 	led_pin = 'LED'
-	led_time_on = [_tdt(1, 0.020, 1.0)]
+	led_time_on = [_tdt(0.5, 0.08, 0.5), _tdt(0.9, 0.02, 1), _tdt(1, 0.5, 3)]
 	led_time_off = [ _tdt(0.6, 0.1, 0.5), _tdt(0.6, 0.3, 1),
-		_tdt(0.4, 0.8, 10), _tdt(0.3, 5, 90), _tdt(1, 60, 3*60) ]
+		_tdt(0.6, 0.8, 10), _tdt(0.7, 5, 90), _tdt(1, 60, 3*60) ]
 
 
 class BLE_MSE_Scanner:
@@ -54,7 +54,7 @@ class BLE_MSE_Scanner:
 				while self.queue: # get first adv_type_manufacturer data
 					if data := self._decode_field(self.queue.pop(), 0xff): break
 			finally:
-				if self.queue: self.check.set()
+				if self.queue or not self.scan: self.check.set()
 			if not data and self.scan: continue
 			return data
 
@@ -91,9 +91,10 @@ class LEDBlinker:
 		for tdt in delay:
 			if random.random() > tdt.chance: continue
 			self.led.value(state)
-			td = tdt.time_min + random.random() * (tdt.time_max - tdt.time_min)
-			# self.log and self.log(f' blink state={int(state)} hold={td:.3f}')
-			return await asyncio.sleep(td)
+			if (td := round(1000 * ( tdt.time_min +
+					random.random() * (tdt.time_max - tdt.time_min) ))) >= 20_000:
+				self.log and self.log(f' blink state={int(state)} long-delay={td:,d}ms')
+			return await asyncio.sleep_ms(td)
 
 	async def run(self):
 		while True:
