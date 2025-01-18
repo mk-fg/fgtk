@@ -1765,6 +1765,9 @@ in a configured pattern, as an indicator/notification.
 Must be configured with at least mid/key parameters at the top of the script,
 unless just testing defaults in both of these scripts.
 
+Action-task in this script simply blinks LED indicator (built-in `machine.Pin('LED')`
+by default) with randomized intervals when no beacons are detected.
+
 To setup/run this on a ttyUSB-connected microcontroller board:
 
 ``` console

@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-import asyncio, bluetooth, time, struct, hashlib as hl
+import hashlib as hl, collections as cs
+import asyncio, machine, bluetooth, time, struct, random
 
 
 class Conf:
-	verbose = True
+	verbose = False
 	ble_mid = 61_634 # uint16 manufacturer id to match in broadcasts
 	ble_secret = b'timed-beacon-test'
 
@@ -15,10 +16,16 @@ class Conf:
 	# "clear" is the normal state, "beacon" is a state when those are detected
 	clear_sample_interval = 20.0
 	clear_sample_time = 4.0
-	beacon_sample_interval = 5.0 * 60
+	beacon_sample_interval = 5.0 * 60 # won't get lower than this in a "beacon" state
 	beacon_sample_time = 3.0
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
 	beacon_span_checks = 6 # do N checks within timespan sent in the beacon
+
+	_tdt = cs.namedtuple('LEDtdt', 'chance time_min time_max')
+	led_pin = 'LED'
+	led_time_on = [_tdt(1, 0.020, 1.0)]
+	led_time_off = [ _tdt(0.6, 0.1, 0.5), _tdt(0.6, 0.3, 1),
+		_tdt(0.4, 0.8, 10), _tdt(0.3, 5, 90), _tdt(1, 60, 3*60) ]
 
 
 class BLE_MSE_Scanner:
@@ -38,8 +45,8 @@ class BLE_MSE_Scanner:
 
 	async def get_data(self):
 		while True:
+			data = None
 			await self.check.wait()
-			data = None; self.check.clear()
 			try:
 				while self.queue: # get first adv_type_manufacturer data
 					if data := self._decode_field(self.queue.pop(), 0xff): break
@@ -63,17 +70,42 @@ class BLE_MSE_Scanner:
 			n += 1 + pkt[n]
 
 
+class LEDBlinker:
+
+	def __init__(self, conf):
+		self.tdts_on, self.tdts_off = conf.led_time_on, conf.led_time_off
+		self.led = machine.Pin(conf.led_pin, machine.Pin.OUT)
+		self.enabled = asyncio.Event()
+		self.log = conf.verbose and (lambda *a: print('[led]', *a))
+
+	def blink_enable(self, state=True):
+		if state != self.enabled.is_set():
+			self.log and self.log('Blinking ' + ('enabled' if state else 'disabled'))
+		if state: self.enabled.set()
+		else: self.enabled.clear()
+
+	async def led_enable(self, delay, state=True):
+		for tdt in delay:
+			if random.random() > tdt.chance: continue
+			self.led.value(state)
+			td = tdt.time_min + random.random() * (tdt.time_max - tdt.time_min)
+			# self.log and self.log(f' blink state={int(state)} hold={td:.3f}')
+			return await asyncio.sleep(td)
+
+	async def run(self):
+		while True:
+			await self.enabled.wait()
+			await self.led_enable(self.tdts_on)
+			await self.led_enable(self.tdts_off, False)
+
+
 def hmac_sha256(key, msg):
 	if len(key) > 64: key = hl.sha256(key).digest()
 	key += bytes(64 - len(key))
 	inner, outer = (hl.sha256(bytes(c^p for c in key)) for p in [0x36, 0x5c])
-	inner.update(msg); outer.update(inner.digest())
-	return outer.digest()
+	inner.update(msg); outer.update(inner.digest()); return outer.digest()
 
-async def main():
-	# XXX: LED task
-	conf = Conf()
-
+async def run_ble(conf, leds):
 	st_beacon, st_clear = (states := ('beacon', 'clear'))
 	timings = dict(zip(states, (
 		(round(s1*1000), round(s2*1000)) for s1, s2 in (
@@ -85,10 +117,11 @@ async def main():
 		conf.scan_duration_ms, conf.scan_interval_us, conf.scan_window_us )
 
 	p_log and p_log('Starting main loop...')
-	counter, st = 0, st_beacon; td_sleep, td_sample = timings[st]
+	counter, st = 0, st_clear; td_sleep, td_sample = timings[st]
 	td_st, td_st_split, td_st_left = 0, conf.beacon_span_checks, list()
 	beacon, beacon_ts = False, 0
 	while True:
+		leds.blink_enable(st != st_beacon)
 		beacon_expected = st == st_beacon
 
 		if beacon != beacon_expected:
@@ -129,5 +162,11 @@ async def main():
 		counter, beacon, beacon_ts = n, True, time.ticks_ms()
 
 	p_log and p_log('Finished')
+
+
+async def main():
+	conf = Conf()
+	leds = LEDBlinker(conf)
+	await asyncio.gather(leds.run(), run_ble(conf, leds))
 
 asyncio.run(main())
