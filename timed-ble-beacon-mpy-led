@@ -7,20 +7,21 @@ import asyncio, machine, bluetooth, time, struct, random
 class Conf:
 	verbose = False
 	ble_mid = 61_634 # uint16 manufacturer id to match in broadcasts
-	ble_secret = b'timed-beacon-test'
+	ble_secret = b'timed-beacon-test' # HMAC key
 
-	scan_duration_ms = 5_000
+	# 5s ~ 55x 30ms 30%dc listen-intervals
 	scan_interval_us = 60_000
 	scan_window_us = 30_000
 
-	# "clear" is the normal state, "beacon" is a state when those are detected
-	clear_sample_interval = 20.0
-	clear_sample_time = 4.0
-	beacon_sample_interval = 5.0 * 60 # won't get lower than this in a "beacon" state
+	# "clear" is the normal state, "beacon" is a state when valid beacons are detected
+	clear_sample_time = 4.0 # seconds to run BLE scan for, with duty cycle scan_* opts
+	clear_sample_interval = 20.0 # sleep delay between scans
 	beacon_sample_time = 3.0
+	beacon_sample_interval = 5.0 * 60 # won't get lower than this in a "beacon" state
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
-	beacon_span_checks = 6 # do N checks within timespan sent in the beacon
+	beacon_span_checks = 6 # wakeup for N checks within timespan sent in the beacon
 
+	# led_time values are scanned with random chance, interval picked from min-max
 	_tdt = cs.namedtuple('LEDtdt', 'chance time_min time_max')
 	led_pin = 'LED'
 	led_time_on = [_tdt(1, 0.020, 1.0)]
@@ -30,16 +31,18 @@ class Conf:
 
 class BLE_MSE_Scanner:
 
-	def __init__(self, duration_ms, interval_us, window_us):
-		self.ble, self.scan_args = bluetooth.BLE(), (duration_ms, interval_us, window_us)
-		self.ble.irq(self._irq_handler)
+	def __init__(self, interval_us, window_us):
+		self.scan_td, self.scan_dc = 5_000, (interval_us, window_us)
 		self.scan, self.queue, self.check = False, list(), asyncio.ThreadSafeFlag()
+		self.ble = bluetooth.BLE()
+		self.ble.irq(self._irq_handler)
 
+	def duration(self, duration_ms):
+		self.scan_td = duration_ms; return self
 	def __enter__(self):
 		if self.scan: raise RuntimeError('Concurrent scans not allowed')
 		self.scan = True; self.queue.clear(); self.check.clear()
-		self.ble.active(True); self.ble.gap_scan(*self.scan_args)
-
+		self.ble.active(True); self.ble.gap_scan(self.scan_td, *self.scan_dc)
 	def __exit__(self, *err):
 		self.scan = False; self.check.set(); self.ble.active(False)
 
@@ -113,8 +116,7 @@ async def run_ble(conf, leds):
 			(conf.clear_sample_interval, conf.clear_sample_time) ) )))
 	beacon_grace_td = round(conf.beacon_repeat_grace * 1000)
 	p_log = conf.verbose and (lambda *a: print('[main]', *a))
-	ble_scan = BLE_MSE_Scanner(
-		conf.scan_duration_ms, conf.scan_interval_us, conf.scan_window_us )
+	ble_scan = BLE_MSE_Scanner(conf.scan_interval_us, conf.scan_window_us)
 
 	p_log and p_log('Starting main loop...')
 	counter, st = 0, st_clear; td_sleep, td_sample = timings[st]
@@ -144,7 +146,7 @@ async def run_ble(conf, leds):
 		p_log and p_log(f'Scanning for broadcasts ({td_sample:,d}ms)...')
 		beacon = False
 
-		with ble_scan: # scan until first hmac-match
+		with ble_scan.duration(td_sample): # scan until first hmac-match
 			while data := await ble_scan.get_data():
 				if len(data) != 28 or int.from_bytes(data[:2], 'little') != conf.ble_mid: continue
 				data, hmac = data[2:8], data[8:]

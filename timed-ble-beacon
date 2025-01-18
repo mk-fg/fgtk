@@ -103,29 +103,31 @@ class BLEAdMsg(dbus.service.Object): # see man org.bluez.LEAdvertisement
 	m = ( lambda si='',so='',iface='org.freedesktop.DBus.Properties':
 		dbus.service.method(iface, in_signature=si, out_signature=so) )
 
-	def __init__(self, bus, mid, secret, td, n=None):
-		n, td = n or int(time.time() - 1_735_689_600), round(td / 100)
+	def __init__(self, bus, mid, secret, td, bms_a, bms_b):
+		n, td = int(time.time() - 1_735_689_600), round(td / 100)
 		msg = struct.pack('<HL', td, n)
 		mac = hmac.HMAC(secret, msg, digestmod=hl.sha256).digest()[:20]
 		ad_name = base64.urlsafe_b64encode(mac).decode()
 		ad_name = ad_name.translate(dict(zip(b'_-=', 'qQX'))) # dbus name limits
 		self.bus, self.path = bus, f'/org/bluez/example/advertisement/{ad_name}'
 		p(f'-- new BLE ad [ {self.path} ]: ( {mid:,d}, {td:,d} {n:,d} {secret} )')
-		self.data = dbus.Dictionary( # uint16 key, <=27B value
-			{mid: dbus.Array(msg + mac, signature='y')}, signature='qv' )
+		self.broadcast = dict(
+			MinInterval=dbus.UInt32(bms_a), MaxInterval=dbus.UInt32(bms_a),
+			ManufacturerData=dbus.Dictionary( # uint16 key, <=27B value
+				{mid: dbus.Array(msg + mac, signature='y')}, signature='qv' ) )
 		super().__init__(self.bus, self.path)
 
 	@m('s', 'a{sv}')
 	def GetAll(self, iface):
 		try:
 			if iface != self.iface: raise BLErrInvalidArgs
-			return dict(Type='broadcast', ManufacturerData=self.data)
+			return dict(Type='broadcast', **self.broadcast)
 		except: tb.print_exc(file=sys.stderr); sys.stderr.flush()
 	Get = m('ss', 'v')(lambda s, iface, k: s.GetAll(iface)[k])
 	Release = m(iface=iface)(lambda s: None)
 
 
-def run_ad(mid, secret, td_updates, td_total):
+def run_ad(mid, secret, td_updates, td_total, td_beacon):
 	ts_end = time.monotonic() + td_total
 	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 	bus = dbus.SystemBus()
@@ -147,7 +149,7 @@ def run_ad(mid, secret, td_updates, td_total):
 				except: pass
 				if close: return
 			if not (td := max(0, ts_end - time.monotonic())): return loop.quit()
-			ad = BLEAdMsg(bus, mid, secret, td)
+			ad = BLEAdMsg(bus, mid, secret, td, *td_beacon)
 			ad_mgr.RegisterAdvertisement( ad.path, {},
 				reply_handler=lambda: None, error_handler=lambda err:
 					(p_err(f'BLE ad setup/update failed - {err}' ), loop.quit()) )
@@ -155,8 +157,8 @@ def run_ad(mid, secret, td_updates, td_total):
 		except: tb.print_exc(file=sys.stderr); sys.stderr.flush(); loop.quit()
 
 	ts_start = dt.datetime.now().isoformat(sep=' ', timespec='seconds')
-	p( f'loop: Setup start=[ {ts_start} ]'
-		f' duration=[ {ts_repr(td_total)} ] update-interval=[ {ts_repr(td_updates)} ]' )
+	p( f'loop: Setup start=[ {ts_start} ] duration=[ {ts_repr(td_total)} ]'
+		f' update-interval=[ {ts_repr(td_updates)} ] beacon_ms={td_beacon}' )
 	loop = GLib.MainLoop()
 	for sig in signal.SIGTERM, signal.SIGINT:
 		GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, loop.quit)
@@ -200,6 +202,10 @@ def main(argv=None):
 			Interval between updating BLE broadcast data. Default: %(default)s
 			Same exact broadcast is repeated within these intervals.
 			Should be specified as a relative short time (e.g. 1m45s) or [[HH:]MM:]SS.'''))
+	parser.add_argument('-b', '--beacon-interval',
+		metavar='ms[-ms]', default='60-120', help=dd('''
+			Range for an interval between sending beacons
+				when those are active, in milliseconds. Default: %(default)s'''))
 
 	parser.add_argument('--mid', metavar='uint16', type=int, default=61_634, help=dd('''
 		Manufacturer "Company Identifier" field in 0-65535 range. Default: %(default)s
@@ -223,7 +229,11 @@ def main(argv=None):
 
 	if not opts.debug: global p; p = lambda *a,**kw: None
 	if not opts.time_span: parser.error('-t/--time-span option must be specified')
+
+	bms_a, s, bms_b = map(str.strip, opts.beacon_interval.partition('-'))
+	bms_a, bms_b = int(bms_a or bms_b), int(bms_b or bms_a)
 	run_ad( opts.mid, _read_file(opts.secret).encode(),
+		td_beacon=(bms_a, bms_b),
 		td_total=ts_parse(opts.time_span).total_seconds(),
 		td_updates=ts_parse(opts.update_interval, relative_only=True).total_seconds() )
 
