@@ -111,10 +111,9 @@ def hmac_sha256(key, msg):
 
 async def run_ble(conf, leds):
 	st_beacon, st_clear = (states := ('beacon', 'clear'))
-	timings = dict(zip(states, (
-		(round(s1*1000), round(s2*1000)) for s1, s2 in (
-			(conf.beacon_sample_interval, conf.beacon_sample_time),
-			(conf.clear_sample_interval, conf.clear_sample_time) ) )))
+	timings = dict(zip(states, ((round(s1*1000), round(s2*1000)) for s1, s2 in (
+		(conf.beacon_sample_interval, conf.beacon_sample_time),
+		(conf.clear_sample_interval, conf.clear_sample_time) ))))
 	beacon_grace_td = round(conf.beacon_repeat_grace * 1000)
 	p_log = conf.verbose and (lambda *a: print('[main]', *a))
 	ble_scan = BLE_MSE_Scanner(conf.scan_interval_us, conf.scan_window_us)
@@ -152,7 +151,7 @@ async def run_ble(conf, leds):
 				if len(data) != 16 or int.from_bytes(data[:2], 'little') != conf.ble_mid: continue
 				data, hmac = data[2:8], data[8:]
 				td_st, n = struct.unpack('<HL', data); td_st *= 100_000
-				p_log and p_log(f'Scan data #{n:,d} {td_st:,d}ms [ {data} ]')
+				p_log and p_log(f'Scan data #{n:,d} span={td_st:,d}ms [ {data} {hmac} ]')
 				if (hmac_chk := hmac_sha256(conf.ble_secret, data)[:8]) == hmac: break
 				p_log and p_log(f'Bad HMAC: #{n} expected={hmac_chk} actual={hmac}')
 		p_log and p_log('Scan done' + (', no relevant data found' if not data else ''))
