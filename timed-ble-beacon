@@ -106,7 +106,7 @@ class BLEAdMsg(dbus.service.Object): # see man org.bluez.LEAdvertisement
 	def __init__(self, bus, mid, secret, td, bms_a, bms_b):
 		n, td = int(time.time() - 1_735_689_600), round(td / 100)
 		msg = struct.pack('<HL', td, n)
-		mac = hmac.HMAC(secret, msg, digestmod=hl.sha256).digest()[:20]
+		mac = hmac.HMAC(secret, msg, digestmod=hl.sha256).digest()[:8]
 		ad_name = base64.urlsafe_b64encode(mac).decode()
 		ad_name = ad_name.translate(dict(zip(b'_-=', 'qQX'))) # dbus name limits
 		self.bus, self.path = bus, f'/org/bluez/example/advertisement/{ad_name}'
@@ -184,9 +184,9 @@ def main(argv=None):
 				(means that they just don't announce device name in them, I think).
 
 			BLE "Manufacturer Specific Data" broadcast field is used to carry
-				all information, being a tuple with --mid value + 27B of following data:
-					field = 2B uint16-le time-delta || 4B uint32-le replay-counter || 20B HMAC
-					HMAC = HMAC-SHA256(time-delta || replay-counter, key=secret)[:20]
+				all information, being a tuple with --mid value + 16B of following data:
+					field = 2B uint16-le time-delta || 4B uint32-le replay-counter || 8B HMAC
+					HMAC = HMAC-SHA256(time-delta || replay-counter, key=secret)[:8]
 				Where time-delta is (seconds/100),
 					replay-counter is a simple time-based monotonic integer,
 					and -s/--secret set via script option must be same on sender/receiver.'''))

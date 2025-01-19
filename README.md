@@ -1763,10 +1763,7 @@ in a configured pattern, as an indicator/notification.
 
 [timed-ble-beacon script] above can be used to broadcast BLE beacons in question.
 Must be configured with at least mid/key parameters at the top of the script,
-unless just testing defaults in both of these scripts.
-
-Action-task in this script simply blinks LED indicator (built-in `machine.Pin('LED')`
-by default) with randomized intervals when no beacons are detected.
+unless just testing with defaults in both of these.
 
 To setup/run this on a ttyUSB-connected microcontroller board:
 
@@ -1783,6 +1780,9 @@ To setup/run this on a ttyUSB-connected microcontroller board:
 % mpremote cp timed-ble-beacon-mpy-led :main.py
 % mpremote reset
 ```
+
+Action-task in this script simply blinks LED indicator (built-in `machine.Pin('LED')`
+by default) with randomized intervals when no beacons are detected.
 
 See timed-ble-beacon script and its `-h/--help` output for more details.
 

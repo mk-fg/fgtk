@@ -149,11 +149,11 @@ async def run_ble(conf, leds):
 
 		with ble_scan.duration(td_sample): # scan until first hmac-match
 			while data := await ble_scan.get_data():
-				if len(data) != 28 or int.from_bytes(data[:2], 'little') != conf.ble_mid: continue
+				if len(data) != 16 or int.from_bytes(data[:2], 'little') != conf.ble_mid: continue
 				data, hmac = data[2:8], data[8:]
 				td_st, n = struct.unpack('<HL', data); td_st *= 100_000
 				p_log and p_log(f'Scan data #{n:,d} {td_st:,d}ms [ {data} ]')
-				if (hmac_chk := hmac_sha256(conf.ble_secret, data)[:20]) == hmac: break
+				if (hmac_chk := hmac_sha256(conf.ble_secret, data)[:8]) == hmac: break
 				p_log and p_log(f'Bad HMAC: #{n} expected={hmac_chk} actual={hmac}')
 		p_log and p_log('Scan done' + (', no relevant data found' if not data else ''))
 		if not data: continue
