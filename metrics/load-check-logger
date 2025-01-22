@@ -107,8 +107,8 @@ def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split
 			a = cnt_last.get(k := (cnt.name, cnt.table, cnt.family, chk.type))
 			b = cnt_last[k] = cnt[chk.type]
 			if a and (inc := b - a) > chk.cap and (not chk.tbf or not next(chk.tbf)):
-				p_load( f'nft {chk.type} increment above {"tbf-" if chk.tbf else ""}'
-					f'cap [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d}' )
+				p_load( f'nft counter increment above {"tbf-" if chk.tbf else ""}cap'
+					f' [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
 
 def run_checks(td_checks):
 	chk_funcs = { ct.la: run_check_la,
@@ -128,6 +128,7 @@ def main(argv=None):
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
+		usage='%(prog)s [opts] check-opts...',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			Check various system load values and simply log to stderr if above thresholds.
 			Most threshold options can be specified multiple times, to be checked separately.
@@ -172,8 +173,8 @@ def main(argv=None):
 	if opts.max_rate_tbf:
 		global p_load; p_load_tbf = token_bucket(opts.max_rate_tbf)
 		p_load_raw, p_load = p_load, lambda *a,**kw: next(p_load_tbf) or p_load_raw(*a,**kw)
+	checks = dict()
 
-	checks, nft_counters = dict(), set()
 	for chk in opts.loadavg or list():
 		try:
 			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
@@ -182,6 +183,7 @@ def main(argv=None):
 		except Exception as err:
 			parser.error(f'Failed to parse -l/--loadavg check [ {chk!r} ]: {err_fmt(err)}')
 		checks.setdefault(td, list()).append(adict(t=ct.la, td=td, cap=cap, tbf=tbf))
+
 	for chk in opts.nproc or list():
 		try:
 			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
@@ -189,6 +191,8 @@ def main(argv=None):
 		except Exception as err:
 			parser.error(f'Failed to parse -p/--nproc check [ {chk!r} ]: {err_fmt(err)}')
 		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
+
+	nft_counters = set()
 	for chk in opts.nft_count_inc or list():
 		try:
 			td, cnt, cap = chk.split(':', 2); cap, s, tbf = cap.partition(':')
@@ -204,7 +208,6 @@ def main(argv=None):
 		chk.counters.setdefault(cnt, list()).append(adict(
 			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
 		nft_counters.add((table, af, cnt))
-
 	if nft_counters:
 		p(f'Checking that {len(nft_counters):,d} nftables counters exist...')
 		global json, sp; import json, subprocess as sp, itertools as it
