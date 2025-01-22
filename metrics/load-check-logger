@@ -68,7 +68,12 @@ p_load = lambda *a,**kw: print('LOAD ::', *a, **kw, file=sys.stderr, flush=True)
 p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True) or 1
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
-ct = enum.Enum('CheckType', 'la nproc')
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+ct = enum.Enum('CheckType', 'la nproc nft_cnt')
 
 
 def run_check_la( ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg'),
@@ -88,16 +93,35 @@ def run_check_nproc(ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg'))
 	if not tbf or not next(tbf): p_load(
 		f'total process-count above {"tbf-" if tbf else ""}cap: {n:,d} > {cap:,d}' )
 
+def run_check_nft(ts, caches, t, td, counters):
+	import json, subprocess as sp
+	if (nft := caches.get('nft')) and nft[0] == ts: nft = nft[1]
+	else: caches.nft = ts, (nft := sp.run(
+		['nft', '-j', 'list counters'], check=True, stdout=sp.PIPE ))
+	cnt_last = caches.setdefault('nft_cnt', dict())
+	for cnt in json.loads(nft.stdout.decode())['nftables']:
+		if not ((cnt := cnt.get('counter')) and (cnt := adict(cnt))): continue
+		if not (checks := counters.get(cnt.name)): continue
+		for chk in checks:
+			if chk.table and chk.table != cnt.table: continue
+			if chk.af and chk.af != cnt.family: continue
+			a = cnt_last.get(k := (cnt.name, cnt.table, cnt.family, chk.type))
+			b = cnt_last[k] = cnt[chk.type]
+			if a and (inc := b - a) > chk.cap and (not chk.tbf or not next(chk.tbf)):
+				p_load( f'nft {chk.type} increment above {"tbf-" if chk.tbf else ""}'
+					f'cap [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d}' )
+
 def run_checks(td_checks):
-	chk_funcs = {ct.la: run_check_la, ct.nproc: run_check_nproc}
-	q, ts, caches = list(), time.monotonic(), dict()
+	chk_funcs = { ct.la: run_check_la,
+		ct.nproc: run_check_nproc, ct.nft_cnt: run_check_nft }
+	q, ts, caches = list(), time.monotonic(), adict()
 	for td in td_checks: heapq.heappush(q, (ts + td, td))
 	while True:
 		ts_chk, td = q[0]
 		if delay := max(0, ts_chk - time.monotonic()):
 			p(f'--- delay until next check: {delay:.1f}'); time.sleep(delay)
 		heapq.heappushpop(q, ((ts := time.monotonic()) + td, td))
-		for chk in td_checks[td]: chk_funcs[chk['t']](ts, caches, **chk)
+		for chk in td_checks[td]: chk_funcs[chk.t](ts, caches, **chk)
 
 
 def main(argv=None):
@@ -125,6 +149,15 @@ def main(argv=None):
 		metavar='sample-interval:max-procs[:tbf-interval[/rate][:burst]]', help=dd('''
 			Check count of total pids in /proc/loadavg for each sample-interval.
 			Same optional token-bucket rate-threshold and format as in -l/--loadavg.'''))
+	group.add_argument('-n', '--nft-count-inc', action='append',
+		metavar='sample-interval:[table/family/]'
+				'name[=units]:max-count-inc[:tbf-interval[/rate][:burst]]', help=dd('''
+			Query named nftables counter increments over
+				specified interval and log if it's more than specified max value.
+			"table/family/" prefix can be something like "filter/inet/",
+				and "=units" suffix is either "=packets" or "=bytes" (default=packets).
+			Example: 10m:cnt.bots:100 (>100 new packets in cnt.bots counter in last 10m)
+			Same optional token-bucket rate-threshold and format as in -l/--loadavg.'''))
 
 	group = parser.add_argument_group('General options')
 	group.add_argument('-r', '--max-rate-tbf', metavar='interval[/rate][:burst]', help=dd('''
@@ -149,14 +182,27 @@ def main(argv=None):
 			cap = list(float(n) if n else 0 for n in cap.split('/'))
 		except Exception as err:
 			parser.error(f'Failed to parse -l/--loadavg check [ {chk!r} ]: {err_fmt(err)}')
-		checks.setdefault(td, list()).append(dict(t=ct.la, td=td, cap=cap, tbf=tbf))
+		checks.setdefault(td, list()).append(adict(t=ct.la, td=td, cap=cap, tbf=tbf))
 	for chk in opts.nproc or list():
 		try:
 			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
 			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
 		except Exception as err:
-			parser.error(f'Failed to parse -n/--nproc check [ {chk!r} ]: {err_fmt(err)}')
-		checks.setdefault(td, list()).append(dict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
+			parser.error(f'Failed to parse -p/--nproc check [ {chk!r} ]: {err_fmt(err)}')
+		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
+	for chk in opts.nft_count_inc or list():
+		try:
+			td, cnt, cap = chk.split(':', 2); cap, s, tbf = cap.partition(':')
+			table, s, cnt = cnt.rpartition('/'); cnt, s, cnt_type = cnt.partition('=')
+			table, af = table.split('/') if table else ('', '')
+			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
+		except Exception as err:
+			parser.error(f'Failed to parse -n/--nft-count-inc check [ {chk!r} ]: {err_fmt(err)}')
+		for chk in checks.setdefault(td, list()):
+			if chk.t is ct.nft_cnt: break
+		else: checks[td].append(chk := adict(t=ct.nft_cnt, td=td, counters=dict()))
+		chk.counters.setdefault(cnt, list()).append(adict(
+			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
 
 	if not checks: parser.error('No thresholds/checks specified')
 	p(f'Starting monitoring {sum(len(td_chks) for td_chks in checks.values())} checks...')
