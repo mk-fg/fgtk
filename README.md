@@ -4664,16 +4664,16 @@ Simple infinite-loop py script to check whether various easy-to-query system val
 (like /proc/loadavg) are above specified thresholds and log a line if they are.
 
 Purpose is to have a simple system load-monitoring feedback mixed into remote
-logging streams, where it might be relevant (i.e. above thresholds), to give
-simple context to other logged messages, without needing to annotate or cross-reference
+logging streams, where it might be relevant (i.e. above thresholds), to provide
+context for other logged messages, without needing to annotate or cross-reference
 those with whatever time-series databases separately (prometheus, influx, etc).
 
 Supports token-bucket thresholds for checks, to avoid irrelevant/bogus spam on
 temporary spiky loads, as well as token-bucket rate-limiting for output in general,
-to avoid spamming logs too much if there're many checks or they have low intervals.
+to not spam logs too much if there're many checks triggering with low intervals.
 
 Not intended to be a replacement for neither time-based metrics databases
-nor A/B monitoring systems like nagios/icinga.
+nor up/down monitoring and alerting systems like nagios/icinga.
 
 
 

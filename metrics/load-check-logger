@@ -68,30 +68,36 @@ p_load = lambda *a,**kw: print('LOAD ::', *a, **kw, file=sys.stderr, flush=True)
 p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True) or 1
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
-ct = enum.Enum('CheckType', 'la')
+ct = enum.Enum('CheckType', 'la nproc')
 
 
-def run_check_la( ts, t, td, cap, tbf,
-		p_src=pl.Path('/proc/loadavg'), la_cache=list(),
+def run_check_la( ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg'),
 		la_fmt=lambda las: '/'.join(f'{la or 0:.2f}'.rstrip('0').rstrip('.') for la in las) ):
-	if la_cache and la_cache[0][0] == ts: la = la_cache[0][1]
-	else: la_cache or la_cache.append(0); la_cache[0] = ts, (la := p_src.read_text())
-	for c, v in zip(cap, la := list(float(v) for v in la.split()[:3])):
+	if (la := caches.get(p_src)) and la[0] == ts: la = la[1]
+	else: caches[p_src] = ts, (la := p_src.read_text())
+	for c, v in zip(cap, la := list(float(v) for v in la.split(' ', 4)[:3])):
 		if v > c: break
 	else: return
-	if tbf and not next(tbf): return
-	p_load( 'load-averages above 1/5/15'
-		f' {"tbf-" if tbf else ""}caps: {la_fmt(la)} > {la_fmt(cap)}' )
+	if not tbf or not next(tbf): p_load( 'load-averages above'
+		f' 1/5/15 {"tbf-" if tbf else ""}caps: {la_fmt(la)} > {la_fmt(cap)}' )
+
+def run_check_nproc(ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg')):
+	if (la := caches.get(p_src)) and la[0] == ts: la = la[1]
+	else: caches[p_src] = ts, (la := p_src.read_text())
+	if (n := int(la.split(' ', 4)[3].split('/', 1)[-1])) <= cap: return
+	if not tbf or not next(tbf): p_load(
+		f'total process-count above {"tbf-" if tbf else ""}cap: {n:,d} > {cap:,d}' )
 
 def run_checks(td_checks):
-	q, ts, chk_funcs = list(), time.monotonic(), {ct.la: run_check_la}
+	chk_funcs = {ct.la: run_check_la, ct.nproc: run_check_nproc}
+	q, ts, caches = list(), time.monotonic(), dict()
 	for td in td_checks: heapq.heappush(q, (ts + td, td))
 	while True:
 		ts_chk, td = q[0]
 		if delay := max(0, ts_chk - time.monotonic()):
 			p(f'--- delay until next check: {delay:.1f}'); time.sleep(delay)
 		heapq.heappushpop(q, ((ts := time.monotonic()) + td, td))
-		for chk in td_checks[td]: chk_funcs[chk['t']](ts, **chk)
+		for chk in td_checks[td]: chk_funcs[chk['t']](ts, caches, **chk)
 
 
 def main(argv=None):
@@ -109,16 +115,22 @@ def main(argv=None):
 	group = parser.add_argument_group('Optional thresholds to check')
 	group.add_argument('-l', '--loadavg', action='append',
 		metavar='sample-interval:[max1]/[max5]/[max15][:tbf-interval[/rate][:burst]]', help=dd('''
-			Thresholds for /proc/loadavg numbers, to be checked for each sample-interval.
+			Thresholds for any /proc/loadavg numbers, to be checked for each sample-interval.
 			If token-bucket parameters are specified at the end,
 				load warnings are only logged when that rate-limit is exceeded,
 				i.e. load consistently is above thresholds for some time.
 			"tbf-interval[/rate]" should represent an interval (in seconds or as time-delta spec),
 				e.g.: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 1h30m/8:30, etc.'''))
+	group.add_argument('-p', '--nproc', action='append',
+		metavar='sample-interval:max-procs[:tbf-interval[/rate][:burst]]', help=dd('''
+			Check count of total pids in /proc/loadavg for each sample-interval.
+			Same optional token-bucket rate-threshold and format as in -l/--loadavg.'''))
 
 	group = parser.add_argument_group('General options')
 	group.add_argument('-r', '--max-rate-tbf', metavar='interval[/rate][:burst]', help=dd('''
 		Max rate of emitted notifications, where any ones exceeding it will be dropped.
+		This is applied across all over-threshold warnings from this script,
+			so is a fairly crude filter, where spammy ones can easily drown-out the rest.
 		Token-bucket filter parameters are same as in various checks, see e.g. -l/--loadavg.'''))
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode')
 
@@ -130,14 +142,21 @@ def main(argv=None):
 		p_load_raw, p_load = p_load, lambda *a,**kw: next(p_load_tbf) or p_load_raw(*a,**kw)
 
 	checks = dict()
-	for la in opts.loadavg:
+	for chk in opts.loadavg or list():
 		try:
-			td, s, cap = la.partition(':'); cap, s, tbf = cap.partition(':')
+			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
 			td, tbf = td_parse(td), tbf and token_bucket(tbf)
 			cap = list(float(n) if n else 0 for n in cap.split('/'))
 		except Exception as err:
-			parser.error(f'Failed to parse -l/--loadavg check [ {la!r} ]: {err_fmt(err)}')
+			parser.error(f'Failed to parse -l/--loadavg check [ {chk!r} ]: {err_fmt(err)}')
 		checks.setdefault(td, list()).append(dict(t=ct.la, td=td, cap=cap, tbf=tbf))
+	for chk in opts.nproc or list():
+		try:
+			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
+			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
+		except Exception as err:
+			parser.error(f'Failed to parse -n/--nproc check [ {chk!r} ]: {err_fmt(err)}')
+		checks.setdefault(td, list()).append(dict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
 
 	if not checks: parser.error('No thresholds/checks specified')
 	p(f'Starting monitoring {sum(len(td_chks) for td_chks in checks.values())} checks...')
