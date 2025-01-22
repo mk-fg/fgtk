@@ -226,6 +226,7 @@ Contents - links to doc section for each script here:
     - [prometheus-snmp-iface-counters-exporter](#hdr-prometheus-snmp-iface-counters-exporter)
     - [prometheus-grafana-simplejson-aggregator](#hdr-prometheus-grafana-simplejson-aggregator)
     - [systemd-cglog](#hdr-systemd-cglog)
+    - [load-check-logger](#hdr-load-check-logger)
 
 - [\[cron-checks\] Diff/alert checks for crontab](#hdr-cron-checks_things_to_run_from_crontab_s.0UQD)
 
@@ -4655,6 +4656,24 @@ or a trivial script and visualized separately as needed.
 Idea here is just to gather all useful numbers over time.
 
 [systemd.journal]: https://www.freedesktop.org/software/systemd/python-systemd/journal.html
+
+<a name=hdr-load-check-logger></a>
+#### [load-check-logger](metrics/load-check-logger)
+
+Simple infinite-loop py script to check whether various easy-to-query system values
+(like /proc/loadavg) are above specified thresholds and log a line if they are.
+
+Purpose is to have a simple system load-monitoring feedback mixed into remote
+logging streams, where it might be relevant (i.e. above thresholds), to give
+simple context to other logged messages, without needing to annotate or cross-reference
+those with whatever time-series databases separately (prometheus, influx, etc).
+
+Supports token-bucket thresholds for checks, to avoid irrelevant/bogus spam on
+temporary spiky loads, as well as token-bucket rate-limiting for output in general,
+to avoid spamming logs too much if there're many checks or they have low intervals.
+
+Not intended to be a replacement for neither time-based metrics databases
+nor A/B monitoring systems like nagios/icinga.
 
 
 

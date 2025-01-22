@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+
+import os, sys, re, time, math, enum, heapq, pathlib as pl
+
+
+_td_days = dict(
+	y=365.2422, yr=365.2422, year=365.2422,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+
+def td_parse(td_str):
+	try: return float(td_str)
+	except: td = 0
+	if (m := _td_re.search(td_str)) and any(m.groups()):
+		# Short time offset like "3d 5h"
+		for n, units in enumerate((_td_days, _td_s)):
+			tdx = 0
+			for k, v in units.items():
+				if not m.group(k): continue
+				tdx += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+			td += (24*3600)**(1-n) * tdx
+		return td
+	if m := re.search(r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', td_str):
+		# [[HH:]MM:]SS where seconds can be fractional
+		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
+	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
+
+
+def token_bucket(spec, negative_tokens=False):
+	'''Spec: { td: float | float_a/float_b }[:burst_float]
+			Examples: 1/4:5 (td=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
+		Expects a number of tokens (can be float, def=1),
+			and subtracts these, borrowing below zero with negative_tokens set.
+		Yields either None if there's enough tokens
+			or delay (in seconds, float) until when there will be.
+		Simple "0" value means "always None", or "inf" for "infinite delays".'''
+	try:
+		try: interval, burst = spec.rsplit(':', 1)
+		except (ValueError, AttributeError): interval, burst = spec, 1.0
+		else: burst = float(burst)
+		if isinstance(interval, str):
+			try: a, b = interval.split('/', 1)
+			except ValueError: interval = td_parse(interval)
+			else: interval = td_parse(a) / float(b)
+		if min(interval, burst) < 0: raise ValueError
+	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
+	if interval <= 0:
+		while True: yield None
+	elif interval == math.inf:
+		while True: yield 2**31 # safe "infinite delay" value
+	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
+	val = (yield) or 1
+	while True:
+		ts = time.monotonic()
+		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
+		val, tokens = ( (None, tokens - val) if tokens >= val else
+			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens) )
+		val = (yield val) or 1
+
+
+p = lambda *a,**kw: print(*a, **kw, flush=True)
+p_load = lambda *a,**kw: print('LOAD ::', *a, **kw, file=sys.stderr, flush=True)
+p_err = lambda *a,**kw: print('ERROR:', *a, **kw, file=sys.stderr, flush=True) or 1
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+
+ct = enum.Enum('CheckType', 'la')
+
+
+def run_check_la( ts, t, td, cap, tbf,
+		p_src=pl.Path('/proc/loadavg'), la_cache=list(),
+		la_fmt=lambda las: '/'.join(f'{la or 0:.2f}'.rstrip('0').rstrip('.') for la in las) ):
+	if la_cache and la_cache[0][0] == ts: la = la_cache[0][1]
+	else: la_cache or la_cache.append(0); la_cache[0] = ts, (la := p_src.read_text())
+	for c, v in zip(cap, la := list(float(v) for v in la.split()[:3])):
+		if v > c: break
+	else: return
+	if tbf and not next(tbf): return
+	p_load( 'load-averages above 1/5/15'
+		f' {"tbf-" if tbf else ""}caps: {la_fmt(la)} > {la_fmt(cap)}' )
+
+def run_checks(td_checks):
+	q, ts, chk_funcs = list(), time.monotonic(), {ct.la: run_check_la}
+	for td in td_checks: heapq.heappush(q, (ts + td, td))
+	while True:
+		ts_chk, td = q[0]
+		if delay := max(0, ts_chk - time.monotonic()):
+			p(f'--- delay until next check: {delay:.1f}'); time.sleep(delay)
+		heapq.heappushpop(q, ((ts := time.monotonic()) + td, td))
+		for chk in td_checks[td]: chk_funcs[chk['t']](ts, **chk)
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Check various system load values and simply log to stderr if above thresholds.
+			Most threshold options can be specified multiple times, to be checked separately.
+			All sampling intervals, or other otherwise-undocumented intervals can be specified
+				using short time-delta notation (e.g. "30s", "10min", "1h 20m", "1d12h5m"),
+				or the usual [[HH:]MM:]SS where seconds can be fractional too.'''))
+
+	group = parser.add_argument_group('Optional thresholds to check')
+	group.add_argument('-l', '--loadavg', action='append',
+		metavar='sample-interval:[max1]/[max5]/[max15][:tbf-interval[/rate][:burst]]', help=dd('''
+			Thresholds for /proc/loadavg numbers, to be checked for each sample-interval.
+			If token-bucket parameters are specified at the end,
+				load warnings are only logged when that rate-limit is exceeded,
+				i.e. load consistently is above thresholds for some time.
+			"tbf-interval[/rate]" should represent an interval (in seconds or as time-delta spec),
+				e.g.: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 1h30m/8:30, etc.'''))
+
+	group = parser.add_argument_group('General options')
+	group.add_argument('-r', '--max-rate-tbf', metavar='interval[/rate][:burst]', help=dd('''
+		Max rate of emitted notifications, where any ones exceeding it will be dropped.
+		Token-bucket filter parameters are same as in various checks, see e.g. -l/--loadavg.'''))
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode')
+
+	opts = parser.parse_args(argv)
+
+	if not opts.debug: global p; p = lambda *a,**kw: None
+	if opts.max_rate_tbf:
+		global p_load; p_load_tbf = token_bucket(opts.max_rate_tbf)
+		p_load_raw, p_load = p_load, lambda *a,**kw: next(p_load_tbf) or p_load_raw(*a,**kw)
+
+	checks = dict()
+	for la in opts.loadavg:
+		try:
+			td, s, cap = la.partition(':'); cap, s, tbf = cap.partition(':')
+			td, tbf = td_parse(td), tbf and token_bucket(tbf)
+			cap = list(float(n) if n else 0 for n in cap.split('/'))
+		except Exception as err:
+			parser.error(f'Failed to parse -l/--loadavg check [ {la!r} ]: {err_fmt(err)}')
+		checks.setdefault(td, list()).append(dict(t=ct.la, td=td, cap=cap, tbf=tbf))
+
+	if not checks: parser.error('No thresholds/checks specified')
+	p(f'Starting monitoring {sum(len(td_chks) for td_chks in checks.values())} checks...')
+	run_checks(checks)
+	p('Finished')
+
+if __name__ == '__main__': sys.exit(main())
