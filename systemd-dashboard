@@ -295,6 +295,7 @@ def main(args=None):
 		if re.search(r'(/|^)user(-runtime-dir)?@\d+\.service$', unit): continue
 		if ( re.search(r'(/|^)[^/@]+@[^/]+\.service$', unit)
 			and s.triggered_by_N.endswith('.socket') ): continue
+		if re.search(r'(/|^)dev-disk-by-diskseq-\d+\.swap$', unit): continue
 
 		if s.unit_load_state in ['error', 'not-found']: continue
 		if s.unit_active_state != 'active': continue
