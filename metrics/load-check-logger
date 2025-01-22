@@ -76,30 +76,29 @@ class adict(dict):
 ct = enum.Enum('CheckType', 'la nproc nft_cnt')
 
 
-def run_check_la( ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg'),
-		la_fmt=lambda las: '/'.join(f'{la or 0:.2f}'.rstrip('0').rstrip('.') for la in las) ):
-	if (la := caches.get(p_src)) and la[0] == ts: la = la[1]
-	else: caches[p_src] = ts, (la := p_src.read_text())
+def run_check_la( ts, caches, t, td, cap, tbf, _p_src=pl.Path('/proc/loadavg'),
+		_la_fmt=lambda las: '/'.join(f'{la or 0:.2f}'.rstrip('0').rstrip('.') for la in las) ):
+	if (la := caches.get(_p_src)) and la[0] == ts: la = la[1]
+	else: caches[_p_src] = ts, (la := _p_src.read_text())
 	for c, v in zip(cap, la := list(float(v) for v in la.split(' ', 4)[:3])):
 		if v > c: break
 	else: return
 	if not tbf or not next(tbf): p_load( 'load-averages above'
-		f' 1/5/15 {"tbf-" if tbf else ""}caps: {la_fmt(la)} > {la_fmt(cap)}' )
+		f' 1/5/15 {"tbf-" if tbf else ""}caps: {_la_fmt(la)} > {_la_fmt(cap)}' )
 
-def run_check_nproc(ts, caches, t, td, cap, tbf, p_src=pl.Path('/proc/loadavg')):
-	if (la := caches.get(p_src)) and la[0] == ts: la = la[1]
-	else: caches[p_src] = ts, (la := p_src.read_text())
+def run_check_nproc(ts, caches, t, td, cap, tbf, _p_src=pl.Path('/proc/loadavg')):
+	if (la := caches.get(_p_src)) and la[0] == ts: la = la[1]
+	else: caches[_p_src] = ts, (la := _p_src.read_text())
 	if (n := int(la.split(' ', 4)[3].split('/', 1)[-1])) <= cap: return
 	if not tbf or not next(tbf): p_load(
 		f'total process-count above {"tbf-" if tbf else ""}cap: {n:,d} > {cap:,d}' )
 
-def run_check_nft(ts, caches, t, td, counters):
-	import json, subprocess as sp
+def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split()):
 	if (nft := caches.get('nft')) and nft[0] == ts: nft = nft[1]
-	else: caches.nft = ts, (nft := sp.run(
-		['nft', '-j', 'list counters'], check=True, stdout=sp.PIPE ))
+	else: caches.nft = ts, (nft := json.loads(sp.run( _cmd,
+		check=True, stdout=sp.PIPE ).stdout.decode())['nftables'])
 	cnt_last = caches.setdefault('nft_cnt', dict())
-	for cnt in json.loads(nft.stdout.decode())['nftables']:
+	for cnt in nft:
 		if not ((cnt := cnt.get('counter')) and (cnt := adict(cnt))): continue
 		if not (checks := counters.get(cnt.name)): continue
 		for chk in checks:
@@ -174,7 +173,7 @@ def main(argv=None):
 		global p_load; p_load_tbf = token_bucket(opts.max_rate_tbf)
 		p_load_raw, p_load = p_load, lambda *a,**kw: next(p_load_tbf) or p_load_raw(*a,**kw)
 
-	checks = dict()
+	checks, nft_counters = dict(), set()
 	for chk in opts.loadavg or list():
 		try:
 			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
@@ -196,6 +195,7 @@ def main(argv=None):
 			table, s, cnt = cnt.rpartition('/'); cnt, s, cnt_type = cnt.partition('=')
 			table, af = table.split('/') if table else ('', '')
 			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
+			if cnt_type and cnt_type not in ('packets', 'bytes'): raise ValueError(cnt_type)
 		except Exception as err:
 			parser.error(f'Failed to parse -n/--nft-count-inc check [ {chk!r} ]: {err_fmt(err)}')
 		for chk in checks.setdefault(td, list()):
@@ -203,9 +203,23 @@ def main(argv=None):
 		else: checks[td].append(chk := adict(t=ct.nft_cnt, td=td, counters=dict()))
 		chk.counters.setdefault(cnt, list()).append(adict(
 			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
+		nft_counters.add((table, af, cnt))
+
+	if nft_counters:
+		p(f'Checking that {len(nft_counters):,d} nftables counters exist...')
+		global json, sp; import json, subprocess as sp, itertools as it
+		for cnt in json.loads(sp.run( 'nft -j list counters'.split(),
+				check=True, stdout=sp.PIPE ).stdout.decode())['nftables']:
+			if not ((cnt := cnt.get('counter')) and (cnt := adict(cnt))): continue
+			for table, af in it.product(['', cnt.table], ['', cnt.family]):
+				nft_counters.discard((table, af, cnt.name))
+		if nft_counters:
+			nft_counters = ' '.join(( '/'.join(cnt)
+				if all(cnt) else cnt[2] ) for cnt in sorted(nft_counters))
+			p_err(f'specified nftables counter(s) not found - {nft_counters}')
 
 	if not checks: parser.error('No thresholds/checks specified')
-	p(f'Starting monitoring {sum(len(td_chks) for td_chks in checks.values())} checks...')
+	p(f'Monitoring {sum(len(td_chks) for td_chks in checks.values()):,d} check(s)...')
 	run_checks(checks)
 	p('Finished')
 
