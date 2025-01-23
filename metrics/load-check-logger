@@ -30,6 +30,22 @@ def td_parse(td_str):
 		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
 	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
 
+def td_repr(delta, units_max=2, units_res=None, _units=dict(
+		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	return ' '.join(res) if res else '<1s'
+
 
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { td: float | float_a/float_b }[:burst_float]
@@ -104,11 +120,10 @@ def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split
 		for chk in checks:
 			if chk.table and chk.table != cnt.table: continue
 			if chk.af and chk.af != cnt.family: continue
-			a = cnt_last.get(k := (cnt.name, cnt.table, cnt.family, chk.type))
-			b = cnt_last[k] = cnt[chk.type]
-			if a and (inc := b - a) > chk.cap and (not chk.tbf or not next(chk.tbf)):
-				p_load( f'nft counter increment above {"tbf-" if chk.tbf else ""}cap'
-					f' [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
+			a = cnt_last.get(chk.id); b = cnt_last[chk.id] = cnt[chk.type]
+			if a and (inc := b - a) > chk.cap and (not chk.tbf or not next(chk.tbf)): p_load(
+				f'nft counter increment within {td_repr(td)} above {"tbf-" if chk.tbf else ""}cap'
+				f' for [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
 
 def run_checks(td_checks):
 	chk_funcs = { ct.la: run_check_la,
@@ -192,7 +207,7 @@ def main(argv=None):
 			parser.error(f'Failed to parse -p/--nproc check [ {chk!r} ]: {err_fmt(err)}')
 		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
 
-	nft_counters = set()
+	nft_check_id, nft_counters = 0, set()
 	for chk in opts.nft_count_inc or list():
 		try:
 			td, cnt, cap = chk.split(':', 2); cap, s, tbf = cap.partition(':')
@@ -206,10 +221,11 @@ def main(argv=None):
 			if chk.t is ct.nft_cnt: break
 		else: checks[td].append(chk := adict(t=ct.nft_cnt, td=td, counters=dict()))
 		chk.counters.setdefault(cnt, list()).append(adict(
-			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
+			id=(nft_check_id := nft_check_id + 1), table=table,
+			af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
 		nft_counters.add((table, af, cnt))
 	if nft_counters:
-		p(f'Checking that {len(nft_counters):,d} nftables counters exist...')
+		p(f'Checking that {len(nft_counters):,d} nftables counter(s) exist...')
 		global json, sp; import json, subprocess as sp, itertools as it
 		for cnt in json.loads(sp.run( 'nft -j list counters'.split(),
 				check=True, stdout=sp.PIPE ).stdout.decode())['nftables']:
