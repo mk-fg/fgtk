@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os, sys, re, time, math, enum, heapq, pathlib as pl
+import os, sys, re, time, math, enum, heapq, signal, pathlib as pl
 
 
 _td_days = dict(
@@ -125,7 +125,9 @@ def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split
 				f'nft counter increment within {td_repr(td)} above {"tbf-" if chk.tbf else ""}cap'
 				f' for [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
 
-def run_checks(td_checks):
+def run_checks(td_checks, iter_timeout=5):
+	signal.signal(signal.SIGALRM, lambda sig,frm: (
+		p_err(f'Check-loop iteration hang-timeout ({iter_timeout}s)'), sys.exit(1) ))
 	chk_funcs = { ct.la: run_check_la,
 		ct.nproc: run_check_nproc, ct.nft_cnt: run_check_nft }
 	q, ts, caches = list(), time.monotonic(), adict()
@@ -135,7 +137,9 @@ def run_checks(td_checks):
 		if delay := max(0, ts_chk - time.monotonic()):
 			p(f'--- delay until next check: {delay:.1f}'); time.sleep(delay)
 		heapq.heappushpop(q, ((ts := time.monotonic()) + td, td))
+		signal.alarm(iter_timeout)
 		for chk in td_checks[td]: chk_funcs[chk.t](ts, caches, **chk)
+		signal.alarm(0)
 
 
 def main(argv=None):
@@ -207,8 +211,8 @@ def main(argv=None):
 			parser.error(f'Failed to parse -p/--nproc check [ {chk!r} ]: {err_fmt(err)}')
 		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
 
-	nft_check_id, nft_counters = 0, set()
-	for chk in opts.nft_count_inc or list():
+	nft_counters = set()
+	for chk_id, chk in enumerate(opts.nft_count_inc or list()):
 		try:
 			td, cnt, cap = chk.split(':', 2); cap, s, tbf = cap.partition(':')
 			table, s, cnt = cnt.rpartition('/'); cnt, s, cnt_type = cnt.partition('=')
@@ -220,9 +224,8 @@ def main(argv=None):
 		for chk in checks.setdefault(td, list()):
 			if chk.t is ct.nft_cnt: break
 		else: checks[td].append(chk := adict(t=ct.nft_cnt, td=td, counters=dict()))
-		chk.counters.setdefault(cnt, list()).append(adict(
-			id=(nft_check_id := nft_check_id + 1), table=table,
-			af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
+		chk.counters.setdefault(cnt, list()).append(adict( id=chk_id,
+			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
 		nft_counters.add((table, af, cnt))
 	if nft_counters:
 		p(f'Checking that {len(nft_counters):,d} nftables counter(s) exist...')
