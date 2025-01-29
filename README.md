@@ -155,6 +155,7 @@ Contents - links to doc section for each script here:
         - [totty](#hdr-totty)
         - [split](#hdr-split)
         - [audio-split-m4b](#hdr-audio-split-m4b)
+        - [audio-split-flac-cue](#hdr-audio-split-flac-cue)
         - [video-concat-xfade](#hdr-video-concat-xfade)
         - [pick-tracks](#hdr-pick-tracks)
         - [twitch_vod_fetch](#hdr-twitch_vod_fetch)
@@ -3298,6 +3299,22 @@ producing aac files with names corresponding to metadata titles
 
 Doesn't do any transcoding, which can easily be performed later to e.g.
 convert resulting aac files to mp3 or ogg, if necessary.
+
+<a name=hdr-audio-split-flac-cue></a>
+##### [audio-split-flac-cue](desktop/media/audio-split-flac-cue)
+
+Splits album-with-tracks \*.flac audio files into individual tagged \*.flac tracks,
+using \*.cue file with same basename next to them for all metadata.
+
+Uses [shntool] to do the splitting, embedded python script to process metadata
+from \*.cue, and [metaflac] to write it to a resulting \*.flac track-file.
+
+Only needed for rare old-media rips nowadays, so a bit shoddy and ad-hoc mix of
+bash and python, with resulting dirs intended for [easytag] or [beets].
+
+[shntool]: http://shnutils.freeshell.org/shntool/
+[metaflac]: https://xiph.org/flac/
+[easytag]: https://wiki.gnome.org/Apps/EasyTAG
 
 <a name=hdr-video-concat-xfade></a>
 ##### [video-concat-xfade](desktop/media/video-concat-xfade)

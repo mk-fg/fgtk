@@ -1,0 +1,89 @@
+#!/bin/bash
+
+usage() {
+	local bin=${0##*/}
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin src-dir dst-dir"
+	[[ $1 -ne 0 ]] || {
+		echo; echo 'Use "shntool" to split *.flac/cue files in src-dir,'
+		echo '  tagging each one afterwards using "metaflac", and moving to dst-dir,'
+		echo '  under album-dir with basename from a source flac file.'; }
+	exit ${1:-1}; }
+[[ ! "$*" =~ (^| )(-h|--help)( |$) && "$#" -eq 2 ]] || usage 0
+set -eo pipefail; shopt -s nullglob
+
+src_dir=$1 dst_dir=$2
+for p in "$src_dir"/*.flac ; do
+
+p_base=${p%.flac} p_cue=$p_base.cue p_alb="$dst_dir"/${p_base##*/}
+echo -e "\n\n--- Processing :: $p :: $p_alb\n"
+shntool split -o flac -O always "$p" < "$p_cue"
+
+python - "$p_cue" <<'EOF'
+import sys, re, pathlib as pl, subprocess as sp
+
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+def unquote(s):
+	if s and s[0] == s[-1] == '"': s = s[1:-1]
+	return s
+
+def track_meta(k, s):
+	assert track is not None, line
+	assert k not in track, (p_track, k, track)
+	track[k] = unquote(s)
+
+meta, track_info, track = adict(alb=adict(), tracks=adict()), False, None
+with pl.Path(sys.argv[1]).open(encoding='utf-8-sig') as cue:
+	for line in cue:
+		line = line.rstrip()
+
+		if m := re.match(r'REM GENRE (.*)', line):
+			meta.alb.GENRE = unquote(m[1]); continue
+		if m := re.match(r'REM DATE (.*)', line):
+			meta.alb.DATE = unquote(m[1]); continue
+		if m := re.match(r'PERFORMER (.*)', line):
+			meta.alb.ALBUMARTIST = unquote(m[1]); continue
+		if m := re.match(r'TITLE (.*)', line):
+			meta.alb.ALBUM = unquote(m[1]); continue
+		if m := re.match(r'REM (DISCID|COMMENT'
+			r'|DISCNUMBER|TOTALDISCS) (.*)', line): continue
+		if m := re.match(r'CATALOG (.*)', line): continue
+		if m := re.match(r'FILE (.*)', line):
+			assert not track_info, line; track_info = True; continue
+
+		if track_info and (m := re.match(r'\s+TRACK (\d+) ', line)):
+			p_track = pl.Path(f'split-track{m[1]}.flac')
+			assert p_track.is_file(), p_track
+			track = meta.tracks[p_track] = adict()
+			track.TRACK = m[1]
+			track.TRACKNUMBER = m[1]
+			continue
+		if m := re.match(r'\s+TITLE (.*)', line):
+			track_meta('TITLE', m[1]); continue
+		if m := re.match(r'\s+PERFORMER (.*)', line):
+			track_meta('ARTIST', m[1]); continue
+		if m := re.match(r'\s+(ISRC|INDEX) (.*)', line): continue
+
+		if track is None: print(f'Extra album cue line: {line!r}')
+		else: print(f'Extra track cue line: {line!r}')
+
+if meta.tracks: meta.alb.TRACKTOTAL = len(meta.tracks)
+
+for p_track, track in meta.tracks.items():
+	tags = ''.join(f'{k}={v}\n' for k,v in dict(meta.alb, **track).items())
+	# print('---------', p_track); print(tags)
+	sp.run(
+		['metaflac', '--remove-all-tags', '--import-tags-from=-', p_track],
+		input=tags.encode(), check=True )
+	p_track.rename(f'{track.TRACK}_track{track.TRACK}.flac')
+EOF
+
+rm -rf "$p_alb" && mkdir "$p_alb" && mv *_track*.flac "$p_alb"/
+for px in split-track*.flac
+	do echo >&2 "ERROR :: leftover split-track: $px"; exit 1; done
+
+done

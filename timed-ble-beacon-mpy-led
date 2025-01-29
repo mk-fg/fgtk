@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+# RP2040 micropython fw script to passively scan for HMAC-authenticated
+#  BLE beacons, and activate something for the duration while they're being broadcast.
 
 import hashlib as hl, collections as cs
 import asyncio, machine, bluetooth, time, struct, random
