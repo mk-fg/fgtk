@@ -207,7 +207,7 @@ def main(argv=None):
 			Range for an interval between sending beacons
 				when those are active, in milliseconds. Default: %(default)s'''))
 
-	parser.add_argument('--mid', metavar='uint16', type=int, default=61_634, help=dd('''
+	parser.add_argument('-m', '--mid', metavar='uint16', type=int, default=61_634, help=dd('''
 		Manufacturer "Company Identifier" field in 0-65535 range. Default: %(default)s
 		It's an arbitrary value that must match on both broadcaster/observer sides.
 		Ideally shouldn't match commonly-seen IDs, to avoid receiver

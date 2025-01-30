@@ -194,7 +194,7 @@ def feed_fetch(log, url, etag):
 			etag=etag, request_headers=dict(Accept=feed_accept_header) )
 		status, bozo, bozo_err = (
 			feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
-	except (hc.HTTPException, ue.URLError) as err:
+	except (hc.HTTPException, ue.URLError, TimeoutError) as err:
 		status, bozo, bozo_err = 0, True, err_fmt(err)
 	if (not status and bozo) or (status or 1000) >= 400:
 		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
