@@ -412,8 +412,7 @@ def link_file_type( p,
 
 def link_copy(src, dst, meta=False, root=None, **repl_kws):
 	'Copy src to dst with all metadata (if requested), in a reasonably atomic way'
-	with open_read_fd(src, root) as a_fd:
-		a = open(a_fd, 'rb')
+	with open_read_fd(src, root) as a_fd, open(a_fd, 'rb') as a:
 		kws = dict() if not meta else dict(
 			mode=stat.S_IMODE((st := os.stat(a_fd)).st_mode),
 			uidgid=(st.st_uid, st.st_gid),
