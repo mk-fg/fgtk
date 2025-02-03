@@ -265,7 +265,7 @@ def main(args=None):
 			fmt.extend('-map 0:v:0 -map 0:a:0'.split())
 			if p.s and (sn := (subs := p.s.copy()).pop()):
 				if subs == list(range(sn)): fmt.extend(['-map', '0:s']); subs.clear()
-				for n in subs: fmt.extend(['-map', f'0:s:{n}'])
+				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *ac, *fmt, '-y', p.tmp ]
 		dt, ts1 = time.strftime('%Y-%m-%d %H:%M:%S'), time.monotonic()
