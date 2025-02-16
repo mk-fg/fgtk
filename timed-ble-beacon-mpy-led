@@ -1,8 +1,20 @@
+# -*- mode: python -*-
 # RP2040 micropython fw script to passively scan for HMAC-authenticated
 #  BLE beacons, and activate something for the duration while they're being broadcast.
 
 import hashlib as hl, collections as cs
 import asyncio, machine, bluetooth, time, struct, random
+
+
+tdr = cs.namedtuple('TimeDeltaRNG', 'chance td_min td_max')
+
+def tdr_ms(delay):
+	if isinstance(delay, (int, float)): return round(1000*delay)
+	for tdr in delay:
+		if random.random() > tdr.chance: continue
+		return round(1000*( tdr.td_min +
+			random.random() * (tdr.td_max - tdr.td_min) ))
+	return 0
 
 
 class Conf:
@@ -16,18 +28,25 @@ class Conf:
 
 	# "clear" is the normal state, "beacon" is a state when valid beacons are detected
 	clear_sample_time = 4.0 # seconds to run BLE scan for, with duty cycle scan_* opts
-	clear_sample_interval = 20.0 # sleep delay between scans
-	beacon_sample_time = 3.0
-	beacon_sample_interval = 5.0 * 60 # won't get lower than this in a "beacon" state
+	clear_sample_interval = 3.3 * 60 # sleep delay between scans
+	beacon_span_checks = 8 # wakeup for N checks within timespan sent in the beacon
+	beacon_sample_time = 3.0 # similar to clear_sample_time
+	beacon_sample_interval_min = 2.7 * 60 # won't get lower than this in a "beacon" state
+	beacon_sample_interval_max = 11.1 * 60 # beacon_span_checks won't raise it higher
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
-	beacon_span_checks = 6 # wakeup for N checks within timespan sent in the beacon
 
 	# led_time values are scanned with random chance, interval picked from min-max
-	_tdt = cs.namedtuple('LEDtdt', 'chance time_min time_max')
 	led_pin = 'LED'
-	led_time_on = [_tdt(0.5, 0.08, 0.5), _tdt(0.9, 0.02, 1), _tdt(1, 0.5, 3)]
-	led_time_off = [ _tdt(0.6, 0.1, 0.5), _tdt(0.6, 0.3, 1),
-		_tdt(0.6, 0.8, 10), _tdt(0.7, 5, 90), _tdt(1, 60, 3*60) ]
+	led_on_beacon = False # turn led on when beacons are detected, instead of by default
+	led_time_on = [tdr(0.5, 0.08, 0.5), tdr(0.9, 0.02, 1), tdr(1, 0.5, 3)]
+	led_time_off = [ tdr(0.6, 0.1, 0.5), tdr(0.6, 0.3, 1),
+		tdr(0.6, 0.8, 10), tdr(0.7, 5, 90), tdr(1, 60, 3*60) ]
+
+	def __init__(self, **opts):
+		for k, v in opts.items():
+			if ( (vx := getattr(self, k)) and v and isinstance(vx, list)
+				and isinstance(vx[0], self.tdr) ): v = list(self.tdr(v) for v in v)
+			setattr(self, k, v)
 
 
 class BLE_MSE_Scanner:
@@ -77,31 +96,30 @@ class BLE_MSE_Scanner:
 class LEDBlinker:
 
 	def __init__(self, conf):
-		self.tdts_on, self.tdts_off = conf.led_time_on, conf.led_time_off
+		self.td_on, self.td_off = conf.led_time_on, conf.led_time_off
 		self.led = machine.Pin(conf.led_pin, machine.Pin.OUT)
+		self.led_state_invert = conf.led_on_beacon
 		self.enabled = asyncio.Event()
 		self.log = conf.verbose and (lambda *a: print('[led]', *a))
 
-	def blink_enable(self, state=True):
+	def blink_state(self, state):
+		if self.led_state_invert: state = bool(state) ^ 1
 		if state != self.enabled.is_set():
 			self.log and self.log('Blinking ' + ('enabled' if state else 'disabled'))
 		if state: self.enabled.set()
 		else: self.enabled.clear()
 
 	async def led_enable(self, delay, state=True):
-		for tdt in delay:
-			if random.random() > tdt.chance: continue
-			self.led.value(state)
-			if (td := round(1000 * ( tdt.time_min +
-					random.random() * (tdt.time_max - tdt.time_min) ))) >= 20_000:
-				self.log and self.log(f' blink state={int(state)} long-delay={td:,d}ms')
-			return await asyncio.sleep_ms(td)
+		self.led.value(state)
+		if (td := tdr_ms(delay)) >= 20_000:
+			self.log and self.log(f' blink state={int(state)} long-delay={td:,d}ms')
+		return await asyncio.sleep_ms(td)
 
 	async def run(self):
 		while True:
 			await self.enabled.wait()
-			await self.led_enable(self.tdts_on)
-			await self.led_enable(self.tdts_off, False)
+			await self.led_enable(self.td_on)
+			await self.led_enable(self.td_off, False)
 
 
 def hmac_sha256(key, msg):
@@ -113,7 +131,7 @@ def hmac_sha256(key, msg):
 async def run_ble(conf, leds):
 	st_beacon, st_clear = (states := ('beacon', 'clear'))
 	timings = dict(zip(states, ((round(s1*1000), round(s2*1000)) for s1, s2 in (
-		(conf.beacon_sample_interval, conf.beacon_sample_time),
+		(conf.beacon_sample_interval_min, conf.beacon_sample_time),
 		(conf.clear_sample_interval, conf.clear_sample_time) ))))
 	beacon_grace_td = round(conf.beacon_repeat_grace * 1000)
 	p_log = conf.verbose and (lambda *a: print('[main]', *a))
@@ -121,10 +139,11 @@ async def run_ble(conf, leds):
 
 	p_log and p_log('Starting main loop...')
 	counter, st = 0, st_clear; td_sleep, td_sample = timings[st]
-	td_st, td_st_split, td_st_left = 0, conf.beacon_span_checks, list()
+	td_st, td_st_left, td_st_split, td_st_limit = (
+		0, list(), conf.beacon_span_checks, conf.beacon_sample_interval_max )
 	beacon, beacon_ts = False, 0
 	while True:
-		leds.blink_enable(st != st_beacon)
+		leds.blink_state(st != st_beacon)
 		beacon_expected = st == st_beacon
 
 		if beacon != beacon_expected:
@@ -137,8 +156,10 @@ async def run_ble(conf, leds):
 			if beacon_expected and beacon: # use td_st + with N rare checks in-between
 				if abs(sum(td_st_left) - td_st) > td*2: td_st_left.clear() # changed/drifted
 				if not td_st_left: # split td_st into chunks, check on those
-					if (td_st_chunk := td_st / td_st_split) > td:
-						td_st_left = [td_st_chunk + td / td_st_split] * td_st_split
+					if (td_st_chunk := td_st / td_st_split) > td: td_st_left = (
+						([td_st_chunk + td / td_st_split] * td_st_split)
+						if td_st_chunk < td_st_limit else # or use td_st_limit+ chunks
+						([td_st_limit + td / td_st_split] * round(td_st / td_st_limit)) )
 				if td_st_left: td = round(td_st_left.pop())
 			elif td_st_left: td_st_left.clear() # beacon went away
 			p_log and p_log(f'Delay (state={st}): {td:,d}ms')
@@ -167,9 +188,10 @@ async def run_ble(conf, leds):
 	p_log and p_log('Finished')
 
 
-async def main():
-	conf = Conf()
-	leds = LEDBlinker(conf)
+async def main(conf=None):
+	leds = LEDBlinker(conf := conf or Conf())
 	await asyncio.gather(leds.run(), run_ble(conf, leds))
 
-asyncio.run(main())
+def run(*args, **kws): asyncio.run(main(*args, **kws))
+def run_with_conf(**conf_opts): run(Conf(**conf_opts))
+if __name__ == '__main__': run()

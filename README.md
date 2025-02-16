@@ -1741,6 +1741,8 @@ intended to run on a cheap [RPi Pico W] board with rp2040 microcontroller.
 There can be any number of senders/receivers at the same time - just use
 different `--mid` and `-s/--secret` values for different control-domains.
 
+Can be debug-run like this: `./timed-ble-beacon -dt 5m`
+
 Uses [python-dbus] and [python-gobject] modules to work
 with bluez over dbus within glib eventloop.
 
@@ -1759,15 +1761,16 @@ Micopython script to passively scan for [Bluetooth Low Energy (BLE)] beacons
 with specific HMAC-authenticated payload, and trigger some action while those
 are active, reverting back to default state otherwise.
 
-Intended to run on [RPi Pico W] microcontroller, but should work on ESP32s
-or anything else supported by [micropython], and to just blink connected LEDs
-in a configured pattern, as an indicator/notification.
+Intended to run on [RPi Pico W] or [ESP32] microcontrollers, or anything else
+supported by [micropython], and default code just blinks connected LEDs in a
+configured pattern, as an indicator/notification task.
 
 [timed-ble-beacon script] above can be used to broadcast BLE beacons in question.
-Must be configured with at least mid/key parameters at the top of the script,
-unless just testing with defaults in both of these.
+Must be configured with at least mid/key parameters when calling it via import +
+run_with_conf() or at the top of the script, unless just testing with defaults
+in both of these.
 
-To setup/run this on a ttyUSB-connected microcontroller board:
+To setup/run this on a usb-tty-connected microcontroller board:
 
 ``` console
 ## Upload micropython firmware to the device, install "mpremote" tool
@@ -1778,16 +1781,28 @@ To setup/run this on a ttyUSB-connected microcontroller board:
 % mpremote run timed-ble-beacon-mpy-led
 ## Should either work or print some errors to console
 
-## To setup this script to run on board boot from now on
+## To setup this script to run on board boot with all-hardcoded parameters
 % mpremote cp timed-ble-beacon-mpy-led :main.py
 % mpremote reset
+
+## Alternatively, configuration can be provided via loader-script
+% mpremote cp timed-ble-beacon-mpy-led :tbbml.py
+% echo >main.py 'import tbbml'
+% echo >>main.py 'tbbml.run_with_conf(verbose=1, led_pin=2, ble_mid=123, ble_secret=b"test")'
+% mpremote cp main.py :
+
+## Can also compile "tbbml" for loader-script via mpy-cross for size/mem/load-times
+% mpy-cross -march=armv6m -O2 timed-ble-beacon-mpy-led -o tbbml.mpy
+% mpremote cp tbbml.mpy :
 ```
 
-Action-task in this script simply blinks LED indicator (built-in `machine.Pin('LED')`
+Action-task in this script simply blinks LED indicator (e.g. built-in `machine.Pin('LED')`
 by default) with randomized intervals when no beacons are detected.
 
-See timed-ble-beacon script and its `-h/--help` output for more details.
+See Conf class in this, as well as timed-ble-beacon script above
+and its `-h/--help` output for more details.
 
+[ESP32]: https://en.wikipedia.org/wiki/ESP32
 [timed-ble-beacon script]: #hdr-timed-ble-beacon
 
 
