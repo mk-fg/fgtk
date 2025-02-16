@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import os, sys, re, signal, hmac, hashlib as hl, traceback as tb
-import struct, base64, math, time, datetime as dt
+import datetime as dt, hashlib as hl, traceback as tb, pathlib as pl, contextlib as cl
+import os, sys, re, signal, fcntl, hmac, struct, base64, math, time
 
 import dbus, dbus.service, dbus.exceptions, dbus.mainloop.glib # python-dbus
 from gi.repository import GLib # python-gobject
@@ -217,6 +217,8 @@ def main(argv=None):
 			Matching secret string for both sender and receiver. Default: %(default)s
 			Can be a filename prefixed by @ character (e.g. @myfile.txt), "-" for stdin,
 				or a file descriptor number with optional %% prefix (e.g. 3 or %%3).'''))
+	parser.add_argument('-p', '--pid-file', metavar='file',
+		help='File to write pid into, for signaling and deduplication. Usable with pkill -F.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode')
 	opts = parser.parse_args(argv)
 
@@ -230,11 +232,20 @@ def main(argv=None):
 	if not opts.debug: global p; p = lambda *a,**kw: None
 	if not opts.time_span: parser.error('-t/--time-span option must be specified')
 
-	bms_a, s, bms_b = map(str.strip, opts.beacon_interval.partition('-'))
-	bms_a, bms_b = int(bms_a or bms_b), int(bms_b or bms_a)
-	run_ad( opts.mid, _read_file(opts.secret).encode(),
-		td_beacon=(bms_a, bms_b),
-		td_total=ts_parse(opts.time_span).total_seconds(),
-		td_updates=ts_parse(opts.update_interval, relative_only=True).total_seconds() )
+	with cl.ExitStack() as ctx:
+		if pid := opts.pid_file and pl.Path(opts.pid_file):
+			pid_file = ctx.enter_context(open(os.open(
+				opts.pid_file, os.O_RDWR | os.O_CREAT, 0o600 ), 'r+b', 0))
+			fcntl.lockf(pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			pid_file.seek(0); pid_file.write(f'{os.getpid()}\n'.encode()); pid_file.truncate()
+			ctx.callback(lambda: pid.unlink(missing_ok=True))
+			p(f'init: created/locked pid-file [ {pid} ]')
+
+		bms_a, s, bms_b = map(str.strip, opts.beacon_interval.partition('-'))
+		bms_a, bms_b = int(bms_a or bms_b), int(bms_b or bms_a)
+		run_ad( opts.mid, _read_file(opts.secret).encode(),
+			td_beacon=(bms_a, bms_b),
+			td_total=ts_parse(opts.time_span).total_seconds(),
+			td_updates=ts_parse(opts.update_interval, relative_only=True).total_seconds() )
 
 if __name__ == '__main__': sys.exit(main())

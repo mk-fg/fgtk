@@ -1,6 +1,6 @@
 # -*- mode: python -*-
-# RP2040 micropython fw script to passively scan for HMAC-authenticated
-#  BLE beacons, and activate something for the duration while they're being broadcast.
+# Micropython fw script to passively scan for HMAC-authenticated BLE beacons,
+#  and change/activate something for the duration while they're being broadcast.
 
 import hashlib as hl, collections as cs
 import asyncio, machine, bluetooth, time, struct, random
@@ -45,7 +45,7 @@ class Conf:
 	def __init__(self, **opts):
 		for k, v in opts.items():
 			if ( (vx := getattr(self, k)) and v and isinstance(vx, list)
-				and isinstance(vx[0], self.tdr) ): v = list(self.tdr(v) for v in v)
+				and isinstance(vx[0], self.tdr) ): v = list(self.tdr(*v) for v in v)
 			setattr(self, k, v)
 
 
