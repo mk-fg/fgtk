@@ -3853,9 +3853,13 @@ to create modal windows or "wall" for terminal broadcasts).
 
 Can keep track of pending alarms if `-p/--pid-file` option is used (see also
 `-l/-list` and `-k/--kill` opts), for persistent notifications (between reboots
-and such), there's an `--at` option to use at(1p) daemon.
+and such), there's an `--at` option to use [at(1) daemon].
 
-Python, needs python-gobject ("gi" module) for desktop notifications.
+Python, uses sd-bus via ctypes for sending desktop notifications over dbus,
+canberra-gtk-play binary for sounds (from [libcanberra], with `-s/--notification-sound`).
+
+[at(1) daemon]: https://man.archlinux.org/man/at.1
+[libcanberra]: https://0pointer.net/lennart/projects/libcanberra/
 
 <a name=hdr-acpi-wakeup-config></a>
 ##### [acpi-wakeup-config](desktop/acpi-wakeup-config)
