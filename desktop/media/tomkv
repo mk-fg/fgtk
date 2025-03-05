@@ -113,6 +113,8 @@ def main(args=None):
 	parser.add_argument('-x', '--convert', action='store_true', help=dd('''
 		Run ffmpeg commands to convert all files not
 			listed as PROBLEM or SKIP (unless -f/--force is used).'''))
+	parser.add_argument('--inplace', action='store_true', help=dd('''
+		Use destination filename directly instead of temporary files for conversion.'''))
 	parser.add_argument('-f', '--force', action='store_true', help=dd('''
 		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
 	parser.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
@@ -224,7 +226,9 @@ def main(args=None):
 		nf = str(len(str(len(ps))))
 		for n, p in enumerate(ps, 1):
 			dst_name_aliases[p.src] = ('{}.{:0'+nf+'d}{}').format(p.fn, n, ext)
-	for p in src_list: p.dst, p.tmp = (dst := dst_name_fmt(p)), f'_tmp.{dst}'
+	for p in src_list:
+		p.dst = p.tmp = (dst := dst_name_fmt(p))
+		if not opts.inplace: p.tmp = f'_tmp.{dst}'
 
 	## Main ffmpeg conversion loop
 	dry_run, m = not opts.convert, len(src_list)
@@ -279,7 +283,7 @@ def main(args=None):
 
 		sp.run( cmd, check=True,
 			env=dict(os.environ, SVT_LOG='2'), stdin=sp.DEVNULL )
-		os.rename(p.tmp, p.dst)
+		if p.tmp != p.dst: os.rename(p.tmp, p.dst)
 
 		# Stats/rm-list for last processed file
 		target = ''
