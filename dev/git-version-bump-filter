@@ -23,7 +23,7 @@ v_date=
 
 # Full replacement with <year>.<month>.<commits-since-month-start>
 v=$(printf '%(%y.%m)T' -1).`
-	`$(git log --since=$(printf '%(%Y-%m-01)T' -1) --pretty=format:x -- "$1" | sed '$a\' | wc -l)
+	`$(git log --since=$(printf '%(%Y-%m-01)T' -1)T00:00 --pretty=format:x -- "$1" | sed '$a\' | wc -l)
 exec sed \
 	-e '/# git-version: py-tuple\(-[0-9]\)*$/ s/\(.* *= *\)\([0-9]\+, *\)*[0-9]\+/\1'"${v//./,}"'/' \
 	-e '/# git-version: py-str\(-[0-9]\)*$/ s/\(.* *= *['\''"]\)\([0-9]\+\.\)*[0-9]\+\(['\''"]\)/\1'"$v"'\3/'
