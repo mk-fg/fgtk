@@ -170,7 +170,7 @@ def get_dbus_notify_func(**defaults):
 				if isinstance(av, (str, bytes)): av_sig, av_args = [ct.c_char_p], [b's', bb(av)]
 				elif isinstance(av, int): av_sig, av_args = [ct.c_int32], [b'i', av]
 				else: av_sig, av_args = av
-				args.extend(av_args) sig.extend(av_sig)
+				args.extend(av_args); sig.extend(av_sig)
 		else: raise ValueError(k)
 		return sig, args
 
@@ -181,7 +181,7 @@ def get_dbus_notify_func(**defaults):
 			if (v := kws.get(k)) is None: v = default
 			if k in ['actions', 'hints']:
 				arr_sig, arr_args = encode_array(k, v)
-				sig_arrays.extend(arr_sig) args.extend(arr_args)
+				sig_arrays.extend(arr_sig); args.extend(arr_args)
 			else: args.append(bb(v))
 		run('sd_bus_open_user', ct.byref(bus), sig=[ct.POINTER(ct.POINTER(sd_bus))])
 		try:
