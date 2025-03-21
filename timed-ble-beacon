@@ -215,19 +215,20 @@ def main(argv=None):
 	parser.add_argument('-s', '--secret',
 		metavar='string', default='timed-beacon-test', help=dd('''
 			Matching secret string for both sender and receiver. Default: %(default)s
-			Can be a filename prefixed by @ character (e.g. @myfile.txt), "-" for stdin,
-				or a file descriptor number with optional %% prefix (e.g. 3 or %%3).'''))
+			Can be a filename prefixed by @ character (e.g. @myfile.txt),
+				"-" for stdin, or a file descriptor number with optional %% prefix (e.g. 3 or %%3),
+				where first line will be used, stripped of any leading/trailing whitespace.'''))
 	parser.add_argument('-p', '--pid-file', metavar='file',
 		help='File to write pid into, for signaling and deduplication. Usable with pkill -F.')
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode')
 	opts = parser.parse_args(argv)
 
 	def _read_file(path):
-		if not path or path == '-': return sys.stdin.read()
+		if not path or path == '-': return sys.stdin.readline().strip()
 		elif path.isdigit(): path = int(path)
 		elif path[0] == '%': path = int(path[1:])
 		else: return path
-		with open(path) as src: return src.read()
+		with open(path) as src: return src.readline().strip()
 
 	if not opts.debug: global p; p = lambda *a,**kw: None
 	if not opts.time_span: parser.error('-t/--time-span option must be specified')
