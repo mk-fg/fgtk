@@ -1796,8 +1796,9 @@ To setup/run this on a usb-tty-connected microcontroller board:
 % mpremote cp tbbml.mpy :
 ```
 
-Action-task in this script simply blinks LED indicator (e.g. built-in `machine.Pin('LED')`
-by default) with randomized intervals when no beacons are detected.
+Action-task in this script simply blinks LED indicator (e.g. built-in
+`machine.Pin('LED')` by default, can use multiple LEDs) with randomized
+intervals when no beacons are detected.
 
 See Conf class in this, as well as timed-ble-beacon script above
 and its `-h/--help` output for more details.

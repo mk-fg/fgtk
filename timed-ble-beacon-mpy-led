@@ -35,18 +35,23 @@ class Conf:
 	beacon_sample_interval_max = 11.1 * 60 # beacon_span_checks won't raise it higher
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
 
-	# led_time values are scanned with random chance, interval picked from min-max
-	led_pin = 'LED'
-	led_on_beacon = False # turn led on when beacons are detected, instead of by default
-	led_time_on = [tdr(0.5, 0.08, 0.5), tdr(0.9, 0.02, 1), tdr(1, 0.5, 3)]
-	led_time_off = [ tdr(0.6, 0.1, 0.5), tdr(0.6, 0.3, 1),
-		tdr(0.6, 0.8, 10), tdr(0.7, 5, 90), tdr(1, 60, 3*60) ]
+	# List of LED(s) to blink in either "clear" or "beacon" state
+	leds = [dict( # run_with_conf will auto-fill omitted dict keys from default leds[0]
+		pin='LED', beacon=False, # led on when beacons are detected, instead of default-on
+		# Time values can be simple ints/floats for a fixed delay
+		# Lists of tdr or tuples are scanned with random chance, interval picked from min-max
+		time_on=[tdr(0.5, 0.08, 0.5), tdr(0.9, 0.02, 1), tdr(1, 0.5, 3)],
+		time_off = [ tdr(0.6, 0.1, 0.5), tdr(0.6, 0.3, 1),
+			tdr(0.6, 0.8, 10), tdr(0.7, 5, 90), tdr(1, 60, 3*60) ] )]
 
 	def __init__(self, **opts):
 		for k, v in opts.items():
-			if ( (vx := getattr(self, k)) and v and isinstance(vx, list)
-				and isinstance(vx[0], self.tdr) ): v = list(self.tdr(*v) for v in v)
-			setattr(self, k, v)
+			if k != 'leds': getattr(self, k); setattr(self, k, v); continue
+			for n, led in enumerate(v := list(v)):
+				led = v[n] = dict(self.leds[0], **led)
+				for k in 'time_on', 'time_off':
+					if isinstance(led[k], list): led[k] = list(tdr(*td) for td in led[k])
+			self.leds = v
 
 
 class BLE_MSE_Scanner:
@@ -95,12 +100,11 @@ class BLE_MSE_Scanner:
 
 class LEDBlinker:
 
-	def __init__(self, conf):
-		self.td_on, self.td_off = conf.led_time_on, conf.led_time_off
-		self.led = machine.Pin(conf.led_pin, machine.Pin.OUT)
-		self.led_state_invert = conf.led_on_beacon
-		self.enabled = asyncio.Event()
-		self.log = conf.verbose and (lambda *a: print('[led]', *a))
+	def __init__(self, conf, verbose=False):
+		self.led = machine.Pin(pin := conf['pin'], machine.Pin.OUT)
+		self.led_state_invert, self.enabled = conf['beacon'], asyncio.Event()
+		self.td_on, self.td_off = conf['time_on'], conf['time_off']
+		self.log = verbose and (lambda *a: print(f'[led.{pin}]', *a))
 
 	def blink_state(self, state):
 		if self.led_state_invert: state = bool(state) ^ 1
@@ -120,6 +124,13 @@ class LEDBlinker:
 			await self.enabled.wait()
 			await self.led_enable(self.td_on)
 			await self.led_enable(self.td_off, False)
+
+class LEDListBlinker:
+	def __init__(self, conf_list, verbose=False):
+		self.leds = list(LEDBlinker(led, verbose=verbose) for led in conf_list)
+	def blink_state(self, state):
+		for led in self.leds: led.blink_state(state)
+	async def run(self): await asyncio.gather(*(led.run() for led in self.leds))
 
 
 def hmac_sha256(key, msg):
@@ -189,7 +200,8 @@ async def run_ble(conf, leds):
 
 
 async def main(conf=None):
-	leds = LEDBlinker(conf := conf or Conf())
+	if not conf: conf = Conf()
+	leds = LEDListBlinker(conf.leds, verbose=conf.verbose)
 	await asyncio.gather(leds.run(), run_ble(conf, leds))
 
 def run(*args, **kws): asyncio.run(main(*args, **kws))
