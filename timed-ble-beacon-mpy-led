@@ -35,13 +35,15 @@ class Conf:
 	beacon_sample_interval_max = 11.1 * 60 # beacon_span_checks won't raise it higher
 	beacon_repeat_grace = 6.0 * 60 # ok to repeat counter within this td
 
-	# List of LED(s) to blink in either "clear" or "beacon" state
+	# List of LED(s) to blink in either "clear" or "beacon" state.
+	# Time values can be simple ints/floats for a fixed delay or a list of 3-value tuples.
+	# List-of-tuples is read as TimeDeltaRNG (chance [0-1.0], td-min [s], td-max [s])
+	#   values, evaluated in order on each blink, until first successful chance-roll,
+	#   and interval then picked uniformly from min-max range specified in that tuple.
 	leds = [dict( # run_with_conf will auto-fill omitted dict keys from default leds[0]
-		pin='LED', beacon=False, # led on when beacons are detected, instead of default-on
-		# Time values can be simple ints/floats for a fixed delay
-		# Lists of tdr or tuples are scanned with random chance, interval picked from min-max
+		pin='LED', beacon=False, # led=on when beacons are detected, instead of default-on
 		time_on=[tdr(0.5, 0.08, 0.5), tdr(0.9, 0.02, 1), tdr(1, 0.5, 3)],
-		time_off = [ tdr(0.6, 0.1, 0.5), tdr(0.6, 0.3, 1),
+		time_off=[ tdr(0.6, 0.1, 0.5), tdr(0.6, 0.3, 1),
 			tdr(0.6, 0.8, 10), tdr(0.7, 5, 90), tdr(1, 60, 3*60) ] )]
 
 	def __init__(self, **opts):
