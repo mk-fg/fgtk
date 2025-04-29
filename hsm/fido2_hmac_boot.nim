@@ -3,7 +3,7 @@
 #   on /dev/console and produce secret for something on early boot, like cryptsetup/dm-crypt.
 #
 # Debug build/run: nim c -w=on --hints=on -o=fhb -r fido2_hmac_boot.nim -h
-# Final build: nim c -d:release -o=fhb fido2_hmac_boot.nim && strip fhb
+# Final build: nim c -d:release -d:strip -d:lto_incremental --opt:size -o=fhb fido2_hmac_boot.nim
 # Usage info: ./fhb -h
 # Intended to complement libfido2 cli tools, like fido2-token and fido2-cred.
 
@@ -32,8 +32,8 @@ let
 
 type
 	FidoError = object of CatchableError
-	Assert {.importc: "fido_assert_t*", final.} = distinct pointer
-	Dev {.importc: "fido_dev_t*", final.} = distinct pointer
+	Assert {.importc: "fido_assert_t*", final.} = object
+	Dev {.importc: "fido_dev_t*", final.} = object
 
 proc fido_strerr(err: cint): cstring {.importc, header: "<fido.h>".}
 proc fido_init(flags: cint) {.importc, header: "<fido.h>".}
@@ -371,7 +371,7 @@ proc main(argv: seq[string]) =
 				fido(assert_allow_cred, a, fhb_cred.cstring, fhb_cred.len.cint)
 			fhb_salt = decode(fhb_salt)
 			fido(assert_set_hmac_salt, a, fhb_salt.cstring, fhb_salt.len.cint)
-		defer: fido_assert_free(addr(a))
+		defer: fido_assert_free(a.addr)
 
 		block fido_assert_attempts:
 			fhb_ask_cmd = fhb_ask_cmd.strip
@@ -400,7 +400,7 @@ proc main(argv: seq[string]) =
 						dev_st: Stat
 						dev_path = ""
 						dev = fido_dev_new()
-					defer: fido_dev_free(addr(dev))
+					defer: fido_dev_free(dev.addr)
 					for fhb_dev in fhb_dev_list:
 						if fhb_dev.contains("://") or (
 								stat(fhb_dev, dev_st) >= 0'i32 and S_ISCHR(dev_st.st_mode) ):

@@ -1,7 +1,7 @@
 #? replace(sub = "\t", by = "  ")
 #
 # Debug build/run: nim c -w=on --hints=on -r run_cmd_pipe.nim -h
-# Final build: nim c -d:release --opt:size run_cmd_pipe.nim && strip run_cmd_pipe
+# Final build: nim c -d:release -d:strip -d:lto_incremental --opt:size run_cmd_pipe.nim
 # Usage info: ./run_cmd_pipe -h
 
 import std/[ parseopt, os, posix, logging, re, osproc, strtabs,
