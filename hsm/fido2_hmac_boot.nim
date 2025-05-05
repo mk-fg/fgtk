@@ -171,9 +171,7 @@ proc main_help(err="") =
 	let app = getAppFilename().lastPathPart
 	if err != "": print &"ERROR: {err}\n"
 	print &"Usage: {app} [options] [file]"
-	if err != "":
-		print &"Run '{app} --help' for more information"
-		quit 0
+	if err != "": print &"Run '{app} --help' for more information"; quit 1
 	let fhb_cid_info = if FHB_CID != "": &"<{FHB_CID.len}B-base64-value>" else: ""
 	let fhb_salt_info = if FHB_Salt != "": &"<{FHB_Salt.len}B-base64-value>" else: ""
 	print dedent(&"""

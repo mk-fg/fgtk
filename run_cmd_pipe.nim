@@ -135,9 +135,7 @@ proc main_help(err="") =
 	let app = getAppFilename().lastPathPart
 	if err != "": print &"ERROR: {err}"
 	print &"\nUsage: {app} [opts] rcp.conf [-- cmd [args...]]"
-	if err != "":
-		print &"Run '{app} --help' for more information"
-		quit 0
+	if err != "": print &"Run '{app} --help' for more information"; quit 1
 	print dedent(&"""
 
 		{app} is a small tool to parse pairs of regexp-command from conf-file,
