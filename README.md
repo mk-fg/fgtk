@@ -740,6 +740,14 @@ significant changes, something like "2>/tmp/errors.log" can be added at the end.
 
 Check options of this subcommand for rate-limiting and some other tweaks.
 
+**s-run**
+
+Go over open screen/tmux sessions, find string there either print
+how to attach there or send some command to run there.
+
+Intended to find empty shell in a specific dir and automate pasting "do something"
+long-running command from another app, to check on later in that shell/window.
+
 <a name=hdr-yaml-to-pretty-json></a>
 ##### [yaml-to-pretty-json](yaml-to-pretty-json)
 

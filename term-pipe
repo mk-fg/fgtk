@@ -103,7 +103,6 @@ def naturaltime_diff( ts, ts0, ext=None,
 		_units=dict( h=3600, m=60, s=1,
 			y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	delta = abs((ts - ts0) if not getattr(ts, 'total_seconds', False) else ts)
-
 	res, s = list(), delta.total_seconds()
 	for unit, unit_s in sorted(_units.items(), key=lambda v: v[1], reverse=True):
 		val = math.floor(s / float(unit_s))
@@ -111,12 +110,8 @@ def naturaltime_diff( ts, ts0, ext=None,
 		res.append('{:.0f}{}'.format(val, unit))
 		if len(res) >= 2: break
 		s -= val * unit_s
-
 	if not res: return 'now'
-	else:
-		if ext: res.append(ext)
-		return ' '.join(res)
-
+	else: ext and res.append(ext); return ' '.join(res)
 
 class MLStripper(HTMLParser):
 	def __init__(self):
@@ -145,15 +140,16 @@ def main(args=None):
 		description='Modes/tools of the script to run. Default one is "out-paste".', dest='call')
 
 	cmd = cmds.add_parser('out-paste',
-		help=dd('''
-			Disable terminal echo, grab any stdin as-is and send it to stdout.
+		help=(h := 'Disable terminal echo, grab any stdin as-is and send it to stdout'),
+		formatter_class=argparse.RawTextHelpFormatter, description=dd(f'''
+			{h}.
 			Example use: term-pipe out-paste |
 				curl -H \'Content-Type: application/json\' -X POST -d @- http://api'''))
 
 	cmd = cmds.add_parser('shell-notify',
 		formatter_class=argparse.RawTextHelpFormatter,
-		help='Send desktop notification when shell'
-			' prompt appears on stdin, for use from screenrc/tmux.conf.')
+		help=(h := 'Send desktop notification when shell prompt appears on stdin'),
+		description=f'{h}, for use from screenrc/tmux.conf.')
 	cmd.add_argument('-i', '--id', metavar='header',
 		help='Custom identification header to print in notifications for this console/input.')
 	cmd.add_argument('-l', '--log', metavar='file',
@@ -171,15 +167,21 @@ def main(args=None):
 			Set to <=0 value to disable this rate-limiting entirely.'''))
 
 	cmd = cmds.add_parser('s-run',
-		formatter_class=argparse.RawTextHelpFormatter,
-		help=dd('''
-			Run command within a specific/matched GNU Screen session window.
+		help=(h := 'Find/match specific GNU Screen / tmux session window/pane, run command there'),
+		formatter_class=argparse.RawTextHelpFormatter, description=dd(f'''
+			{h}.
 			Intended to match shell prompt via -s/--shell-re option and send -c/--command line to it.
 			Only matches stuff in all attached unnamed pts-N screen sessions by default.'''))
-	cmd.add_argument('-S', '--session', metavar='spec',
-		help='Instead of default session-matching, pass this session spec to "screen -S".')
+	cmd.add_argument('-T', '--tmux', action='store_true',
+		help='Use tmux instead of GNU Screen, changing meaning of some options below.')
+	cmd.add_argument('-S', '--session', metavar='spec', help=dd('''
+		Instead of default session-matching, pass this session spec to "screen -S".
+		With -T/--tmux this is either socket name for -L option or an absolute path for -S.'''))
+	cmd.add_argument('-g', '--session-group', metavar='name-or-list', help=dd('''
+		Only with -T/--tmux - name or space/comma-separated names of session groups to check.
+		Windows/panes in specified groups will be checked in index-order. Default is all groups.'''))
 	cmd.add_argument('-n', '--win-max', type=int, metavar='n', default=5, help=dd('''
-		Max window number to check within each matched session.
+		Max window number to check within each matched session, or session group for tmux.
 		All of these numbers are queried/checked from first to last until match,
 			repeatedly checking last window within session if they don't exist. Default: %(default)s'''))
 	cmd.add_argument('-s', '--shell-re', metavar='regexp', help=dd('''
@@ -194,6 +196,9 @@ def main(args=None):
 		help='Print screen session/window info to stdout after sending command there.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+	sp_out = lambda *cmd: sp.run(
+		cmd[0] if len(cmd) == 1 and isinstance(cmd[0], list) else cmd,
+		stdout=sp.PIPE, check=True ).stdout.decode(errors='replace').strip()
 
 
 	if opts.call == 'out-paste':
@@ -240,15 +245,38 @@ def main(args=None):
 				notify_func(header, body_str)
 
 
+	elif opts.call == 's-run' and opts.tmux:
+		import re, subprocess as sp
+		tsock, re_sh = list(), re.compile(opts.shell_re or '')
+		if opts.session: tsock.extend( ['-L', opts.session]
+			if not opts.session.startswith('/') else ['-S', opts.session] )
+		for sg in opts.session_group.replace(*', ').split() or ['']:
+			m, lines = None, sp_out([
+				'tmux', *tsock, 'list-panes', '-aF', '#D #{session_group} #I',
+				*(['-f', '#{==:#{session_group},'+sg+'}'] if sg else list()) ]).split('\n')
+			for p in lines:
+				p, p_info = p.split(None, 1)
+				line = sp_out(['tmux', *tsock, 'capture-pane', '-pt', p]).rsplit('\n', 1)[-1]
+				if m := re_sh.search(line): break
+			if m: break
+		else:
+			print('ERROR: Failed to match tmux pane/shell', file=sys.stderr)
+			return 1
+		if not opts.command:
+			cmd = ' '.join((repr(a) if any( c in a for c in
+				r' \'"|*?!&$`{}[];' ) else a) for a in ['tmux', *tsock, 'attach', '-t', p])
+			print(f'Found shell prefix: {cmd}')
+		else:
+			sp.run(['tmux', *tsock, 'send-keys', '-t', p, f' {opts.command.strip()}', 'Enter'])
+			if opts.verbose: print(p_info)
+
 	elif opts.call == 's-run':
 		import re, tempfile, time, itertools as it, subprocess as sp
 		re_sh = re.compile(opts.shell_re or '')
 		if opts.session: sessions = [opts.session]
 		else:
 			sessions, re_s = list(), re.compile(r'^\s+(\d+\.pts-\d+\.\S+)\s+\(Attached\)\s*$')
-			lines = sp.run( ['screen', '-ls'], check=True,
-				stdout=sp.PIPE ).stdout.decode().strip().split('\n')
-			for line in lines:
+			for line in sp_out('screen', '-ls').split('\n'):
 				if m := re_s.search(line): sessions.append(m.group(1))
 			sessions = sorted(sessions, key=lambda s: int(re.findall(r'^\d+', s)[0] or 0))
 		with tempfile.NamedTemporaryFile(prefix='.term-pipe.', buffering=0) as tmp:
@@ -263,7 +291,7 @@ def main(args=None):
 					if tmp_ts != tmp_ts_chk: break
 				tmp_ts = tmp_ts_chk
 				line = tmp.read().strip().rsplit(b'\n', 1)[-1].decode(errors='replace')
-				if m := re_sh.search(line): break
+				if re_sh.search(line): break
 			else:
 				print('ERROR: Failed to match screen session/shell', file=sys.stderr)
 				return 1

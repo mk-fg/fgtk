@@ -32,7 +32,7 @@ proc parse_conf(conf_path: string): Conf =
 		cooldown = -1
 		rules = initTable[string, Rule]()
 		re_comm = re"^\s*([#;].*)?$"
-		re_name = re"^\[(.*)\]$"
+		re_name = re"^\s*\[(.*)\]\s*$"
 		re_name_int_prefix = re"^--[^-]" # to avoid clashes with internal event name
 		re_name_int_infix = re" (¦+) " # avoids clashes with regexp-run-group matches
 		re_var = re"^\s*(\S.*?)\s*(=\s*(\S.*?)?\s*)?$"
@@ -85,6 +85,7 @@ proc parse_conf(conf_path: string): Conf =
 					else: warn(&"Ignoring unrecognized rule-option line {line_n} [ {line} ]")
 				except Exception as err:
 					warn(&"Failed to parse config value on line {line_n} [ {line} ] :: {err.msg}")
+		else: warn(&"Failed to parse config-file line {line_n} [ {line} ]")
 	return (mtime, delay, cooldown, rules)
 
 
