@@ -727,18 +727,18 @@ def main(args=None):
 		Default is to override -f option for suitable audio formats,
 			but leave -o unspecified (i.e. use default or config file).
 		Will be split on spaces, unless option is used multiple times.'''))
-	group.add_argument('-n', '--name', metavar='tpl', help=dd('''
+	group.add_argument('-n', '-o', '--name', metavar='tpl', help=dd('''
 		Template to rename resulting file(s), instead of default "{name}".
 		Names are deduplicated with number-suffix when multiple sources are used.
 		Substituted keys: "name" - source filename without extension.'''))
 
 	group = parser.add_argument_group('Volume normalization')
-	group.add_argument('--loudnorm', action='store_true', help=dd('''
+	group.add_argument('-L', '--loudnorm', action='store_true', help=dd('''
 		Use ffmpeg "loudnorm" filter to have sane volume level.
 		It takes quite a while to process longer files with it.
 		Should not be available in pre-3.1 (2016-06-27) ffmpeg builds.
 		ffmpeg docs link: https://ffmpeg.org/ffmpeg-all.html#loudnorm'''))
-	group.add_argument('-o', '--loudnorm-opts', metavar='ffmpeg-af-opts', help=dd('''
+	group.add_argument('--loudnorm-opts', metavar='ffmpeg-af-opts', help=dd('''
 		String of options to pass to loudnorm filter, same as they
 			would appear on ffmpeg command line. Example: I=-16:TP=-1.5:LRA=11'''))
 
