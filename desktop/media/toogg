@@ -95,7 +95,8 @@ class FFProc:
 		self.term_width = shutil.get_terminal_size()[0] - 2
 		if prefix: self.prefix = prefix
 		self.line_max_len = self.kws['limit'] = limit or self.stream_reader_limit
-		self.cmd_repr = ' '.join((v if len(str(v).split()) == 1 else repr(v)) for v in cmd)
+		self.cmd_repr = ' '.join((repr(a) if any(
+			c in a for c in r' \'"|*?!&$`{}[];' ) else a ) for a in cmd)
 
 	async def __aenter__(self):
 		await self.run(wait=False)
@@ -277,7 +278,7 @@ class AudioConv:
 	def __init__(self, src_list, dst_name_tpl=None,
 			start=None, length=None,
 			chunks=None, chunks_beep=False, chunks_fn_tpl=None,
-			probe=None, inplace=False, remove_src=False,
+			probe=None, inplace=False, remove_src=False, keep_tmp=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop = asyncio.get_running_loop()
 		self.src_list, self.dst_name_tpl = src_list, dst_name_tpl or ''
@@ -285,10 +286,11 @@ class AudioConv:
 		self.start, self.length, self.probe = start, length, probe
 		self.chunks, self.chunks_beep = chunks, chunks_beep
 		self.chunks_fn_tpl = chunks_fn_tpl or '{n:03d}__{name}.ogg'
-		self.inplace, self.remove_src = inplace, remove_src
+		self.inplace, self.remove_src, self.keep_tmp = inplace, remove_src, keep_tmp
 		self.loudnorm, self.loudnorm_opts = loudnorm, loudnorm_opts or ''
 		self.ytdl_opts = ytdl_opts or list()
 		self.status_lines, self.chunk_dirs = dict(), set()
+		self.progress_func = not log.isEnabledFor(logging.DEBUG) and self.status_line_set
 
 	async def __aenter__(self):
 		self.conv_jobs = dict()
@@ -552,7 +554,7 @@ class AudioConv:
 		ytdl_opts.extend(['-o', str(src.p).replace('%', '%%')])
 		try:
 			async with YTDLProc( self.loop, src.p.name,
-					ytdl_opts + [url], progress_func=self.status_line_set ) as proc:
+					ytdl_opts + [url], progress_func=self.progress_func ) as proc:
 				await proc.finished
 		finally: src_part.p.unlink(missing_ok=True)
 		return AudioConvSubResult(src)
@@ -594,10 +596,11 @@ class AudioConv:
 		def tmp_file(ext): paths.add(p := f'{dst}.{ext}'); return p
 
 		job = AudioConvJob(src.label, src.p, dst, start, length, tmp_file)
-		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y -progress pipe:1'.split()
+		ffmpeg_cmd = 'ffmpeg -v error -hide_banner -y'.split()
+		if self.progress_func: ffmpeg_cmd.extend(['-progress', 'pipe:1'])
 		job.ffmpeg = lambda pre, cmd_ext, **kws: FFProc(
 			self.loop, job.name, ffmpeg_cmd + cmd_ext, stream_len=src.duration,
-			prefix=pre, progress_func=self.status_line_set, **kws )
+			prefix=pre, progress_func=self.progress_func, **kws )
 		job.can_copy_stream = src.codec == 'vorbis:2'
 
 		conv_func = ( self.conv_src_simple
@@ -606,8 +609,8 @@ class AudioConv:
 			await conv_func(job)
 			paths.remove(dst)
 		finally:
-			for p in paths:
-				with contextlib.suppress(OSError): os.unlink(p)
+			if not self.keep_tmp:
+				for p in paths: pl.Path(p).unlink(missing_ok=True)
 		return dst
 
 
@@ -642,8 +645,8 @@ class AudioConv:
 		if opts: opts += ':'
 
 		async with job.ffmpeg( 'loudnorm-info [2/3]',
-				[ '-v', 'info', '-i', job.tmp_file('src.wav'),
-					'-af', f'loudnorm={opts}print_format=json', '-f', 'null', '/dev/null' ],
+				[ '-v', 'info', '-i', job.tmp_file('src.wav'), '-af',
+					f'loudnorm={opts}print_format=json', '-f', 'null', '/dev/null' ],
 				env=ffmpeg_env, stderr=sp.PIPE ) as proc:
 			norm_info, ffmpeg_stderr = list(), list()
 			while True:
@@ -655,7 +658,7 @@ class AudioConv:
 					assert not line.endswith(proc.crop_mark)
 					norm_info.append(line)
 					if line == '}': break
-				if re.search(r'^\[Parsed_loudnorm_0 @ 0x[0-f]+\]$', line): norm_info.append('')
+				if re.search(r'\[Parsed_loudnorm_0 @ 0x[\da-f]+\]', line): norm_info.append('')
 			norm_info = ''.join(norm_info)
 			try: await proc.finished
 			except:
@@ -664,9 +667,8 @@ class AudioConv:
 					'\n'.join(ffmpeg_stderr).rstrip() )
 				raise
 			log.debug('[{!r}] detected audio normalization info: {!r}', job.name, norm_info)
-			if not norm_info:
-				raise AudioConvError( 'ffmpeg failed to produce'
-					f' normalization info json (source file: {job.name!r})' )
+			if not norm_info: raise AudioConvError(
+				'ffmpeg failed to produce normalization info json (source file: {job.name!r})' )
 			norm_info = json.loads(norm_info)
 			with open(job.tmp_file('loudnorm.json'), 'w') as dst:
 				json.dump(norm_info, dst, sort_keys=True, indent=2, separators=(',', ': '))
@@ -768,6 +770,8 @@ def main(args=None):
 		Default or 0 will be set to number of available cpu threads.'''))
 	group.add_argument('-p', '--probe', action='store_true',
 		help='Only probe and print length for each file, without converting anything.')
+	group.add_argument('--keep-tmp', action='store_true',
+		help='Do not remove temp-files after exit/error, to debug where issue comes from.')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -812,7 +816,7 @@ def main(args=None):
 		chunks=chunks, chunks_fn_tpl=opts.chunks_fn,
 		chunks_beep=bool(chunks and opts.chunks_beep),
 		max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
-		remove_src=opts.remove_src, ytdl_opts=ytdl_opts,
+		remove_src=opts.remove_src, keep_tmp=opts.keep_tmp, ytdl_opts=ytdl_opts,
 		loudnorm=opts.loudnorm, loudnorm_opts=opts.loudnorm_opts ))
 	return int(not success)
 
