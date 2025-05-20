@@ -45,11 +45,13 @@ def main(args=None):
 	parser.add_argument('path', help='Path to source m4b file.')
 
 	parser.add_argument('-f', '--name-format',
-		metavar='str.format', default='{n:03d}__{title}.aac', help=dd('''
+		metavar='str.format', default='{n:03d}__{title}.{ext}', help=dd('''
 			Template for output filenames as python str.format template string.'
-			Can contain following keys: n, id, title, title_raw, a, b. Default: %(default)s.'''))
+			Format keys: n, id, title, title_raw, a, b, ext. Default: %(default)s.'''))
 	parser.add_argument('--name-format-raw', action='store_true',
 		help='Avoid doing any string replacements on filename (to make it more fs-friendly).')
+	parser.add_argument('-w', '--wav', action='store_true',
+		help='Convert to WAV instead of trying to copy source - when input format has issues.')
 
 	parser.add_argument('-j', '--max-parallel', type=int, metavar='n', help=dd(f'''
 		Max number of processing jobs to run in parallel.
@@ -100,16 +102,18 @@ def main(args=None):
 		if n: procs[n] = sp.Popen(cmd)
 
 	ts_fmt = '{:f}'.format
+	ext, codec = ( ('aac', ['-acodec', 'copy'])
+		if not opts.wav else ('wav', ['-acodec', 'pcm_s16le']) )
 	for n, c in enumerate(meta, 1):
-		c.update(n=n, title_raw=c.title)
+		c.update(n=n, title_raw=c.title, ext=ext)
 		if title_fn_fmt: c.title = title_fn_fmt(c.title)
 		dst_path = opts.name_format.format(**c)
 		log.info(
-			'Copying chapter #%s %s - %s [ start: %s, len: %s, title: %s ] to file: %s',
-			n, c.a, c.b, td_repr(c.a), td_repr(c.b - c.a), c.title_raw, dst_path )
+			'Copying chapter %s / %s :: %s - %s :: start: %s, len: %s, title: %s :: %s',
+			n, len(meta), c.a, c.b, td_repr(c.a), td_repr(c.b - c.a), c.title_raw, dst_path )
 		if opts.dry_run: continue
-		_procs_cycle(n, [ 'ffmpeg', '-loglevel', 'error', '-y', '-i', opts.path,
-			'-acodec', 'copy', '-ss', ts_fmt(c.a), '-to', ts_fmt(c.b), dst_path ])
+		_procs_cycle(n, [ 'ffmpeg', '-loglevel', 'error', '-y',
+			'-i', opts.path, *codec, '-ss', ts_fmt(c.a), '-to', ts_fmt(c.b), dst_path ])
 	_procs_cycle(limit=1)
 
 	log.debug('Finished')

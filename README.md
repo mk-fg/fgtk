@@ -3319,10 +3319,12 @@ list of which should be encoded into file metadata.
 Chapter offsets and titles are detected via `ffprobe -v 0 -show_chapters`,
 and then each gets extracted with `ffmpeg -i ... -acodec copy -ss ... -to ...`,
 producing aac files with names corresponding to metadata titles
-(by default, can be controlled with --name-format, e.g. `{n:03d}__{title}.aac`).
+(by default, can be controlled with --name-format, e.g. `{n:03d}__{title}.{ext}`).
 
-Doesn't do any transcoding, which can easily be performed later to e.g.
-convert resulting aac files to mp3 or ogg, if necessary.
+Doesn't do any transcoding, or outputs simple .wav files with `-w/--wav` option
+(for when source codecs have issues and can't be copied), so can be followed by
+an encoding step to convert resulting aac/wav files to mp3 or ogg, if necessary.\
+[toogg tool from this repo](#hdr-toogg) can do that via something like `toogg -x *.aac`.
 
 <a name=hdr-audio-split-flac-cue></a>
 ##### [audio-split-flac-cue](desktop/media/audio-split-flac-cue)
