@@ -14,19 +14,27 @@ class ContainerIDMismatch(Exception):
 		return f'{self.p} :: {self.cid2:x} not in [{cid_set}]'
 
 
-def assert_cid_match(p, cid_or_set, n=None, s=None):
+def id_cid(n): return n & 0xffff0000
+def id_base(n): return n & 0xffff
+def patch(cid, n): return id_base(n) | cid
+
+def assert_cid_match(p, cid_or_set, n=None, s=None, warn=False):
 	if s is not None:
-		assert_cid_match(p, cid_or_set, s.st_uid)
-		assert_cid_match(p, cid_or_set, s.st_gid)
+		try:
+			assert_cid_match(p, cid_or_set, s.st_uid)
+			assert_cid_match(p, cid_or_set, s.st_gid)
+		except ContainerIDMismatch:
+			log.warning( 'CID mismatch: {} :: {} [{}-{}] not in {}'.format( p,
+				id_repr(s.st_uid, s.st_gid), id_repr(map(id_cid, [s.st_uid, s.st_gid]), as_hex=True),
+				id_repr(map(id_base, [s.st_uid, s.st_gid])), cid_or_set ))
 		return
 	cid2 = id_cid(n)
 	if isinstance(cid_or_set, int): chk = cid_or_set == cid2
 	else: chk = cid2 in cid_or_set
-	if not chk: raise ContainerIDMismatch(p, cid_or_set, cid2)
-
-def id_cid(n): return n & 0xffff0000
-def id_base(n): return n & 0xffff
-def patch(cid, n): return id_base(n) | cid
+	if chk: return
+	if warn: log.warning( 'CID mismatch: {} :: {} [{}-{}] not in {}'.format(
+		p, n, id_repr(id_cid(n), as_hex=True), id_repr(id_base(n)), cid_or_set ))
+	else: raise ContainerIDMismatch(p, cid_or_set, cid2)
 
 def id_repr(uid_gid, gid=None, as_hex=False):
 	if gid is None: uid, gid = uid_gid
@@ -35,14 +43,14 @@ def id_repr(uid_gid, gid=None, as_hex=False):
 	return f'{tpl}{{}}'.format(uid, '' if uid == gid else f':{tpl}'.format(gid))
 
 
-def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False):
+def shift_path_ids(path, cid, old_cid_whitelist=None, dry_run=False, warn=False):
 	log.debug( 'Patch-lines format: <path> :: <src-uid/gid-dec>'
 		' [<src-uid/gid-hex>-<src-uid/gid-base>] -> <src-uid/gid-dec> [<src-uid/gid-hex>]' )
 
 	cid_patch = ft.partial(patch, cid)
 	def shift_node(p):
 		s = p.lstat()
-		if old_cid_whitelist: assert_cid_match(p, old_cid_whitelist, s=s)
+		if old_cid_whitelist: assert_cid_match(p, old_cid_whitelist, s=s, warn=warn)
 		dst_uid, dst_gid = map(cid_patch, [s.st_uid, s.st_gid])
 		if dst_uid == s.st_uid and dst_gid == s.st_gid: return
 		if log.isEnabledFor(logging.DEBUG):
@@ -84,6 +92,8 @@ def main(args=None):
 				' have different value from that of top-level path.'
 			' Can be used to make sure that container paths are not "merged" and that no uids'
 				' on pre-container fs go beyond 16 bits (and hence are incompatible with new schema).')
+	parser.add_argument('-w', '--warn', action='store_true',
+		help='Same as -s/--strict, but issue a warning message to stderr instead.')
 	parser.add_argument('-n', '--dry-run', action='store_true',
 		help='Do not change anything on fs, only navigate over it and run all the checks.')
 
@@ -107,11 +117,12 @@ def main(args=None):
 	paths = list(pathlib.Path(p).resolve() for p in opts.path)
 	for p in paths:
 		cid_whitelist = None
-		if opts.strict:
+		if opts.strict or opts.warn:
 			s = p.lstat()
 			cid_chk = id_cid(s.st_uid)
-			assert_cid_match(p, cid_chk, s.st_gid)
+			assert_cid_match(p, cid_chk, s.st_gid, warn=not opts.strict)
 			cid_whitelist = [cid_chk]
-		shift_path_ids(p, cid, old_cid_whitelist=cid_whitelist, dry_run=opts.dry_run)
+		shift_path_ids( p, cid, dry_run=opts.dry_run,
+			old_cid_whitelist=cid_whitelist, warn=not opts.strict )
 
 if __name__ == '__main__': sys.exit(main())
