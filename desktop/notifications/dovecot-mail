@@ -211,7 +211,7 @@ def mail_header(msg, k):
 	res, header = list(), mail_header_decode(msg.get(k, ''))
 	# email.header.decode_header misses some badly-concatenated stuff
 	while True:
-		m = re.search('=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
+		m = re.search(r'=\?[\w\d-]+(\*[\w\d-]+)?\?[QB]\?[^?]+\?=', header)
 		if not m:
 			res.append(header)
 			break

@@ -23,8 +23,8 @@ can=$1
 shift
 
 can_sets=()
-[[ -z "$1" ]]\
-	&& can_sets+=( can-base )\
+[[ -z "$1" ]] \
+	&& can_sets+=( can-base ) \
 	|| while :; do
 			can_set=$1; shift
 			[[ -z "$can_set" || "$can_set" = -- ]] && break
@@ -42,7 +42,7 @@ pacstrap "$@" -c -C "$pacman_conf" "$can" "${can_sets[@]}"
 
 for conf in \
 	/etc/{localtime,profile,locale.gen,locale.conf} \
-	/etc/{screenrc,nanorc,gitconfig,pacman.d/mirrorlist}
+	/etc/{tmux.screen.conf,nanorc,gitconfig,pacman.d/mirrorlist}
 do [[ ! -e "$conf" ]] || rsync -aL "$conf" "$can$conf"
 done
 
