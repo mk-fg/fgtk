@@ -267,11 +267,20 @@ proc main(argv_full: seq[string]) =
 	var
 		stream_eof = false
 		line: string
+		ts_select = getMonoTime()
 	while not stream_eof:
 
 		### Build run_rules list to start commands
-		var run_rules = newSeq[string]()
-		for rk in s.select(-1):
+		var
+			run_rules = newSeq[string]()
+			evs = newSeq[ReadyKey]()
+		try: evs = s.select(-1)
+		except IOSelectorsException as err: # EAGAIN seem to happen on overflows
+			if (getMonoTime() - ts_select).inMilliseconds >= 2_000: raiseOSError(
+				OSErrorCode(EAGAIN), &"Persistent failures in event selector: {err.msg}" )
+			sleep(50); continue
+		ts_select = getMonoTime()
+		for rk in evs:
 			if Event.Error in rk.events:
 				debug(&"-- close/err: [{rk.errorCode}] {osErrorMsg(rk.errorCode)}")
 				stream_eof = true; break
