@@ -263,11 +263,12 @@ def open_log_iterators(ctx, log_map, ts_a, ts_b):
 			chan = chan_name(chan)
 			for ts, p in reversed(sorted(files)): # newest-first
 				# Discard all further way-too-old xz archives (should hold one month at most)
-				if ts_a and (ts + dt.timedelta(63)) < ts_a:
+				ts_dt = dt.datetime(ts.year, ts.month, ts.day)
+				if ts_a and (ts_dt + dt.timedelta(63)) < ts_a:
 					log.debug(f'Skipping too-old logs: {ts} - [ {rel_path(p)} ] and older')
 					break
 				# Skip way-too-new xz archives
-				if ts_b and (ts - dt.timedelta(63)) > ts_b:
+				if ts_b and (ts_dt - dt.timedelta(63)) > ts_b:
 					log.debug(f'Skipping too-new logfile: {ts} [ {rel_path(p)} ]')
 					continue
 				# Create line-by-line iterators on file(s)
