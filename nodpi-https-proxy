@@ -9,19 +9,29 @@ class HTTPSFragProxy:
 
 	buff_sz = 1500
 
-	def __init__(self, host, port, sni_list=None, af=0):
-		self.bind, self.log = (host, port, af), logging.getLogger('nhp.proxy')
+	def __init__(self, sni_list=None, idle_timeout=None, **bind):
+		self.idle_timeout, self.bind = idle_timeout, bind
 		if sni_list is not None:
 			if not sni_list: sni_list = [b'\0'] # match nothing
 			else: sni_list = list(s.strip().encode() for s in sni_list)
-		self.snis = sni_list
+		self.snis, self.log = sni_list, logging.getLogger('nhp.proxy')
 
 	async def run(self):
-		(host, port, af), loop = self.bind, asyncio.get_running_loop()
+		loop, self.activity = asyncio.get_running_loop(), asyncio.Event()
 		for sig in signal.SIGINT, signal.SIGTERM: # asyncio.start_server hangs
 			loop.add_signal_handler(sig, lambda: os._exit(0))
-		server = await asyncio.start_server(self.conn_handle, host, port, family=af)
+		if self.idle_timeout:
+			asyncio.create_task(self.idle_stop(self.idle_timeout))
+		server = await asyncio.start_server(self.conn_handle, **self.bind)
 		await server.serve_forever()
+
+	async def idle_stop(self, timeout):
+		while True:
+			try: await asyncio.wait_for(self.activity.wait(), timeout)
+			except TimeoutError:
+				self.log.debug('Exiting on timeout (%.1fs)', timeout)
+				return os.kill(os.getpid(), signal.SIGTERM)
+			self.activity.clear()
 
 	async def conn_wrap(self, func, reader, writer, close_writer=False):
 		try: await func(reader, writer)
@@ -34,6 +44,7 @@ class HTTPSFragProxy:
 	def conn_handle(self, reader, writer):
 		return self.conn_wrap(self._conn_handle, reader, writer)
 	async def _conn_handle(self, reader, writer):
+		self.activity.set()
 		cid = ':'.join(map(str, writer.get_extra_info('peername')))
 		http_data = await reader.read(self.buff_sz)
 		if not http_data: writer.close(); return
@@ -53,6 +64,7 @@ class HTTPSFragProxy:
 		try: xreader, xwriter = await asyncio.open_connection(host, port)
 		except OSError as err: return self.log.info( 'Connection [%s]'
 			' to %s:%s failed (tls=%s): %s', cid, host, port, int(https), err_fmt(err) )
+		self.activity.set()
 		if not https: xwriter.write(http_data); await xwriter.drain()
 		else:
 			writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
@@ -83,6 +95,7 @@ class HTTPSFragProxy:
 
 	async def pipe(self, reader, writer):
 		while not reader.at_eof() and not writer.is_closing():
+			self.activity.set()
 			data = await reader.read(self.buff_sz); writer.write(data); await writer.drain()
 
 
@@ -90,9 +103,8 @@ def main(args=None):
 	import argparse, textwrap, re
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
-	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter, usage='%(prog)s [opts] [lines]',
-		description=dd('''
+	parser = argparse.ArgumentParser(usage='%(prog)s [options]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			HTTP-proxy for TLS connections that detects specific hosts in SNI fields
 				and fragments those to avoid/confuse deep packet inspection (DPI) systems.
 			Despite the name, it should be set as "HTTP Proxy" in e.g. browsers, NOT HTTPS one.
@@ -100,12 +112,15 @@ def main(args=None):
 	parser.add_argument('-i', '--bind',
 		metavar='host[:port]', default='127.0.0.1:8101', help=dd('''
 			Address/host and port to bind proxy server socket to (default: %(default)s).
-			It should be used and accessible with e.g. http_proxy= env-var.'''))
+			It should be used and accessible with e.g. http_proxy= env-var.
+			Ignored if process is started by systemd from a socket unit.'''))
 	parser.add_argument('-d', '--frag-domains', metavar='file', help=dd('''
 		File with a list of space/newline-separated domains
 			to detect in TLS handshakes and fragment connection data for.
 		"-" can be used for stdin, or %%-prefixed number for any file descriptor (e.g. %%3).
 		Default is to apply such fragmentation to all processed connections.'''))
+	parser.add_argument('-t', '--idle-timeout', type=float, metavar='seconds', help=dd('''
+		Stop after number of seconds being idle. Useful if started from systemd socket.'''))
 	parser.add_argument('--debug', action='store_true', help='Verbose logging to stderr.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -123,8 +138,17 @@ def main(args=None):
 	if opts.frag_domains:
 		with in_file(opts.frag_domains) as src: sni_list = src.read().split()
 
-	host, _, port = opts.bind.partition(':'); port = int(port or 8101)
-	proxy = HTTPSFragProxy(host, port, sni_list)
+	sd_pid, sd_fds = (int(os.environ.get(f'LISTEN_{k}', 0)) for k in ['PID', 'FDS'])
+	if sd_pid == os.getpid() and sd_fds:
+		if sd_fds > 1: return log.error( 'More than one socket passed'
+			'  from systemd, exiting (pid=%s fds=%s)', sd_pid, sd_fds ) or 1
+		log.debug('Listening on socket fd=3 received from systemd')
+		proxy = dict(sock=socket.socket(fileno=3))
+	else:
+		host, _, port = opts.bind.partition(':'); port = int(port or 8101)
+		proxy = dict(host=host, port=port)
+	proxy = HTTPSFragProxy(sni_list=sni_list, idle_timeout=opts.idle_timeout, **proxy)
+
 	log.debug( 'Starting proxy (%s)...',
 		f'{len(sni_list):,d} SNI domains' if sni_list is not None else 'fragmenting any SNI' )
 	return asyncio.run(proxy.run())

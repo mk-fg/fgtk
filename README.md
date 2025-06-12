@@ -2592,7 +2592,22 @@ which fragments https requests where it detects SNI that won't be
 allowed through by some censorshit DPI otherwise.
 
 Rewritten to not have as much needless stats, boilerplate, verbosity
-and cross-platform cruft, to make easier adjustments for misc local needs.
+and cross-platform cruft, to make easier adjustments, e.g. to start/stop
+as-needed in systemd user session:
+
+``` ini
+[Socket]
+ListenStream=127.0.0.1:8101
+
+[Install]
+WantedBy=sockets.target
+```
+
+``` ini
+[Service]
+Type=exec
+ExecStart=nodpi-https-proxy -t 600
+```
 
 [GVCoder09/NoDPI]: https://github.com/GVCoder09/NoDPI
 
