@@ -2588,14 +2588,15 @@ Not a replacement for wireshark or tcpdump firehose-filters.
 ##### [nodpi-https-proxy](nodpi-https-proxy)
 
 Simpler ~100-line version of [GVCoder09/NoDPI] http-proxy script,
-which fragments https requests where it detects SNI that won't be
-allowed through by some censorshit DPI otherwise.
+which fragments https requests where it detects SNI domains that won't
+be allowed through by some state-censorshit DPI devices otherwise.
 
-Rewritten to not have as much needless stats, boilerplate, verbosity
-and cross-platform cruft, to make easier adjustments, e.g. to start/stop
-as-needed in systemd user session:
+Rewritten to not have as much needless stats, boilerplate, verbosity and
+cross-platform cruft, to make easier adjustments, e.g. to block plain http
+and start/stop as-needed in systemd user session:
 
 ``` ini
+# nodpi.socket
 [Socket]
 ListenStream=127.0.0.1:8101
 
@@ -2604,9 +2605,10 @@ WantedBy=sockets.target
 ```
 
 ``` ini
+# nodpi.service
 [Service]
 Type=exec
-ExecStart=nodpi-https-proxy -t 600
+ExecStart=nodpi-https-proxy --block-http --idle-timeout 600
 ```
 
 [GVCoder09/NoDPI]: https://github.com/GVCoder09/NoDPI
