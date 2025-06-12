@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import itertools as it, functools as ft, operator as op
-import pathlib as pl, datetime as dt, urllib.parse as up, hashlib as hl, subprocess as sp
+import itertools as it, operator as op, hashlib as hl, subprocess as sp
+import pathlib as pl, datetime as dt, urllib.request as ur, urllib.parse as up
 import xml.etree.ElementTree as etree
 import os, sys, re, socket, logging, time, calendar, base64, json, textwrap, unicodedata
 
@@ -188,10 +188,10 @@ feed_user_agent = f'yt-feed-to-email/0.1 feedparser/{fp.__version__}'
 feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
 	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
 
-def feed_fetch(log, url, etag):
+def feed_fetch(log, url, etag, **fp_parse_kws):
 	try:
-		feed = fp.parse( url, agent=feed_user_agent,
-			etag=etag, request_headers=dict(Accept=feed_accept_header) )
+		feed = fp.parse( url, agent=feed_user_agent, etag=etag,
+			request_headers=dict(Accept=feed_accept_header), **fp_parse_kws )
 		status, bozo, bozo_err = (
 			feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
 	except (hc.HTTPException, ue.URLError, TimeoutError) as err:
@@ -273,8 +273,10 @@ def process_summary(text, w=120, pre='  '):
 
 def main(args=None):
 	import argparse
-	parser = argparse.ArgumentParser(
-		description='Script to generate email notifications for YouTube OPML/RSS feed updates.')
+	parser = argparse.ArgumentParser(usage='%(prog)s [options]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Script to generate email notifications for YouTube OPML/RSS feed updates.
+			Will use <scheme>_proxy environment variables to pickup proxy servers, if used.'''))
 
 	group = parser.add_argument_group('Feed sources')
 	group.add_argument('-o', '--opml', metavar='file',
@@ -287,19 +289,17 @@ def main(args=None):
 	group = parser.add_argument_group('Notification options')
 	group.add_argument('-e', '--email', metavar='addr', required=True,
 		help='Email address to send video notifications to via local "mail" command.')
-	group.add_argument('-d', '--email-delay',
-		type=float, metavar='float', default=1.1,
-		help='Delay between running notification-command in seconds.'
-			' Useful to make sure emails sort by date/time correctly within same channel,'
-				' and don\'t all have same exact timestamp. Default is %(default)ss (0 - disable).')
+	group.add_argument('-d', '--email-delay', type=float, metavar='seconds', default=1.1, help=dd('''
+		Delay between running notification-command in seconds.
+		Useful to make sure emails sort by date/time correctly within same channel,
+			and don\'t all have same exact timestamp. Default is %(default)ss (0 - disable).'''))
 
 	group = parser.add_argument_group('State storage/init')
 	group.add_argument('-s', '--state-dir', default='state', metavar='path',
 		help='Directory to use for storing per-feed "last check" timestamps. Default: %(default)s')
-	group.add_argument('-t', '--new-feed-time',
-		type=float, metavar='posix-ts',
-		help='Timestamp to fetch entries after for new/unknown feeds.'
-			' Default or 0 is to generate notifications for all entries in new feeds.')
+	group.add_argument('-t', '--new-feed-time', type=float, metavar='posix-ts', help=dd('''
+		Timestamp to fetch entries after for new/unknown feeds.
+		Default or 0 is to generate notifications for all entries in new feeds.'''))
 
 	group = parser.add_argument_group('Check filtering and rate-limiting')
 	group.add_argument('-n', '--feed-name', metavar='name',
@@ -354,6 +354,8 @@ def main(args=None):
 		print(f'-- added feeds: {n}')
 		return
 
+	fp_kws = dict()
+	if proxies := ur.getproxies(): fp_kws['handlers'] = [ur.ProxyHandler(proxies)]
 	socket.setdefaulttimeout(60)
 	feeds = YTFeedIndex(feeds_opml, feeds_rss)
 	state_log = state_process(opts.state_dir, feeds)
@@ -371,7 +373,7 @@ def main(args=None):
 
 		feed_log = get_logger(f'feed.{feed.chan}')
 		feed_log.debug('Fetching feed: {} [ {} ]', feed.title, feed.url)
-		try: etag, entries = feed_fetch(feed_log, feed.url, feed.etag)
+		try: etag, entries = feed_fetch(feed_log, feed.url, feed.etag, **fp_kws)
 		except FeedFetchError as err:
 			feed_log.error('Failed to fetch feed: {}', err)
 			etag = entries = None
