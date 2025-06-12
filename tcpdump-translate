@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, io, re, contextlib as cl
+import os, sys, io, re, itertools as it, contextlib as cl
 
 
 ep_map_default = '''
@@ -19,15 +19,24 @@ class Highlight:
 	aliases = dict(v.split('=') for v in ( 'bk=black rd=red gn=green'
 		' ye=yellow bu=blue pink=magenta pk=magenta turquoise=cyan'
 		' tq=cyan wh=white br=bright bt=bright bo=bold bd=bold' ).split())
-	reset = '\033[0m'
+	esc = '\033['
+	reset = f'{esc}0m'
 
 	def __init__(self, enabled=True):
 		self.enabled, self.glyphs = enabled, dict()
 		g = self.glyphs['reset'] = '\ue000'; self.glyphs[g] = self.reset
 
+	def color_list(self):
+		'''Yield two lists, one for mods and second one of color hues.
+			Each list has (name, alias1, alias2, ...) tuples as elements.'''
+		alias_map = dict()
+		for a, k in self.aliases.items(): alias_map.setdefault(k, list()).append(a)
+		return tuple(list( (k, *alias_map.get(k, list()))
+			for k in lst ) for lst in (self.mod, self.hue))
+
 	def glyph(self, spec):
 		if not spec: return ''
-		if spec in self.glyphs: return self.glyphs[spec]
+		if g := self.glyphs.get(spec): return g
 		sc, smods = list(), list()
 		for c in spec.lower().split('-'):
 			for c in c, self.aliases.get(c):
@@ -36,8 +45,10 @@ class Highlight:
 		c, mods = sc and sc[-1], list()
 		for mod in smods: c, mods = mod(c, mods)
 		if c: mods.append(c)
-		s = ('\033[' + ';'.join(map(str, mods)) + 'm') if mods else ''
-		g = self.glyphs[spec] = chr(0xe000 + len(self.glyphs)); self.glyphs[g] = s
+		s = (self.esc + ';'.join(map(str, mods)) + 'm') if mods else ''
+		if g := self.glyphs.get(s): return g
+		g = self.glyphs[spec] = chr(0xe000 + len(self.glyphs))
+		self.glyphs[g] = s; self.glyphs[s] = g
 		return g
 
 	def wrap(self, spec, s):
@@ -45,20 +56,55 @@ class Highlight:
 		if not (hl := self.glyph(spec)): return s
 		return hl + s + self.glyph('reset')
 
+	def glyph_esc(self, g, pre=True):
+		s = self.glyphs.get(g, g)
+		if not pre and s: s = s.removeprefix(self.esc)
+		return s
+
 	def term(self, s, trunc=9_999):
 		'Decode unicode-glyph-colors to terminal ansi sequences, truncate as-needed'
 		if not self.enabled: return s[:trunc]
-		if len(s) <= trunc: return ''.join(self.glyphs.get(c, c) for c in s)
+		if len(s) <= trunc: return ''.join(self.glyph_esc(c) for c in s)
 		n, out, reset = trunc, list(), None
 		for c in s: # truncation doesn't count invisible color-glyphs
-			out.append(self.glyphs.get(c, c))
+			out.append(self.glyph_esc(c))
 			if 0xe000 <= (cn := ord(c)) <= 0xf8ff: reset = cn == 0xe000
 			else:
 				n -= 1
 				if n == 0: break
-		if reset is False: out.append(self.glyphs['\ue000'])
+		if reset is False: out.append(self.glyph_esc('\ue000'))
 		return ''.join(out)
 
+
+def print_color_map(hl, ep_map, trunc):
+	mods, hues = hl.color_list()
+	hue_host, hue_info = dict(), dict((h[0], (f'{h[0]}' + ( ''
+		if len(h) == 1 else ' ['+' '.join(h[1:])+']' ))) for h in hues)
+	for pre, repl, hls in ep_map:
+		if not (h := hl.glyph(hls)): continue
+		hue_host[h] = repl if h not in hue_host else f'{hue_host[h]}+'
+	for h, info in hue_info.items():
+		if hh := hue_host.get(hl.glyph(h)): hue_info[h] = f'{info} - {hh}'
+	hue_info_len = max(map(len, hue_info.values()))
+	print('Format: <esc>: <hue-pure> :: <hue+mods-1> :: <hue+mods-2> ...')
+	mss = list(ms for n in range(1, len(mods)+1) for ms in it.combinations(mods, n))
+	def _mod_suffix(hue=''):
+		line, mods_used = '', dict()
+		for ms in mss:
+			if not hue and len(ms) == 1:
+				c = (m := ms[0])[0]; ext = c + ('' if len(m) == 1 else ' ['+' '.join(m[1:])+']')
+			else: ext = c = '-'.join(m[0] for m in ms) + ('' if not hue else f'-{hue}')
+			if not hl.glyph_esc(g := hl.glyph(c), False): ext += ' (no change)'
+			elif cc := mods_used.get(g): ext += f' (same as {cc})'
+			elif hh := hue_host.get(g): ext += f' - {hh}'
+			mods_used[g] = c; line += ' :: ' + hl.wrap(c, ext)
+		return line
+	print(hl.term('Color mods' + _mod_suffix(), trunc), end='\n\n')
+	for hue, info in hue_info.items():
+		pre = hl.glyph_esc(hl.glyph(hue), False) + ': '
+		line = pre + hl.wrap(hue, f'{{:<{hue_info_len}}}'.format(info))
+		print(hl.term(line + _mod_suffix(hue), trunc))
+	print()
 
 def main(args=None):
 	import argparse, textwrap
@@ -93,10 +139,15 @@ def main(args=None):
 	parser.add_argument('-f', '--filter', action='store_true', help=dd('''
 		Print only lines that match TCP/UDP/ICMP packets and some pattern in -m/--map-file.
 		Intended for filtering tcpdump output by a list of known addrs/nets easily.'''))
+	parser.add_argument('-g', '--grep', metavar='regexp', action='append', help=dd('''
+		Python regexp to filter original tcpdump lines by.
+		Can be used multiple times, in which case lines must match all regexps.'''))
 	parser.add_argument('-e', '--err-fail', action='store_true', help=dd('''
 		Fail on first <translate-fail> error, instead of passing those through with suffix.'''))
 	parser.add_argument('-t', '--truncate', type=int, metavar='chars', help=dd('''
 		Truncate all passed-through lines to specified length. Default: terminal width.'''))
+	parser.add_argument('--cm', '--color-map', action='store_true', help=dd('''
+		Print known colors and whether they're used in -m/--map-file (if specified) and exit.'''))
 	parser.add_argument('-C', '--no-color', action='store_true', help=dd('''
 		Disable colors, if used in -m/--map-file. Same as setting NO_COLOR env variable.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -134,6 +185,7 @@ def main(args=None):
 		try: trunc = os.get_terminal_size().columns
 		except OSError: trunc = 9_999
 	hl = Highlight(enabled=not (opts.no_color or os.environ.get('NO_COLOR')))
+	if opts.cm: return print_color_map(hl, ep_map, trunc)
 
 	def _ep(addr, has_port=False):
 		if has_port: addr, port = addr.rsplit('.', 1)
@@ -149,9 +201,11 @@ def main(args=None):
 		r'(?P<addrs> +(?P<af>IP|IP6) +(?P<src>[\da-f:.]+) +\> +(?P<dst>[\da-f:.]+):)'
 		r'(?P<p> (?P<proto>UDP|TCP|ICMP|ICMP6|Flags))(?P<tail>.*)' )
 	re_icmp = re.compile(r'\b(who has|tgt is) (?P<addr>[\da-f:.]+),')
+	re_grep = list(map(re.compile, opts.grep or list()))
 
 	while line := tcpdump.readline():
 		line = line.decode(errors='surrogateescape').rstrip()
+		if re_grep and not any(rx.search(line) for rx in re_grep): continue
 		if m := re_pkt.fullmatch(line):
 			src0 = src = m['src']; dst0 = dst = m['dst']
 			suff, has_port = '', m['proto'] in ['TCP', 'UDP']

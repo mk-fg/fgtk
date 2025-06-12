@@ -2575,6 +2575,9 @@ adjust, compared to commenting-out addr/net lines in a simple text file.
 (plus on top of that, "host ..." misses stuff like IPv4 ARP and IPv6 NDPs
 for addresses, so is worse than a grep for debug purposes)
 
+Can be run with `--cm/--color-map` to print all recognized colors, as well as
+which hosts already use those, if `-m/--map-file` is also specified.
+
 Mostly useful for debugging "what's going on" and "where do these packets get
 dropped" type of simple connectivity issues in-between running pings and whatever
 configuration tweaks.
