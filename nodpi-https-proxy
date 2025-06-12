@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+
+import os, sys, socket, logging, inspect, random, signal, asyncio, contextlib as cl
+
+
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+
+class HTTPSFragProxy:
+
+	buff_sz = 1500
+
+	def __init__(self, host, port, sni_list=None, af=0):
+		self.bind, self.log = (host, port, af), logging.getLogger('nhp.proxy')
+		if sni_list is not None:
+			if not sni_list: sni_list = [b'\0'] # match nothing
+			else: sni_list = list(s.strip().encode() for s in sni_list)
+		self.snis = sni_list
+
+	async def run(self):
+		(host, port, af), loop = self.bind, asyncio.get_running_loop()
+		for sig in signal.SIGINT, signal.SIGTERM: # asyncio.start_server hangs
+			loop.add_signal_handler(sig, lambda: os._exit(0))
+		server = await asyncio.start_server(self.conn_handle, host, port, family=af)
+		await server.serve_forever()
+
+	async def conn_wrap(self, func, reader, writer, close_writer=False):
+		try: await func(reader, writer)
+		except Exception as err:
+			writer.close()
+			self.log.exception('Failed handing connection: %s', err_fmt(err))
+		finally:
+			if close_writer: writer.close()
+
+	def conn_handle(self, reader, writer):
+		return self.conn_wrap(self._conn_handle, reader, writer)
+	async def _conn_handle(self, reader, writer):
+		cid = ':'.join(map(str, writer.get_extra_info('peername')))
+		http_data = await reader.read(self.buff_sz)
+		if not http_data: writer.close(); return
+		method, url = (headers := http_data.split(b'\r\n'))[0].decode().split()[:2]
+		self.log.debug( 'Connection [%s] ::'
+			' %s %s [buff=%d]', cid, method, url, len(http_data) )
+
+		if https := (method == 'CONNECT'): # https
+			host, _, port = url.partition(':')
+			port = int(port) if port else 443
+		else: # paintext http
+			host_header = next((h for h in headers if h.startswith(b'Host: ')), None)
+			if not host_header: raise ValueError('Missing Host header')
+			host, _, port = host_header[6:].partition(b':')
+			host, port = host.decode(), int(port) if port else 80
+
+		try: xreader, xwriter = await asyncio.open_connection(host, port)
+		except OSError as err: return self.log.info( 'Connection [%s]'
+			' to %s:%s failed (tls=%s): %s', cid, host, port, int(https), err_fmt(err) )
+		if not https: xwriter.write(http_data); await xwriter.drain()
+		else:
+			writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+			await writer.drain()
+			await self.conn_wrap(self.fragment_data, reader, xwriter)
+
+		for task in asyncio.as_completed([
+				self.conn_wrap(self.pipe, reader, xwriter, True),
+				self.conn_wrap(self.pipe, xreader, writer, True) ]):
+			await task
+
+	async def fragment_data(self, reader, writer):
+		head = await reader.read(5)
+		data = await reader.read(2048)
+		if self.snis and all(site not in data for site in self.snis):
+			writer.write(head); writer.write(data); await writer.drain(); return
+		parts, host_end = list(), data.find(b'\x00')
+		if host_end != -1:
+			parts.append( b'\x16\x03\x04' +
+				(host_end + 1).to_bytes(2, 'big') + data[:host_end + 1] )
+			data = data[host_end + 1:]
+		while data:
+			chunk_len = random.randint(1, len(data))
+			parts.append( b'\x16\x03\x04' +
+				chunk_len.to_bytes(2, 'big') + data[:chunk_len] )
+			data = data[chunk_len:]
+		writer.write(b''.join(parts)); await writer.drain()
+
+	async def pipe(self, reader, writer):
+		while not reader.at_eof() and not writer.is_closing():
+			data = await reader.read(self.buff_sz); writer.write(data); await writer.drain()
+
+
+def main(args=None):
+	import argparse, textwrap, re
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, usage='%(prog)s [opts] [lines]',
+		description=dd('''
+			HTTP-proxy for TLS connections that detects specific hosts in SNI fields
+				and fragments those to avoid/confuse deep packet inspection (DPI) systems.
+			Despite the name, it should be set as "HTTP Proxy" in e.g. browsers, NOT HTTPS one.
+			Based on https://github.com/GVCoder09/NoDPI distributed under GPL v3 license.'''))
+	parser.add_argument('-i', '--bind',
+		metavar='host[:port]', default='127.0.0.1:8101', help=dd('''
+			Address/host and port to bind proxy server socket to (default: %(default)s).
+			It should be used and accessible with e.g. http_proxy= env-var.'''))
+	parser.add_argument('-d', '--frag-domains', metavar='file', help=dd('''
+		File with a list of space/newline-separated domains
+			to detect in TLS handshakes and fragment connection data for.
+		"-" can be used for stdin, or %%-prefixed number for any file descriptor (e.g. %%3).
+		Default is to apply such fragmentation to all processed connections.'''))
+	parser.add_argument('--debug', action='store_true', help='Verbose logging to stderr.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	@cl.contextmanager
+	def in_file(path):
+		if not path or path == '-': return (yield sys.stdin)
+		if path[0] == '%': path = int(path[1:])
+		with open(path) as src: yield src
+
+	logging.basicConfig( format='%(levelname)s :: %(message)s',
+		level=logging.WARNING if not opts.debug else logging.DEBUG )
+	log = logging.getLogger('nhp.main')
+
+	sni_list = None
+	if opts.frag_domains:
+		with in_file(opts.frag_domains) as src: sni_list = src.read().split()
+
+	host, _, port = opts.bind.partition(':'); port = int(port or 8101)
+	proxy = HTTPSFragProxy(host, port, sni_list)
+	log.debug( 'Starting proxy (%s)...',
+		f'{len(sni_list):,d} SNI domains' if sni_list is not None else 'fragmenting any SNI' )
+	return asyncio.run(proxy.run())
+
+if __name__ == '__main__': sys.exit(main())

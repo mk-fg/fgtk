@@ -112,6 +112,7 @@ Contents - links to doc section for each script here:
         - [svg-tweak](#hdr-svg-tweak)
         - [unix-socket-links](#hdr-unix-socket-links)
         - [tcpdump-translate](#hdr-tcpdump-translate)
+        - [nodpi-https-proxy](#hdr-nodpi-https-proxy)
 
 - [\[dev\] Dev tools](#hdr-dev___dev_tools)
 
@@ -2582,6 +2583,18 @@ Mostly useful for debugging "what's going on" and "where do these packets get
 dropped" type of simple connectivity issues in-between running pings and whatever
 configuration tweaks.
 Not a replacement for wireshark or tcpdump firehose-filters.
+
+<a name=hdr-nodpi-https-proxy></a>
+##### [nodpi-https-proxy](nodpi-https-proxy)
+
+Simpler ~100-line version of [GVCoder09/NoDPI] http-proxy script,
+which fragments https requests where it detects SNI that won't be
+allowed through by some censorshit DPI otherwise.
+
+Rewritten to not have as much needless stats, boilerplate, verbosity
+and cross-platform cruft, to make easier adjustments for misc local needs.
+
+[GVCoder09/NoDPI]: https://github.com/GVCoder09/NoDPI
 
 
 
