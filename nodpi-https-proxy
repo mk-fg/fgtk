@@ -5,6 +5,14 @@ import os, sys, socket, logging, inspect, random, signal, asyncio
 
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
+def parse_ep(ep, port_def, host_def=None):
+	host, _, port = ep.rpartition(':')
+	if host and port and port.isdigit(): port = int(port)
+	elif host_def and ep.isdigit(): host, port = host_def, int(ep)
+	else: host, port = ep, port_def
+	if host[0] == '[' and host[-1] == ']': host = host[1:-1] # raw ipv6
+	return host, port
+
 class HTTPSFragProxy:
 
 	buff_sz = 1500
@@ -18,10 +26,11 @@ class HTTPSFragProxy:
 
 	async def run(self):
 		loop, self.activity = asyncio.get_running_loop(), asyncio.Event()
-		for sig in signal.SIGINT, signal.SIGTERM: # asyncio.start_server hangs
+		for sig in signal.SIGINT, signal.SIGTERM:
+			# Hard-exit to not deal with asyncio.start_server crap and not close systemd-fd
+			# See https://github.com/python/cpython/issues/113538 and all links there
 			loop.add_signal_handler(sig, lambda: os._exit(0))
-		if self.idle_timeout:
-			asyncio.create_task(self.idle_stop(self.idle_timeout))
+		if self.idle_timeout: asyncio.create_task(self.idle_stop(self.idle_timeout))
 		server = await asyncio.start_server(self.conn_handle, **self.bind)
 		await server.serve_forever()
 
@@ -54,13 +63,10 @@ class HTTPSFragProxy:
 			' %s %s [buff=%d]', ':'.join(cid), method, url, len(http_data) )
 		cid.extend(dst)
 
-		if https := (method == 'CONNECT'): port_default = 443
+		if https := (method == 'CONNECT'): port_def = 443
 		elif not url.startswith('http://') or self.block_http: raise ValueError(url)
-		else: url, port_default = url[7:].split('/', 1)[0], 80
-		host, _, port = url.rpartition(':')
-		if host and port and port.isdigit(): port = int(port)
-		else: host, port = url, port_default
-		if host[0] == '[' and host[-1] == ']': host = host[1:-1] # raw ipv6
+		else: url, port_def = url[7:].split('/', 1)[0], 80
+		host, port = parse_ep(url, port_def)
 
 		try: xreader, xwriter = await asyncio.open_connection(host, port)
 		except OSError as err: return self.log.info( 'Connection [%s] to %s:%s'
@@ -101,6 +107,8 @@ class HTTPSFragProxy:
 
 
 def main(args=None):
+	host_def, port_def = '127.0.0.1', 8101
+
 	import argparse, textwrap, re
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
@@ -111,8 +119,8 @@ def main(args=None):
 			Despite the name, it should be set as "HTTP Proxy" in e.g. browsers, NOT HTTPS one.
 			Based on https://github.com/GVCoder09/NoDPI distributed under GPL v3 license.'''))
 	parser.add_argument('-i', '--bind',
-		metavar='host[:port]', default='127.0.0.1:8101', help=dd('''
-			Address/host and port to bind proxy server socket to (default: %(default)s).
+		metavar='host[:port]', default=f'{host_def}:{port_def}', help=dd('''
+			Address/host and/or port for proxy to listen on (defaults: %(default)s).
 			It should be used and accessible with e.g. http_proxy= env-var.
 			Ignored if process is started by systemd from a socket unit.'''))
 	parser.add_argument('-d', '--frag-domains', metavar='file', help=dd('''
@@ -138,18 +146,18 @@ def main(args=None):
 		sni_list = src.read().split()
 
 	sd_pid, sd_fds = (int(os.environ.get(f'LISTEN_{k}', 0)) for k in ['PID', 'FDS'])
-	if sd_pid == os.getpid() and sd_fds:
+	if sd := (sd_pid == os.getpid() and sd_fds):
 		if sd_fds > 1: return log.error( 'More than one socket passed'
 			'  from systemd, exiting (pid=%s fds=%s)', sd_pid, sd_fds ) or 1
 		log.debug('Listening on socket fd=3 received from systemd')
 		proxy = dict(sock=socket.socket(fileno=3))
 	else:
-		host, _, port = opts.bind.partition(':'); port = int(port or 8101)
+		host, port = parse_ep(opts.bind, host_def=host_def, port_def=port_def)
 		proxy = dict(host=host, port=port)
 	proxy = HTTPSFragProxy( sni_list=sni_list,
 		idle_timeout=opts.idle_timeout, block_http=opts.block_http, **proxy )
 
-	log.debug( 'Starting proxy (%s)...',
+	log.debug( 'Starting proxy on %s (%s)...', 'systemd-fd' if sd else f'{host} {port}',
 		f'{len(sni_list):,d} SNI domains' if sni_list is not None else 'fragmenting any SNI' )
 	return asyncio.run(proxy.run())
 
