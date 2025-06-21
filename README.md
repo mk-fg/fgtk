@@ -2419,6 +2419,9 @@ dedicated mailbox folder, and click-open video links from there in mpv,
 like one could before Aug 2020 when google decided to stop sending all update
 notification emails on that platform.
 
+Supports basic filtering by regexp-matching video names, for when YT channels
+have mixed types of videos, only some of which are interesting.
+
 [feedparser]: https://pythonhosted.org/feedparser/
 [EWMA]: https://en.wikipedia.org/wiki/Moving_average#Exponential_moving_average
 
