@@ -106,6 +106,8 @@ def md_clean(md, code_re, errs):
 				if st.list_start and level == 1 and line.startswith('  '): level -= 1
 				st.list_level -= level
 			if line.startswith('- '): st.list_level += 1; st.list_start = True
+			if m := re.search(r'(^| )`` .*? ``( |$)', line): # `` can get tricky
+				line = lines[n] = line[:m.start()] + ' ' + line[m.end():]
 			_find_code_start(n, line)
 
 		else:
