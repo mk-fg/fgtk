@@ -62,25 +62,24 @@ dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 fill = lambda s,w=90,ind='',ind_next='  ',**k: textwrap.fill(
 	s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
 
-class RXCNF:
-	'''One or multiple regexps connected by CNF ("product of sums") logic ∧∨¬ chars.
-		Example: ¬ rx1 ∧ rx2 ∨ rx3 ∧¬ rx4 - with mandatory spaces around separators.'''
-	op_not, op_and = 1, 2; rx = ex = None; ex_op = 0
-	def __init__(self, line):
-		self.line = line
-		if not (m := re.search(r'^¬ | [∧∨](¬)? ', line)): self.rx = re.compile(line); return
-		if '¬' in m[0]: self.ex_op |= self.op_not
-		if '∧' in m[0]: self.ex_op |= self.op_and
-		rx, ex = line[:m.start()], line[m.end():]
-		if not rx: rx = '$x' # '¬ rx' = '$x ∨¬ rx' where $x never matches anything
-		self.rx, self.ex = re.compile(rx), ex and RXCNF(line[m.end():])
-	def __repr__(self): return f'<RXCNF[ {self.line} ]>'
-	def search(self, s):
-		m, ex_not = bool(self.rx.search(s)), self.ex_op & self.op_not
-		if not self.ex: return m
-		if (ex_or := self.ex and not (self.ex_op & self.op_and)) and m: return True
-		mx = ex_not ^ self.ex.search(s)
-		return mx if ex_or and not m else (m and mx)
+class RX:
+	'''Can be just a python "re" regexp (case-insensitive by default),
+			or one or more /.../-wrapped regexps like <flags>/<regexp>/ [&& ...]
+			with optional flags and " && " AND-logic connectors.
+		<flags> can be empty or any combo of: ! - negation ("not match"),
+			I - case-sensitive, i - case-insensitive (already a default).'''
+	def __init__(self, s):
+		self.rx_list = list()
+		for n, rx in enumerate(s.split(' && ')):
+			if not (m := re.search(r'^([!iI]+)?/(.+)/$', rx)):
+				if n: raise ValueError('Chained regexps must be /.../-wrapped')
+				self.rx_list.append((False, re.compile(rx, re.I))); continue
+			self.rx_list.append(( '!' in (m[1] or ''),
+				re.compile(m[2], re.NOFLAG if 'I' not in (m[1] or '') else re.I) ))
+	def __repr__(self): return '<RX[ ' + ' && '.join(
+		(' !'[neg] + ' i'[bool(rx.flags & re.I)]).strip()
+			+ f'/{rx.pattern}/' for neg, rx in self.rx_list ) + ' ]>'
+	def check(self, s): return all(neg ^ bool(rx.search(s)) for neg, rx in self.rx_list)
 
 
 class YTFeed:
@@ -114,7 +113,7 @@ class YTFeed:
 		url, title = line if len(line) > 1 else (line[0], None)
 		if '||' in title:
 			title, title_filter = map(str.strip, title.split('||', 1))
-			title_filter = RXCNF(title_filter)
+			title_filter = RX(title_filter)
 		return cls(url, title, title_filter)
 
 	def ts_check_next(self):
@@ -130,7 +129,7 @@ class YTFeed:
 
 	def filter_check(self, title):
 		if not self.title_filter: return True
-		return self.title_filter.search(title)
+		return self.title_filter.check(title)
 
 
 class YTFeedIndex:
@@ -303,10 +302,12 @@ def main(args=None):
 		help='YT OPML export from https://www.youtube.com/subscription_manager?action_takeout=1 link.')
 	group.add_argument('-r', '--rss-list', metavar='file', help=dd('''
 		File with YT RSS/Atom feed URLs, one per line, with optional name/filters/comments after URL.
-		General line syntax is: [<URL> [<name>] [ || <rxcnf>]] [# <comment>]
+		General line syntax is: [<URL> [<name>] [ || <rx>]] [# <comment>]
 			Example: https://www.youtube.com/feeds/... MyChannel Reviews || (?i) - Review$
-		Where <rxcnf> can also be regexps connected by ∧∨¬ CNF logic chars,
-			for example: ¬ rx1 ∧ rx2 ∨ rx3 ∧¬ rx4 - with mandatory spaces around rx-separators.'''))
+		Where <rx> can be regexp (case-insensitive by default), or one or more /.../-wrapped
+			regexps like "<flags>/<regexp>/ [&& ...]" with optional flags and " && " AND-connectors.
+			<flags> can be empty or any combo of: ! - negation ("not match"),
+			I - case-sensitive, i - case-insensitive (already a default).'''))
 	group.add_argument('-c', '--opml-convert', action='store_true',
 		help='Append all new feeds from specified -o/--opml file to -r/--rss-list and exit.')
 
