@@ -111,8 +111,8 @@ class YTFeed:
 	def from_line(cls, line):
 		title_filter, line = None, line.strip().split(None, 1)
 		url, title = line if len(line) > 1 else (line[0], None)
-		if '||' in title:
-			title, title_filter = map(str.strip, title.split('||', 1))
+		if ' || ' in (title := title.split(' # ', 1)[0]):
+			title, title_filter = map(str.strip, title.split(' || ', 1))
 			title_filter = RX(title_filter)
 		return cls(url, title, title_filter)
 
@@ -302,8 +302,9 @@ def main(args=None):
 		help='YT OPML export from https://www.youtube.com/subscription_manager?action_takeout=1 link.')
 	group.add_argument('-r', '--rss-list', metavar='file', help=dd('''
 		File with YT RSS/Atom feed URLs, one per line, with optional name/filters/comments after URL.
-		General line syntax is: [<URL> [<name>] [ || <rx>]] [# <comment>]
-			Example: https://www.youtube.com/feeds/... MyChannel Reviews || (?i) - Review$
+		General line syntax is: <URL> [<name>] [ || <rx>] [ # <comment>]
+			Examples: https://www.youtube.com/feeds/... MyChannel Reviews || - Review$
+				https://... OtherChannel news no-summaries || /\\[News\\]/ && !/\\bSummary\\b/
 		Where <rx> can be regexp (case-insensitive by default), or one or more /.../-wrapped
 			regexps like "<flags>/<regexp>/ [&& ...]" with optional flags and " && " AND-connectors.
 			<flags> can be empty or any combo of: ! - negation ("not match"),
