@@ -86,26 +86,28 @@ def main(args=None):
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		usage='%(prog)s [opts] log-file unit-fnmatch',
+		usage='%(prog)s [opts] unit-fnmatch [log-file]',
 		formatter_class=argparse.RawTextHelpFormatter,
 		description='Log cgroup stats and systemd events for specified unit files until stopped.')
-	parser.add_argument('log_file',
-		metavar=f'log_file[:bytes={ev_log_bs}[:backups={ev_log_n}]]',
-		help=dd(f'''
+	parser.add_argument('unit_fnmatch', help=dd('''
+		fnmatch pattern for systemd unit name(s) to monitor.
+		Unit names list: systemctl list-units -ao json | jq -r '..|objects|.unit' | sort'''))
+	parser.add_argument('log_file', nargs='?', default='-',
+		metavar=f'log_file[:bytes={ev_log_bs}[:backups={ev_log_n}]]', help=dd(f'''
 			File to use for json data/events with an optional
 				[:bytes[:backups]] suffix (default :{ev_log_bs}:{ev_log_n}).
-			Can be e.g. %%3 to output to file descriptor 3, or '-' for stdout.
+			Can be e.g. %%3 to output to file descriptor 3, or '-' for stdout (default).
 			Won't be rotated if dev, fd or non-seekable, resolved to realpath if symlink.'''))
-	parser.add_argument('unit_fnmatch', help='fnmatch pattern for systemd unit name(s) to monitor.')
 	parser.add_argument('-i', '--poll-interval',
 		type=float, metavar='seconds', default=3.0,
 		help='Interval between polling datapoints from unit(s) cgroup(s). Default: %(default).1fs')
 	parser.add_argument('-n', '--new', action='store_true',
 		help='Only monitor unit(s) that get started after this script, not pre-exising ones.')
-	parser.add_argument('-s', '--stop', action='store_true',
-		help=dd('''
-			Stop after all monitored units exit.
-			Can be used with --new to log data for a single unit start/stop lifecycle.'''))
+	parser.add_argument('-s', '--stop', action='store_true', help=dd('''
+		Stop after all monitored units exit.
+		Can be used with --new to log data for a single unit start/stop lifecycle.'''))
+	parser.add_argument('-u', '--user', action='store_true',
+		help='Match systemd --user session units instead of --system ones.')
 	opts = parser.parse_args(args if args is not None else sys.argv[1:])
 
 	logging.basicConfig(level=logging.WARNING, format='{levelname} :: {message}', style="{")
@@ -142,12 +144,15 @@ def main(args=None):
 	ev_log.propagate = False
 	ev_log = lambda log=ev_log,**d: log.info('%s', json.dumps(dict(ts=time.time(), **d)))
 
+	sd_cmd = ['systemctl']
+	if opts.user: sd_cmd.append('--user')
+
 	if new := opts.new: unit_set = set()
 	else:
 		unit_st = op.itemgetter('load', 'active', 'sub')
 		unit_set = set( u['unit']
 			for u in json.loads(sp.run(
-				['systemctl', 'list-units', '-ao', 'json'],
+				[*sd_cmd, 'list-units', '-ao', 'json'],
 				check=True, stdout=sp.PIPE ).stdout)
 			if unit_st(u)[:2] == ('loaded', 'active') and
 				fnmatch.fnmatch(u['unit'], opts.unit_fnmatch) )
@@ -173,7 +178,7 @@ def main(args=None):
 
 		for u in set(unit_cg_map).difference(unit_set): del unit_cg_map[u] # stopped
 		for u in unit_set.difference(unit_cg_map): # new/started
-			cmd = sp.run(['systemctl', 'show', '-P', 'ControlGroup', u], stdout=sp.PIPE)
+			cmd = sp.run([*sd_cmd, 'show', '-P', 'ControlGroup', u], stdout=sp.PIPE)
 			if cmd.returncode: unit_cg_errs[u] += 1; continue
 			p = pl.Path(f'/sys/fs/cgroup/{cmd.stdout.decode().strip()}')
 			cg = unit_cg_map[u] = dict()

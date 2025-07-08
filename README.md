@@ -4723,7 +4723,7 @@ cgroup(s), docker containers and such (use e.g. [prometheus] for
 anything more long-term instead):
 
 ``` console
-# systemd-cglog -ns /dev/stdout 'docker-*.scope'
+# systemd-cglog -ns 'docker-*.scope'
 
 {"ts": 1657877464.7816184, "ev": "start", "u": "docker-ef7c216d.scope"}
 {"ts": 1657877464.7819324, "ev": "stat", "u": "docker-ef7c216d.scope",
