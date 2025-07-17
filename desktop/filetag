@@ -79,7 +79,7 @@ tag_map = dict(
 	# Code formats
 	code_ext = {
 		'py|tac': 'py', 'go': 'go', r'c(c|pp|xx|\+\+)?|hh?|lex|y(acc)?': 'c',
-		r'js(o?n(\.txt)?)?|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
+		r'js(o?n(\.txt)?)?|ts|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
 		'nim': 'nim', 'ex|exs|erl|hrl': 'erlang',
 		'unit|service|taget|mount|desktop|rules': 'conf',
 		'[sx]?htm(l[45]?)?|css|less|jade': 'html', 'x[ms]l|xsd|dbk': 'xml',
@@ -96,12 +96,12 @@ tag_map = dict(
 		r'|backup|default|example|sample|dist|\w+-new)|_t)*',
 	code_shebang = r'(?i)^#!((/usr/bin/env)?\s+)?(/.*/)?(?P<bin>\S+)',
 	code_bin = {
-		r'lua[-\d.]': 'lua', r'php\d?': 'php',
+		r'lua[-\d.]': 'lua', r'php\d?': 'php', r'node': 'js',
 		r'j?ruby(\d\.\d)?|rbx': 'ruby',
 		r'[jp]ython(\d(\.\d+)?)?': 'py',
-		'[gnm]?awk': 'awk',
-		r'(mini)?perl(\d(\.\d+)?)?': 'perl',
-		'wishx?|tcl(sh)?': 'tcl',
+		r'(mini)?perl(\d(\.\d+)?)?': 'perl', r'java': 'js',
+		r'stack': 'haskell', r'ocamlscript': 'ml ocaml',
+		'wishx?|tcl(sh)?': 'tcl', '[gnm]?awk': 'awk',
 		'scm|guile|clisp|racket|(sb)?cl|emacs': 'lisp',
 		'([bdo]?a|t?c|k|z)?sh': 'sh' },
 	code_path = {

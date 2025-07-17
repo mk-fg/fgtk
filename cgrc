@@ -95,7 +95,7 @@ setcg() {
 		u=$slice; [ "${u%.slice}" != "$u" ] || u="${u}.slice"
 		[ -z "$start" ] || systemctl "$t" start "$u"; }
 	[ -z "$unit" ] || { u=$unit; [ "${u%.$mode}" != "$u" ] || u="${u}.$mode"; }
-	cg=$(systemctl -q "$t" show -p ControlGroup --value -- "$u")
+	cg=$(systemctl -q "$t" show -P ControlGroup -- "$u")
 }
 
 procs=
