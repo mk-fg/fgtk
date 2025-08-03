@@ -79,7 +79,7 @@ tag_map = dict(
 	# Code formats
 	code_ext = {
 		'py|tac': 'py', 'go': 'go', r'c(c|pp|xx|\+\+)?|hh?|lex|y(acc)?': 'c',
-		r'js(o?n(\.txt)?)?|ts|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
+		r'js(o?n(\.txt)?)?|tsx?|coffee': 'js', 'co?nf|cf|cfg|ini': 'conf',
 		'nim': 'nim', 'ex|exs|erl|hrl': 'erlang',
 		'unit|service|taget|mount|desktop|rules': 'conf',
 		'[sx]?htm(l[45]?)?|css|less|jade': 'html', 'x[ms]l|xsd|dbk': 'xml',

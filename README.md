@@ -2957,7 +2957,8 @@ Current full list of checks that it runs:
 Useful for maintaining non-mkdocs .md files for git forges and such,
 where otherwise nothing will indicate any potential issues.
 
-["Basic markdown syntax/links checks ..." blog post] might have a bit more info/context for this script.
+["Basic markdown syntax/links checks ..." blog post] might have a bit more info/context for this script.\
+See also `-h/--help` for a list of unclear syntax choices and odd special-cases, if any.
 
 ["Basic markdown syntax/links checks ..." blog post]:
   https://blog.fraggod.net/2024/01/17/basic-markdown-syntaxlinks-checks-after-rst-md-migration.html

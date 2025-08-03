@@ -194,10 +194,10 @@ def md_parse_misc_anchors(md_lines, anchor_map):
 	return anchors
 
 
-def md_check_links(md_lines, errs):
+def md_check_links(md_lines, errs, sc=False):
 	'''Parse/check links in a cleaned-up/numbered md lines without code blocks.
 		Returns {target: [links...]} to run file/path/url/git and such checks on.'''
-	links, link_urls, st = dict(), dict(), adict(indented_url=None)
+	links, link_urls, link_urls_ex, st = dict(), dict(), dict(), adict(indented_url=None)
 
 	for n, line_raw in md_lines:
 		if not (line := md_esc_strip(line_raw.strip())): continue
@@ -218,19 +218,28 @@ def md_check_links(md_lines, errs):
 
 		for a, b, title in titles:
 			if not title: continue # [] after image-links and such
-			if title != title.strip(): continue
-			link = adict(n=n, title=(title := md_esc_restore(title)), url=None, dups=0)
+			if sc and title != title.strip(): continue # special-case - links with spaced titles
+			link = adict(n=n, title=(title := md_esc_restore(title)), url=None)
 			if urls := list(extract_toplevel(ls := line[b:], '()', False)):
 				ua, ub, url = urls[0]
 				if not ua: link.url = md_esc_restore(url)
-			if (link.url or '').startswith('#'): # these are special - for anchor-checks only
+			if (link.url or '').startswith('#'): # always special - for anchor-checks only
 				title = link.title = f'\uf001{link.title}'
-			if (link_chk := links.get(title)) and (link_chk.url or link.url or link_chk.dups):
-				errs.append(adict( n=n, t='link_dups',
-					s=f'Duplicate non-uniform link [{link.title}], matching one on line-{link_chk.n}' ))
-				link.dups = link_chk.dups + 1
-				if not link_chk.url: link.url = None # one of them needs an url
-			links[title] = link
+			links[title], link_chk = link, links.get(title)
+			if not link_chk: continue
+			# Special-case allows explicit-URL links to match uniform ones pointing to anchor
+			dup_warn = lambda err: errs.append(adict( n=n,
+				t='link_dups', s=f'Duplicate non-uniform link [{link.title}] {err}' ))
+			url_sc = (lu := link_urls.get(link.title)) and sc and lu.url.startswith('#')
+			if link_chk.url and not url_sc: dup_warn(f'on line-{link_chk.n}')
+			if link.url:
+				if lud := link_urls_ex.get(title):
+					warn = f'matching one on line-{lud.n}'
+					if lud: warn += f' (url-match={int(lu.url == lud.url)})'
+					dup_warn(warn)
+				elif not url_sc: dup_warn(f'with one on line-{link_chk.n}')
+				link_urls_ex[title] = link
+			if not link_chk.url: link.url = None # propagate missing url for a single check below
 
 	link_map = cs.defaultdict(list)
 	for link in links.values():
@@ -305,8 +314,7 @@ def main(argv=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
-		usage='%(prog)s [opts] [--] [file.md ...]',
-		description=dd('''
+		usage='%(prog)s [opts] [--] [file.md ...]', description=dd('''
 			Check all specified markdown files for common issues.
 			Returns non-zero exit code with stderr output if any of the checks detect issues.
 
@@ -338,6 +346,13 @@ def main(argv=None):
 		Only #-prefix headers are handled as such, all underlined ones are ignored.
 		This modifies files and suppresses normal script operation mode.
 		Exit code is 0 if no anchors were added, and non-zero otherwise.'''))
+	parser.add_argument('-s', '--special-cases', action='store_true', help=dd('''
+		Apply following exceptions/special-cases for syntax/checks:\n
+			- Links with space-prefix/suffix in title, like [ skip this](...) are left unchecked.
+			- Links with explicit URLs can have same title as header-links (to #<name> anchors).
+				Allows to point links to a repo script(s), while otherwise to its doc section.\n
+		Idea is to have this special md sub-syntax to prevent this tool from raising
+			warnings in places were it normally should, but are known to be non-issues.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
@@ -384,7 +399,7 @@ def main(argv=None):
 				err_code = 1
 			continue
 
-		link_map = md_check_links(md_lines, errs)
+		link_map = md_check_links(md_lines, errs, sc=opts.special_cases)
 
 		anchor_names = dict((a.name, a) for a in anchor_map.values())
 		anchor_names.update( (a.name, a) for a in
