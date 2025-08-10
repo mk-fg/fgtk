@@ -113,7 +113,7 @@ def main(args=None):
 	parser.add_argument('-x', '--convert', action='store_true', help=dd('''
 		Run ffmpeg commands to convert all files not
 			listed as PROBLEM or SKIP (unless -f/--force is used).'''))
-	parser.add_argument('--inplace', action='store_true', help=dd('''
+	parser.add_argument('-X', '--inplace', action='store_true', help=dd('''
 		Use destination filename directly instead of temporary files for conversion.'''))
 	parser.add_argument('-f', '--force', action='store_true', help=dd('''
 		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
