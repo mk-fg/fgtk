@@ -221,13 +221,14 @@ def feed_fetch(log, url, etag, **fp_parse_kws):
 	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
 	return feed.get('etag'), feed.entries
 
-def feed_process(log, feed, entries, ts, ts_since=None):
+def feed_process(log, feed, entries, ts, ts_since=None, ignore_shorts=False):
 	first_old_id = e_ts_prev = None
 	ewma_delay, ewma_a = feed.delay_ewma, feed.delay_ewma_a
 	emails, feed_ids, seen_ids = list(), dict(), feed.seen_entries or dict()
 
 	for e in entries:
 		if not feed.filter_check(e.title): continue
+		if ignore_shorts and '/shorts/' in e.link: continue
 
 		e_id, e_ts = feed.entry_id(e), calendar.timegm(e.published_parsed)
 		if not e_id: raise ValueError(f'Failed to get id for feed entry: {str_repr(e)}')
@@ -334,6 +335,8 @@ def main(args=None):
 		help='Limit on number of feeds to check in one run. Default or 0 - no limit.')
 	group.add_argument('-f', '--force', action='store_true',
 		help='Force-check feeds regardless of timestamps.')
+	group.add_argument('--no-shorts', action='store_true',
+		help='Filter-out and ignore "shorts" videos intended for phones in the feed.')
 
 	group = parser.add_argument_group('Debug options')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -410,8 +413,8 @@ def main(args=None):
 			ts_since = feed.ts_last_check or ts_new_feed
 		log.debug( 'Processing feed:'
 			' entries={} etag={!r} new-since={}', len(entries), etag, ts_since )
-		emails, ewma_delay, seen_ids = \
-			feed_process(feed_log, feed, entries, ts, ts_since)
+		emails, ewma_delay, seen_ids = feed_process(
+			feed_log, feed, entries, ts, ts_since, ignore_shorts=opts.no_shorts )
 		if emails and not opts.dry_run:
 			log.debug( 'Sending notification emails:'
 				' count={} delay={:.1f}', len(emails), opts.email_delay )
