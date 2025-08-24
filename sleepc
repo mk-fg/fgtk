@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os, sys, re, math, time, datetime as dt
+import os, sys, re, math, time, random, datetime as dt
 
 
 _td_days = dict(
@@ -111,6 +111,9 @@ def main(argv=None):
 		help='Print parsed time, but suppress countdown, acting more like "sleep" binary.')
 	parser.add_argument('-i', '--update-interval', type=float, metavar='sec', default=3,
 		help='Countdown timer update interval, in seconds. Default: %(default)ss')
+	parser.add_argument('-r', '--random', action='store_true', help=dd('''
+		Pick delay as a uniformly random amount of time in-between zero and specified amount.
+		Multiple commands can be chained to have minimum delay + random to max after that.'''))
 	opts = parser.parse_args()
 
 	ts_str = ' '.join(' '.join(opts.time_spec).replace('_', ' ').split())
@@ -120,13 +123,15 @@ def main(argv=None):
 		parser.error(
 			'Specified time-spec argument(s) cannot be in the past:\n'
 			f'  {ts_str!r} - parsed as {ts} [{ts_repr(ts, printf="%s ago")}]' )
-	print(f'Parsed time-spec {ts_str!r} as {ts} [{ts_repr(ts, printf="in %s")}]', flush=True)
+	print( f'Parsed time-spec {ts_str!r} as {ts}'
+		f' [{ts_repr(ts, printf="in %s")}{" or less" if opts.random else ""}]', flush=True )
 
 	delay_min, line_wipe = 0.1, '\x1b[2K\x1b[\rb'
 	tsx, tdx_str = ts.timestamp(), ''
 
 	while (tsx_now := time.time()) < tsx:
 		tdx, tdx_pad = tsx - tsx_now, len(tdx_str)
+		if opts.random: tdx = random.random() * tdx
 		delay = max(tdx, delay_min)
 		if opts.quiet: time.sleep(delay); continue
 		tdx_str = f'{dt.timedelta(seconds=int(tdx))} [{ts_repr(tdx, printf="%s left")}]'
