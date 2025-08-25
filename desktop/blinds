@@ -66,8 +66,10 @@ class BlindsConf:
 		' deletable skip_taskbar skip_pager urgency accept_focus'
 		' auto_startup_notification mnemonics_visible focus_visible' ).split()
 	wm_type_hints = Gdk.WindowTypeHint.NORMAL
-	wm_type_hints_all = dict(
-		(e.value_nick, v) for v, e in Gdk.WindowTypeHint.__enum_values__.items() if v )
+	wm_type_hints_all = dict( ((e.value_nick, v) for v, e in es.items() if v)
+		if (es := getattr(et := Gdk.WindowTypeHint, '__enum_values__', None))
+		else ((e.name.lower(), e.value) for e in et if e.value) )
+
 
 	win_css = ''
 	win_css_opts_tpl = '#blinds, #blinds * {{ background: {win_color}; }}\n'
@@ -167,13 +169,14 @@ class BlindsWindow(Gtk.ApplicationWindow):
 
 	def _window_key(self, w, ev, _masks=dict()):
 		if not _masks:
-			for st, mod in Gdk.ModifierType.__flags_values__.items():
-				if ( len(mod.value_names) != 1
-					or not mod.first_value_nick.endswith('-mask') ): continue
-				assert st not in _masks, [mod.first_value_nick, _masks[st]]
-				mod = mod.first_value_nick[:-5]
-				if mod.startswith('modifier-reserved-'): mod = 'res-{}'.format(mod[18:])
-				_masks[st] = mod
+			for st, mod in (
+					((v,m.first_value_nick) for v,m in es.items() if len(m.value_names) == 1)
+					if (es := getattr(et := Gdk.ModifierType, '__flags_values__', None))
+					else ((e.value, e.name.lower().replace('_', '-')) for e in et) ):
+				if not mod.endswith('-mask'): continue
+				assert st not in _masks, [mod, _masks[st]]
+				if mod.startswith('modifier-reserved-'): mod = f'res-{mod[18:]}'
+				_masks[st] = mod[:-5]
 		chk, keyval = ev.get_keyval()
 		if not chk: return
 		key_sum, key_name = list(), Gdk.keyval_name(keyval)
