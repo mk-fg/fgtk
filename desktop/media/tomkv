@@ -215,20 +215,22 @@ def main(args=None):
 			if skip and not opts.force: continue
 		src_list[n], p.src = p, srcx
 
-	## Deduplication of dst filenames
-	dst_name_aliases, dst_name_map, ext = dict(), dict(), p.ext and f'.{p.ext}'
-	dst_name_fmt = lambda p: dst_name_aliases.setdefault(p.src, p.fn + ext)
-	src_list = list(filter(None, src_list))
+	## Deduplication of destination filenames
+	dst_name_map = dict()
 	for p in sorted(src_list, key=lambda p: (p.fn, str(p.src))):
-		dst_name_map.setdefault(dst_name_fmt(p), list()).append(p)
-	for dst_name, ps in dst_name_map.items():
-		if len(ps) == 1: continue
-		nf = str(len(str(len(ps))))
-		for n, p in enumerate(ps, 1):
-			dst_name_aliases[p.src] = ('{}.{:0'+nf+'d}{}').format(p.fn, n, ext)
-	for p in src_list:
-		p.dst = p.tmp = (dst := dst_name_fmt(p))
-		if not opts.inplace: p.tmp = f'_tmp.{dst}'
+		p.tmp = p.dst = p.fn + (p.ext and f'.{p.ext}')
+		dst_name_map.setdefault(p.dst, list()).append(p)
+	for dst_name, ps in list(dst_name_map.items()):
+		nf = len(str(len(ps))) if (dedup := len(ps) > 1) else 1
+		for nf in range(nf, 50): # to fix secondary dups created by suffix
+			for n, p in enumerate(ps, 1):
+				if dedup:
+					fn = ('{}.{:0'+str(nf)+'d}{}').format(p.fn, n, p.ext and f'.{p.ext}')
+					if fn in dst_name_map: break
+					p.dst = p.tmp = fn
+				if not opts.inplace: p.tmp = f'_tmp.{p.tmp}'
+			else: break
+		else: parser.error(f'Destination filename deduplication failed for [ {dst_name} ]')
 
 	## Main ffmpeg conversion loop
 	dry_run, m = not opts.convert, len(src_list)
