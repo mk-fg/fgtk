@@ -28,6 +28,34 @@ def sz_repr(size, _units=list(
 	if u1 > 1: size = f'{size/u1:.1f}'
 	return f'{size}{u}'
 
+
+_td_days = dict(
+	y=365.2422, yr=365.2422, year=365.2422,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+
+def td_parse(td_str):
+	try: return float(td_str)
+	except: td = 0
+	if (m := _td_re.search(td_str)) and any(m.groups()):
+		# Short time offset like "3d 5h"
+		for n, units in enumerate((_td_days, _td_s)):
+			tdx = 0
+			for k, v in units.items():
+				if not m.group(k): continue
+				tdx += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+			td += (24*3600)**(1-n) * tdx
+		return td
+	if m := re.search(r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', td_str):
+		# [[HH:]MM:]SS where seconds can be fractional
+		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
+	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
+
 def td_repr(delta, units_max=2, units_res=None, _units=dict(
 		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
 	res, s, n_last = list(), abs(delta), units_max - 1
@@ -43,6 +71,21 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 		if n_last is True: break
 		s -= val * unit_s
 	return ' '.join(res) if res else '<1s'
+
+def retries_within_timeout(tries, timeout, delay_min=0, slack_k=0.1):
+	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
+	a, b, slack = 1, timeout, (delay_min or 1) * slack_k
+	backoff_func = lambda e,n: (e**n-1)/e
+	while True:
+		m, delays = (a + b) / 2, list()
+		for n in range(10_485_760):
+			if (td := backoff_func(m, n)) < delay_min: continue
+			delays.append(td)
+			if len(delays) >= tries: break
+		else: raise ValueError('Delays for parameters + slack take too long to pick')
+		if abs(error := sum(delays) - timeout) < slack: return delays
+		elif error > 0: b = m
+		else: a = m
 
 
 def parse_rgb10_pixfmts():
@@ -110,27 +153,54 @@ def main(args=None):
 				(e.g. ones that have multiple A/V streams or errors of any kind).
 			Does not run conversion by default, only prints actions to be done.'''))
 	parser.add_argument('src', nargs='+', help='File(s) to convert.')
-	parser.add_argument('-x', '--convert', action='store_true', help=dd('''
+
+	group = parser.add_argument_group('General modes of operation')
+	group.add_argument('-x', '--convert', action='store_true', help=dd('''
 		Run ffmpeg commands to convert all files not
 			listed as PROBLEM or SKIP (unless -f/--force is used).'''))
-	parser.add_argument('-X', '--inplace', action='store_true', help=dd('''
-		Use destination filename directly instead of temporary files for conversion.'''))
-	parser.add_argument('-f', '--force', action='store_true', help=dd('''
-		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
-	parser.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
-		Process files with multiple A/V streams, encoding first stream from those.'''))
-	parser.add_argument('-q', '--quiet', action='store_true', help=dd('''
+	group.add_argument('-n', '--skip-n', metavar='n', type=int, help=dd('''
+		Skip first N files that'd have been processed otherwise.
+		Can be used to resume a long operation, using number from
+			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
+	group.add_argument('-q', '--quiet', action='store_true', help=dd('''
 		Don't print any WARN/SKIP info about files that seem to be encoded properly.'''))
-	parser.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
+	group.add_argument('-w', '--wait', metavar='timeout [/ check-interval]', help=dd('''
+		Wait for all source file(s) to appear before running any kind of probes/processing.
+		Timeout value will be divided into <60 exponentially-spaced checks,
+			with min interval of 3s, and optional explicitly-specified check-interval.
+		Wait/iterval can be a number of seconds or [[HH:]MM:]SS[.MS] or short time-delta
+			like "30s", "10min", "1h 20m", "1d12h5m". Intended for downloads or proc-pipelines.
+		Operation can be aborted after file(s) appear(s) due to format quirks,
+			so might be a good idea to double-check formats and all processing-related opts.'''))
+
+	group = parser.add_argument_group('Processing tweaks')
+	group.add_argument('-f', '--force', action='store_true', help=dd('''
+		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
+	group.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
+		Process files with multiple A/V streams, encoding first stream from those.'''))
+	group.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
+		Apply and strip ffmpeg params stored in filenames.
+		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
+		Where "<opts>" part can have any number of following options, concatenated:
+			+ss=<time> - translated to "-ss <time>" for ffmpeg command.
+			+to=<time> - "-to <time>" for ffmpeg - stop time to cut video short at.
+		Filename example: video.tomkv+ss=1:23+to=4:56.mp4'''))
+
+	group = parser.add_argument_group('File naming/paths')
+	group.add_argument('-X', '--inplace', action='store_true', help=dd('''
+		Use destination filename directly instead of temporary files for conversion.'''))
+	group.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
 		Existing path to store resulting files in. Defaults to current dir.'''))
-	parser.add_argument('--name',
+	group.add_argument('--name',
 		metavar='tpl', default='{name}.mkv', help=dd('''
 			Template to rename resulting file(s), instead of default: %(default)s
 			Can be used to set non-mkv container format, e.g. mp4.
 				ffmpeg auto-detects it from extension, so it must be something conventional.
 			Names are deduplicated with number-suffix when multiple sources are used.
 			Substituted keys: "name" - source filename without extension.'''))
-	parser.add_argument('-r', '--rm-list', metavar='file[:ratio]', help=dd('''
+
+	group = parser.add_argument_group('Make a list of converted files')
+	group.add_argument('-r', '--rm-list', metavar='file[:ratio]', help=dd('''
 		Generate a list of files to cleanup after conversion, one per line.
 		It will have realpath of all source files by default, unless ratio number
 			(float in 0-1.0 range) is also specified, colon-separated after filename.
@@ -142,29 +212,39 @@ def main(args=None):
 			rm when replacing old ones with converted versions,
 			without unnecessary replacement if there's not enough benefit.
 		Specified list file is always overwritten.'''))
-	parser.add_argument('-R', '--rm-list-regen', action='store_true', help=dd('''
+	group.add_argument('-R', '--rm-list-regen', action='store_true', help=dd('''
 		When using -n/--skip-n or similar options,
 			still check file sizes when they exist, and put them on the list.
 		Can be used to make -r/--rm-list with new compression ratio target,
 			by re-running script at any time with -n/--skip-n covering processed files.'''))
-	parser.add_argument('-n', '--skip-n', metavar='n', type=int, help=dd('''
-		Skip first N files that'd have been processed otherwise.
-		Can be used to resume a long operation, using number from
-			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
-	parser.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
-		Apply and strip ffmpeg params stored in filenames.
-		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
-		Where "<opts>" part can have any number of following options, concatenated:
-			+ss=<time> - translated to "-ss <time>" for ffmpeg command.
-			+to=<time> - "-to <time>" for ffmpeg - stop time to cut video short at.
-		Filename example: video.tomkv+ss=1:23+to=4:56.mp4'''))
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	src_list = list()
-	for src in opts.src:
-		try: src_list.append((src := pl.Path(src), srcx := src.resolve(strict=True)))
-		except FileNotFoundError: parser.error(f'Source path missing/inaccessible: {src}')
-		if '\n' in f'{src} {srcx}': parser.error(f'Source path with newline in it: {src!r}')
+	## Wait for source files if necessary
+	if opts.wait:
+		delays, delay_min = opts.wait.split('/', 1), 3
+		if len(delays) == 1:
+			n = min(60, round((td := td_parse(delays[0].strip())) / delay_min))
+			if td < delay_min * 2: delay_min, n = 0, 5
+			delays = retries_within_timeout(n, td, delay_min, slack_k=0.5)
+		elif len(delays) != 2: parser.error('-w/--wait should be: timeout [/ check-interval]')
+		else:
+			span, interval = (td_parse(s.strip()) for s in delays); delays.clear()
+			while sum(delays) < span: delays.append(interval or delay_min)
+	while True:
+		src_list = list()
+		for src in opts.src:
+			try: src_list.append((src := pl.Path(src), srcx := src.resolve(strict=True)))
+			except FileNotFoundError:
+				if opts.wait: break
+				parser.error(f'Source path missing/inaccessible: {src}')
+			if '\n' in f'{src} {srcx}': parser.error(f'Source path with newline in it: {src!r}')
+		else: break
+		if not opts.wait: break
+		if delays: time.sleep(delays.pop()); continue
+		parser.error('Missing source file(s) after -w/--wait timeout expired')
+
+	## Misc init stuff
 	if opts.dst_dir: os.chdir(opts.dst_dir)
 	if rm_list := opts.rm_list:
 		rm_list, rm_list_ratio = ( (rm_list, math.inf)
