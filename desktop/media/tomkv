@@ -72,17 +72,18 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 		s -= val * unit_s
 	return ' '.join(res) if res else '<1s'
 
-def retries_within_timeout(tries, timeout, delay_min=0, slack_k=0.1):
-	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
-	a, b, slack = 1, timeout, (delay_min or 1) * slack_k
-	backoff_func = lambda e,n: (e**n-1)/e
+def retries_within_timeout(tries, timeout, delay_min=0, slack=None):
+	'Return list of delays to make exactly n tires within timeout'
+	if tries * delay_min * 1.1 > timeout: raise ValueError('tries * delay_min <~ timeout')
+	a, b, slack = 1, timeout, slack or max(0.5 * delay_min, 0.1 * (timeout / tries))
+	backoff_func = lambda e,n: (e**n - 1) / e
 	while True:
 		m, delays = (a + b) / 2, list()
-		for n in range(10_485_760):
+		for n in range(100_000):
 			if (td := backoff_func(m, n)) < delay_min: continue
 			delays.append(td)
 			if len(delays) >= tries: break
-		else: raise ValueError('Delays for parameters + slack take too long to pick')
+		else: slack *= 2; continue
 		if abs(error := sum(delays) - timeout) < slack: return delays
 		elif error > 0: b = m
 		else: a = m
@@ -224,8 +225,8 @@ def main(args=None):
 	if opts.wait:
 		delays, delay_min = opts.wait.split('/', 1), 3
 		if len(delays) == 1:
-			n = min(60, round((td := td_parse(delays[0].strip())) / delay_min))
-			if td < delay_min * 2: delay_min, n = 0, 5
+			n = min(60, round((td := td_parse(delays[0].strip())) / (delay_min * 2)))
+			if td < delay_min * 3: delay_min, n = 0, 5 # for quick timeout
 			delays = retries_within_timeout(n, td, delay_min, slack_k=0.5)
 		elif len(delays) != 2: parser.error('-w/--wait should be: timeout [/ check-interval]')
 		else:
