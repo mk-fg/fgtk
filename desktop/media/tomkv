@@ -301,6 +301,8 @@ def main(args=None):
 				else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
 			if skip and not opts.force: continue
 		src_list[n], p.src = p, srcx
+	if not (src_list := list(filter(None, src_list))):
+		parser.error('No non-skipped files left to process')
 
 	## Deduplication of destination filenames
 	dst_name_map = dict()
