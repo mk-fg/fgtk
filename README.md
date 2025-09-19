@@ -257,6 +257,7 @@ Contents - links to doc section for each script here:
     - [sqlite-python-concurrency-test](#hdr-sqlite-python-concurrency-test)
     - [numfmt.awk](#hdr-numfmt.awk)
     - [nft-ddos](#hdr-nft-ddos)
+    - [nft-set-to-ranges](#hdr-nft-set-to-ranges)
 
 
 
@@ -5210,6 +5211,29 @@ See [nftables rate-limiting against low-effort DDoS attacks] blog post for more 
 [nftables]: https://wiki.nftables.org/
 [nftables rate-limiting against low-effort DDoS attacks]:
   https://blog.fraggod.net/2025/01/16/nftables-rate-limiting-against-low-effort-ddos-attacks.html
+
+<a name=hdr-nft-set-to-ranges></a>
+#### [nft-set-to-ranges](scraps/nft-set-to-ranges)
+
+Python script to load `nft -j list set inet filter <name>` json-export of [nftables]
+IPv4/IPv6 address set  and map addresses in there to RIPE and ASN IP-ranges.
+
+Shows how many IPs are in which range (in most-addrs-first order),
+and a breakdown for any relevant sub-ranges found within those.
+
+Intended to go over a bunch of nftables-blocked IPs and check if maybe they
+belong to specific range(s) that should be blocked more generally, instead of
+blocking individual addresses in there.
+
+Does not typically help against DDoS attacks, LLM-scraping, or similar malicious abuse
+intended to evade such obvious filters and originate from everywhere on-purpose.
+
+Uses [pyasn module] plus local copies of [RIPE database] (~350M as of 2025,
+only "inetnum" IPv4 ranges from there) and ASN database (~100M, IPv4+IPv6) -
+see `-h/--help` output for specific commands to fetch those.
+
+[pyasn module]: https://github.com/hadiasghari/pyasn
+[RIPE database]: https://ftp.ripe.net/ripe/dbase/
 
 
 

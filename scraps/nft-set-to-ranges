@@ -1,0 +1,162 @@
+#!/usr/bin/env python
+
+import ipaddress as ip, pathlib as pl, collections as cs
+import os, sys, re, json, gzip, bisect, time
+
+
+class RipeDB:
+
+	@classmethod
+	def parse(cls, src): # parse from ripe.db.gz
+		nets = set()
+		for line in src:
+			if (n := line.find(b'inetnum:')) == -1: continue
+			rng = line[n+8:].strip().decode().split()
+			if not (rng and rng[0][0].isdigit()): continue # e.g. "inetnum: OPTI-SPE-NET"
+			if len(rng) != 3 or rng[1] != '-':
+				rng = rng[0].split(',v', 1)[0]; a, b = rng.rsplit('-', 1)
+				a, b = a, a.rsplit('.', 1)[0] + f'.{b}'
+			else: a, b = rng[0], rng[2]
+			for net in ip.summarize_address_range(ip.ip_address(a), ip.ip_address(b)):
+				if net.version == 6: raise ValueError('Loading RIPE IPv6 nets is not implemented')
+				nets.add(net)
+		if not nets: raise ValueError('Failed to parse any networks from source file')
+		return cls(sorted(nets))
+
+	@classmethod
+	def load(cls, src):
+		nets = set()
+		for line in src: nets.add(ip.ip_network(line.strip().decode()))
+		return cls(nets)
+
+	def __init__(self, nets=None):
+		self.nets = nets or list(); self.sz = len(self.nets)
+
+	def export(self, p):
+		p_tmp = pl.Path(str(p := pl.Path(p).resolve()) + '.new')
+		try:
+			with gzip.open(p_tmp, 'wb') as dst:
+				dst.write(b'# ripedb-ip-ranges\n')
+				for net in sorted(self.nets): dst.write(f'{net}\n'.encode())
+			p_tmp.rename(p)
+		finally: p_tmp.unlink(missing_ok=True)
+
+	def lookup(self, addr_or_net):
+		net, net_ripe = addr_or_net, None
+		if isinstance(net, str): net = (ip.ip_address if '/' not in net else ip.ip_network)(net)
+		if net.version == 6: return # RIPE inetnum is IPv4-only
+		if not isinstance(net, ip.IPv4Network): net = ip.ip_network(f'{net}/32')
+		for n in range(33):
+			if net in self.nets: return net
+			net = net.supernet()
+
+
+def main(argv=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter,
+		description=dd('''
+			Print RIPE/ASN ranges for IP addresses of NFTables set.
+			Set data can be exported using: nft -j list set inet filter <name>
+
+			Requires full RIPE database downloaded from https://ftp.ripe.net/ripe/dbase/ (~350M):
+				curl -OL https://ftp.ripe.net/ripe/dbase/ripe.db.gz
+
+			Requires pyasn database downloaded (~100M) and converted to IPASN format:
+				pyasn_util_download.py -46
+				pyasn_util_convert.py --compress --single rib.20250919.0400.bz2 ipasn.dat.gz
+
+			All input file arguments/options can be specified as a path, or "-"
+				to read from stdin, or %%-prefixed number for any file descriptor (e.g. %%3).'''))
+
+	group = parser.add_argument_group('Input data')
+	group.add_argument('set_json', nargs='?', help=dd('''
+		NFTables IPv4/IPv6 set exported in JSON format (with -j/--json option).'''))
+	group.add_argument('--ipasn', metavar='file', default='ipasn.gz', help=dd('''
+		IPASN database from pyasn_util_download/convert scripts.
+		Special value @ can be specified to not use this db. Default: %(default)s'''))
+	group.add_argument('--ripedb', metavar='file', default='ripe.db.gz', help=dd('''
+		Either full downloaded RIPE database in a gzipped format (~350M), or a
+			converted one (faster to load) after using --ripedb-convert option (auto-detected).
+		Special value @ can be specified to not use this db. Default: %(default)s'''))
+	group.add_argument('--ripedb-convert', metavar='file', help=dd('''
+		Convert, gzip and save RIPE database specified with --ripedb
+			option to a smaller file containing only "inetnum" IP ranges from it.
+		Path to an output file (~12M) should be specified for this option.'''))
+
+	group = parser.add_argument_group('Output limits [ NOTE: defaults are for IPv4s ]')
+	group.add_argument('-b', '--max-cidr-bits', metavar='bits', type=int, default=17,
+		help='Return nets like .../<bits> or smaller, to avoid 0.0.0.0/8. Default: %(default)s')
+	group.add_argument('-B', '--min-cidr-bits', metavar='bits', type=int, default=31,
+		help='Do not return nets smaller than .../<bits>. Default: %(default)s')
+	group.add_argument('-n', '--min-addrs', metavar='n', type=int, default=3,
+		help='Only print ranges that include at least this many addrs. Default: %(default)s')
+	group.add_argument('-r', '--ranges-only', action='store_true', help=dd('''
+		Only print non-overlapping ranges that work with all other limits,
+			one per line, without address counts or any other information.'''))
+
+	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+	def _src_file(src, binary=False):
+		if not (p := src) or p == '-': return sys.stdin if not binary else sys.stdin.detach()
+		else: return open(p if p[0] != '%' else int(p[1:]), 'r' if not binary else 'rb')
+	out = print if not (p_nets := opts.ranges_only) else lambda s,**k: None
+
+	with _src_file(opts.set_json) as src: nft_data = json.load(src)
+	if opts.ipasn == '@': asndb = type(
+		'ASNDB', (object,), dict(lookup=lambda addr: (None, None)) )
+	else:
+		with _src_file(opts.ipasn) as src:
+			import pyasn # https://github.com/hadiasghari/pyasn
+			asndb = pyasn.pyasn(ipasn_file=None, ipasn_string=src.read())
+	if opts.ripedb == '@': ripedb = RipeDB()
+	else:
+		with _src_file(opts.ripedb, binary=True) as src_gz, gzip.open(src_gz) as src:
+			if src.readline().strip() != b'# ripedb-ip-ranges': ripedb = RipeDB.parse(src)
+			else: ripedb = RipeDB.load(src)
+
+	if p := opts.ripedb_convert:
+		ripedb.export(p)
+		return out(f'Gzipped ripedb inetnum CIDRs exported ({ripedb.sz:,d} total): {p}')
+
+	addrs = set()
+	for rules in nft_data['nftables']:
+		if 'set' not in rules: continue
+		for e in rules['set']['elem']:
+			addrs.add(ip.ip_address(e['elem']['val']))
+	addrs = sorted(addrs)
+	out(f'Parsed addresses: {len(addrs):,d}')
+
+	prefix_bits = lambda o: [32, 128][o and o.version == 6]
+	nets, ipnet = cs.Counter(), ip.ip_network
+	for addr in addrs:
+		net = net_ripe = ripedb.lookup(addr)
+		asn, net_asn = asndb.lookup(str(addr))
+		if not net: net = ipnet(net_asn or f'{addr}/{prefix_bits(addr)}')
+		if net_asn and (net_asn := ipnet(net_asn)).prefixlen <= net.prefixlen: net_asn = None
+		for net in net, net_asn:
+			if net and opts.max_cidr_bits <= net.prefixlen <= opts.min_cidr_bits: nets[net] += 1
+	nets_mc, n = dict(), opts.min_addrs
+	for net, addrs in nets.most_common():
+		if addrs >= n: nets_mc[net] = addrs
+	out(f'Networks with {n:,d}+ addrs: {len(nets_mc):,d}', end='\n\n')
+
+	lines_last = 0
+	for net, addrs in list(nets_mc.items()):
+		if net not in nets_mc: continue # already printed as subnet
+		lines = [f'{net} {addrs:,d}' if not p_nets else str(net)]; del nets_mc[net]
+		for net2, addrs in list(nets_mc.items()):
+			if net2 == net or not net2.subnet_of(net): continue
+			if not p_nets: lines.append(f'  {net2} {addrs:,d}')
+			del nets_mc[net2]
+		if lines_last and (lines_last > 1 or len(lines) > 1): print()
+		for ln in lines: print(ln)
+		lines_last = len(lines)
+
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
