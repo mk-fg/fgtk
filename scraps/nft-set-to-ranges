@@ -57,12 +57,13 @@ def main(argv=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
-		description=dd('''
+		usage='%(prog)s [opts] nft-set.json', description=dd('''
 			Print RIPE/ASN ranges for IP addresses of NFTables set.
 			Set data can be exported using: nft -j list set inet filter <name>
 
 			Requires full RIPE database downloaded from https://ftp.ripe.net/ripe/dbase/ (~350M):
 				curl -OL https://ftp.ripe.net/ripe/dbase/ripe.db.gz
+				%(prog)s --ripedb-convert ripe.db.gz
 
 			Requires pyasn database downloaded (~100M) and converted to IPASN format:
 				pyasn_util_download.py -46
@@ -72,8 +73,8 @@ def main(argv=None):
 				to read from stdin, or %%-prefixed number for any file descriptor (e.g. %%3).'''))
 
 	group = parser.add_argument_group('Input data')
-	group.add_argument('set_json', nargs='?', help=dd('''
-		NFTables IPv4/IPv6 set exported in JSON format (with -j/--json option).'''))
+	group.add_argument('nftset_json', nargs='?', help=dd('''
+		NFTables IPv4/IPv6 set exported in JSON format (with -j/--json option). Default: stdin'''))
 	group.add_argument('--ipasn', metavar='file', default='ipasn.gz', help=dd('''
 		IPASN database from pyasn_util_download/convert scripts.
 		Special value @ can be specified to not use this db. Default: %(default)s'''))
@@ -84,7 +85,7 @@ def main(argv=None):
 	group.add_argument('--ripedb-convert', metavar='file', help=dd('''
 		Convert, gzip and save RIPE database specified with --ripedb
 			option to a smaller file containing only "inetnum" IP ranges from it.
-		Path to an output file (~12M) should be specified for this option.'''))
+		Path to an output file (~12M) should be specified for this opt, can be same as --ripedb.'''))
 
 	group = parser.add_argument_group('Output limits [ NOTE: defaults are for IPv4s ]')
 	group.add_argument('-b', '--max-cidr-bits', metavar='bits', type=int, default=17,
@@ -104,22 +105,21 @@ def main(argv=None):
 		else: return open(p if p[0] != '%' else int(p[1:]), 'r' if not binary else 'rb')
 	out = print if not (p_nets := opts.ranges_only) else lambda s,**k: None
 
-	with _src_file(opts.set_json) as src: nft_data = json.load(src)
+	if opts.ripedb == '@': ripedb = RipeDB()
+	else:
+		with _src_file(opts.ripedb, binary=True) as src_gz, gzip.open(src_gz) as src:
+			if src.readline().strip() != b'# ripedb-ip-ranges': ripedb = RipeDB.parse(src)
+			else: ripedb = RipeDB.load(src)
+	if p := opts.ripedb_convert:
+		ripedb.export(p)
+		return out(f'Gzipped ripedb inetnum CIDRs exported ({ripedb.sz:,d} total): {p}')
 	if opts.ipasn == '@': asndb = type(
 		'ASNDB', (object,), dict(lookup=lambda addr: (None, None)) )
 	else:
 		with _src_file(opts.ipasn) as src:
 			import pyasn # https://github.com/hadiasghari/pyasn
 			asndb = pyasn.pyasn(ipasn_file=None, ipasn_string=src.read())
-	if opts.ripedb == '@': ripedb = RipeDB()
-	else:
-		with _src_file(opts.ripedb, binary=True) as src_gz, gzip.open(src_gz) as src:
-			if src.readline().strip() != b'# ripedb-ip-ranges': ripedb = RipeDB.parse(src)
-			else: ripedb = RipeDB.load(src)
-
-	if p := opts.ripedb_convert:
-		ripedb.export(p)
-		return out(f'Gzipped ripedb inetnum CIDRs exported ({ripedb.sz:,d} total): {p}')
+	with _src_file(opts.nftset_json) as src: nft_data = json.load(src)
 
 	addrs = set()
 	for rules in nft_data['nftables']:
