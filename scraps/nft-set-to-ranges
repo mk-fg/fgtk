@@ -75,7 +75,7 @@ def main(argv=None):
 	group = parser.add_argument_group('Input data')
 	group.add_argument('nftset_json', nargs='?', help=dd('''
 		NFTables IPv4/IPv6 set exported in JSON format (with -j/--json option). Default: stdin'''))
-	group.add_argument('--ipasn', metavar='file', default='ipasn.gz', help=dd('''
+	group.add_argument('--ipasn', metavar='file', default='ipasn.dat.gz', help=dd('''
 		IPASN database from pyasn_util_download/convert scripts.
 		Special value @ can be specified to not use this db. Default: %(default)s'''))
 	group.add_argument('--ripedb', metavar='file', default='ripe.db.gz', help=dd('''
