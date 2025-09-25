@@ -524,17 +524,16 @@ class TVF:
 			file_prefix = file_prefix_dir / name
 
 		vod_cache = ft.partial(TVFFileCache, file_prefix)
+		meta_vc = ctx.enter_context(vod_cache('info.json'))
+		meta = json.loads(meta_vc.cached or 'null')
 
 		if self.conf.ytdl_output_format:
-			ytdl_fn_vc = ctx.enter_context(vod_cache('ytdl_filename'))
-			ytdl_filename = ytdl_fn_vc.cached
-			if not ytdl_filename:
+			if not meta:
 				ytdl_output_opts = list() \
 					if self.conf.ytdl_output_format is True \
 					else ['--output', self.conf.ytdl_output_format]
-				with vod_cache('info.json') as vc: meta = json.loads(
-					vc.cached or vc.update(await self.ytdl_run('-sj', *ytdl_output_opts, url, out=True)) )
-				ytdl_filename = meta['filename']
+				meta = json.loads(await self.ytdl_run('-sj', *ytdl_output_opts, url, out=True))
+			ytdl_filename = meta['filename']
 			self.log.debug(
 				'Using youtube-dl output filename (template={}): {}',
 				'[default]' if self.conf.ytdl_output_format
@@ -552,15 +551,14 @@ class TVF:
 				' for existing file: {} (rename/remove it to force)', file_dst_done )
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
-		if self.conf.ytdl_output_format and not ytdl_fn_vc.cached: ytdl_fn_vc.update(ytdl_filename)
+		if not meta: meta = json.loads(await self.ytdl_run('-sj', url, out=True))
+		if not meta_vc.cached: meta_vc.update(json.dumps(meta))
 		http = await ctx.enter_async_context(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
 		self.log.info( '--- Downloading VoD {} ({}url={}){}',
 			file_dst_path, f'final-name={str(file_dst_done)!r}, '
 				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
-		with vod_cache('info.json') as vc: meta = json.loads(
-			vc.cached or vc.update(await self.ytdl_run('-sj', url, out=True)) )
 		url_pls, headers = meta['url'], meta['http_headers']
 		assert ' ' not in url_pls, url_pls # can return URLs of multiple flvs for *really* old VoDs
 		url_base = url_pls.rsplit('/', 1)[0]
