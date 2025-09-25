@@ -17,7 +17,7 @@ class TVFConfig:
 	slice_scatter_interval = None
 
 	aria2c_opts = None # overrides opts in aria2_conf_func
-	ytdl_opts = None
+	ytdl_cmd = ytdl_opts = None
 	ytdl_output_format = None
 	aiohttp_opts = dict(
 		timeout=aiohttp.ClientTimeout(connect=60, sock_read=30) )
@@ -400,7 +400,7 @@ class TVF:
 	async def __aexit__(self, *err): pass
 
 	async def ytdl_run(self, ytdl_op, *args, check=True, out=False, **popen_kws):
-		cmd = ['youtube-dl']
+		cmd = [self.conf.ytdl_cmd]
 		if self.conf.verbose: cmd.append('--verbose')
 		cmd = cmd + [ytdl_op] + (self.conf.ytdl_opts or list()) + list(args)
 		self.log.debug('Running "youtube-dl %s" command: %s', ytdl_op, ' '.join(cmd))
@@ -441,16 +441,15 @@ class TVF:
 
 		if self.conf.ytdl_output_format:
 			if not meta:
-				ytdl_output_opts = list() \
-					if self.conf.ytdl_output_format is True \
-					else ['--output', self.conf.ytdl_output_format]
-				meta = json.loads(await self.ytdl_run('-sj', *ytdl_output_opts, url, out=True))
-			ytdl_filename = meta['filename']
+				ytdl_fn = ( [] if self.conf.ytdl_output_format is True
+					else ['--output', self.conf.ytdl_output_format] )
+				meta = json.loads(await self.ytdl_run('-sj', *ytdl_fn, url, out=True))
+			ytdl_fn = meta['filename']
 			self.log.debug(
 				'Using youtube-dl output filename (template=%s): %s',
 				'[default]' if self.conf.ytdl_output_format
-					is True else self.conf.ytdl_output_format, ytdl_filename )
-			file_dst_done = file_dst_path.parent / ytdl_filename
+					is True else self.conf.ytdl_output_format, ytdl_fn )
+			file_dst_done = file_dst_path.parent / ytdl_fn
 		elif self.conf.file_part_suffix:
 			file_dst_done = file_dst_path
 			file_dst_path = file_dst_path.parent / (file_dst_path.name[:-4] + '.part.mp4')
@@ -669,7 +668,7 @@ def main(args=None, conf=None):
 		See also -o/--ytdl-output-format option wrt destination filenames for urls.'''))
 	parser.add_argument('file_prefix', nargs='?', help=dd('''
 		File prefix for destination file and temp dir.
-		Used even with -o/--ytdl-output-format while download is in progress.'''))
+		Still used with -o/--ytdl-output-format while download is in progress.'''))
 	parser.add_argument('more_url_and_prefix_pairs', nargs='*',
 		help='Any number of extra urls or url/file_prefix pairs can be specified.')
 
@@ -681,7 +680,8 @@ def main(args=None, conf=None):
 		type=parse_pos_spec, metavar='time', help=dd('''
 			Only download video chunks after specified start position.
 			Time can be formatted as "[[hours:]minutes:]seconds" or e.g. "XhYmZs",
-				with any h/m/s component being optional, and they all added together.'''))
+				with any h/m/s component being optional, and they all added together.
+			Examples: 120 (seconds), 17m, 2:55:30, 20m40s, 30:00, 1h16m, 3h11m49s.'''))
 	group.add_argument('-l', '--length',
 		type=parse_pos_spec, metavar='time', help=dd('''
 			Only download specified length of the video (from specified start or beginning).
@@ -701,24 +701,27 @@ def main(args=None, conf=None):
 				to easily narrow down which part of it is interesting and worth downloading in full.'''))
 
 	group = parser.add_argument_group('youtube-dl/aria2c options')
+	group.add_argument('-c', '--ytdl-cmd', metavar='command', help=dd('''
+		youtube-dl/yt-dlp command or path.
+		Default is to use whichever one of youtube-dl/yt-dlp is available in PATH.'''))
 	group.add_argument('-F', '--ytdl-list-formats', action='store_true', help=dd('''
 		Do not download anything,
 			just list formats available for each specified URL and exit.'''))
 	group.add_argument('-y', '--ytdl-opts', action='append', metavar='opts', help=dd('''
-		Extra opts for youtube-dl --get-url/--get-filename commands.
+		Extra opts for youtube-dl metadata-fetching command.
 		Will be split on spaces, unless option is used multiple times.'''))
 	group.add_argument('-o', '--ytdl-output-format',
 		metavar='ytdl-output-template', const=True, nargs='?', help=dd('''
-			Use youtube-dl output filename template.
-			Passed to youtube-dl --get-filename as the
-				--output argument to get the final file name for the video.
+			Use specified youtube-dl output filename template for a final downloaded file.
+			Passed to youtube-dl --dump-json as the --output
+				argument to get the final file name for the video.
+			Prefix-name argument is still used while download is in-progress, only renamed at the end.
 			If option is used, but no format is specified, youtube-dl's default format will be used.'''))
-	group.add_argument('-a', '--aria2c-opts',
-		action='append', metavar='opts', help=dd('''
-			Extra options to store in aria2c configuration file.
-			These are same as long-form command-line options, but without double-dash prefix.
-			Will be split on spaces, unless option is used multiple times.
-			Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"'''))
+	group.add_argument('-a', '--aria2c-opts', action='append', metavar='opts', help=dd('''
+		Extra options to store in aria2c configuration file.
+		These are same as long-form command-line options, but without double-dash prefix.
+		Will be split on spaces, unless option is used multiple times.
+		Example: --aria2c-opts "lowest-speed-limit=20K max-overall-download-limit=1M"'''))
 	group.add_argument('--aria2c-opts-print', action='store_true', help=dd('''
 		Print template for aria2c configuration file
 			that will be used, with all options there. Short form: -ap'''))
@@ -762,14 +765,20 @@ def main(args=None, conf=None):
 	if len(conf.ytdl_opts) == 1: conf.ytdl_opts = conf.ytdl_opts[0].strip().split()
 	conf.aria2c_opts = opts.aria2c_opts or list()
 	if len(conf.aria2c_opts) == 1: conf.aria2c_opts = conf.aria2c_opts[0].strip().split()
-
 	if conf.aria2c_opts == ['p']: opts.aria2c_opts_print, conf.aria2c_opts = True, list()
 	if opts.aria2c_opts_print:
-		print(conf.aria2_conf_func(adict(
+		return print(conf.aria2_conf_func(adict(
 			key='<key>', port='<port>', ua='<ytdl-user-agent>',
 			log_level='notice' if conf.verbose else 'warn' )).strip())
-		return
 	if not opts.url: parser.error('At least one video URL must be specified.')
+	if not (ytdl_cmd := opts.ytdl_cmd):
+		import subprocess as spr
+		for ytdl_cmd in 'yt-dlp', 'youtube-dl':
+			try: spr.run( [ytdl_cmd, '--help'], check=True,
+				stdout=spr.DEVNULL, stderr=spr.DEVNULL ); break
+			except (FileNotFoundError, spr.CalledProcessError): pass
+		else: parser.error('Failed to find working youtube-dl/yt-dlp in current PATH')
+	conf.ytdl_cmd = ytdl_cmd
 
 	conf.verbose = opts.debug
 	conf.keep_tempfiles = opts.keep_tempfiles
