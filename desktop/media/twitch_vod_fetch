@@ -60,22 +60,17 @@ class TVFConfig:
 	aria2_ws_debug_signals = False
 
 
-class LogMessage:
-	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
-	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
-class LogStyleAdapter(logging.LoggerAdapter):
-	def __init__(self, logger, extra=None):
-		super(LogStyleAdapter, self).__init__(logger, extra or {})
-	def log(self, level, msg, *args, **kws):
-		if not self.isEnabledFor(level): return
-		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
-		msg, kws = self.process(msg, kws)
-		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
-
-err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
-get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
-
+def log_lines(log_func, lines, log_func_last=False):
+	if isinstance(lines, str):
+		lines = list(line.rstrip() for line in lines.rstrip().split('\n'))
+	uid = secrets.token_urlsafe(3)
+	for n, line in enumerate(lines, 1):
+		if isinstance(line, str): line = '[%s] %s', uid, line
+		else: line = [f'[{uid}] {line[0]}', *line[1:]]
+		if log_func_last and n == len(lines): log_func_last(*line)
+		else: log_func(*line)
 
 _td_s = dict( h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1 )
@@ -105,37 +100,25 @@ def parse_pos_spec(pos):
 			raise argparse.ArgumentTypeError(
 				f'Failed to parse {pos!r} as a duration value: {err}' )
 
-
-class adict(dict):
-	def __init__(self, *args, **kwargs):
-		super().__init__(*args, **kwargs)
-		self.__dict__ = self
-
-def log_lines(log_func, lines, log_func_last=False):
-	if isinstance(lines, str):
-		lines = list(line.rstrip() for line in lines.rstrip().split('\n'))
-	uid = secrets.token_urlsafe(3)
-	for n, line in enumerate(lines, 1):
-		if isinstance(line, str): line = '[{}] {}', uid, line
-		else: line = ['[{}] {}'.format(uid, line[0])] + list(line[1:])
-		if log_func_last and n == len(lines): log_func_last(*line)
-		else: log_func(*line)
-
 def retries_within_timeout( tries, timeout,
-		backoff_func=lambda e,n: ((e**n-1)/e), slack=1e-2 ):
-	'Return list of delays to make exactly n tires within timeout, with backoff_func.'
-	a, b = 0, timeout
+		backoff_func=lambda e,n: ((e**n-1)/e), slack=0.01 ):
+	'Return list of delays to make exactly n retries within timeout'
+	a, b = 1, timeout
 	while True:
 		m = (a + b) / 2
 		delays = list(backoff_func(m, n) for n in range(tries))
-		error = sum(delays) - timeout
-		if abs(error) < slack: return delays
+		if abs(error := sum(delays) - timeout) < slack: return delays
 		elif error > 0: b = m
 		else: a = m
 
 async def maybe_coro(res):
 	if asyncio.iscoroutine(res): res = await res
 	return res
+
+class adict(dict):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.__dict__ = self
 
 
 class TVFError(Exception): pass
@@ -152,11 +135,11 @@ class TVFAria2Proc:
 		self.ws_closed = asyncio.Event()
 		self.cmd_conf, self.ws_key, self.ws_url, self.path_func = (
 			cmd_conf, f'token:{key}', f'ws://localhost:{port}/jsonrpc', path_func )
-		self.log = get_logger('tvf.aria2')
+		self.log = logging.getLogger('tvf.aria2')
 
 	async def __aenter__(self):
 		cmd = [self.conf.aria2_cmd, '--conf-path', self.cmd_conf]
-		self.log.debug('Starting aria2c daemon: {}', ' '.join(cmd))
+		self.log.debug('Starting aria2c daemon: %s', ' '.join(cmd))
 		self.proc = await asyncio.create_subprocess_exec(*cmd)
 		self.ws_ctx = cl.AsyncExitStack()
 		return self
@@ -178,15 +161,15 @@ class TVFAria2Proc:
 			try:
 				self.proc.send_signal(0)
 				self.log.debug( 'Sending SIGTERM to aria2c pid'
-					' (timeout={:.2f}s): {}', self.conf.aria2_term_wait[1], self.proc.pid )
+					' (timeout=%.2f): %s', self.conf.aria2_term_wait[1], self.proc.pid )
 				self.proc.terminate()
 				try: await asyncio.wait_for(self.proc.wait(), timeout=self.conf.aria2_term_wait[1])
 				except asyncio.TimeoutError:
-					self.log.debug('Sending SIGKILL to aria2c pid: {}', self.proc.pid)
+					self.log.debug('Sending SIGKILL to aria2c pid: %s', self.proc.pid)
 					self.proc.kill()
 			except OSError: pass
 			exit_code = await self.proc.wait()
-			if exit_code: self.log.warning('aria2c has exited with error code: {}', exit_code)
+			if exit_code: self.log.warning('aria2c has exited with error code: %s', exit_code)
 			self.proc = None
 
 	async def connect(self):
@@ -197,11 +180,11 @@ class TVFAria2Proc:
 			ts = loop.time()
 			if ts >= ts_max: break
 			timeout = ts_max - ts
-			self.log.debug('Connecting to aria2c ws url (timeout={:.2f}s): {}', timeout, self.ws_url)
+			self.log.debug('Connecting to aria2c ws url (timeout=%.2fs): %s', timeout, self.ws_url)
 			try:
 				self.ws = await self.ws_ctx.enter_async_context(self.http.ws_connect(
 					self.ws_url, heartbeat=self.conf.aria2_ws_heartbeat, timeout=timeout ))
-			except aiohttp.ClientError as err: self.log.debug('aria2c conn attempt error: {}', err)
+			except aiohttp.ClientError as err: self.log.debug('aria2c conn attempt error: %s', err)
 			else:
 				self.log.debug('Connected to aria2c json-rpc ws')
 				break
@@ -240,21 +223,21 @@ class TVFAria2Proc:
 		try:
 			async for msg in self.ws:
 				if msg.type == aiohttp.WSMsgType.TEXT:
-					if self.conf.aria2_ws_debug: self.log.debug('rpc-msg: {}', msg.data)
+					if self.conf.aria2_ws_debug: self.log.debug('rpc-msg: %s', msg.data)
 					msg_data, hs_discard = json.loads(msg.data), set()
 					if self.conf.aria2_ws_debug_signals and msg_data.get('method'):
-						self.log.debug('rpc-signal: {}', msg.data)
+						self.log.debug('rpc-signal: %s', msg.data)
 					for k, func in self.ws_handlers.items():
 						oneshot = await maybe_coro(func(msg_data))
 						if oneshot: hs_discard.add(k)
 					for k in hs_discard: del self.ws_handlers[k]
 				elif msg.type == aiohttp.WSMsgType.closed: break
 				elif msg.type == aiohttp.WSMsgType.error:
-					self.log.error('ws protocol error, aborting: {}', msg)
+					self.log.error('ws protocol error, aborting: %s', msg)
 					break
-				else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
+				else: self.log.warning('Unhandled ws msg type %s, ignoring: %s', msg.type, msg)
 		except Exception as err:
-			self.log.exception('Unhandled ws handler failure, aborting: {}', err)
+			self.log.exception('Unhandled ws handler failure, aborting: %s', err)
 		await self._ws_close()
 
 	async def _ws_close(self):
@@ -276,7 +259,7 @@ class TVFAria2Proc:
 				# # How it looks: dict( id=None, jsonrpc='2.0',
 				# #  error=dict(code=-32600, message='Invalid Request.') )
 				# self.log.error( 'Fatal protocol error from aria2'
-				# 	' - probably a bug in this scipt, exiting: {!r}', msg )
+				# 	' - probably a bug in this scipt, exiting: %r', msg )
 				# return await self._ws_close()
 			if uid.startswith('aria2.'): uid = uid[6:]
 			if uid != uid_or_func: return
@@ -298,7 +281,7 @@ class TVFAria2Proc:
 			jsonrpc='2.0', id=req_uid,
 			method=method, params=params )
 		if self.conf.aria2_ws_debug:
-			self.log.debug( 'rpc-req{} [{}]: {}',
+			self.log.debug( 'rpc-req%s [%s]: %s',
 				'-sync' if sync else '', req_uid, json.dumps(data_req) )
 		try: await self.ws.send_str(json.dumps(data_req))
 		except ConnectionError as err:
@@ -306,7 +289,7 @@ class TVFAria2Proc:
 		if sync:
 			with self.ws_close_wrap(): res = await self.expect(req_uid)
 			if self.conf.aria2_ws_debug:
-				self.log.debug('rpc-res-sync [{}]: {}', req_uid, json.dumps(res))
+				self.log.debug('rpc-res-sync [%s]: %s', req_uid, json.dumps(res))
 			if 'result' not in res:
 				raise TVFReqError(f'Request failed (method={method}, params={params}): {res}')
 			res = res['result']
@@ -324,7 +307,7 @@ class TVFAria2Proc:
 	async def queue(self, gid, url, pos=None):
 		res = await self.req('addUri', *self._queue_params(gid, url, pos))
 		if res != gid:
-			self.log.error('addUri error (gid={}): {}', gid, res)
+			self.log.error('addUri error (gid=%s): %s', gid, res)
 			raise TVFError(f'Failed to queue chunk URL to aria2c')
 
 	async def queue_batch(self, *gid_urls, pos=None):
@@ -337,8 +320,8 @@ class TVFAria2Proc:
 		if res != res_chk:
 			log_lines(self.log.error, [
 				'Result gid match check failed for submitted urls.',
-				('  expected: {}', ', '.join(str(r[0]) for r in res_chk)),
-				('  returned: {}', ', '.join(( str(r[0])
+				('  expected: %s', ', '.join(str(r[0]) for r in res_chk)),
+				('  returned: %s', ', '.join(( str(r[0])
 					if isinstance(r, list) else repr(r) ) for r in res)) ])
 			raise TVFError(f'Failed to queue {len(gid_urls)} chunk URLs to aria2c')
 
@@ -411,7 +394,7 @@ class TVFChunkIter:
 class TVF:
 
 	def __init__(self, conf, log):
-		self.conf, self.log = conf, log or get_logget('tvf.fetcher')
+		self.conf, self.log = conf, log or logging.getLogger('tvf.fetcher')
 
 	async def __aenter__(self): return self
 	async def __aexit__(self, *err): pass
@@ -420,7 +403,7 @@ class TVF:
 		cmd = ['youtube-dl']
 		if self.conf.verbose: cmd.append('--verbose')
 		cmd = cmd + [ytdl_op] + (self.conf.ytdl_opts or list()) + list(args)
-		self.log.debug('Running "youtube-dl {}" command: {}', ytdl_op, ' '.join(cmd))
+		self.log.debug('Running "youtube-dl %s" command: %s', ytdl_op, ' '.join(cmd))
 		if out: popen_kws.setdefault('stdout', asyncio.subprocess.PIPE)
 		proc = await asyncio.create_subprocess_exec(*cmd, **popen_kws)
 		if out: proc_stdout = (await proc.stdout.read()).strip()
@@ -431,7 +414,7 @@ class TVF:
 
 	async def ytdl_probe_formats(self, url, file_prefix, info_suffix=None):
 		self.log.info( '--- Listing formats available'
-			' for VoD {} (url={}){}', file_prefix, url, info_suffix or '' )
+			' for VoD %s (url=%s)%s', file_prefix, url, info_suffix or '' )
 		return await self.ytdl_run('--list-formats', url, check=False)
 
 	async def download(self, url, file_prefix, info_suffix=None):
@@ -464,7 +447,7 @@ class TVF:
 				meta = json.loads(await self.ytdl_run('-sj', *ytdl_output_opts, url, out=True))
 			ytdl_filename = meta['filename']
 			self.log.debug(
-				'Using youtube-dl output filename (template={}): {}',
+				'Using youtube-dl output filename (template=%s): %s',
 				'[default]' if self.conf.ytdl_output_format
 					is True else self.conf.ytdl_output_format, ytdl_filename )
 			file_dst_done = file_dst_path.parent / ytdl_filename
@@ -477,14 +460,14 @@ class TVF:
 		if file_dst_done.exists() and (
 				file_dst_path != file_dst_done or not file_prefix_ext('m3u8').exists() ):
 			return self.log.info( '--- Skipping download'
-				' for existing file: {} (rename/remove it to force)', file_dst_done )
+				' for existing file: %s (rename/remove it to force)', file_dst_done )
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
 		if not meta: meta = json.loads(await self.ytdl_run('-sj', url, out=True))
 		if not meta_cf.cached(): meta_cf.update(json.dumps(meta))
 		http = await ctx.enter_async_context(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
-		self.log.info( '--- Downloading VoD {} ({}url={}){}',
+		self.log.info( '--- Downloading VoD %s (%surl=%s)%s',
 			file_dst_path, f'final-name={str(file_dst_done)!r}, '
 				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
@@ -493,7 +476,7 @@ class TVF:
 		url_base = url_pls.rsplit('/', 1)[0]
 
 		if not (pls := (cf := _cache_file('m3u8')).cached()):
-			self.log.debug('Fetching playlist from URL: {}', url_pls)
+			self.log.debug('Fetching playlist from URL: %s', url_pls)
 			async with http.get(url_pls, headers=headers) as res: pls = cf.update(await res.text())
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
@@ -547,11 +530,11 @@ class TVF:
 			# All chunks from iter(chunks) get queued for download here
 			info = await aria2c.req('getVersion')
 			self.log.debug( 'Starting downloads'
-				' (rpc-port={}, aria2-version={})...', port, info['version'] )
+				' (rpc-port=%s, aria2-version=%s)...', port, info['version'] )
 			count, gid_last = await aria2c.queue_chunks(chunks)
 			if gid_last:
-				self.log.info( '\n\n  ------ Started {} downloads,'
-					' last gid: {} ------  \n', count, gid_pretty(gid_last) )
+				self.log.info( '\n\n  ------ Started %s downloads,'
+					' last gid: %s ------  \n', count, gid_pretty(gid_last) )
 			else: self.log.info('No extra downloads were necessary')
 
 			### Main download-control loop ahead
@@ -588,8 +571,8 @@ class TVF:
 							if self.log.isEnabledFor(logging.DEBUG):
 								status = await aria2c.req( 'tellStatus', e['gid'],
 									['status', 'errorCode', 'errorMessage', 'completedLength', 'totalLength'] )
-								self.log.debug( 'Chunk {} download'
-									' stopped or failed, retrying: {}', e['gid'], status )
+								self.log.debug( 'Chunk %s download'
+									' stopped or failed, retrying: %s', e['gid'], status )
 							await aria2c.req_ok('removeDownloadResult', e['gid'])
 							await aria2c.queue(e['gid'], chunks.gid_urls[e['gid']], 0)
 
@@ -606,15 +589,15 @@ class TVF:
 						file_dst_mark.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
 						file_dst_mark.flush()
 						for p in seq_chunks: os.unlink(p)
-						# self.log.debug('\nExtended partial dst file by {} chunk(s)', len(seq_chunks))
+						# self.log.debug('\nExtended partial dst file by %s chunk(s)', len(seq_chunks))
 						seq_chunks.clear()
 
 				if len(seq_heap) > self.conf.file_append_max:
 					err_msg = ( 'Chunk-append sequence is broken'
 						f' (pending={len(seq_heap)} max={self.conf.file_append_max})' )
-					log_lines(self.log.error, [ ('{}:', err_msg),
-						('  expecting gid: {}', seq_to_gid(file_dst_seq)),
-						('  first gid among pending: {}', seq_to_gid(seq_heap[0].seq)) ])
+					log_lines(self.log.error, [ ('%s:', err_msg),
+						('  expecting gid: %s', seq_to_gid(file_dst_seq)),
+						('  first gid among pending: %s', seq_to_gid(seq_heap[0].seq)) ])
 					raise TVFError(err_msg)
 
 		### done!
@@ -628,21 +611,22 @@ class TVF:
 			file_dst_path = file_dst_done
 
 		if not self.conf.keep_tempfiles:
-			self.log.debug('Cleanup for prefix (dir={}): {}', self.conf.use_temp_dirs, file_prefix)
+			self.log.debug( 'Cleanup for prefix'
+				' (dir=%s): %s', self.conf.use_temp_dirs, file_prefix )
 			if self.conf.use_temp_dirs: shutil.rmtree(file_prefix_dir)
 			else:
 				for p in file_prefix.parent.glob(f'{file_prefix.name}.*'):
 					if p != file_dst_path: os.unlink(p)
 
-		self.log.info('--- Downloaded VoD file: {}{}', file_dst_path, info_suffix or '')
+		self.log.info('--- Downloaded VoD file: %s%s', file_dst_path, info_suffix or '')
 
 
 async def vod_fetch_loop(conf, vod_queue, list_formats_only=False):
 	'Async wrapper to run TVF.download(url) for each URL, handling errors in there'
-	exit_code, exit_sig, log = 1, None, get_logger('tvf.fetcher')
+	exit_code, exit_sig, log = 1, None, logging.getLogger('tvf.fetcher')
 	loop, task = asyncio.get_running_loop(), asyncio.current_task()
 	def sig_handler(sig, code):
-		log.info('Exiting on {} signal with code: {}', sig, code)
+		log.info('Exiting on %s signal with code: %s', sig, code)
 		nonlocal exit_code, exit_sig
 		exit_code, exit_sig = code, sig
 		task.cancel()
@@ -658,10 +642,10 @@ async def vod_fetch_loop(conf, vod_queue, list_formats_only=False):
 			except TVFError as err:
 				if exit_sig and isinstance(err, TVFReqSocketError):
 					# aria2c can be killed during requests and such, causing socket errors
-					log.debug('Expected connection error on signal-exit: {}', err_fmt(err))
+					log.debug('Expected connection error on signal-exit: %s', err_fmt(err))
 				else:
-					if err.args: log.exception('BUG: {}', err)
-					log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
+					if err.args: log.exception('BUG: %s', err)
+					log.error('Failed to fetch VoD #%s %r (url=%r), exiting', n, prefix, url)
 				break
 		else: exit_code = 0
 	return exit_code
@@ -759,7 +743,7 @@ def main(args=None, conf=None):
 			.format('%(name)s ' if opts.debug else ''),
 		level=logging.DEBUG if opts.debug else logging.INFO )
 	logging.getLogger('charset_normalizer').setLevel(logging.WARNING) # noisy aiohttp dep
-	log = get_logger('tvf.main')
+	log = logging.getLogger('tvf.main')
 
 	if opts.length and opts.end_pos:
 		parser.error('Only one of -l/--length or -e/--end-pos can be specified, not both')
@@ -809,7 +793,7 @@ def main(args=None, conf=None):
 						f' to be an URL, only first one should be: {url} {prefix}' )
 				prefix, url = url, prefix
 				log.warn( 'Looks like url/prefix args got'
-					' mixed-up, correcting that to prefix={} url={}', prefix, url )
+					' mixed-up, correcting that to prefix=%s url=%s', prefix, url )
 			vod_queue.append((url, prefix))
 	for url, prefix in vod_queue:
 		if re.search(r'^https?://[^/]+/([^/]+/v|videos)/', url): continue
