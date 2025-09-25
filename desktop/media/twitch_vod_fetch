@@ -49,7 +49,7 @@ class TVFConfig:
 			'timeout=15',
 			'connect-timeout=10',
 			'lowest-speed-limit=100K',
-			f'user-agent={opts.ua}', '' ]
+			f'user-agent={opts.ua}' if opts.ua else '', '' ]
 		+ ([*self.aria2c_opts, ''] if self.aria2c_opts else []) )
 
 	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
@@ -532,7 +532,9 @@ class TVF:
 				ytdl_output_opts = list() \
 					if self.conf.ytdl_output_format is True \
 					else ['--output', self.conf.ytdl_output_format]
-				ytdl_filename = await self.ytdl_run('--get-filename', *ytdl_output_opts, url, out=True)
+				with vod_cache('info.json') as vc: meta = json.loads(
+					vc.cached or vc.update(await self.ytdl_run('-sj', *ytdl_output_opts, url, out=True)) )
+				ytdl_filename = meta['filename']
 			self.log.debug(
 				'Using youtube-dl output filename (template={}): {}',
 				'[default]' if self.conf.ytdl_output_format
@@ -546,9 +548,8 @@ class TVF:
 		# It's not a problem even with --keep-tempfiles, as file_dst_mark will be kept there too
 		if file_dst_done.exists() and (
 				file_dst_path != file_dst_done or not file_prefix_ext('m3u8').exists() ):
-			self.log.info( '--- Skipping download'
+			return self.log.info( '--- Skipping download'
 				' for existing file: {} (rename/remove it to force)', file_dst_done )
-			return
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
 		if self.conf.ytdl_output_format and not ytdl_fn_vc.cached: ytdl_fn_vc.update(ytdl_filename)
@@ -558,30 +559,27 @@ class TVF:
 			file_dst_path, f'final-name={str(file_dst_done)!r}, '
 				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
-		with vod_cache('m3u8.url') as vc:
-			url_pls = vc.cached or vc.update(await self.ytdl_run('--get-url', url, out=True))
+		with vod_cache('info.json') as vc: meta = json.loads(
+			vc.cached or vc.update(await self.ytdl_run('-sj', url, out=True)) )
+		url_pls, headers = meta['url'], meta['http_headers']
 		assert ' ' not in url_pls, url_pls # can return URLs of multiple flvs for *really* old VoDs
 		url_base = url_pls.rsplit('/', 1)[0]
 
-		with vod_cache('m3u8.ua') as vc:
-			ua = vc.cached or vc.update(await self.ytdl_run('--dump-user-agent', out=True))
-
 		with vod_cache('m3u8') as vc:
-			pls = vc.cached
-			if not pls:
+			if not (pls := vc.cached):
 				self.log.debug('Fetching playlist from URL: {}', url_pls)
-				async with http.get(url_pls, headers={'User-Agent': ua}) as res:
-					pls = vc.update(await res.text())
+				async with http.get(url_pls, headers=headers) as res: pls = vc.update(await res.text())
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
 		with vod_cache('aria2c_conf') as vc:
 			key = secrets.token_urlsafe(18)
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				s.bind(('localhost', 0))
-				addr, port = s.getsockname()
+				s.bind(('localhost', 0)); addr, port = s.getsockname()
+			try: ua = next(hdr for k, hdr in headers.items() if k.lower() == 'user-agent')
+			except StopIteration: ua = self.log.warning(
+				'Missing User-Agent header in ytdl info for URL, will use aria2c default' )
 			vc.update(self.conf.aria2_conf_func(adict(
-				key=key, port=port, ua=ua,
-				log_level='notice' if self.conf.verbose else 'warn' )))
+				key=key, port=port, ua=ua, log_level='notice' if self.conf.verbose else 'warn' )))
 			aria2c_conf_path = vc.path
 
 		# file_dst_mark stores (pos, seq) tuples, appending each update to the end
