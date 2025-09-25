@@ -76,20 +76,6 @@ class LogStyleAdapter(logging.LoggerAdapter):
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
-def add_stack_wrappers(cls):
-	def _make_wrapper(func):
-		async def _wrapper(self, *args, **kws):
-			async with cl.AsyncExitStack() as ctx:
-				return await func(self, ctx, *args, **kws)
-		return ft.wraps(func)(_wrapper)
-	for name, func in inspect.getmembers(cls, inspect.isroutine):
-		if name.startswith('__'): continue
-		sig = inspect.signature(func)
-		if ( len(sig.parameters) <= 1 or
-			list(sig.parameters.values())[1].annotation is not cl.AsyncExitStack ): continue
-		setattr(cls, name, _make_wrapper(func))
-	return cls
-
 
 _td_s = dict( h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1 )
@@ -119,11 +105,6 @@ def parse_pos_spec(pos):
 			raise argparse.ArgumentTypeError(
 				f'Failed to parse {pos!r} as a duration value: {err}' )
 
-
-it_adjacent = lambda seq, n, fill=None: it.zip_longest(fillvalue=fill, *([iter(seq)] * n))
-it_adjacent_nofill = lambda seq, n:\
-	( tuple(filter(lambda v: v is not it_adjacent, chunk))
-		for chunk in it_adjacent(seq, n, fill=it_adjacent) )
 
 class adict(dict):
 	def __init__(self, *args, **kwargs):
@@ -161,61 +142,6 @@ class TVFError(Exception): pass
 class TVFWSClosed(TVFError): pass
 class TVFReqError(TVFError): pass
 class TVFReqSocketError(TVFReqError): pass
-
-
-async def vod_fetch(conf, vod_queue, list_formats_only=False):
-	exit_code, exit_sig, log = 1, None, get_logger('tvf.fetcher')
-	loop, task = asyncio.get_running_loop(), asyncio.current_task()
-	def sig_handler(sig, code):
-		log.info('Exiting on {} signal with code: {}', sig, code)
-		nonlocal exit_code, exit_sig
-		exit_code, exit_sig = code, sig
-		task.cancel()
-	if not conf.compat_windows:
-		for sig, code in ('INT', 1), ('TERM', 0):
-			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ft.partial(sig_handler, sig, code))
-	async with TVF(conf, log) as fetcher:
-		fetch = fetcher.get if not list_formats_only else fetcher.ytdl_probe_formats
-		for n, (url, prefix) in enumerate(vod_queue, 1):
-			info_suffix = None if len(vod_queue) == 1 else f' [{n} / {len(vod_queue)}]'
-			try: await fetch(url, prefix, info_suffix=info_suffix)
-			except asyncio.CancelledError as err: break
-			except TVFError as err:
-				if exit_sig and isinstance(err, TVFReqSocketError):
-					# aria2c can be killed during requests and such, causing socket errors
-					log.debug('Expected connection error on signal-exit: {}', err_fmt(err))
-				else:
-					if err.args: log.exception('BUG: {}', err)
-					log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
-				break
-		else: exit_code = 0
-	return exit_code
-
-
-class TVFFileCache:
-
-	update_lock = True
-
-	def __init__(self, prefix, ext, text=True):
-		self.b, self.path = '' if text else 'b', f'{prefix}.{ext}'
-
-	def __enter__(self):
-		assert self.update_lock
-		self.update_lock = False
-		return self
-
-	def __exit__(self, *err):
-		self.update_lock = True
-
-	@property
-	def cached(self):
-		if not os.path.exists(self.path): return None
-		with open(self.path, 'r' + self.b) as src: return src.read()
-
-	def update(self, data):
-		assert not self.update_lock
-		with open(self.path, 'w' + self.b) as dst: dst.write(data)
-		return data
 
 
 class TVFAria2Proc:
@@ -420,7 +346,7 @@ class TVFAria2Proc:
 		self.chunks = chunks
 		count, gid_last = 0, None
 		with self.ws_close_wrap():
-			for gid_url_batch in it_adjacent_nofill(chunks, self.conf.aria2_queue_batch):
+			for gid_url_batch in it.batched(chunks, self.conf.aria2_queue_batch):
 				await self.queue_batch(*gid_url_batch)
 				count, gid_last = count + len(gid_url_batch), gid_url_batch[-1][0]
 		return count, gid_last
@@ -482,7 +408,6 @@ class TVFChunkIter:
 		return len(self.gid_urls) == len(self.gids_done)
 
 
-@add_stack_wrappers
 class TVF:
 
 	def __init__(self, conf, log):
@@ -509,23 +434,27 @@ class TVF:
 			' for VoD {} (url={}){}', file_prefix, url, info_suffix or '' )
 		return await self.ytdl_run('--list-formats', url, check=False)
 
-
-	async def get(self, ctx: cl.AsyncExitStack, url, file_prefix, info_suffix=None):
+	async def download(self, url, file_prefix, info_suffix=None):
+		async with cl.AsyncExitStack() as ctx:
+			return await self._download(ctx, url, file_prefix, info_suffix)
+	async def _download(self, ctx, url, file_prefix, info_suffix=None):
 		if file_prefix.lower().endswith('.mp4'): file_prefix = file_prefix[:-4]
 		file_prefix = pl.Path(file_prefix)
-		file_prefix_ext = lambda ext: file_prefix.parent / (file_prefix.name + f'.{ext}')
-
-		file_dst_path = file_prefix_ext('mp4')
-		file_dst_done = file_dst_path
-
+		file_prefix_ext = lambda ext: pl.Path(f'{file_prefix}.{ext}')
+		file_dst_done = file_dst_path = file_prefix_ext('mp4')
 		if self.conf.use_temp_dirs:
 			name = file_prefix.name
 			file_prefix_dir = file_prefix.parent / (name + '.tmp')
 			file_prefix = file_prefix_dir / name
 
-		vod_cache = ft.partial(TVFFileCache, file_prefix)
-		meta_vc = ctx.enter_context(vod_cache('info.json'))
-		meta = json.loads(meta_vc.cached or 'null')
+		def _cache_file(name):
+			p = file_prefix_ext(name)
+			return adict( path=str(p),
+				cached=lambda: p.exists() and p.read_text(),
+				update=lambda data: [p.write_text(data), data][1] )
+
+		meta_cf = _cache_file('info.json')
+		meta = json.loads(meta_cf.cached() or 'null')
 
 		if self.conf.ytdl_output_format:
 			if not meta:
@@ -552,7 +481,7 @@ class TVF:
 
 		if self.conf.use_temp_dirs: file_prefix_dir.mkdir(exist_ok=True)
 		if not meta: meta = json.loads(await self.ytdl_run('-sj', url, out=True))
-		if not meta_vc.cached: meta_vc.update(json.dumps(meta))
+		if not meta_cf.cached(): meta_cf.update(json.dumps(meta))
 		http = await ctx.enter_async_context(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
 		self.log.info( '--- Downloading VoD {} ({}url={}){}',
@@ -563,22 +492,20 @@ class TVF:
 		assert ' ' not in url_pls, url_pls # can return URLs of multiple flvs for *really* old VoDs
 		url_base = url_pls.rsplit('/', 1)[0]
 
-		with vod_cache('m3u8') as vc:
-			if not (pls := vc.cached):
-				self.log.debug('Fetching playlist from URL: {}', url_pls)
-				async with http.get(url_pls, headers=headers) as res: pls = vc.update(await res.text())
+		if not (pls := (cf := _cache_file('m3u8')).cached()):
+			self.log.debug('Fetching playlist from URL: {}', url_pls)
+			async with http.get(url_pls, headers=headers) as res: pls = cf.update(await res.text())
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
-		with vod_cache('aria2c_conf') as vc:
-			key = secrets.token_urlsafe(18)
-			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				s.bind(('localhost', 0)); addr, port = s.getsockname()
-			try: ua = next(hdr for k, hdr in headers.items() if k.lower() == 'user-agent')
-			except StopIteration: ua = self.log.warning(
-				'Missing User-Agent header in ytdl info for URL, will use aria2c default' )
-			vc.update(self.conf.aria2_conf_func(adict(
-				key=key, port=port, ua=ua, log_level='notice' if self.conf.verbose else 'warn' )))
-			aria2c_conf_path = vc.path
+		key = secrets.token_urlsafe(18)
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			s.bind(('localhost', 0)); addr, port = s.getsockname()
+		try: ua = next(hdr for k, hdr in headers.items() if k.lower() == 'user-agent')
+		except StopIteration: ua = self.log.warning(
+			'Missing User-Agent header in ytdl info for URL, will use aria2c default' )
+		(cf := _cache_file('aria2c_conf')).update(self.conf.aria2_conf_func(adict(
+			key=key, port=port, ua=ua, log_level='notice' if self.conf.verbose else 'warn' )))
+		aria2c_conf_path = cf.path
 
 		# file_dst_mark stores (pos, seq) tuples, appending each update to the end
 		# It is assumed here that such tiny writes will be atomic
@@ -709,6 +636,35 @@ class TVF:
 
 		self.log.info('--- Downloaded VoD file: {}{}', file_dst_path, info_suffix or '')
 
+
+async def vod_fetch_loop(conf, vod_queue, list_formats_only=False):
+	'Async wrapper to run TVF.download(url) for each URL, handling errors in there'
+	exit_code, exit_sig, log = 1, None, get_logger('tvf.fetcher')
+	loop, task = asyncio.get_running_loop(), asyncio.current_task()
+	def sig_handler(sig, code):
+		log.info('Exiting on {} signal with code: {}', sig, code)
+		nonlocal exit_code, exit_sig
+		exit_code, exit_sig = code, sig
+		task.cancel()
+	if not conf.compat_windows:
+		for sig, code in ('INT', 1), ('TERM', 0):
+			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ft.partial(sig_handler, sig, code))
+	async with TVF(conf, log) as fetcher:
+		fetch = fetcher.download if not list_formats_only else fetcher.ytdl_probe_formats
+		for n, (url, prefix) in enumerate(vod_queue, 1):
+			info_suffix = None if len(vod_queue) == 1 else f' [{n} / {len(vod_queue)}]'
+			try: await fetch(url, prefix, info_suffix=info_suffix)
+			except asyncio.CancelledError as err: break
+			except TVFError as err:
+				if exit_sig and isinstance(err, TVFReqSocketError):
+					# aria2c can be killed during requests and such, causing socket errors
+					log.debug('Expected connection error on signal-exit: {}', err_fmt(err))
+				else:
+					if err.args: log.exception('BUG: {}', err)
+					log.error('Failed to fetch VoD #{} {!r} (url={!r}), exiting', n, prefix, url)
+				break
+		else: exit_code = 0
+	return exit_code
 
 def main(args=None, conf=None):
 	if not conf: conf = TVFConfig()
@@ -846,7 +802,7 @@ def main(args=None, conf=None):
 		if len(args) % 2:
 			parser.error( 'Odd number of url/prefix args specified'
 				f' ({len(args)}), while these should always come in pairs.' )
-		for url, prefix in it_adjacent(args, 2):
+		for url, prefix in it.batched(args, 2):
 			if url_re.search(prefix):
 				if url_re.search(url):
 					parser.error( 'Both url/file_prefix args seem'
@@ -866,7 +822,7 @@ def main(args=None, conf=None):
 		asyncio.set_event_loop(loop)
 
 	log.debug('Starting vod_fetch loop...')
-	exit_code = asyncio.run(vod_fetch(
+	exit_code = asyncio.run(vod_fetch_loop(
 		conf, vod_queue, list_formats_only=opts.ytdl_list_formats ))
 	log.debug('Finished')
 	return exit_code
