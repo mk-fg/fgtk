@@ -179,7 +179,7 @@ def main(args=None):
 			Stale delay option checks that mtime is older, i.e. file is finished writing.
 			Wait/iterval/delay can be a number of seconds or [[HH:]MM:]SS[.MS] or short time-delta
 				like "30s", "10min", "1h 20m", "1d12h5m". Intended for downloads or proc-pipelines.
-			Operation can be aborted after file(s) appear(s) due to format quirks,
+			Implies -x/--convert. Can be aborted after file(s) appear due to w/e quirks,
 				so might be a good idea to double-check formats and all processing-related opts.'''))
 
 	group = parser.add_argument_group('Processing tweaks')
@@ -234,7 +234,7 @@ def main(args=None):
 		try: tds = dict( (pre, td.strip())
 			for pre, td in re.findall(r'(^|[/~])([^/~]+)', opts.wait) ); tds['']
 		except: parser.error('-w/--wait should be: timeout [/ interval] [~ stale-delay]')
-		tds = dict((k, td_parse(v)) for k, v in tds.items())
+		opts.convert, tds = True, dict((k, td_parse(v)) for k, v in tds.items())
 		delay_min, span, delay_mtime = 3, tds[''], tds.get('~')
 		if interval := tds.get('/'):
 			delays = list()
