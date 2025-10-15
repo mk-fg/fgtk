@@ -3729,6 +3729,7 @@ and avoidable.
 
 Looks up either specific paths with "plug"/"unplug" and other device-state checks
 (e.g. fido2/piv pin counts), or network interfaces with "net-cut" or "net-connect".
+All supported checks can be looked up in the short script itself.
 
 Avoids creating duplicate notifications while one is already on-screen via
 `-w/--wait` option of notify-send (to monitor "notification closed" signals)

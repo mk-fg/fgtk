@@ -49,6 +49,17 @@ check_dev() {
 			[[ "$st" =~ $re ]] && att_left=${BASH_REMATCH[2]} || att_left=0
 			[[ "$att_left" -lt "$att_chk" ]] || return 0 ;;
 
+		run|stop)
+			[[ "$dev" =~ ^/pgrep/(.+)$ ]] || {
+				echo >&2 "ERROR: Invalid pgrep spec '$dev $act ...'"; err=1; return; }
+			dev=${BASH_REMATCH[1]} a= ax= args=()
+			for a in ${dev//\// }; do [[ -z "$ax" ]] || {
+				[[ "${#ax}" -gt 1 ]] && args+=( --"$ax" ) || args+=( -"$ax" ); }
+				ax=$a; done; args+=( "$ax" )
+			pgrep "${args[@]}" >/dev/null && running=1 || running=
+			[[ "$act" != run ]] || { [[ -z "$running" ]] || return 0; }
+			[[ "$act" != stop ]] || { [[ -n "$running" ]] || return 0; } ;;
+
 		*) echo >&2 "ERROR: Unrecognized action '$dev $act ...'"; err=1; return
 	esac
 
