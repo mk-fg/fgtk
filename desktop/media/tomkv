@@ -112,7 +112,7 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p):
+def src_probe(p, vn=0, an=0):
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
 	probe = adict.rec_make(json.loads(probe.stdout))
@@ -122,7 +122,10 @@ def src_probe(p):
 	for s in probe.streams:
 		if not (ct := s.get('codec_type')): continue
 		if ct == 'video':
-			if video:
+			if vn:
+				if vn is ... or (vn := vn - 1): continue
+				vn = ...
+			elif video:
 				if s.codec_name == 'mjpeg': continue # as long as it's not the first stream
 				multistream = True; continue
 			if fps := s.get('avg_frame_rate') or 0:
@@ -131,7 +134,10 @@ def src_probe(p):
 			video = adict( c=s.codec_name, fps=fps, w=s.width,
 				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 		if ct == 'audio':
-			if audio: multistream = True; continue
+			if an:
+				if an is ... or (an := an - 1): continue
+				an = ...
+			elif audio: multistream = True; continue
 			audio = adict(c=s.codec_name, chans=s.channels)
 		if ct == 'subtitle':
 			sub += 1
@@ -185,8 +191,10 @@ def main(args=None):
 	group = parser.add_argument_group('Processing tweaks')
 	group.add_argument('-f', '--force', action='store_true', help=dd('''
 		Also process files marked as SKIP, i.e. ones that don't seem to need it.'''))
-	group.add_argument('-1', '--force-stream1', action='store_true', help=dd('''
+	group.add_argument('-1', '--use-stream1', action='store_true', help=dd('''
 		Process files with multiple A/V streams, encoding first stream from those.'''))
+	group.add_argument('-a', '--audio-n', type=int, metavar='n', help=dd('''
+		Index of audio stream to use for all files, with -a1 to use first stream (same as -1).'''))
 	group.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
 		Apply and strip ffmpeg params stored in filenames.
 		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
@@ -267,15 +275,16 @@ def main(args=None):
 		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
 	nx = max(0, opts.skip_n or 0)
 	pxfmt_set = parse_rgb10_pixfmts()
+	an = 1 if opts.use_stream1 else opts.audio_n or 0
+	vn = opts.use_stream1 and 1 or 0
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
 		src_list[n] = None
-		try: p = src_probe(srcx)
+		try: p = src_probe(srcx, vn, an)
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
-		if p.get('ms') and not opts.force_stream1:
-			p = adict(t='format', msg='Multiple A/V streams detected')
+		if p.get('ms'): p = adict(t='format', msg='Multiple A/V streams detected')
 		# Parse fnopts, format dst filename
 		fn = (opts.name or '{name}.mkv').format(name=src.name.rsplit('.', 1)[0])
 		p.fn, p.ext = fn.rsplit('.', 1) if '.' in fn else (fn, '')
@@ -364,8 +373,8 @@ def main(args=None):
 				'|c1=0.5*c2+0.707*c1+0.707*c5+0.5*c3,volume=2.0' ] + ac
 			elif p.a.chans != 2: ac = ['-ac', '2'] + ac
 		fmt = ['-movflags', '+faststart'] if p.ext.lower() in ['mp4', 'mov', 'm4v'] else []
-		if p.s or p.ms:
-			fmt.extend('-map 0:v:0 -map 0:a:0'.split())
+		if p.s or p.ms or an or vn:
+			fmt.extend(f'-map 0:v:{max(vn-1,0)} -map 0:a:{max(an-1,0)}'.split())
 			if p.s and (sn := (subs := p.s.copy()).pop()):
 				if subs == list(range(sn)): fmt.extend(['-map', '0:s']); subs.clear()
 				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
