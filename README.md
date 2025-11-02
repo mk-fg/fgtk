@@ -29,6 +29,7 @@ Contents - links to doc section for each script here:
         - [fast-disk-wipe](#hdr-fast-disk-wipe)
         - [lsx](#hdr-lsx)
         - [trunc-filenames](#hdr-trunc-filenames)
+        - [rmx.c](#hdr-rmx.c)
 
     - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
@@ -503,6 +504,35 @@ always keeps longest filename possible under `-l/--max-len` limit,
 inserts unicode-ellipsis (…) character to indicate where truncation was made.
 
 Defaults to dry-run mode for safety, only printing all renames to be made.
+
+<a name=hdr-rmx.c></a>
+##### [rmx.c](rmx.c)
+
+Safe-ish [rm(1)] tool replacement for removing files by absolute or relative
+pathnames under one specified directory, i.e. restricting all file removals
+to that dir.
+
+Does this in a safe way with `openat2(checked_realpath, RESOLVE_NO_SYMLINKS)`
+(plus `RESOLVE_NO_XDEV` with `-x` option), which works correctly for any paths,
+while preventing all time-of-check-time-of-use race conditions with symlinks
+and mountpoints inserted at any time during this operation.
+
+(afaik only correct way to do this is - run `p = realpath(path)`, check `p`
+in all necessary ways, then `openat2(p, RESOLVE_NO_SYMLINKS [ | RESOLVE_NO_XDEV ])`
+and only trust fd from that)
+
+It allows to safely cleanup some arbitrary directory using a file-list with any random
+paths in there, and be certain that nothing outside of that directory will be affected,
+regardless of how malicious filesystem contents or paths on the list might be.
+
+At the same time, e.g. `rmx -d /mnt/storage /tmp/vm-list/vm.img` will work with `vm.img`
+(or anything in its path) being symlink to under `/mnt/storage` somewhere
+(which itself can be a symlink too), as everything is resolved and checked reliably
+using realpaths first.
+
+Written in C, can be built with `gcc -Wall -O2 -o rmx rmx.c && strip rmx` (~15K binary).
+
+[rm(1)]: https://man.archlinux.org/man/rm.1
 
 
 
