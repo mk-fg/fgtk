@@ -528,7 +528,7 @@ regardless of how malicious filesystem contents or paths on the list might be.
 At the same time, e.g. `rmx -d /mnt/storage /tmp/vm-list/vm.img` will work with `vm.img`
 (or anything in its path) being symlink to under `/mnt/storage` somewhere
 (which itself can be a symlink too), as everything is resolved and checked reliably
-using realpaths first.
+using file-directory realpaths first.
 
 Written in C, can be built with `gcc -Wall -O2 -o rmx rmx.c && strip rmx` (~15K binary).
 

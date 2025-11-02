@@ -18,21 +18,21 @@
 void print_usage(char *prog, int code) {
 	printf("Usage: %s [-h/--help] [-d <dir>] [-x] [-f/--force] [--] <files...>\n\n", prog);
 	printf(
-		"Remove specified files, same as rm(1) would do, but with some extra options:\n\n"
+		"Remove specified files like rm(1) tool does, with additional\n"
+		" safety options to reliably restrict all removals to be under specified directory:\n\n"
 
 		"  -d - Base directory which all specified files must be under.\n"
-		"     This includes absolute file paths, after resolving symlinks in those.\n"
-		"     Relative file paths will be interpreted to be under this directory.\n\n"
+		"     This includes absolute file paths, after resolving symlinks in their dirs.\n"
+		"     Relative file paths will be interpreted to be under this directory, NOT cwd.\n\n"
 
 		"  -x - Signal error for file paths which cross mountpoints.\n"
-		"     I.e. files must not be mountpoints or have any\n"
-		"      mountpoints in-between base directory and final filename.\n"
-		"     If base-dir (-d) isn't specified, matches mountpoint to cwd.\n\n"
+		"     I.e. disallow mountpoints in-between base-dir and final file dirname.\n"
+		"     If base directory (-d) isn't specified, matches mountpoint to cwd.\n\n"
 
-		"  -f/--force - Skip non-existent files, including ones with bogus paths.\n"
+		"  -f/--force - Skip non-existent files, including ones in non-existent dirs.\n"
 		"     Errors for files outside base-dir (-d) or cross-mount removals (-x)\n"
-		"      will still be report and set non-zero exit code, but won't stop operation.\n"
-		"     Normally everything stops immediately at any detected error.\n\n"
+		"      will still be reported and set non-zero exit code, but won't stop operation.\n"
+		"     Normally everything stops immediately at any detected error otherwise.\n\n"
 
 		"  -h/--help - print this usage info.\n\n" );
 	exit(code); }
@@ -79,25 +79,31 @@ int main(int argc, char *argv[]) {
 
 	int res = 0, nn = idx; idx = 0;
 	for (int n = 0; n < nn; n++) {
-		char *p0 = file_paths[n], *p = realpath(p0, NULL);
-		if (!p) {
+		char *p = file_paths[n], *p_name = basename(strdup(p));
+		char *p_dir = realpath(dirname(strdup(p)), NULL);
+		if (!p_dir) {
 			if (!(force && errno == ENOENT)) {
-				fprintf( stderr, "ERROR: File access error"
-					" [ %s ]: %s\n", p0, strerror(errno) );
+				fprintf( stderr, "ERROR: File-dir access"
+					" error [ %s ]: %s\n", p, strerror(errno) );
 				res |= 1; }
 			continue; }
 
 		if (dir_check) {
-			if (strncmp(p, dir_check, dir_offset) || p[dir_offset] != '/') {
-				fprintf(stderr, "ERROR: Path not inside specified dir [ %s ]\n", p0);
+			if ( strncmp(p_dir, dir_check, dir_offset)
+					|| (p_dir[dir_offset] != '/' && p_dir[dir_offset] != 0) ) {
+				fprintf(stderr, "ERROR: Path is not inside base-dir [ %s ]\n", p);
 				res |= 2; continue; }
-			p += dir_offset + 1; }
+			p_dir = strlen(p_dir) > dir_offset + 1 ? p_dir + dir_offset + 1 : NULL; }
 
-		file_paths[idx] = p0;
-		file_dir_fds[idx] = openat2(
-			dir_fd, dirname(strdup(p)),
-			.flags=O_RDONLY|O_DIRECTORY, .resolve=open_resolve );
-		file_names[idx++] = basename(p); }
+		file_dir_fds[idx] = !p_dir ? dir_fd :
+			openat2(dir_fd, p_dir, .flags=O_RDONLY|O_DIRECTORY, .resolve=open_resolve);
+		if (file_dir_fds[idx] < 0) {
+			if (!(force && errno == ENOENT)) {
+				fprintf( stderr, "ERROR: File-dir access"
+					" error [ %s ]: %s\n", p, strerror(errno) );
+				res |= 1; }
+			continue; }
+		file_paths[idx] = p; file_names[idx++] = p_name; }
 	if (res) return res;
 
 	for (int n = 0; n < idx; n++)
