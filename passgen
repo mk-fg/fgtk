@@ -39,7 +39,7 @@ def main(args=None):
 	else: parser.error(f'Failed to pick password of {a}-{b} chars within {tries} attempts')
 
 	if opts.id:
-		id_sep = random.choice('#@$%&^*!<>/?\|')
+		id_sep = random.choice(r'#@$%&^*!<>/?\|')
 		n = random.choice(range(len(words)))
 		words[n] = ''.join( [opts.id, id_sep, words[n]]
 			if random.random() > 0.5 else [words[n], id_sep, opts.id] )
