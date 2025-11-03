@@ -83,15 +83,13 @@ int main(int argc, char *argv[]) {
 		char *p_dir = realpath(dirname(strdup(p)), NULL);
 		if (!p_dir) {
 			if (!(force && errno == ENOENT)) {
-				fprintf( stderr, "ERROR: File-dir access"
-					" error [ %s ]: %s\n", p, strerror(errno) );
-				res |= 1; }
+				warn("ERROR: File-dir access error [ %s ]", p); res |= 1; }
 			continue; }
 
 		if (dir_check) {
 			if ( strncmp(p_dir, dir_check, dir_offset)
 					|| (p_dir[dir_offset] != '/' && p_dir[dir_offset] != 0) ) {
-				fprintf(stderr, "ERROR: Path is not inside base-dir [ %s ]\n", p);
+				warnx("ERROR: Path is not inside base-dir [ %s ]", p);
 				res |= 2; continue; }
 			p_dir = strlen(p_dir) > dir_offset + 1 ? p_dir + dir_offset + 1 : NULL; }
 
@@ -99,9 +97,7 @@ int main(int argc, char *argv[]) {
 			openat2(dir_fd, p_dir, .flags=O_RDONLY|O_DIRECTORY, .resolve=open_resolve);
 		if (file_dir_fds[idx] < 0) {
 			if (!(force && errno == ENOENT)) {
-				fprintf( stderr, "ERROR: File-dir access"
-					" error [ %s ]: %s\n", p, strerror(errno) );
-				res |= 1; }
+				warn("ERROR: File-dir access error [ %s ]", p); res |= 1; }
 			continue; }
 		file_paths[idx] = p; file_names[idx++] = p_name; }
 	if (res) return res;
