@@ -5246,7 +5246,7 @@ See [nftables rate-limiting against low-effort DDoS attacks] blog post for more 
 #### [nft-set-to-ranges](scraps/nft-set-to-ranges)
 
 Python script to load `nft -j list set inet filter <name>` json-export of [nftables]
-IPv4/IPv6 address set  and map addresses in there to RIPE and ASN IP-ranges.
+IPv4/IPv6 address set and map addresses in there to RIPE and ASN IP-ranges.
 
 Shows how many IPs are in which range (in most-addrs-first order),
 and a breakdown for any relevant sub-ranges found within those.
@@ -5261,6 +5261,20 @@ intended to evade such obvious filters and originate from everywhere on-purpose.
 Uses [pyasn module] plus local copies of [RIPE database] (~350M as of 2025,
 only "inetnum" IPv4 ranges from there) and ASN database (~100M, IPv4+IPv6) -
 see `-h/--help` output for specific commands to fetch those.
+
+Full usage might look something like this:
+```
+# nft -j list set inet filter set.inet-bots4.rate > bots4.json
+# nft -j list set inet filter set.inet-bots6.rate > bots6.json
+
+% curl -OL https://ftp.ripe.net/ripe/dbase/ripe.db.gz
+% nft-set-to-ranges --ripedb-convert ripe.db.gz
+% pyasn_util_download.py -46   # script comes with pyasn module
+% pyasn_util_convert.py --compress --single rib.20250919.0400.bz2 ipasn.dat.gz
+
+% nft-set-to-ranges bots4.json | less
+% nft-set-to-ranges bots6.json | less
+```
 
 [pyasn module]: https://github.com/hadiasghari/pyasn
 [RIPE database]: https://ftp.ripe.net/ripe/dbase/
