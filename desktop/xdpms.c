@@ -19,10 +19,18 @@
 int main(int argc, char *argv[]) {
 	int mode_print = argc == 1;
 	int mode_check = argc == 2 && !strcmp(argv[1], "check");
-	int mode_wait = argc == 2 && !strcmp(argv[1], "wait");
+	int mode_wait = argc >= 2 && !strcmp(argv[1], "wait");
+
+	long wait_fb_delay = 0;
+	if (mode_wait && argc > 2) {
+		if (argc > 3) mode_wait = 0;
+		char *end; wait_fb_delay = strtol(argv[2], &end, 10);
+		if (*end != '\0' || wait_fb_delay == LONG_MIN || wait_fb_delay == LONG_MAX) {
+			fprintf(stderr, "ERROR: Invalid wait-delay-seconds value [ %s ]\n", argv[2]);
+			return 1; } }
 
 	if (!(mode_print || mode_check || mode_wait)) {
-		printf("Usage: %s [-h/--help] [ check | wait ]\n", argv[0]);
+		printf("Usage: %s [-h/--help] [ check | wait [fallback-delay] ]\n", argv[0]);
 		printf(
 			"\nWithout arguments:\n"
 			"  Prints seconds from now until dpms-off is supposed to happen to stdout.\n"
@@ -34,7 +42,8 @@ int main(int argc, char *argv[]) {
 			"  Sleeps until system is idle, making checks proportional to dpms timeouts.\n"
 			"  Exits with status=0 upon detecting dpms-off state.\n"
 			"  Intended use is like a 'sleep' command to delay until desktop idleness.\n"
-			"  Will exit with error if dpms-off delay is disabled or <1min.\n" );
+			"  Will exit with error if dpms-off delay is disabled or <1min,\n"
+			"   unless fallback delay is specified for it as an extra argument, in seconds.\n" );
 		return 1; }
 
 	char *err = NULL; int ret = 0;
@@ -71,7 +80,9 @@ int main(int argc, char *argv[]) {
 			break; }
 
 		if (mode_wait) {
-			if (delay_off < 60) { err = "dpms-off delay is <1min"; goto cleanup; }
+			if (delay_off < 60) {
+				if (wait_fb_delay <= 0) { err = "dpms-off delay is <1min"; goto cleanup; }
+				delay_off = wait_fb_delay; }
 			if (seconds <= 0) break;
 			timeout = MIN(seconds, delay_off / 2) + 3;
 			while (timeout > 1) timeout = sleep(timeout); }
