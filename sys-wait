@@ -17,11 +17,16 @@ usage() {
 	echo
 	echo "Wait until all specified system/load conditions are met."
 	echo "E.g. load average value below specified threshold (--load* options)."
+	echo "-p/--pgrep skips any other pgrep/pidwait processes,"
+	echo "  use it multiple times for args with spaces: -p -f -p 'sleep 5'"
+	echo "-I/--interval-ext-ms option adds random 0-N ms delay to each"
+	echo "  interval (0-2000ms by default), to make sure they're desynced."
 	echo
 	exit ${1:-1};
 }
 
-interval=60
+interval=60 interval_ext=2000
+pgrep=()
 load1= load5= load15=
 file= file_nx=
 
@@ -31,11 +36,13 @@ while [[ -n "$1" ]]; do
 		-x|--debug) shift; set -x ;;
 
 		-i|--check-interval) shift; interval=$1; shift ;;
+		-I|--interval-ext-ms) shift; interval_ext=$1; shift ;;
 
 		-l|--load1) shift; load1=$1; shift ;;
 		--load5) shift; load5=$1; shift ;;
 		--load15) shift; load15=$1; shift ;;
 
+		-p|--pgrep) shift; pgrep+=( "$1" ); shift ;;
 		-f|--file) shift; file=$1; shift ;;
 		-F|--file-nx) shift; file_nx=$1; shift ;;
 
@@ -59,19 +66,30 @@ load_test() {
 	local thresh=$(load_parse "$2")
 	[[ "$value" -le "$thresh" ]] || return 1; }
 
+pgrep_check() {
+	[[ "${#pgrep[@]}" -eq 1 ]] && \
+		local procs=( ${pgrep[0]} ) || local procs=( "${pgrep[@]}" )
+	procs=$(pgrep -A -l "${procs[@]}" | grep -v ' \(pgrep\|pidwait\)$' ||:)
+	[[ -z "$procs" ]] || return 1; }
 
+
+(( interval_ext = RANDOM % (interval_ext + 1) )) || interval_ext=0
+interval_ext=00${interval_ext} interval_ext=0.${interval_ext: -3}
 while :; do
-	err=0
+	recheck=0
 
 	[[ -z "$load1" && -z "$load5" && -z "$load15" ]] || {
 		read m1 m5 m15 rest < /proc/loadavg
-		[[ -z "$load1" ]] || load_test "$m1" "$load1" || err=1
-		[[ -z "$load5" ]] || load_test "$m5" "$load5" || err=1
-		[[ -z "$load15" ]] || load_test "$m15" "$load15" || err=1; }
+		[[ -z "$load1" ]] || load_test "$m1" "$load1" || recheck=1
+		[[ -z "$load5" ]] || load_test "$m5" "$load5" || recheck=1
+		[[ -z "$load15" ]] || load_test "$m15" "$load15" || recheck=1; }
 
-	[[ -z "$file" ]] || { [[ -e "$file" ]] || err=1; }
-	[[ -z "$file_nx" ]] || { [[ ! -e "$file_nx" ]] || err=1; }
+	[[ -z "$file" ]] || { [[ -e "$file" ]] || recheck=1; }
+	[[ -z "$file_nx" ]] || { [[ ! -e "$file_nx" ]] || recheck=1; }
+	[[ -z "$pgrep" ]] || pgrep_check || recheck=1
 
-	[[ $err -ne 0 ]] || break
-	sleep $interval
+	[[ $recheck -ne 0 ]] || break
+	if [[ $recheck -eq 1 ]]
+		then sleep $interval $interval_ext
+		else sleep $interval_ext; fi
 done

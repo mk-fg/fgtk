@@ -2423,14 +2423,17 @@ Random examples:
     % sys-wait --load15 5 && run-next-heavy-task
     % sys-wait -f /some/file/appeared && process-file
     % sys-wait -F /file/to-be-removed && run-stuff
+    % sys-wait -p '-f yt-dlp' && yt-dlp next-thing
 
 Helps to avoid writing those annoyingly-common
 `while :; do some-check || break; sleep 60; done; run-other-stuff`
 when something heavy/long is already running and you just don't
 have the heart to break and reschedule it properly.
 
-Mostly used to need for pgrep in a loop, but these days util-linux includes
-pidwait binary, which does the job without this wrapper.
+Mostly used to run "pgrep in a loop", as util-linux pidwait doesn't
+work for most common case of queueing multiple similar things
+(pidwaits only wait for pids they see at the start, so will all
+finish at the same time when initial proc is gone).
 
 <a name=hdr-yt-feed-to-email></a>
 ##### [yt-feed-to-email](yt-feed-to-email)
