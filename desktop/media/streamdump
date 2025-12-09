@@ -2,7 +2,8 @@
 
 slink_opts=( --retry-streams 120 --retry-open 3 --twitch-disable-ads
 	--logformat='{asctime}.{msecs:03.0f} :: {name} {levelname} :: {message}'
-	--logdateformat='%Y-%m-%dT%H:%M:%S' )
+	--logdateformat='%Y-%m-%dT%H:%M:%S'
+	--webbrowser=off --webbrowser-executable=/bin/false )
 slink_fmt=720p,720p60,480p,best
 yt_check_interval=3m
 yt_check_interval_done=10m
