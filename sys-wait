@@ -21,9 +21,7 @@ usage() {
 	echo "  use it multiple times for args with spaces: -p -f -p 'sleep 5'"
 	echo "-I/--interval-ext-ms option adds random 0-N ms delay to each"
 	echo "  interval (0-2000ms by default), to make sure they're desynced."
-	echo
-	exit ${1:-1};
-}
+	echo; exit ${1:-1}; }
 
 interval=60 interval_ext=2000
 pgrep=()
@@ -73,10 +71,10 @@ pgrep_check() {
 	[[ -z "$procs" ]] || return 1; }
 
 
-(( interval_ext = RANDOM % (interval_ext + 1) )) || interval_ext=0
-interval_ext=00${interval_ext} interval_ext=0.${interval_ext: -3}
+(( m = ((RANDOM<<15)|RANDOM) % (interval_ext + 1) )) || m=0
+(( n = m / 1000 )) || n=0; m=000$m; interval_ext=$n.${m: -3}
 while :; do
-	recheck=0
+	recheck=0 # 1 - delay, 2 - only random-ish interval_ext
 
 	[[ -z "$load1" && -z "$load5" && -z "$load15" ]] || {
 		read m1 m5 m15 rest < /proc/loadavg
