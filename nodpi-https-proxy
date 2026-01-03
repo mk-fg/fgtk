@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, socket, logging, inspect, random, signal, asyncio
+import os, sys, socket, logging, inspect, random, signal, enum, asyncio
 
 
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
@@ -16,9 +16,12 @@ def parse_ep(ep, port_def, host_def=None):
 class HTTPSFragProxy:
 
 	buff_sz = 1500
+	split_types = enum.Enum('SplitType', 'random sni')
 
-	def __init__(self, sni_list=None, idle_timeout=None, block_http=False, **bind):
-		self.idle_timeout, self.block_http, self.bind = idle_timeout, block_http, bind
+	def __init__( self, sni_list=None,
+			idle_timeout=None, block_http=False, split_type=None, **bind ):
+		self.idle_timeout, self.block_http = idle_timeout, block_http
+		self.split_type, self.bind = split_type or self.split_types.random, bind
 		if sni_list is not None:
 			if not sni_list: sni_list = [b'\0'] # match nothing
 			else: sni_list = list(s.strip().encode() for s in sni_list)
@@ -43,7 +46,7 @@ class HTTPSFragProxy:
 			self.activity.clear()
 
 	async def conn_wrap(self, func, cid, reader, writer, close_writer=True):
-		try: await func(reader, writer)
+		try: await func(cid, reader, writer)
 		except Exception as err: # handles client closing connection too
 			writer.close()
 			self.log.info('Connection error [%s]: %s', ':'.join(cid), err_fmt(err))
@@ -52,7 +55,7 @@ class HTTPSFragProxy:
 
 	def conn_handle(self, reader, writer):
 		cid = list(map(str, writer.get_extra_info('peername')))
-		return self.conn_wrap(lambda *a: self._conn_handle(cid, *a), cid, reader, writer)
+		return self.conn_wrap(self._conn_handle, cid, reader, writer)
 
 	async def _conn_handle(self, cid, reader, writer):
 		self.activity.set()
@@ -83,24 +86,34 @@ class HTTPSFragProxy:
 				self.conn_wrap(self.pipe, cid, xreader, writer) ]):
 			await task
 
-	async def fragment_data(self, reader, writer):
+	async def fragment_data(self, cid, reader, writer):
 		head = await reader.read(5)
-		data = await reader.read(2048)
+		splits, parts, data = list(), list(), await reader.read(2048)
 		if self.snis and all(site not in data for site in self.snis):
 			writer.write(head); writer.write(data); await writer.drain(); return
-		parts, host_end = list(), data.find(b'\x00')
-		if host_end != -1:
-			parts.append( b'\x16\x03\x04' +
-				(host_end + 1).to_bytes(2, 'big') + data[:host_end + 1] )
-			data = data[host_end + 1:]
-		while data:
-			chunk_len = random.randint(1, len(data))
-			parts.append( b'\x16\x03\x04' +
-				chunk_len.to_bytes(2, 'big') + data[:chunk_len] )
-			data = data[chunk_len:]
+
+		if (t := self.split_type) is t.sni:
+			for n in range(len(data) - 16):
+				if not ( data[n] == data[n+1] == data[n+2] ==
+					data[n+4] == data[n+6] == data[n+7] == 0 ): continue
+				ext_len, sn_list_len, sn_len = data[n+3], data[n+5], data[n+8]
+				if not (ext_len - sn_list_len == 2 and sn_list_len - sn_len == 3): continue
+				splits.extend([n0 := n + 9, n0 + (sn_len + 1) // 2, n0 + sn_len + 1]); break
+
+		if not splits: # "random" default/fallback
+			n, n_max = 0, (nd := len(data)) - 10
+			if (host_end := data.find(b'\x00')) != -1: splits.append(n := host_end + 1)
+			while n <= n_max: splits.append(n := random.randint(n, nd))
+
+		n0 = 0; splits.append(len(data))
+		self.log.debug(' [%s] frag ends: %s', ':'.join(cid), splits)
+		for n in splits:
+			if n == n0: continue
+			parts.append(b'\x16\x03\x04' + (n - n0).to_bytes(2, 'big') + data[n0:n])
+			n0 = n
 		writer.write(b''.join(parts)); await writer.drain()
 
-	async def pipe(self, reader, writer):
+	async def pipe(self, cid, reader, writer):
 		while not reader.at_eof() and not writer.is_closing():
 			self.activity.set()
 			data = await reader.read(self.buff_sz); writer.write(data); await writer.drain()
@@ -128,6 +141,11 @@ def main(args=None):
 			to detect in TLS handshakes and fragment connection data for.
 		"-" can be used for stdin, or %%-prefixed number for any file descriptor (e.g. %%3).
 		Default is to apply such fragmentation to all processed connections.'''))
+	parser.add_argument('-f', '--frag-type', metavar='type', choices=['random', 'sni'], help=dd('''
+		Where to fragment packets:
+			random (default) - pick offset at random somewhere within Client Hello TLS record.
+			sni - around and in the middle of first SNI name, found by zero-bytes in it.
+		"random" is used as a fallback if e.g. finding sni doesn't work.'''))
 	parser.add_argument('-t', '--idle-timeout', type=float, metavar='seconds', help=dd('''
 		Stop after number of seconds being idle. Useful if started from systemd socket.'''))
 	parser.add_argument('--block-http', action='store_true', help=dd('''
@@ -155,10 +173,12 @@ def main(args=None):
 		host, port = parse_ep(opts.bind, host_def=host_def, port_def=port_def)
 		proxy = dict(host=host, port=port)
 	proxy = HTTPSFragProxy( sni_list=sni_list,
+		split_type=(st := HTTPSFragProxy.split_types[opts.frag_type or 'random']),
 		idle_timeout=opts.idle_timeout, block_http=opts.block_http, **proxy )
 
 	log.debug( 'Starting proxy on %s (%s)...', 'systemd-fd' if sd else f'{host} {port}',
-		f'{len(sni_list):,d} SNI domains' if sni_list is not None else 'fragmenting any SNI' )
+		(f'{len(sni_list):,d} SNI domains' if sni_list is not None else 'fragmenting any SNI')
+		+ f', method={st.name}' )
 	return asyncio.run(proxy.run())
 
 if __name__ == '__main__': sys.exit(main())
