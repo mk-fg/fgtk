@@ -2414,8 +2414,8 @@ which is fine for intended purpose (bots spam requests anyway).
 <a name=hdr-sys-wait></a>
 ##### [sys-wait](sys-wait)
 
-Bash script to check and wait for various system conditions,
-files, processes or thresholds like load average or PSI values.
+Bash script to check and wait for various system conditions, files and
+their timestamps, processes or thresholds like load average or PSI values.
 
 Random examples:
 
@@ -2423,6 +2423,7 @@ Random examples:
     % sys-wait --load15 5 && run-next-heavy-task
     % sys-wait -f /some/file/appeared && process-file
     % sys-wait -F /file/to-be-removed && run-stuff
+    % sys-wait -fo download.mp4 && ffmpeg -i download.mp4 ...
     % sys-wait -p '-f yt-dlp' && yt-dlp next-thing
 
 Helps to avoid writing those annoyingly-common

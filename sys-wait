@@ -19,14 +19,15 @@ usage() {
 	echo "E.g. load average value below specified threshold (--load* options)."
 	echo "-p/--pgrep skips any other pgrep/pidwait processes,"
 	echo "  use it multiple times for args with spaces: -p -f -p 'sleep 5'"
+	echo "-f/--file-older expects <filename>[:<age>] spec, with <age> part (default=interval)"
+	echo "  either being number of seconds or short time-delta like 3h, 1h30m, 2m45s, etc."
 	echo "-I/--interval-ext-ms option adds random 0-N ms delay to each"
 	echo "  interval (0-2000ms by default), to make sure they're desynced."
 	echo; exit ${1:-1}; }
 
 interval=60 interval_ext=2000
-pgrep=()
-load1= load5= load15=
-file= file_nx=
+pgrep=() load1= load5= load15=
+file= file_nx= file_old= file_old_td=
 
 while [[ -n "$1" ]]; do
 	case "$1" in
@@ -43,11 +44,21 @@ while [[ -n "$1" ]]; do
 		-p|--pgrep) shift; pgrep+=( "$1" ); shift ;;
 		-f|--file) shift; file=$1; shift ;;
 		-F|--file-nx) shift; file_nx=$1; shift ;;
+		-fo|--file-older) shift; file_old=$1; shift ;;
 
 		welp) exit 1 ;;
 		*) echo "ERROR: Unknown option - $1"; usage 1 ;;
 	esac
 done
+
+[[ -z "$file_old" ]] || {
+	trap 'echo >&2 "Failed to parse -fo/--file-older '\''$file_old'\'' value"; exit 1' ERR
+	[[ "$file_old" =~ ^(.*):(.+)$ ]] && {
+		file_old=${BASH_REMATCH[1]} file_old_td=${BASH_REMATCH[2]}
+		[[ "$file_old_td" =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s?)?$ ]] && {
+			hh=${BASH_REMATCH[2]} mm=${BASH_REMATCH[4]} ss=${BASH_REMATCH[6]}
+			file_old_td=$(( ${hh:-0} * 3600 + ${mm:-0} * 60 + ${ss:-0} )); } || false; } \
+	|| file_old_td=$interval; trap - ERR; }
 
 
 load_parse() {
@@ -82,9 +93,14 @@ while :; do
 		[[ -z "$load5" ]] || load_test "$m5" "$load5" || recheck=1
 		[[ -z "$load15" ]] || load_test "$m15" "$load15" || recheck=1; }
 
+	[[ -z "$pgrep" ]] || pgrep_check || recheck=1
 	[[ -z "$file" ]] || { [[ -e "$file" ]] || recheck=1; }
 	[[ -z "$file_nx" ]] || { [[ ! -e "$file_nx" ]] || recheck=1; }
-	[[ -z "$pgrep" ]] || pgrep_check || recheck=1
+
+	[[ -z "$file_old" ]] || {
+		ts=$(printf '%(%s)T' -1)
+		age=$(($ts - $(stat -c%Y "$file_old" 2>/dev/null || echo $ts)))
+		[[ "$age" -gt "$file_old_td" ]] || recheck=1; }
 
 	[[ $recheck -ne 0 ]] || break
 	if [[ $recheck -eq 1 ]]
