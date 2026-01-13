@@ -17,7 +17,7 @@ usage() {
 	echo
 	echo "Wait until all specified system/load conditions are met."
 	echo "E.g. load average value below specified threshold (--load* options)."
-	echo "-p/--pgrep skips any other pgrep/pidwait processes,"
+	echo "-p/--pgrep skips any other pgrep/pidwait/sys-wait processes,"
 	echo "  use it multiple times for args with spaces: -p -f -p 'sleep 5'"
 	echo "-f/--file-older expects <filename>[:<age>] spec, with <age> part (default=interval)"
 	echo "  either being number of seconds or short time-delta like 3h, 1h30m, 2m45s, etc."
@@ -78,7 +78,7 @@ load_test() {
 pgrep_check() {
 	[[ "${#pgrep[@]}" -eq 1 ]] && \
 		local procs=( ${pgrep[0]} ) || local procs=( "${pgrep[@]}" )
-	procs=$(pgrep -A -l "${procs[@]}" | grep -v ' \(pgrep\|pidwait\)$' ||:)
+	procs=$(pgrep -A -l "${procs[@]}" | grep -v ' \(pgrep\|pidwait\|sys-wait\)$' ||:)
 	[[ -z "$procs" ]] || return 1; }
 
 
