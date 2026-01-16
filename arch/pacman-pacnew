@@ -129,7 +129,7 @@ git tag original
 	echo "Generating git-diff between original and final (merged) version:"
 	echo
 
-	git diff original merged
+	git diff original merged ||:
 
 	echo
 	read -e -p "Apply produced diff to all files [y/N]? " y
