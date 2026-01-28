@@ -9,7 +9,7 @@ bs_max = 20 * 2**20
 def main(args=None):
 	args = list(sys.argv[1:] if args is None else args)
 	for n, arg in enumerate(args):
-		if re.search(r'^-\d+$', arg): args[n] = '-n{}'.format(arg.lstrip('-'))
+		if re.fullmatch(r'-\d+', arg): args[n] = '-n{}'.format(arg.lstrip('-'))
 
 	import argparse
 	parser = argparse.ArgumentParser(

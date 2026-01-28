@@ -99,7 +99,7 @@ def main(args=None):
 		metavar='number/service_name',
 		help='Append the port to all passed hosts as "<host>:<port>".')
 	parser.add_argument('-m', '--match', metavar='regexp',
-		help='Regexp (python) to match host/port by, without ^ and $ matchers.'
+		help='Regexp (python) to match host/port by, without ^ and $ anchors.'
 			' Must contain either exactly one capture group (use "(?:...)" to avoid creating these),'
 				' or named "name" group, and can also contain'
 				' "port" and "protocol" named groups. Example: "(?P<name>.*\.(?:my\.tld1|my.tld2)):\d+":')
@@ -144,8 +144,8 @@ def main(args=None):
 		hc, names = r'[\w\d.-]', list()
 		for name in opts.hosts:
 			port = opts.port
-			if re.search(r'^{}+:\d+$'.format(hc), name): name, port = name.rsplit(':', 1)
-			else: assert re.search(r'^{}+$'.format(hc), name), name
+			if re.fullmatch(r'{}+:\d+'.format(hc), name): name, port = name.rsplit(':', 1)
+			else: assert re.fullmatch(r'{}+'.format(hc), name), name
 			name = re.escape(name)
 			if port: name += ':{}'.format(re.escape(bytes(port)))
 			names.append(name)

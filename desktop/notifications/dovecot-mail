@@ -145,9 +145,9 @@ def mail_find(maildir, msgid, msgpath, ts, ts_diff_max=5*60):
 				for line in src:
 					line = line.strip()
 					if not line: break # end of headers
-					if msg_id_line: m = re.search(r'^\s*(<[^>]+>)(\s|$)', line)
+					if msg_id_line: m = re.match(r'\s*(<[^>]+>)(\s|\Z)', line)
 					else:
-						m = re.search(r'(?i)^message-id:\s*(?:(<[^>]+>)\s*)?$', line)
+						m = re.fullmatch(r'(?i)message-id:\s*(?:(<[^>]+>)\s*)?', line)
 						if m and not m.group(1): msg_id_line = True; continue
 					msg_id_line = False
 					if not m or m.group(1) != msgid: continue
@@ -169,7 +169,7 @@ def mail_iter_log(log_tailer, maildir, path_filters=list()):
 			r' mail\.info dovecot\[(-|\d+)\]:\s+'
 			r'lda\([^)]+\)(<\d+><[^>]+>)?: sieve:'
 			r' msgid=(?P<msgid><[^>]+>|[^\s:]+|unspecified)\s*:'
-			r'( fileinto action:)? stored mail into mailbox \'(?P<path>[^\']+)\'\s*$', line )
+			r'( fileinto action:)? stored mail into mailbox \'(?P<path>[^\']+)\'\s*\Z', line )
 		if not m:
 			log.warn('Failed to match line: %r', line.strip())
 			continue

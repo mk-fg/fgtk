@@ -175,12 +175,12 @@ async def run_wpa_checks(loop, conf):
 			log.debug('State: {}', ['disabled', 'enabled'][int(bool(state))])
 
 		if conf.mode == 'hostapd':
-			rx_enable = r'\<3\>(INTERFACE|AP)-ENABLED$'
-			rx_disable = r'\<3\>INTERFACE-DISABLED$'
+			rx_enable = r'\<3\>(INTERFACE|AP)-ENABLED\Z'
+			rx_disable = r'\<3\>INTERFACE-DISABLED\Z'
 			# state= doesn't transition ENABLED -> INTERFACE_DISABLED like with
 			#  wpa_state=, so it can be lost in a short window before STATUS is first checked
 			# There seem to be no way to actively check interface state with hostpad from wpa_cli
-			rx_state = r'(?:\n|^)state=(\S+)(?:\n|$)', r'^ENABLED$'
+			rx_state = r'(?:\n|^)state=(\S+)(?:\n|\Z)', r'^ENABLED\Z'
 		else:
 			# wpa_supplicant is "enabled" when it is actively
 			#  scanning (connecting) as well as connected, not just the latter
@@ -189,7 +189,7 @@ async def run_wpa_checks(loop, conf):
 			rx_disable = r'\<3\>CTRL-EVENT-DISCONNECTED\b.*\blocally_generated=1\b'
 			# INTERFACE_DISABLED (state=disabled) -> SCANNING -> CONNECTED -> COMPLETED
 			# There are probably more states in-between these
-			rx_state = r'(?:\n|^)wpa_state=(\S+)(?:\n|$)', r'^(?!INTERFACE_DISABLED).*$'
+			rx_state = r'(?:\n|^)wpa_state=(\S+)(?:\n|\Z)', r'^(?!INTERFACE_DISABLED).*\Z'
 
 		wpa.expect(rx(rx_enable), lambda msg: enabled_toggle(True))
 		wpa.expect(rx(rx_disable), lambda msg: enabled_toggle(False))
@@ -282,7 +282,7 @@ def main(args=None, conf=None):
 	conf.mode = 'wpa_supplicant' if not opts.ap_mode else 'hostapd'
 	if conf.mode == 'hostapd':
 		with open(opts.conf) as src:
-			iface_match = re.findall(r'^\s*interface=(\S+)\s*$', src.read(), re.M)
+			iface_match = re.findall(r'^\s*interface=(\S+)\s*\Z', src.read(), re.M)
 		try:
 			iface_match, = iface_match
 			if iface_match != opts.iface: raise ValueError()

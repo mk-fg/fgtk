@@ -20,7 +20,7 @@ _td_s = dict( h=3600, hr=3600, hour=3600,
 _td_usort = lambda d: sorted(
 	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
 _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
-	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '\\Z')
 
 def parse_timestamp(ts_str):
 	ts, ts_str = None, ts_str.replace('_', ' ')
@@ -34,9 +34,9 @@ def parse_timestamp(ts_str):
 				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
 			delta.append(val)
 		ts = dt.datetime.now() - dt.timedelta(*delta)
-	if not ts and (m := re.search( # common BE format
-			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
-			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )):
+	if not ts and (m := re.fullmatch( # common BE format
+			r'(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?', ts_str )):
 		tpl = 'y' if not m.group('Y') else 'Y'
 		tpl, tss = f'%{tpl}-%m-%d', m.group('date')
 		if m.group('time'):
@@ -45,8 +45,8 @@ def parse_timestamp(ts_str):
 			tpl += ' ' + ':'.join(tpl_time[:len(tss_time)])
 		try: ts = dt.datetime.strptime(tss, tpl)
 		except ValueError: pass
-	if not ts and (m := re.search( # just time without AM/PM - treat as 24h format
-			r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', ts_str )):
+	if not ts and (m := re.fullmatch( # just time without AM/PM - treat as 24h format
+			r'\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?', ts_str )):
 		us, tpl = 0, ':'.join(['%H', '%M', '%S'][:len(ts_str.split(':'))])
 		if m.group('us'):
 			ts_str, us = ts_str.rsplit('.', 1)
@@ -215,7 +215,7 @@ def find_logs(p_znc, p_logs, log_fn_tpl):
 	for p in p_znc.glob('users/*/moddata/log/*.log'):
 		net, chan, ts = re_chk(
 			r'/users/(?P<net>[^/]+)/moddata/'
-				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+				r'log/(?P<chan>[^/]+)_(?P<ts>\d{8})\.log\Z',
 			p, 'net', 'chan', 'ts' )
 		logs_append(None, net, chan, ts, p)
 
@@ -223,7 +223,7 @@ def find_logs(p_znc, p_logs, log_fn_tpl):
 	for p in p_znc.glob('moddata/log/*.log'):
 		user, net, chan, ts = re_chk(
 			r'/moddata/log/(?P<user>[^/]+?)'
-				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log$',
+				r'_(?P<net>[^/]+?)_(?P<chan>[^/]+)_(?P<ts>\d{8})\.log\Z',
 			p, 'user', 'net', 'chan', 'ts' )
 		if '_' in f'{user}{net}': raise AssertionError(net, p)
 		logs_append(user, net, chan, ts, p)
@@ -235,7 +235,7 @@ def find_logs(p_znc, p_logs, log_fn_tpl):
 	for p in p_znc.glob('moddata/log/*/*/*/*.log'):
 		user, net, chan, ts = re_chk(
 			r'/moddata/log/(?P<user>[^/]+?)/'
-				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log$',
+				r'(?P<net>[^/]+?)/(?P<chan>[^/]+)/(?P<ts>\d{4}-\d{2}-\d{2})\.log\Z',
 			p, 'user', 'net', 'chan', 'ts' )
 		if '_' in f'{user}{net}': raise AssertionError(net, p)
 		logs_append(user, net, chan, ts.replace('-', ''), p)

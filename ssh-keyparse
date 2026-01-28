@@ -26,7 +26,7 @@ def ssh_key_parse(path, patch_sk=None, decrypt=True):
 					key_enc = False
 					for line in stderr:
 						if re.search( r'^Failed to load key .*:'
-								r' incorrect passphrase supplied to decrypt private key$', line ):
+								r' incorrect passphrase supplied to decrypt private key\Z', line ):
 							key_enc = True
 						else: print(line, file=sys.stderr)
 					if key_enc:

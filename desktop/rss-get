@@ -98,7 +98,7 @@ def feed_entry_ts(entry):
 _name_subs = {
 	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
 	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
-	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_', '#': 'N' }
+	'[\'’]': '', r'\.+\Z': '_', r'\s+\Z': '', r'\s': '_', '#': 'N' }
 def name_for_fs( name, fallback=...,
 		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
 	if not name and fallback is not ...: return fallback
@@ -106,7 +106,7 @@ def name_for_fs( name, fallback=...,
 	return name
 
 def name_dedup(name, name_set, n=3):
-	suff_n, suff_re, suff_fmt = 1, re.compile(r'\.x' + r'\d'*n + r'$'), f'.x{{:0{n}d}}'
+	suff_n, suff_re, suff_fmt = 1, re.compile(r'\.x' + r'\d'*n + r'\Z'), f'.x{{:0{n}d}}'
 	while name in name_set:
 		if m := suff_re.search(name): name = name.rsplit(m.group(0))[0]
 		name += suff_fmt.format(suff_n)
@@ -196,7 +196,7 @@ def main(args=None):
 
 	ranges = list()
 	for v in opts.num or list():
-		m = re.search(r'^(\d+)(?:-(\d+))?$', v)
+		m = re.fullmatch(r'(\d+)(?:-(\d+))?', v)
 		if not m: parser.error(f'Invalid format for -n/--num option, should be N[-M]: {v!r}')
 		a, b = int(m.group(1)) or 1, int(m.group(2) or 0)
 		if not b: b = a

@@ -15,7 +15,7 @@ _td_s = dict( h=3600, hr=3600, hour=3600,
 _td_usort = lambda d: sorted(
 	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
 _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
-	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '\\Z')
 
 def ts_parse(ts_str, ts_now=False, relative_only=False):
 	relative = ts_now is False
@@ -32,9 +32,9 @@ def ts_parse(ts_str, ts_now=False, relative_only=False):
 				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
 			delta.append(val)
 		ts = ts_now + dt.timedelta(*delta)
-	if not ts and not relative_only and (m := re.search( # common BE format
-			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
-			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )):
+	if not ts and not relative_only and (m := re.fullmatch( # common BE format
+			r'(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?', ts_str )):
 		tpl = 'y' if not m.group('Y') else 'Y'
 		tpl, tss = f'%{tpl}-%m-%d', m.group('date')
 		if m.group('time'):
@@ -43,8 +43,8 @@ def ts_parse(ts_str, ts_now=False, relative_only=False):
 			tpl += ' ' + ':'.join(tpl_time[:len(tss_time)])
 		try: ts = dt.datetime.strptime(tss, tpl)
 		except ValueError: pass
-	if not ts and (m := re.search( # just time without AM/PM - treat as 24h format
-			r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?$', ts_str )):
+	if not ts and (m := re.fullmatch( # just time without AM/PM - treat as 24h format
+			r'\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?', ts_str )):
 		us, tpl = 0, ':'.join(['%H', '%M', '%S'][:len(ts_str.split(':'))])
 		if m.group('us'):
 			ts_str, us = ts_str.rsplit('.', 1)
@@ -64,8 +64,8 @@ def ts_parse(ts_str, ts_now=False, relative_only=False):
 				if ',' in ts_str: ts_str = ts_str.replace(',', ' '); continue
 			else:
 				ts = dt.datetime.fromtimestamp(int(res.stdout.strip()))
-				if 0 < (ts_now - ts).total_seconds() <= 24*3600 and re.search(
-						r'(?i)^[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?$', ts_str.strip() ):
+				if 0 < (ts_now - ts).total_seconds() <= 24*3600 and re.fullmatch(
+						r'(?i)[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?', ts_str.strip() ):
 					ts += dt.timedelta(1)
 			break
 	if ts: return (ts - ts_now) if relative else ts

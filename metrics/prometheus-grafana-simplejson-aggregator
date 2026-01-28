@@ -445,7 +445,7 @@ class ExportHTTPd:
 		qk, qs = str_part(qk, ':>')
 		qs = Span(qs) if qs else Span.day
 		date_range = date_round(date0, qs), date_round(date1, qs, up=True)
-		if qk and (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
+		if qk and (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?\Z', qk)):
 			metric, labels = m[0]
 			data = self._db.get_metric_data([(metric, labels)], date_range)
 			data = list( # (value, timestamp[ms])
@@ -484,7 +484,7 @@ class ExportHTTPd:
 			else: qa, (qk, qts) = None, str_part(qts, '<<')
 			qk, qo = str_part(qk, ':')
 			if not qa: qa = qk
-			if not (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?$', qk)):
+			if not (m := re.findall(r'^([^\]]+)(?:\[([^\]]+)\])?\Z', qk)):
 				self.log.warning('Unrecognized query metric format: {!r}', qk)
 				continue
 			metric, labels = m = m[0]

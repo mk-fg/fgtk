@@ -353,9 +353,8 @@ class StatDB:
 		addr = line_raw.split(b' ', 1)[0].strip()
 		if addr:
 			addr = addr.decode()
-			re.search(r'^(\d+\.\d+\.\d+\.\d+|\[?[\da-fA-F:]+\]?)\$', addr)
-			if not re.search(r'^(\d+\.\d+\.\d+\.\d+'
-				'|\[?[\da-fA-F:]+\]?)$', addr): addr = None
+			if not re.fullmatch( r'\d+\.\d+\.\d+\.\d+'
+				r'|\[?[\da-fA-F:]+\]?', addr ): addr = None
 		if not addr:
 			log.debug('Skipping unrecognized-format line: {!r}', line_raw)
 			return

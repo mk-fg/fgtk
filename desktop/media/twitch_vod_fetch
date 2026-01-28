@@ -77,7 +77,7 @@ _td_s = dict( h=3600, hr=3600, hour=3600,
 _td_usort = lambda d: sorted(
 	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
 _td_re = re.compile('(?i)^[-+]?' + ''.join(
-	fr'(?P<{k}>\d+{k}\s*)?' for k, v in _td_usort(_td_s) ) + '$')
+	rf'(?P<{k}>\d+{k}\s*)?' for k, v in _td_usort(_td_s) ) + '\\Z')
 
 def parse_pos_spec(pos):
 	if not pos: return

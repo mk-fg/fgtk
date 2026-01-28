@@ -201,9 +201,9 @@ class FileTreeTagger:
 			elif isinstance(v, dict):
 				taggers = tag_map[k] = list()
 				for rx, tags in v.items():
-					if k == 'code_ext': rx = rf'\.({rx}){code_ext_suff}$'
-					elif k == 'bin_ext': rx = rf'(?i)\.({rx}){bin_ext_suff}$'
-					elif k == 'code_bin': rx = rf'^{rx}$'
+					if k == 'code_ext': rx = rf'\.({rx}){code_ext_suff}\Z'
+					elif k == 'bin_ext': rx = rf'(?i)\.({rx}){bin_ext_suff}\Z'
+					elif k == 'code_bin': rx = rf'^{rx}\Z'
 					tags = tags.split()
 					tag_set.update(tags)
 					taggers.append((re.compile(rx), tags))

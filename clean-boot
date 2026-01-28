@@ -42,7 +42,7 @@ def main(args=None):
 
 	os.chdir(opts.boot_dir)
 
-	path_re = re.compile(r'^(vmlinuz|config|System\.map)-(\d+\.\d+\.\d+)-.*?(\.old)?$')
+	path_re = re.compile(r'^(vmlinuz|config|System\.map)-(\d+\.\d+\.\d+)-.*?(\.old)?\Z')
 	path_ver = lambda v,old: tuple(map(int, v.split('.'))) + (int(not bool(old)),)
 	format_ver = lambda v: '.'.join(map(str, v))
 

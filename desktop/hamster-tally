@@ -36,7 +36,7 @@ def _td_re():
 	ts_re = ['^'] + [
 		r'(?P<{0}>\d*{0}s?\s*)?'.format(k)
 		for k, v in it.chain.from_iterable(
-			map(sub_sort, [_td_days, _td_s]) ) ] + ['$']
+			map(sub_sort, [_td_days, _td_s]) ) ] + ['\\Z']
 	return re.compile(''.join(ts_re), re.I | re.U)
 _td_re = _td_re()
 
@@ -111,7 +111,7 @@ def log_fn_fmt_re(log_fmt):
 	log_fmt_vars.update( year=r'\d{4}', mo=r'\d{2}',
 		mo_name=r'\d\d_\w+', dd1=r'-?\d\d', dd2=r'\d\d' )
 	if not all(log_fmt_vars.values()): raise AssertionError(log_fmt_vars)
-	return re.compile(f'^{log_fmt.format(**log_fmt_vars)}$')
+	return re.compile(f'^{log_fmt.format(**log_fmt_vars)}\\Z')
 
 def log_total_td(lines): return sum(map(op.attrgetter('td'), lines))
 def log_total_line(lines):

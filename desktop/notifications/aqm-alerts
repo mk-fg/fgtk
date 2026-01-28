@@ -15,7 +15,7 @@ _tds = dict(
 	h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1 )
 _td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}s?\s*)?' for k, v in
-	sorted(_tds.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True) ) + '$')
+	sorted(_tds.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True) ) + '\\Z')
 
 def td_parse_sec(td):
 	'Parse [[HH:]MM:]SS or e.g. 5h30m and such time-deltas to seconds'

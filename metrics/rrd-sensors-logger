@@ -324,7 +324,7 @@ def ts_diff_parse(spec, t=float, as_td_obj=False):
 	except ValueError: pass
 	else: return t(spec)
 	spec = spec.strip()
-	if re.search(r'^[\d.]+$', spec): spec = f'{spec}s'
+	if re.fullmatch(r'[\d.]+', spec): spec = f'{spec}s'
 	m = _short_ts_regexp.search(spec)
 	if not m: raise ValueError(spec)
 	delta, delta_any = list(), False
@@ -717,7 +717,7 @@ def init_rrd(sensors_interval, sensors, conf):
 
 	dss = list()
 	for k,s in sensors.items():
-		assert re.search(r'^[a-zA-Z0-9_]+$', k), k
+		assert re.fullmatch(r'[a-zA-Z0-9_]+', k), k
 		for sk,sv in s.values.items():
 			dss.append(dict(
 				min=sv.get('min'), max=sv.get('max'),
@@ -804,7 +804,7 @@ def httpd_poller(conf, rrdb, bind, http_opts=None, http_opts_allow=False):
 			opts = list(http_opts or list())
 			if http_opts_allow and opts_ext: opts.append(opts_ext)
 			if metrics:
-				if not re.search(r'^[-a-zA-Z0-9_ ]+$', metrics):
+				if not re.fullmatch(r'[-a-zA-Z0-9_ ]+', metrics):
 					return self.send_error( 400,
 						f'Bad request - invalid metric name spec: {metrics!r}' )
 				metrics = metrics.replace('-', ' ').split(' ')
@@ -896,7 +896,7 @@ def detect_rpi():
 	if not hasattr(detect_rpi, 'cache'):
 		import re
 		with open('/proc/cpuinfo', 'r') as src: cpuinfo = src.read()
-		m = re.search(r'^Revision\s*:\s*([\da-f]{4})$', cpuinfo, re.MULTILINE | re.I)
+		m = re.fullmatch(r'Revision\s*:\s*([\da-f]{4})', cpuinfo, re.MULTILINE | re.I)
 		if not m: raise OSError(cpuinfo)
 		# https://elinux.org/RPi_HardwareHistory
 		rev, rev_int = m.group(1).lower(), int(m.group(1), 16)
@@ -939,7 +939,7 @@ def rpi_set_internal_resistor_state(bcm_gpio_n, state, platform=False):
 def gpio_init(sysfs_gpio_n, state, path_gpio=pl.Path('/sys/class/gpio')):
 	if not state: return
 	pin_str = str(int(sysfs_gpio_n))
-	m = re.search(r'^(in|high|low)(?:-(up|down|off))?$', state)
+	m = re.fullmatch(r'(in|high|low)(?:-(up|down|off))?', state)
 	assert m, state
 	d, pull = m.groups()
 	log.debug('Initializing gpio pin %s into state: %s (pull: %s)', pin_str, d, pull)

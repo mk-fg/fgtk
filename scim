@@ -916,7 +916,7 @@ def main(args=None):
 	if conf.links:
 		conf.links_exc = list(re.compile(ln) for ln in conf.links_exc.lines() if ln)
 		conf.links_exc.extend(re.compile(
-			f'^{re.escape(str(node))}$' ) for node in conf.lists)
+			rf'^{re.escape(str(node))}\Z' ) for node in conf.lists)
 		if opts.summary or opts.check: conf.diff_cmd = None
 		else:
 			conf.diff_cmd = [opts.diff_cmd.split()]

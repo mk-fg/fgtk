@@ -68,7 +68,7 @@ def parse_timestamp(ts_str):
 	if not ts:
 		match = re.search( # common BE format
 			r'^(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
-			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?$', ts_str )
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?\Z', ts_str )
 		if match:
 			tpl = 'y' if not match.group('Y') else 'Y'
 			tpl, ts_str = '%{}-%m-%d'.format(tpl), match.group('date')
@@ -89,7 +89,7 @@ def parse_timestamp(ts_str):
 			# Try to add +1 day to simple timestamps like 3:00 if they're in the past
 			# Whitelisted cases: 1:00, 4am, 5am GMT, 3:30 UTC-4
 			if 0 < time.time() - val <= 24*3600 and re.search(
-					r'(?i)^[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?$', ts_str.strip() ):
+					r'(?i)^[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?\Z', ts_str.strip() ):
 				val += 24*3600
 			ts = datetime.fromtimestamp(val)
 

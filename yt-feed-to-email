@@ -71,7 +71,7 @@ class RX:
 	def __init__(self, s):
 		self.rx_list = list()
 		for n, rx in enumerate(s.split(' && ')):
-			if not (m := re.search(r'^([!iI]+)?/(.+)/$', rx)):
+			if not (m := re.fullmatch(r'([!iI]+)?/(.+)/', rx)):
 				if n: raise ValueError('Chained regexps must be /.../-wrapped')
 				self.rx_list.append((False, re.compile(rx, re.I))); continue
 			self.rx_list.append(( '!' in (m[1] or ''),

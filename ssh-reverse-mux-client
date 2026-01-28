@@ -207,7 +207,7 @@ def main(args=None, conf=None):
 			import re
 			with open('/proc/cpuinfo') as src:
 				for line in src:
-					m = re.search(r'^\s*Serial\s*:\s*(\S+)\s*$', line)
+					m = re.fullmatch(r'\s*Serial\s*:\s*(\S+)\s*', line)
 					if m: break
 				else: parser.error('Failed to find "Serial : ..." line in /proc/cpuinfo (non-RPi kernel?)')
 				ident = hashlib.blake2b(m.group(1).encode(), key=to_bytes(opts.auth_secret)).digest()

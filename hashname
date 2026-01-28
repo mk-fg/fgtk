@@ -85,7 +85,7 @@ def main(args=None):
 		name, ext = name if len( name :=
 			(name_old := p.name).rsplit('.', 1) ) == 2 else (name[0], '')
 		if opts.tag:
-			if m := re.search(fr'(?i)\.{tag_rx}$', name): name = name[:m.start()]
+			if m := re.search(rf'(?i)\.{tag_rx}\Z', name): name = name[:m.start()]
 			p_hash = tag_fmt.format(p_hash[:tag_len])
 		name_new = [name, p_hash, ext] if not opts.replace else [p_hash, ext]
 		name_new = '.'.join(filter(None, name_new))

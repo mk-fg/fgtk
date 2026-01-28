@@ -235,7 +235,7 @@ async def dns_update_local(api_conf, domain, addr):
 	zone, replaced = list(), None
 	line_re = re.compile(
 		r'(?i)^(\s*' + re.escape(rec)
-		+ r'\s+IN\s+' + rec_t + r'\s+)(\S+)\s*$' )
+		+ r'\s+IN\s+' + rec_t + r'\s+)(\S+)\s*\Z' )
 	for line in api_conf.zone_file.read_text().splitlines():
 		m = line_re.search(line)
 		if m:

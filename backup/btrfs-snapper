@@ -10,7 +10,7 @@ def bak_ret_parse(s):
 	ret_re.update(n=r'(\d+)')
 	for sv in s.split():
 		for k, pat in ret_re.items():
-			if not (pat and (m := re.search(rf'(?i)^{pat}$', sv))): continue
+			if not (pat and (m := re.fullmatch(pat, sv, re.IGNORECASE))): continue
 			m = m.group(1)
 			ret_re[k], ret_map[k] = None, int(m) if m != '*' else 2**30
 			break
@@ -78,7 +78,7 @@ def run_sv_backup(p_snap, bak_fmt, svn, sv, ret_policy, rn, rv, check_genid):
 	dt_fmt, dt_re = '%Y%m%d_%H%M%S', r'(\d{8}_\d{6})'
 	assert '\uf320' not in bak_fmt, bak_fmt
 	snaps, snap_re = dict(), re.compile( r'^' +
-		re.escape(bak_fmt.format(sv=svn, dt='\uf320')).replace('\uf320', dt_re) + '$' )
+		re.escape(bak_fmt.format(sv=svn, dt='\uf320')).replace('\uf320', dt_re) + '\\Z' )
 
 	for snap in sorted(s.resolve() for s in p_snap.iterdir()):
 		if not (m := snap_re.search(snap.name)): continue

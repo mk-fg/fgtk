@@ -80,7 +80,7 @@ def notify_logtail_cb(path=None, line='', skipped=None, **notify_kws):
 		# Try to strip iso8601 timestamp, use simplier format
 		# For things like "2016-06-28T20:53:03.550642+05:00 user.notice proc[5973]: stuff"
 		line = re.sub( r'\d{4}-\d{2}-\d{2}[T ](\d{2}:){2}\d{2}(\.\d+)'
-				r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)$',
+				r'?(\+|-)\d{2}:\d{2} (?P<channel>[\w.]+)(<\d+>)? (?P<msg>.*)\Z',
 			r'\g<channel> \g<msg>', line )
 		if 'logtail_notify' in line: return # to avoid exception loops
 		# Slow, can probably be optimized by compiling all these chars into a regexp

@@ -275,7 +275,7 @@ def main(args=None):
 		re_sh = re.compile(opts.shell_re or '')
 		if opts.session: sessions = [opts.session]
 		else:
-			sessions, re_s = list(), re.compile(r'^\s+(\d+\.pts-\d+\.\S+)\s+\(Attached\)\s*$')
+			sessions, re_s = list(), re.compile(r'^\s+(\d+\.pts-\d+\.\S+)\s+\(Attached\)\s*\Z')
 			for line in sp_out('screen', '-ls').split('\n'):
 				if m := re_s.search(line): sessions.append(m.group(1))
 			sessions = sorted(sessions, key=lambda s: int(re.findall(r'^\d+', s)[0] or 0))

@@ -9,8 +9,8 @@ class Conf:
 	xattr_ts = 'user.log-tail-check.ts'
 	tail_check_size = 200
 
-	line_re = r'^(?P<ts>\S+)\s+(?P<name>\S+)\s*$'
-	ts_re = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?([-+]\d{2}:\d{2}|Z)$'
+	line_re = r'^(?P<ts>\S+)\s+(?P<name>\S+)\s*\Z'
+	ts_re = r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?([-+]\d{2}:\d{2}|Z)\Z'
 	ts_tpl = '%Y-%m-%dT%H:%M:%S'
 
 	check_names = list()
@@ -45,7 +45,7 @@ def parse_ts(ts, ts_re, ts_tpl):
 	ts = dt.datetime.strptime(ts, ts_tpl)
 	if ts_tz == 'Z': ts_tz = dt.timedelta(0)
 	else:
-		(s,hh,mm), = re.findall(r'^([-+])(\d{2}):(\d{2})$', ts_tz)
+		(s,hh,mm), = re.findall(r'^([-+])(\d{2}):(\d{2})\Z', ts_tz)
 		ts_tz = dt.timedelta(hours=int(hh), minutes=int(mm))
 		if s == '+': ts_tz = -ts_tz
 	ts += ts_tz

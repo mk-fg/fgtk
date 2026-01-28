@@ -47,7 +47,7 @@ def main(args=None):
 		['mosh-server', 'new', '-p', str(opts.server_port)],
 		stderr=subprocess.DEVNULL )
 	for line in key.decode().splitlines():
-		m = re.search(fr'^MOSH CONNECT {opts.server_port} (\S+)(\s|$)', line)
+		m = re.search(rf'^MOSH CONNECT {opts.server_port} (\S+)(\s|\Z)', line)
 		if not m: continue
 		key = m.group(1)
 		break

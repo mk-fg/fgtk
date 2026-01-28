@@ -231,7 +231,7 @@ def main(args=None):
 		xset = subprocess.run(['xset', 'q'], stdout=subprocess.PIPE, check=True)
 		for line in xset.stdout.splitlines():
 			m = re.search( r'^\s*auto repeat delay:\s+'
-				r'(\d+)\s+repeat rate:\s+(\d+)\s*$', line.decode() )
+				r'(\d+)\s+repeat rate:\s+(\d+)\s*\Z', line.decode() )
 			if not m: continue
 			xset_rate = m.groups()
 			break

@@ -67,7 +67,7 @@ tags_default = dict(x='x', xxx='xxx')
 tags_subs = {
 	r'[\\/]': '_', r'^\.+': '_', r'[\x00-\x1f]': '_', r':': '-_',
 	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', r'[\?\*]': '_',
-	'[\'’]': '', r'\.+$': '_', r'\s+$': '', r'\s': '_' }
+	'[\'’]': '', r'\.+\Z': '_', r'\s+\Z': '', r'\s': '_' }
 
 def track_name( rename, p,
 		_track_name_subs = list((re.compile(k), v) for k,v in tags_subs.items()) ):
