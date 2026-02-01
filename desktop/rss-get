@@ -84,12 +84,13 @@ def feed_entry_enclosures(entry, ext_filter=None):
 		enc_urls.append(enc_href)
 	return enc_urls
 
-def feed_entry_ts(entry):
+def feed_entry_ts(entry, raw=False):
 	'Return tuple of (raw, parsed) timestamps for entry, latter one in datetime format.'
 	for k in 'published created modified'.split():
 		if not entry.get(k): continue
 		ts, ts_str = entry[f'{k}_parsed'], entry[k]
 		if ts: ts = dt.datetime.fromtimestamp(calendar.timegm(ts))
+		if not raw: ts_str = ts.strftime(' %Y-%m-%d %H:%M %a ')
 		break
 	else: ts = ts_str = None
 	return ts_str, ts
@@ -187,6 +188,8 @@ def main(args=None):
 		help='List curl commands for downloading all selected files individually and exit.')
 	group.add_argument('-A', '--list-aria2', action='store_true',
 		help='Print filelist for downloading all selected files with aria2c and exit.')
+	group.add_argument('-T', '--print-raw-ts', action='store_true',
+		help='Print original timestamps as they are parsed from feed, not localized ones.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -219,7 +222,7 @@ def main(args=None):
 	ts0, n0, file_urls = None, entries[0][0], dict()
 	for n, e in reversed(entries):
 		enc_urls = feed_entry_enclosures(e, opts.file_type)
-		ts_str, ts = feed_entry_ts(e)
+		ts_str, ts = feed_entry_ts(e, raw=opts.print_raw_ts)
 
 		if opts.list or not ranges:
 			if not opts.list:
