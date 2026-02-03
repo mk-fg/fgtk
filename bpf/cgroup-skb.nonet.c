@@ -11,12 +11,9 @@
 //   /sys/fs/bpf/cgroup-skb-nonet type cgroup/skb
 //  (use "bpftool -d" to debug why stuff fails to load)
 
-
 #include <linux/version.h>
 #include <uapi/linux/bpf.h>
-
-// From /usr/src/linux/tools/testing/selftests/bpf/bpf_helpers.h
-#include "bpf_helpers.h"
+#include <bpf/bpf_helpers.h>
 
 
 #define ETH_P_IP 0x8
