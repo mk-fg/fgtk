@@ -194,7 +194,8 @@ def main(args=None):
 	group.add_argument('-1', '--use-stream1', action='store_true', help=dd('''
 		Process files with multiple A/V streams, encoding first stream from those.'''))
 	group.add_argument('-a', '--audio-n', type=int, metavar='n', help=dd('''
-		Index of audio stream to use for all files, with -a1 to use first stream (same as -1).'''))
+		Index of audio stream to use for all files, with -a1 to use first stream (same as -1).
+		Overrides -1/--use-stream1 for audio, if both options are used together.'''))
 	group.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
 		Apply and strip ffmpeg params stored in filenames.
 		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
@@ -275,8 +276,7 @@ def main(args=None):
 		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
 	nx = max(0, opts.skip_n or 0)
 	pxfmt_set = parse_rgb10_pixfmts()
-	an = 1 if opts.use_stream1 else opts.audio_n or 0
-	vn = opts.use_stream1 and 1 or 0
+	vn, an = bool(opts.use_stream1), opts.audio_n or bool(opts.use_stream1)
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
