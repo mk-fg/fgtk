@@ -136,8 +136,8 @@ def df_get(path):
 	df = os.statvfs(path or copy.dst)
 	return float(df.f_bavail * df.f_bsize)
 
-def pop_path(path_list):
-	idx = random.randint(0, len(path_list) - 1)
+def pop_path(path_list, order=False):
+	idx = 0 if order else random.randint(0, len(path_list) - 1)
 	return path_list.pop(idx)
 
 def cleanup_run(cleanup, paths, df=None, dry_run=False):
@@ -203,7 +203,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 				' - space left to fill: %.1f MiB, rate: %.2f MiB/s, left: %s',
 				to_fill / MiB, rate / MiB, time_left )
 
-		src = pop_path(src_files)
+		src = pop_path(src_files, copy.order)
 		dst = copy.dst / track_name(rename, src)
 		log.debug('Copy: %s -> %s', src, dst.name)
 		try:
