@@ -263,7 +263,7 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	return '\n'.join(desc_lines)
 
 
-def ffmpeg_extract_atts(src_list, p_dst, quiet=False):
+def ffmpeg_extract_atts(src_list, p_dst, replace=False, quiet=False):
 	'Extracts attachments via tmpdir, matching those case-insensitively vs p_dst'
 	import tempfile, hashlib as hl; warn_n = 0
 	def _warn(src, msg):
@@ -292,15 +292,20 @@ def ffmpeg_extract_atts(src_list, p_dst, quiet=False):
 					with csum.p.open('rb') as pf:
 						csum.h = hl.file_digest(pf, hl.sha256).digest()
 				with p.open('rb') as pf: h2 = hl.file_digest(pf, hl.sha256).digest()
-				if h2 != csum.h: _warn( src.name,
-					f'Same-name att-file mismatch, discarding [ {p.name} ]' )
+				if h2 == csum.h: continue
+				act = 'discarding' if not replace else 'replacing'
+				sz_a, sz_b = (pc.stat().st_size for pc in [csum.p, p])
+				_warn( src.name, f'Same-name att-file mismatch,'
+					f' {act} it [ {p.name} ]: {sz_repr(sz_a)} -> {sz_repr(sz_b)}' )
+				if not replace: continue
+				csum.p.unlink(); p.rename(p_new := p_tmp / p.name); csum.update(h=h2, p=p_new)
 		new_sz = list()
 		for p in p_tmp.iterdir():
 			if not p.is_file(): continue
 			with p.open('rb') as a, (p_dst / p.name).open('xb') as b:
 				b.write(data := a.read()); new_sz.append(len(data))
 	ext = list()
-	if new_sz: ext.append(f' [ +{sz_repr(sum(new_sz))} ]')
+	if new_sz: ext.append(f' [ {sz_repr(sum(new_sz))} ]')
 	if warn_n: ext.append(f', {warn_n:,d} WARNING(s)')
 	print( f'Extracted/collected {len(new_sz):,d} / {len(csums):,d} new'
 		f' attachment(s) from {len(src_list):,d} source file(s){"".join(ext)}' )
@@ -353,7 +358,8 @@ def main(args=None):
 		Detect/extract all attachment blobs (usually subtitle fonts)
 			from files to specified existing dir and exit instead of converting anything.
 		Keeps exact filenames as used in each file and checks that same-name attachments
-			are identical (incl. with files already in specified dir), with warnings otherwise.'''))
+			are identical (incl. with files already in specified dir), with warnings otherwise.
+		When used with -f/--force option, replaces files on checksum mismatches.'''))
 
 	group = parser.add_argument_group('Processing tweaks')
 	group.add_argument('-f', '--force', action='store_true', help=dd('''
@@ -475,7 +481,7 @@ def main(args=None):
 	if dst_dir := opts.extract_attachments:
 		if not (p_dst := pl.Path(dst_dir)).is_dir():
 			return err_func(f'Missing directory for -E/--extract-attachments [ {dst_dir} ]')
-		return ffmpeg_extract_atts(src_list, p_dst, opts.quiet)
+		return ffmpeg_extract_atts(src_list, p_dst, opts.force, opts.quiet)
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
