@@ -152,7 +152,7 @@ Contents - links to doc section for each script here:
 
     - [\[desktop/media\]](#hdr-desktop_media__)
 
-        - [toogg](#hdr-toogg)
+        - [toogg]
         - [tomkv](#hdr-tomkv)
         - [totty](#hdr-totty)
         - [split](#hdr-split)
@@ -259,6 +259,8 @@ Contents - links to doc section for each script here:
     - [numfmt.awk](#hdr-numfmt.awk)
     - [nft-ddos](#hdr-nft-ddos)
     - [nft-set-to-ranges](#hdr-nft-set-to-ranges)
+
+[toogg]: #hdr-toogg
 
 
 
@@ -3341,20 +3343,65 @@ to ~720p30 av1 and 2-channel 96k opus audio, which is useful for modern systems
 that have no trouble playing new codecs and take 2x+ less space than common h264,
 or even less than that if downscaling/downsampling is also involved.
 
-ffprobe is run on the files first to detect ones which won't benefit from
-conversion or have any kind of ambiguity/errors not handled by this script
-(e.g. multiple A/V tracks), which is also where script stops by default,
-listing any problems, files to convert and ffmpeg commands it'll run for those.
+General idea is to avoid storing placebo-quality media in bad old codecs
+when 720p30/2c96k with av1/opus is good enough, and anything beyond that
+tends to just be a massive waste of space.
 
-Converts everything sequentially, without any explicit hw optimization flags.
+How it works:
 
-Can generate a list of files to remove afterwards with `-r/--rm-list`,
-optionally checking compression factor to put destination file there
-instead of source, if it doesn't improve enough on resulting file size.
+- ffprobe is run on the files first to detect ones which won't benefit from
+  conversion or have any kind of ambiguity/errors not handled by this script
+  (e.g. multiple A/V tracks).
 
-Idea here is to avoid storing placebo-quality media in bad old codecs when
-720p30/2c96k with av1/opus is good enough, and anything beyond that tends
-to be a massive waste of space.
+    Which is also where script stops by default without `-x/--convert` option,
+    listing any problems, skipped files, files to convert, and ffmpeg commands
+    it'll run for all those.
+
+- Any format issues and ambiguities print a simple stream map, like in mpv
+  terminal output.
+  `-p/--print-probe` can also be used as a nicer `ffprobe` for all files.
+
+- Converts everything sequentially, without any explicit hw optimization flags,
+  averaging time per GiB of data, running an estimate of how long it'll take to
+  finish and what resulting space and savings % will be.
+
+- Easy to interrupt at any point, resume from same point via `-n/--skip-n` as
+  printed before/after each processed file.
+
+- For torrented files, `-w/--wait` can be used to smartly wait until downloads
+  are finished (i.e. all files exist and done writing), start conversion after that.
+
+- In anime it's useful to pick audio stream via `-a/--audio-n`, `-A/--audio-tag`
+  (e.g. `-A language=jpn` - as they're printed for multi-stream files or with
+  `-p/--print-probe`), or both of these together to detect occasional files where
+  streams can be reshuffled or tagged incorrectly.
+
+    `-E/--extract-attachments` can be useful to collect all fancy ASS subtitle fonts
+    in one shared dir instead of bundling with each file (mpv can pick them up via
+    `~/.mpv/fonts.conf`, probe output has total space usage for those too).
+    Or `-t/--copy-attachments` can keep those bundled in mkv files.
+
+- `-F/--fn-opts` can pickup ffmpeg options from filenames, like
+  `video.tomkv+ss=1:23+to=4:56.mp4` to cut files from-and-to easily,
+  incl. with symlinks to process same file multiple times with different
+  parameters to multiple chunks/outputs (as per symlink name).
+
+- Can generate a list of files to remove afterwards with `-r/--rm-list`,
+  optionally checking compression factor to put destination file there
+  instead of source, if it doesn't improve enough on resulting file size.
+
+    E.g. `--rm-list conv.txt:0.7` to then `while read p; do rm -f "$p"; done < conv.txt`
+    after script's done with mass-conversion to only keep what was worth compressing -
+    <70% resulting size in this example, though high-def crap often slims down to 10-20%.
+
+    `-R/--rm-list-regen` can generate such list later, from converted src/dst files,
+    and keep appending new ones there.
+
+It's basically how I use ffmpeg for video format/codec conversion,
+to store files long-term, to drop into some to-watch-later dump,
+or just to be able to play on an old laptop without too much fan noise.
+
+[toogg] next to it is a similar script for audio files.
 
 <a name=hdr-totty></a>
 ##### [totty](desktop/media/totty)
