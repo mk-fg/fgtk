@@ -42,8 +42,13 @@ def wrap_to_lines(chunks, w=80, w_max=110, s=' ', s_chunks='', split=None, **wra
 	if s_chunks: split = list(c.replace('\ue9ae', s_chunks) for c in split)
 	return list(c.replace('\ue9ad', s) for c in split)
 
+class sh_str_raw(str): __slots__ = () # str for sh_repr to skip quoting
+class sh_str_dq(str): __slots__ = () # str for sh_repr to double-quote without other changes
 def sh_repr(s): # same idea as in shlex.quote, likely unsafe anyway
 	if not s: return "''"
+	elif isinstance(s, sh_str_raw): return str(s)
+	elif isinstance(s, sh_str_dq): return f'"{s}"'
+	elif not isinstance(s, str): s = str(s)
 	if s.isascii() and not s.encode().translate(
 		None, delete=b'%+,-./0123456789:=@ABCDEFGHIJKLMN'
 		b'OPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz' ): return s
@@ -118,7 +123,8 @@ def retries_within_timeout(tries, timeout, delay_min=0, slack=None, e=10):
 
 def parse_rgb10_pixfmts():
 	'Return a set of 10b video pixel formats, to know when converting those is needed'
-	probe = sp.run(['ffmpeg', '-v', 'fatal', '-pix_fmts'], check=True, stdout=sp.PIPE)
+	probe = sp.run( ['ffmpeg', '-v', 'fatal', '-pix_fmts'],
+		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
 	parse, pxfmt_set = False, set()
 	for line in probe.stdout.decode().splitlines():
 		if not (line := line.strip()): continue
@@ -136,8 +142,9 @@ def parse_rgb10_pixfmts():
 
 def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
-	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
-		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
+	probe = sp.run( [ 'ffprobe', '-v', 'fatal',
+			'-show_entries', 'stream:format', '-print_format', 'json', str(p) ],
+		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
 	vx, ax = vn, an; ac = sc = 0; probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = dict(); errs, subs, multistream = list(), list(), None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
@@ -403,7 +410,7 @@ def main(args=None):
 		if not errs: return
 		try: fail = err = next(err for err in errs if not err.get('warn'))
 		except: err = errs[fail := 0]
-		if not quiet:
+		if not quiet: # doesn't affect fail_desc output
 			err_verdict = lambda: ( 'PROBLEM' if err.get('fatal')
 				else ('WARN' if err.get('warn') or skip else 'SKIP') )
 			if len(errs) > 1:
@@ -489,7 +496,7 @@ def main(args=None):
 		if p.v.scale: filters.append(
 			"scale='if(gte(iw,ih),min(1280,iw),-2)"
 			":if(lt(iw,ih),min(1280,ih),-2)',setsar=1:1" )
-		if filters: filters = ['-filter:v', ','.join(filters)]
+		if filters: filters = ['-filter:v', sh_str_dq(','.join(filters))]
 		if fnopts := p.get('opts'):
 			filters = sum(([f'-{k}', v] for k, v in fnopts.items()), []) + filters
 		if p.v.pxconv: filters.extend(['-pix_fmt', 'yuv420p10le'])
@@ -524,7 +531,7 @@ def main(args=None):
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join(sh_repr(a) for a in cmd), end='\n\n', flush=True)
-		if opts.print_probe and p.desc: print(tw.indent(p.desc, '  ') + '\n')
+		if opts.print_probe and p.desc: print(tw.indent(p.desc, '  ') + '\n', flush=True)
 		if dry_run: continue
 
 		sp.run( cmd, check=True,
