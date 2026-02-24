@@ -134,7 +134,7 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p, vn=0, an=0, at=None, pxfmts_10b=None):
+def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
@@ -184,7 +184,7 @@ def src_probe(p, vn=0, an=0, at=None, pxfmts_10b=None):
 	if not (audio and video):
 		errs.append(adict(t='format', fatal=1, msg='Missing/unmatched A/V streams'))
 	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
-	data = adict( v=video, a=audio, s=subs, errs=errs,
+	data = adict( v=video, a=audio, s=subs, atts=atts, errs=errs,
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
 	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
@@ -192,14 +192,13 @@ def src_probe(p, vn=0, an=0, at=None, pxfmts_10b=None):
 def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	'Return multiline description of file contents - container, streams, formats, etc'
 	td, sz = d.get('td', float(p.format.duration)), d.get('sz', int(p.format.size))
-	desc_lines = [ 'Container: ' + str(
-		p.format.get('format_long_name') or p.format.get('format_name') or '???')
-		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(sz / td)} per second ]' ]
+	desc_lines = list()
 	if (n := float(p.format.get('probe_score', 0))) < 100:
 		desc_lines.append('WARNING: only partial probe success = {round(n)} / 100')
-	vx, ax = (d.get(k, dict()).get('n', -1) for k in 'va'); sxs = d.get('s', [-1])
+	vx, ax = (d.get(k, dict()).get('n', -1) for k in 'va')
+	sxs, tx = d.get('s', [-1]), d.get('atts')
 
-	vn = an = sn = att = 0
+	vn = an = sn = att_bs = 0
 	for s in p.streams:
 		if not (ct := s.get('codec_type')): continue
 		sit, sin, six = ct.title(), '#' + str(s.get('index', '?')), ' '
@@ -224,17 +223,17 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 
 		if ct == 'audio':
 			if c := s.get('channels'): sil1.append(f'{c}ch')
-			if len(sr := str(s.get('sample_rate', ''))) > 3: sr = sr[:-3] + 'k'
+			if len(sr := str(s.get('sample_rate', ''))) > 3: sil1.append(sr[:-3] + 'k')
 			sit = ' Audio'; an += 1; sin = an
 			if not ax or an == ax: six = 'x'
 
 		if ct == 'subtitle':
-			if c := s.get('channels'): sil1.append(f'{c}ch')
-			if len(sr := str(s.get('sample_rate', ''))) > 3: sr = sr[:-3] + 'k'
 			if sxs and sn in sxs: six = 'x'
 			sit = 'Subs'; sn += 1; sin = sn
 
-		if ct == 'attachment': sit = ' Att'
+		if ct == 'attachment':
+			if bs := s.get('extradata_size'): sil1.append(sz_repr(bs)); att_bs += bs
+			sit, six = ' Att', 'x' if tx else six
 
 		ext = [f' [{six}] {sit} {sin} : ' + (e := ' '.join(filter(None, sil1 + sil2)))]
 		if tags := s.get('tags'):
@@ -249,6 +248,11 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 					['tags:', *tags], initial_indent=' '*5, subsequent_indent=' '*7 ))
 
 		desc_lines.extend(ext)
+
+	att_bs = '' if not att_bs else f', incl. {sz_repr(att_bs)} atts'
+	desc_lines.insert(0, 'Container: ' + str(
+		p.format.get('format_long_name') or p.format.get('format_name') or '???')
+		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(sz / td)} per second{att_bs} ]' )
 	return '\n'.join(desc_lines)
 
 def main(args=None):
@@ -307,7 +311,8 @@ def main(args=None):
 		Similar to --audio-n, but selects audio stream by its metadata tag, e.g. "language=eng".
 		If used together with --audio-n, SKIPs the file on stream number/tag mismatch.
 		Run with -p/--print-probe option to get info on streams and their tags in input files.'''))
-	# XXX: option to copy attachments
+	group.add_argument('-t', '--copy-attachments', action='store_true', help=dd('''
+		Copy all "attachment" blobs, like subtitle fonts and such.'''))
 	group.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
 		Apply and strip ffmpeg params stored in filenames.
 		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
@@ -387,7 +392,8 @@ def main(args=None):
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
 	nx, pxfmts_10b = max(0, opts.skip_n or 0), parse_rgb10_pixfmts()
-	vn, an = bool(opts.use_stream1), ( bool(opts.use_stream1) if not opts.audio_n
+	vn, atts = bool(opts.use_stream1), opts.copy_attachments
+	an = ( bool(opts.use_stream1) if not opts.audio_n
 		else (None if opts.audio_n.lower() in ['a', 'all'] else int(opts.audio_n)) )
 	try: at = opts.audio_tag and opts.audio_tag.lower().split('=', 1)
 	except: parser.error(f'Invalid -A/--audio-tag format: {opts.audio_tag!r}')
@@ -411,7 +417,7 @@ def main(args=None):
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
 		src_list[n] = None # default-skip files, unless they pass all checks below
-		try: p = src_probe(srcx, vn, an, at, pxfmts_10b)
+		try: p = src_probe(srcx, vn, an, at, atts, pxfmts_10b)
 		except Exception as err: p = adict( t='probe', fatal=1,
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
 		else: # parse fnopts, format dst filename
@@ -501,12 +507,13 @@ def main(args=None):
 			([f'-{k}:a:{n}', v] for n, ax in enumerate(ac) for k, v in ax.items()), [])
 
 		fmt = ['-movflags', '+faststart'] if p.ext.lower() in ['mp4', 'mov', 'm4v'] else []
-		if p.s or vn or an or at:
+		if vn or an or at or p.s or p.atts:
 			fmt.extend(( '-map', f'0:v:{max(p.v.n-1,0)}',
 				'-map', '0:a' if an is None else f'0:a:{max(p.a.n-1,0)}' ))
 			if subs := p.s.copy():
 				if subs == list(range(subs[-1] + 1)): fmt.extend(['-map', '0:s']); subs.clear()
 				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
+			if p.atts: fmt.extend(['-map', '0:t'])
 
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
 			*'-c:v libsvtav1 -preset 5 -crf 38'.split(), *ac, *fmt, '-y', p.tmp ]
