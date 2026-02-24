@@ -262,6 +262,51 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(sz / td)} per second{att_bs} ]' )
 	return '\n'.join(desc_lines)
 
+
+def ffmpeg_extract_atts(src_list, p_dst, quiet=False):
+	'Extracts attachments via tmpdir, matching those case-insensitively vs p_dst'
+	import tempfile, hashlib as hl; warn_n = 0
+	def _warn(src, msg):
+		nonlocal warn_n; warn_n += 1
+		if not quiet: print(f'{src} :: WARNING :: {msg}')
+	with tempfile.TemporaryDirectory(prefix='.tomkv.extract-atts.') as tmp:
+		(p_last := (p_tmp := pl.Path(tmp)) / 'new').mkdir()
+		csums = dict(( p.name.lower(),
+			adict(h=None, p=p )) for p in p_dst.iterdir() if p.is_file())
+		for src, srcx in src_list:
+			for p in p_last.iterdir(): p.unlink()
+			out = sp.run( ['ffmpeg', '-v', 'error', '-dump_attachment:t', '', '-i', srcx],
+				env=dict(AV_LOG_FORCE_NOCOLOR='1'), cwd=p_last,
+				stdin=sp.DEVNULL, stdout=sp.PIPE, stderr=sp.STDOUT )
+			out = out.stdout.decode().strip().splitlines()
+			try: out.remove('At least one output file must be specified')
+			except ValueError: pass
+			if out := '\n'.join(out).strip(): _warn(src.name, (
+				f'ffmpeg had issues processing path: {srcx.name}\n'
+				+ tw.indent(out, '  [ffmpeg] ') ).strip()); continue
+			for p in p_last.iterdir():
+				if not (csum := csums.get(fn := p.name.lower())):
+					p.rename(p_new := p_tmp / p.name)
+					csums[fn] = adict(h=None, p=p_new); continue
+				if not csum.h:
+					with csum.p.open('rb') as pf:
+						csum.h = hl.file_digest(pf, hl.sha256).digest()
+				with p.open('rb') as pf: h2 = hl.file_digest(pf, hl.sha256).digest()
+				if h2 != csum.h: _warn( src.name,
+					f'Same-name att-file mismatch, discarding [ {p.name} ]' )
+		new_sz = list()
+		for p in p_tmp.iterdir():
+			if not p.is_file(): continue
+			with p.open('rb') as a, (p_dst / p.name).open('xb') as b:
+				b.write(data := a.read()); new_sz.append(len(data))
+	ext = list()
+	if new_sz: ext.append(f' [ +{sz_repr(sum(new_sz))} ]')
+	if warn_n: ext.append(f', {warn_n:,d} WARNING(s)')
+	print( f'Extracted/collected {len(new_sz):,d} / {len(csums):,d} new'
+		f' attachment(s) from {len(src_list):,d} source file(s){"".join(ext)}' )
+	return bool(warn_n and not quiet)
+
+
 def main(args=None):
 	import argparse
 	dd = lambda text: re.sub( r' \t+', ' ',
@@ -304,6 +349,11 @@ def main(args=None):
 				like "30s", "10min", "1h 20m", "1d12h5m". Intended for downloads or proc-pipelines.
 			Implies -x/--convert. Can be aborted after file(s) appear due to w/e quirks,
 				so might be a good idea to double-check formats and all processing-related opts.'''))
+	group.add_argument('-E', '--extract-attachments', metavar='dir', help=dd('''
+		Detect/extract all attachment blobs (usually subtitle fonts)
+			from files to specified existing dir and exit instead of converting anything.
+		Keeps exact filenames as used in each file and checks that same-name attachments
+			are identical (incl. with files already in specified dir), with warnings otherwise.'''))
 
 	group = parser.add_argument_group('Processing tweaks')
 	group.add_argument('-f', '--force', action='store_true', help=dd('''
@@ -420,6 +470,12 @@ def main(args=None):
 		if skip or not fail: return
 		if fail_desc: print('\n' + tw.indent(fail_desc, '  ') + '\n')
 		return fail
+
+	## Extract-attachments mode
+	if dst_dir := opts.extract_attachments:
+		if not (p_dst := pl.Path(dst_dir)).is_dir():
+			return err_func(f'Missing directory for -E/--extract-attachments [ {dst_dir} ]')
+		return ffmpeg_extract_atts(src_list, p_dst, opts.quiet)
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
