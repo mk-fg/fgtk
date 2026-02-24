@@ -134,7 +134,7 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p, vn=0, an=0, at=None, desc_meta=None):
+def src_probe(p, vn=0, an=0, at=None, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
@@ -186,10 +186,10 @@ def src_probe(p, vn=0, an=0, at=None, desc_meta=None):
 	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
 	data = adict( v=video, a=audio, s=subs, errs=errs,
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
-	if desc_meta: data.desc = src_probe_desc(desc_meta, probe, data)
+	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
 
-def src_probe_desc(m, p, d=dict()):
+def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	'Return multiline description of file contents - container, streams, formats, etc'
 	td, sz = d.get('td', float(p.format.duration)), d.get('sz', int(p.format.size))
 	desc_lines = [ 'Container: ' + str(
@@ -212,8 +212,8 @@ def src_probe_desc(m, p, d=dict()):
 				if ar := s.get('display_aspect_ratio'):
 					if (ars := s.get('sample_aspect_ratio')) != '1:1': ar += f'.{ars}'
 					sil1.append(f'[ {ar} ]')
-			if s.pix_fmt in m.pxf:
-				if wh: sil1[-1] += 'x10b'
+			if pxfmts_10b and s.pix_fmt in pxfmts_10b:
+				if wh: sil1[-1] += '.10b'
 				else: sil1.append('10b')
 			if fps := s.get('avg_frame_rate'):
 				if '/' not in fps: fps = float(fps)
@@ -278,9 +278,11 @@ def main(args=None):
 			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
 	group.add_argument('-p', '--print-probe', action='store_true', help=dd('''
 		Print information about contents of each file relevant to this script.
+		Normally this info is only printed for files with some kind of processing issues.
 		For full data use: ffprobe -v error -show_entries stream:format -of json <file>'''))
 	group.add_argument('-q', '--quiet', action='store_true', help=dd('''
-		Don't print any WARN/SKIP info about files that seem to be encoded properly.'''))
+		Don't print WARN/SKIP info about minor issues or files
+			that seem to be encoded adequately, or stream info on any errors.'''))
 	group.add_argument('-w', '--wait',
 		metavar='timeout [/ check-interval] [~ stale-delay]', help=dd('''
 			Wait for all source file(s) to appear before running any kind of probes/processing.
@@ -391,25 +393,25 @@ def main(args=None):
 	except: parser.error(f'Invalid -A/--audio-tag format: {opts.audio_tag!r}')
 	else: at = at and dict([at])
 
-	def _err_fail(errs, desc=None, skip=False):
+	def _err_fail(errs, fail_desc=None, skip=False, quiet=False):
 		if not errs: return
 		try: fail = err = next(err for err in errs if not err.get('warn'))
 		except: err = errs[fail := 0]
-		err_verdict = lambda: ( 'PROBLEM' if err.get('fatal')
-			else ('WARN' if err.get('warn') or skip else 'SKIP') )
-		if len(errs) > 1:
-			print(f'\n{src.name} :: {err_verdict()}')
-			for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-		else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-		if skip: return
-		if desc: print('\n' + tw.indent(desc, '  ') + '\n')
+		if not quiet:
+			err_verdict = lambda: ( 'PROBLEM' if err.get('fatal')
+				else ('WARN' if err.get('warn') or skip else 'SKIP') )
+			if len(errs) > 1:
+				print(f'\n{src.name} :: {err_verdict()}')
+				for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+			else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+		if skip or not fail: return
+		if fail_desc: print('\n' + tw.indent(fail_desc, '  ') + '\n')
 		return fail
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
-		src_list[n] = None
-		try: p = src_probe( srcx, vn, an, at=at,
-			desc_meta=opts.print_probe and adict(pxf=pxfmts_10b) )
+		src_list[n] = None # default-skip files, unless they pass all checks below
+		try: p = src_probe(srcx, vn, an, at, pxfmts_10b)
 		except Exception as err: p = adict( t='probe', fatal=1,
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
 		else: # parse fnopts, format dst filename
@@ -423,8 +425,9 @@ def main(args=None):
 				except: p.errs.append(adict( t='file', fatal=1,
 					msg=f'Failed to parse -F/--fn-opts: {fnopts!r}' ))
 		# Last check for unfixable file/format issues
-		errs = p.get('errs', [p])
-		if _err_fail(list(err for err in errs if err.get('fatal')), p.get('desc')): continue
+		if (errs := p.get('errs', [p])) and _err_fail(
+			list(err for err in errs if err.get('fatal')),
+			not opts.quiet and p.get('desc') ): continue
 
 		# Check for warnings and skippable issues
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
@@ -435,7 +438,7 @@ def main(args=None):
 		if all(a.clone for a in p.a.enc): errs.append(adict(
 			t='audio', warn=1, msg='Already encoded to ~2ch opus, will copy it as-is' ))
 		# Last check for non-fatal errors
-		if _err_fail(errs, p.desc, skip=opts.force): continue
+		if _err_fail(errs, opts.print_probe and p.desc, opts.force, opts.quiet): continue
 		src_list[n], p.src = p, srcx
 	if not (src_list := list(filter(None, src_list))):
 		parser.error('No non-skipped files to process')
@@ -514,7 +517,7 @@ def main(args=None):
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join(sh_repr(a) for a in cmd), end='\n\n', flush=True)
-		if p.desc: print(tw.indent(p.desc, '  ') + '\n')
+		if opts.print_probe and p.desc: print(tw.indent(p.desc, '  ') + '\n')
 		if dry_run: continue
 
 		sp.run( cmd, check=True,
