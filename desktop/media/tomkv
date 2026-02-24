@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-import os, sys, json, re, math, time, pathlib as pl, subprocess as sp
+import pathlib as pl, subprocess as sp, textwrap as tw
+import os, sys, json, re, math, time, string
 
 
 class adict(dict):
@@ -25,8 +26,28 @@ def sz_repr(size, _units=list(
 		reversed(list((u, 2 ** (n * 10)) for n, u in enumerate('BKMGT'))) )):
 	for u, u1 in _units:
 		if size > u1: break
-	if u1 > 1: size = f'{size/u1:.1f}'
+	if u1 > 1: size = f'{size/u1:.1f}'.removesuffix('.0')
 	return f'{size}{u}'
+
+def wrap_to_lines(chunks, w=80, w_max=110, s=' ', s_chunks='', split=None, **wrap):
+	'Wrap s-joined chunks to least lines of roughly same length within w-w_max range'
+	wrap = dict(dict(break_long_words=False, break_on_hyphens=False, tabsize=2), **wrap)
+	if s_chunks: chunks = list( # normalize spaces within chunks
+		s_chunks.join(c.split()).replace(s_chunks, '\ue9ae') for c in chunks )
+	chunks = s.join(c.replace(s, '\ue9ad') for c in chunks)
+	for n in range(w_max, w-1, -1):
+		split_new = tw.wrap(chunks, n, **wrap)
+		if split and len(split_new) > len(split): break
+		split = split_new
+	if s_chunks: split = list(c.replace('\ue9ae', s_chunks) for c in split)
+	return list(c.replace('\ue9ad', s) for c in split)
+
+def sh_repr(s): # same idea as in shlex.quote, likely unsafe anyway
+	if not s: return "''"
+	if s.isascii() and not s.encode().translate(
+		None, delete=b'%+,-./0123456789:=@ABCDEFGHIJKLMN'
+		b'OPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz' ): return s
+	return "'" + s.replace("'", "'\\''") + "'"
 
 
 _td_days = dict(
@@ -96,6 +117,7 @@ def retries_within_timeout(tries, timeout, delay_min=0, slack=None, e=10):
 
 
 def parse_rgb10_pixfmts():
+	'Returns a set of 10b video pixel formats, to know when converting those is needed'
 	probe = sp.run(['ffmpeg', '-v', 'fatal', '-pix_fmts'], check=True, stdout=sp.PIPE)
 	parse, pxfmt_set = False, set()
 	for line in probe.stdout.decode().splitlines():
@@ -112,11 +134,11 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p, vn=0, an=0):
+def src_probe(p, vn=0, an=0, desc_meta=None):
 	'Returns info on relevant streams in input file, filtered by vn/an options'
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
-	probe = adict.rec_make(json.loads(probe.stdout))
+	vx, ax = vn, an; probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = sub = 0; errs, subs, multistream = list(), list(), None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', msg=f'Subtitle file [{fmt}]')
@@ -142,15 +164,76 @@ def src_probe(p, vn=0, an=0):
 			if not audio: audio = adict(enc=list())
 			audio.enc.append(adict(c=s.codec_name, cn=s.channels))
 		if ct == 'subtitle':
-			sub += 1
 			if s.get('codec_name') in [None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle']:
 				errs.append(adict(t='subs', msg='Has bitmap or unrecognized subtitles'))
-			else: subs.append(sub-1)
+			else: subs.append(sub)
+			sub += 1
 	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
 	if sub or subs: subs.append(sub)
-	return adict( v=video, a=audio, s=subs, ms=multistream,
+	data = adict( v=video, a=audio, s=subs, ms=multistream,
 		errs=errs, td=float(probe.format.duration), sz=int(probe.format.size) )
+	if desc_meta: data.desc = src_probe_desc(desc_meta, probe, data, vx, ax, subs)
+	return data
 
+def src_probe_desc(m, p, d, vx, ax, sxs):
+	desc_lines = [ 'Container: ' + str(
+		p.format.get('format_long_name') or p.format.get('format_name') or '???')
+		+ ' :: ' + f'{td_repr(float(d.td))} in {sz_repr(d.sz)}'
+			f' [ {sz_repr(d.sz / d.td)} per second ]' ]
+	if (n := float(p.format.get('probe_score', 0))) < 100:
+		desc_lines.append('WARNING: only partial probe success = {round(n)} / 100')
+
+	vn = an = sn = att = 0
+	for s in p.streams:
+		if not (ct := s.get('codec_type')): continue
+		sit, sin, six = ct.title(), '#' + str(s.get('index', '?')), ' '
+		sil1, sil2 = [s.get('codec_name')], list()
+		if s.get('disposition', dict()).get('default'): sil2.append('[default]')
+
+		if ct == 'video':
+			if all(wh := [s.get('width'), s.get('height')]):
+				sil1.append('x'.join(map(str, wh)))
+				if ar := s.get('display_aspect_ratio'):
+					if (ars := s.get('sample_aspect_ratio')) != '1:1': ar += f'.{ars}'
+					sil1.append(f'[ {ar} ]')
+			if s.pix_fmt in m.pxf:
+				if wh: sil1[-1] += 'x10b'
+				else: sil1.append('10b')
+			if fps := s.get('avg_frame_rate'):
+				if '/' not in fps: fps = float(fps)
+				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
+				fps = f'{fps:.1f}'.removesuffix('.0'); sil1.append(f'{fps}fps')
+			vn += 1; sin = vn
+			if not vx or vn == vx: six = 'x'
+
+		if ct == 'audio':
+			if c := s.get('channels'): sil1.append(f'{c}ch')
+			if len(sr := str(s.get('sample_rate', ''))) > 3: sr = sr[:-3] + 'k'
+			sit = ' Audio'; an += 1; sin = an
+			if not ax or an == ax: six = 'x'
+
+		if ct == 'subtitle':
+			if c := s.get('channels'): sil1.append(f'{c}ch')
+			if len(sr := str(s.get('sample_rate', ''))) > 3: sr = sr[:-3] + 'k'
+			if sxs and sn in sxs: six = 'x'
+			sit = 'Subs'; sn += 1; sin = sn
+
+		if ct == 'attachment': sit = ' Att'
+
+		ext = [f' [{six}] {sit} {sin} : ' + (e := ' '.join(filter(None, sil1 + sil2)))]
+		if tags := s.get('tags'):
+			if st := tags.pop('_STATISTICS_TAGS', ''):
+				for k in st.split(): tags.pop(k, '')
+			for k in list(tags):
+				if k.startswith('_STATISTICS_'): tags.pop(k)
+			if tags := list( f'{k}={sh_repr(v)}' for k,v in tags.items()
+					if all(c in string.printable for c in v.replace(' ', '')) ):
+				if len(e := ext[0] + (e and ' :: ') + ' '.join(tags)) < 110: ext[0] = e
+				else: ext.extend(wrap_to_lines(
+					['tags:', *tags], initial_indent=' '*5, subsequent_indent=' '*7 ))
+
+		desc_lines.extend(ext)
+	return desc_lines
 
 def main(args=None):
 	import argparse, textwrap
@@ -177,6 +260,9 @@ def main(args=None):
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
 			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
+	group.add_argument('-p', '--print-probe', action='store_true', help=dd('''
+		Print information about contents of each file relevant to this script.
+		For full data use: ffprobe -v error -show_entries stream:format -of json <file>'''))
 	group.add_argument('-q', '--quiet', action='store_true', help=dd('''
 		Don't print any WARN/SKIP info about files that seem to be encoded properly.'''))
 	group.add_argument('-w', '--wait',
@@ -277,14 +363,14 @@ def main(args=None):
 		rm_list, rm_list_ratio = ( (rm_list, math.inf)
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
-	nx, pxfmt_set = max(0, opts.skip_n or 0), parse_rgb10_pixfmts()
+	nx, pxfmts_10b = max(0, opts.skip_n or 0), parse_rgb10_pixfmts()
 	vn, an = bool(opts.use_stream1), ( bool(opts.use_stream1) if not opts.audio_n
 		else (None if opts.audio_n.lower() in ['a', 'all'] else int(opts.audio_n)) )
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
 		src_list[n] = None
-		try: p = src_probe(srcx, vn, an)
+		try: p = src_probe(srcx, vn, an, opts.print_probe and adict(pxf=pxfmts_10b))
 		except Exception as err: p = adict( t='probe',
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
 		if p.get('ms'): p = adict(t='format', msg='Multiple A/V streams detected')
@@ -302,7 +388,7 @@ def main(args=None):
 			print(f'\n{src.name} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
 		# Check for warnings and skippable issues
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
-		p.v.pxconv = p.v.pxf not in pxfmt_set
+		p.v.pxconv = p.v.pxf not in pxfmts_10b
 		if p.v.c in ['hevc', 'av1'] and not p.v.scale and not p.v.resample and p.v.br < 2.5e6:
 			errs.append(adict(t='video', msg=f'Already encoded to <1280x <30fps {p.v.c}'))
 		for a in p.a.enc: a.clone = a.c == 'opus' and a.cn <= 2
@@ -396,8 +482,8 @@ def main(args=None):
 		if n == nx and not dry_run: _skipped_stats_catchup(n+1)
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
-		print(msg); print(' '.join((repr(a) if any( c in a for c in
-			r' \'"|*?!&$`{}[];' ) else a) for a in cmd), end='\n\n', flush=True)
+		print(msg); print(' '.join(sh_repr(a) for a in cmd), end='\n\n', flush=True)
+		if p.desc: print('\n'.join(f'  {ln}' for ln in p.desc), end='\n\n')
 		if dry_run: continue
 
 		sp.run( cmd, check=True,
