@@ -117,7 +117,7 @@ def retries_within_timeout(tries, timeout, delay_min=0, slack=None, e=10):
 
 
 def parse_rgb10_pixfmts():
-	'Returns a set of 10b video pixel formats, to know when converting those is needed'
+	'Return a set of 10b video pixel formats, to know when converting those is needed'
 	probe = sp.run(['ffmpeg', '-v', 'fatal', '-pix_fmts'], check=True, stdout=sp.PIPE)
 	parse, pxfmt_set = False, set()
 	for line in probe.stdout.decode().splitlines():
@@ -134,16 +134,17 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
-def src_probe(p, vn=0, an=0, desc_meta=None):
-	'Returns info on relevant streams in input file, filtered by vn/an options'
+def src_probe(p, vn=0, an=0, at=None, desc_meta=None):
+	'Return info on relevant streams in input file, filtered by vn/an options'
 	probe = sp.run([ 'ffprobe', '-v', 'fatal', '-show_entries',
 		'stream:format', '-print_format', 'json', str(p) ], check=True, stdout=sp.PIPE)
-	vx, ax = vn, an; probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = sub = 0; errs, subs, multistream = list(), list(), None
+	vx, ax = vn, an; ac = sc = 0; probe = adict.rec_make(json.loads(probe.stdout))
+	video = audio = dict(); errs, subs, multistream = list(), list(), None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
-		return adict(t='format', msg=f'Subtitle file [{fmt}]')
+		return adict(t='format', fatal=1, msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
 		if not (ct := s.get('codec_type')): continue
+
 		if ct == 'video':
 			if vn:
 				if vn is ... or (vn := vn - 1): continue
@@ -154,34 +155,49 @@ def src_probe(p, vn=0, an=0, desc_meta=None):
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
-			video = adict( c=s.codec_name, fps=fps, w=s.width,
-				h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
+			video = adict( n=vx, c=s.codec_name, fps=fps,
+				w=s.width, h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
+
 		if ct == 'audio':
+			ac += 1
 			if an:
 				if an is ... or (an := an - 1): continue
 				an = ...
-			elif audio and an is not None: multistream = True; continue
-			if not audio: audio = adict(enc=list())
+			if at:
+				tags = dict((k.lower(), str(v).lower()) for k, v in s.get('tags', dict()).items())
+				if err := ' '.join( f'{k}=[ {sh_repr(tags.get(k))} != {sh_repr(v)} ]'
+						for k, v in at.items() if tags.get(k) != v ):
+					if an: errs.append(adict( t='audio',
+						msg=f'Index/tags mismatch: #{ax} {err}' ))
+					else: continue
+				elif not an: ax = ac
+			if not audio: audio = adict(n=ax, enc=list())
+			elif an is not None: multistream = True; continue
 			audio.enc.append(adict(c=s.codec_name, cn=s.channels))
+
 		if ct == 'subtitle':
 			if s.get('codec_name') in [None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle']:
 				errs.append(adict(t='subs', msg='Has bitmap or unrecognized subtitles'))
-			else: subs.append(sub)
-			sub += 1
-	if not (audio and video): return adict(t='format', msg='Missing A/V streams')
-	if sub or subs: subs.append(sub)
-	data = adict( v=video, a=audio, s=subs, ms=multistream,
-		errs=errs, td=float(probe.format.duration), sz=int(probe.format.size) )
-	if desc_meta: data.desc = src_probe_desc(desc_meta, probe, data, vx, ax, subs)
+			else: subs.append(sc)
+			sc += 1
+
+	if not (audio and video):
+		errs.append(adict(t='format', fatal=1, msg='Missing/unmatched A/V streams'))
+	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
+	data = adict( v=video, a=audio, s=subs, errs=errs,
+		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
+	if desc_meta: data.desc = src_probe_desc(desc_meta, probe, data)
 	return data
 
-def src_probe_desc(m, p, d, vx, ax, sxs):
+def src_probe_desc(m, p, d=dict()):
+	'Return multiline description of file contents - container, streams, formats, etc'
+	td, sz = d.get('td', float(p.format.duration)), d.get('sz', int(p.format.size))
 	desc_lines = [ 'Container: ' + str(
 		p.format.get('format_long_name') or p.format.get('format_name') or '???')
-		+ ' :: ' + f'{td_repr(float(d.td))} in {sz_repr(d.sz)}'
-			f' [ {sz_repr(d.sz / d.td)} per second ]' ]
+		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(sz / td)} per second ]' ]
 	if (n := float(p.format.get('probe_score', 0))) < 100:
 		desc_lines.append('WARNING: only partial probe success = {round(n)} / 100')
+	vx, ax = (d.get(k, dict()).get('n', -1) for k in 'va'); sxs = d.get('s', [-1])
 
 	vn = an = sn = att = 0
 	for s in p.streams:
@@ -233,12 +249,12 @@ def src_probe_desc(m, p, d, vx, ax, sxs):
 					['tags:', *tags], initial_indent=' '*5, subsequent_indent=' '*7 ))
 
 		desc_lines.extend(ext)
-	return desc_lines
+	return '\n'.join(desc_lines)
 
 def main(args=None):
-	import argparse, textwrap
+	import argparse
 	dd = lambda text: re.sub( r' \t+', ' ',
-		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+		tw.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
 		usage='%(prog)s [options] src [src ...]', description=dd('''
@@ -285,6 +301,11 @@ def main(args=None):
 		Index of audio stream to use for all files, with -a1 to use first stream (same as -1).
 		Special 'a' or 'all' value can be used to keep all audio streams.
 		Overrides -1/--use-stream1 for audio, if both options are used together.'''))
+	group.add_argument('-A', '--audio-tag', metavar='key=value', help=dd('''
+		Similar to --audio-n, but selects audio stream by its metadata tag, e.g. "language=eng".
+		If used together with --audio-n, SKIPs the file on stream number/tag mismatch.
+		Run with -p/--print-probe option to get info on streams and their tags in input files.'''))
+	# XXX: option to copy attachments
 	group.add_argument('-F', '--fn-opts', action='store_true', help=dd('''
 		Apply and strip ffmpeg params stored in filenames.
 		If filename has ".tomkv<opts>." before file extension, it'll be parsed and removed.
@@ -366,26 +387,45 @@ def main(args=None):
 	nx, pxfmts_10b = max(0, opts.skip_n or 0), parse_rgb10_pixfmts()
 	vn, an = bool(opts.use_stream1), ( bool(opts.use_stream1) if not opts.audio_n
 		else (None if opts.audio_n.lower() in ['a', 'all'] else int(opts.audio_n)) )
+	try: at = opts.audio_tag and opts.audio_tag.lower().split('=', 1)
+	except: parser.error(f'Invalid -A/--audio-tag format: {opts.audio_tag!r}')
+	else: at = at and dict([at])
+
+	def _err_fail(errs, desc=None, skip=False):
+		if not errs: return
+		try: fail = err = next(err for err in errs if not err.get('warn'))
+		except: err = errs[fail := 0]
+		err_verdict = lambda: ( 'PROBLEM' if err.get('fatal')
+			else ('WARN' if err.get('warn') or skip else 'SKIP') )
+		if len(errs) > 1:
+			print(f'\n{src.name} :: {err_verdict()}')
+			for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+		else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
+		if skip: return
+		if desc: print('\n' + tw.indent(desc, '  ') + '\n')
+		return fail
 
 	## ffprobe checks
 	for n, (src, srcx) in enumerate(src_list):
 		src_list[n] = None
-		try: p = src_probe(srcx, vn, an, opts.print_probe and adict(pxf=pxfmts_10b))
-		except Exception as err: p = adict( t='probe',
+		try: p = src_probe( srcx, vn, an, at=at,
+			desc_meta=opts.print_probe and adict(pxf=pxfmts_10b) )
+		except Exception as err: p = adict( t='probe', fatal=1,
 			msg=f'Failed to process media info: [{err.__class__.__name__}] {err}' )
-		if p.get('ms'): p = adict(t='format', msg='Multiple A/V streams detected')
-		# Parse fnopts, format dst filename
-		fn = (opts.name or '{name}.mkv').format(name=src.name.rsplit('.', 1)[0])
-		p.fn, p.ext = fn.rsplit('.', 1) if '.' in fn else (fn, '')
-		if opts.fn_opts and (m := re.search(r'\.tomkv(\+\S+)?\Z', p.fn)):
-			p.fn, fnopts = fn[:m.start()], m[1] or ''
-			try:
-				p.opts = dict(opt.split('=', 1) for opt in fnopts.split('+') if opt)
-				if set(p.opts) - {'ss', 'to'}: raise ValueError
-			except: p = adict(t='file', msg=f'Failed to parse -F/--fn-opts: {fnopts!r}')
-		# Last check for any unfixable issues
-		if (errs := p.get('errs')) is None:
-			print(f'\n{src.name} :: PROBLEM {p.get("t") or "-"} :: {p.msg}'); continue
+		else: # parse fnopts, format dst filename
+			fn = (opts.name or '{name}.mkv').format(name=src.name.rsplit('.', 1)[0])
+			p.fn, p.ext = fn.rsplit('.', 1) if '.' in fn else (fn, '')
+			if opts.fn_opts and (m := re.search(r'\.tomkv(\+\S+)?\Z', p.fn)):
+				p.fn, fnopts = fn[:m.start()], m[1] or ''
+				try:
+					p.opts = dict(opt.split('=', 1) for opt in fnopts.split('+') if opt)
+					if set(p.opts) - {'ss', 'to'}: raise ValueError
+				except: p.errs.append(adict( t='file', fatal=1,
+					msg=f'Failed to parse -F/--fn-opts: {fnopts!r}' ))
+		# Last check for unfixable file/format issues
+		errs = p.get('errs', [p])
+		if _err_fail(list(err for err in errs if err.get('fatal')), p.get('desc')): continue
+
 		# Check for warnings and skippable issues
 		p.v.scale, p.v.resample = p.v.w > 1400 or p.v.h > 1500, p.v.fps > 35
 		p.v.pxconv = p.v.pxf not in pxfmts_10b
@@ -395,19 +435,10 @@ def main(args=None):
 		if all(a.clone for a in p.a.enc): errs.append(adict(
 			t='audio', warn=1, msg='Already encoded to ~2ch opus, will copy it as-is' ))
 		# Last check for non-fatal errors
-		if errs:
-			try: skip = err = next(err for err in errs if not err.get('warn'))
-			except: err = errs[skip := 0]
-			if not opts.quiet:
-				err_verdict = lambda: 'WARN' if err.get('warn') or opts.force else 'SKIP'
-				if len(errs) > 1:
-					print(f'\n{src.name} :: {err_verdict()}'.rstrip())
-					for err in errs: print(f'  {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-				else: print(f'\n{src.name} :: {err_verdict()} {err.get("t") or "-"} :: {err.msg}')
-			if skip and not opts.force: continue
+		if _err_fail(errs, p.desc, skip=opts.force): continue
 		src_list[n], p.src = p, srcx
 	if not (src_list := list(filter(None, src_list))):
-		parser.error('No non-skipped files left to process')
+		parser.error('No non-skipped files to process')
 
 	## Deduplication of destination filenames
 	dst_name_map = dict()
@@ -467,11 +498,11 @@ def main(args=None):
 			([f'-{k}:a:{n}', v] for n, ax in enumerate(ac) for k, v in ax.items()), [])
 
 		fmt = ['-movflags', '+faststart'] if p.ext.lower() in ['mp4', 'mov', 'm4v'] else []
-		if p.s or p.ms or an or vn:
-			fmt.extend(( '-map', f'0:v:{max(vn-1,0)}',
-				'-map', '0:a' if an is None else f'0:a:{max(an-1,0)}' ))
-			if p.s and (sn := (subs := p.s.copy()).pop()):
-				if subs == list(range(sn)): fmt.extend(['-map', '0:s']); subs.clear()
+		if p.s or vn or an or at:
+			fmt.extend(( '-map', f'0:v:{max(p.v.n-1,0)}',
+				'-map', '0:a' if an is None else f'0:a:{max(p.a.n-1,0)}' ))
+			if subs := p.s.copy():
+				if subs == list(range(subs[-1] + 1)): fmt.extend(['-map', '0:s']); subs.clear()
 				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
 
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
@@ -483,7 +514,7 @@ def main(args=None):
 		if n <= nx: continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join(sh_repr(a) for a in cmd), end='\n\n', flush=True)
-		if p.desc: print('\n'.join(f'  {ln}' for ln in p.desc), end='\n\n')
+		if p.desc: print(tw.indent(p.desc, '  ') + '\n')
 		if dry_run: continue
 
 		sp.run( cmd, check=True,
