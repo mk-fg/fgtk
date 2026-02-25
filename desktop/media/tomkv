@@ -226,7 +226,7 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
 				fps = f'{fps:.1f}'.removesuffix('.0'); sil1.append(f'{fps}fps')
 			vn += 1; sin = vn
-			if not vx or vn == vx: six = 'x'
+			if vn == (vx or 1): six = 'x'
 
 		if ct == 'audio':
 			if c := s.get('channels'): sil1.append(f'{c}ch')
