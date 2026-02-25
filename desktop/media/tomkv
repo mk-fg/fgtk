@@ -210,23 +210,25 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 		if not (ct := s.get('codec_type')): continue
 		sit, sin, six = ct.title(), '#' + str(s.get('index', '?')), ' '
 		sil1, sil2 = [s.get('codec_name')], list()
-		if s.get('disposition', dict()).get('default'): sil2.append('[default]')
+		if (sd := s.get('disposition', dict())).get('default'): sil2.append('[default]')
 
 		if ct == 'video':
+			is_10b = pxfmts_10b and s.pix_fmt in pxfmts_10b
 			if all(wh := [s.get('width'), s.get('height')]):
-				sil1.append('x'.join(map(str, wh)))
+				sil1.append(wh := 'x'.join(map(str, wh)))
+				if is_10b: sil1[-1] += '.10b'
 				if ar := s.get('display_aspect_ratio'):
 					if (ars := s.get('sample_aspect_ratio')) != '1:1': ar += f'.{ars}'
-					sil1.append(f'[ {ar} ]')
-			if pxfmts_10b and s.pix_fmt in pxfmts_10b:
-				if wh: sil1[-1] += '.10b'
-				else: sil1.append('10b')
+					if ar != wh.replace('x', ':'): sil1.append(f'[ {ar} ]')
+			elif is_10b: sil1.append('10b')
 			if fps := s.get('avg_frame_rate'):
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
-				fps = f'{fps:.1f}'.removesuffix('.0'); sil1.append(f'{fps}fps')
-			vn += 1; sin = vn
-			if vn == (vx or 1): six = 'x'
+				if fps: fps = f'{fps:.1f}'.removesuffix('.0'); sil1.append(f'{fps}fps')
+			if sd.get('attached_pic'): sit = 'Image'
+			else:
+				vn += 1; sin = vn
+				if vn == (vx or 1): six = 'x'
 
 		if ct == 'audio':
 			if c := s.get('channels'): sil1.append(f'{c}ch')
@@ -256,10 +258,10 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 
 		desc_lines.extend(ext)
 
-	att_bs = '' if not att_bs else f', incl. {sz_repr(att_bs)} atts'
+	br, att_bs = (sz - att_bs) / td, '' if not att_bs else f' + {sz_repr(att_bs)} atts'
 	desc_lines.insert(0, 'Container: ' + str(
 		p.format.get('format_long_name') or p.format.get('format_name') or '???')
-		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(sz / td)} per second{att_bs} ]' )
+		+ ' :: ' + f'{td_repr(td)} in {sz_repr(sz)} [ {sz_repr(br)} per second{att_bs} ]' )
 	return '\n'.join(desc_lines)
 
 
@@ -324,9 +326,9 @@ def main(args=None):
 			Encodes to av1/opus/mkv, downscaling to ~720p30b10/96k-stereo.
 			Initial ffprobe is intended to detect files that might already be
 				converted or won't benefit from it as much, and skip those by default,
-				as well as any files that can't be handled by this script correctly
-				(e.g. ones that have multiple A/V streams or errors of any kind).
-			Does not run conversion by default, only prints actions to be done.'''))
+				as well as any files that can't be handled by this script/settings
+				correctly (e.g. ones that have multiple A/V streams or errors of any kind).
+			Does not run conversion by default, only prints ffmpeg commands to do it.'''))
 	parser.add_argument('src', nargs='+', help='File(s) to convert.')
 
 	group = parser.add_argument_group('General modes of operation')
