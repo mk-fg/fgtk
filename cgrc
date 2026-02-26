@@ -57,6 +57,7 @@ usage() {
 	echo >&2 "  cgrc -v cpu.max app-pacman"
 	echo >&2 "  cgrc -v cpu.max='2M 500K' app-pacman"
 	echo >&2 "  cgrc -sru pulseaudio"
+	echo >&2 "  cgrc -s app-misc -- python -c pass # requires .slice file for non-cpu stats"
 	echo >&2 'Basic no-slice scope: systemd-run -q --user --scope --unit=test.$$ -- ...'
 	echo >&2
 	exit ${1:-1}
@@ -214,10 +215,11 @@ def print_stats_diff(ts_diff, s1, s2):
 			line.strip().split(None, 1) for line in s.cpu.split('\n') if line.strip() )
 		if s1.io: s.io = adict( (k, adict(v.split('=', 1) for v in st.split()))
 			for k, st in (line.strip().split(None, 1) for line in s.io.split('\n') if line.strip()) )
-	if s1.cpu:
-		print('  cpu-time [s] ::', ' : '.join(
-			f'{rmsuff(k, "_usec")} {{:,.1f}}'.format((int(s2.cpu[k]) - int(v1)) / 1e6)
-			for k, v1 in s1.cpu.items() ))
+	if s := s1.cpu:
+		diffs = ((k, (int(s2.cpu[k]) - int(v1)) / 1e6) for k, v1 in s.items())
+		print( '  cpu-time [s] ::', ' : '.join(
+			f'{rmsuff(k, "_usec")} {{:,.1f}}'.format(v) for k, v in diffs if v ))
+	if v := s2.get('mem_peak'): print(f'  mem-peak [B] :: {v:,d}')
 	if not s1.io: return
 	dev_map, p_dev = dict(), pl.Path('/dev/disk/by-label')
 	for p in p_dev.iterdir():
@@ -247,18 +249,19 @@ def main():
 	for p in list(stats):
 		try: stats[p] = (cg / f'{p}.stat').read_text()
 		except OSError: stats[p] = print(f'Skipping unavailable stats-group: {p}')
+	if mem := (p := cg / 'memory.peak').exists():
+		mem = p.open('r+'); mem.write('0'); mem.flush() # resets max-value for fd
 	ts_diff = time.monotonic()
 	try: err = run(*cmd) if cmd else time.sleep(2**30)
 	except KeyboardInterrupt: err = print() or 130 # code when interrupting "sleep"
 	ts_diff = time.monotonic() - ts_diff
 	stats_new = adict((p, (cg / f'{p}.stat').read_text()) for p, v in stats.items() if v)
+	if mem: stats_new.mem_peak = int(mem.read().strip()); mem.close()
 	print_stats_diff(ts_diff, stats, stats_new)
 	return err
 
 try: sys.exit(main())
-except Exception as err:
-	print(
-		'ERROR - cgroup-stats wrapper failed:'
-		f' [{err.__class__.__name__}] {err}', file=sys.stderr )
+except Exception as err: print( 'ERROR - cgroup-stats'
+	f' wrapper failed: [{err.__class__.__name__}] {err}', file=sys.stderr )
 sys.exit(1)
 EOF
