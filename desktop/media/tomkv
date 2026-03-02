@@ -210,7 +210,7 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 		if not (ct := s.get('codec_type')): continue
 		sit, sin, six = ct.title(), '#' + str(s.get('index', '?')), ' '
 		sil1, sil2 = [s.get('codec_name')], list()
-		if (sd := s.get('disposition', dict())).get('default'): sil2.append('[default]')
+		if (sd := s.get('disposition', dict())).get('default'): sil2.append('<default>')
 
 		if ct == 'video':
 			is_10b = pxfmts_10b and s.pix_fmt in pxfmts_10b
