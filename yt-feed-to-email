@@ -162,7 +162,7 @@ def state_process(state_dir, feeds):
 	if not state_dir: return
 	state_dir, log = pl.Path(state_dir), get_logger('state')
 	if not state_dir.exists():
-		state_dir.mkdir(mode=0o700, parents=True, exists_ok=True)
+		state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 	state_last, state_log = dict(), state_dir / state_log_name
 	with state_log.open('a+') as src:
@@ -207,14 +207,18 @@ feed_user_agent = f'yt-feed-to-email/0.1 feedparser/{fp.__version__}'
 feed_accept_header = ( 'application/atom+xml,application/rdf+xml,'
 	'application/rss+xml,application/x-netcdf,application/xml;q=0.9,text/xml;q=0.2' )
 
-def feed_fetch(log, url, etag, **fp_parse_kws):
-	try:
-		feed = fp.parse( url, agent=feed_user_agent, etag=etag,
-			request_headers=dict(Accept=feed_accept_header), **fp_parse_kws )
-		status, bozo, bozo_err = (
-			feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
-	except (hc.HTTPException, ue.URLError, TimeoutError) as err:
-		status, bozo, bozo_err = 0, True, err_fmt(err)
+def feed_fetch(log, url, etag, retries, **fp_parse_kws):
+	for delay in retries + [None]:
+		try:
+			feed = fp.parse( url, agent=feed_user_agent, etag=etag,
+				request_headers=dict(Accept=feed_accept_header), **fp_parse_kws )
+			status, bozo, bozo_err = (
+				feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
+		except (hc.HTTPException, ue.URLError, TimeoutError) as err:
+			status, bozo, bozo_err = 0, True, err_fmt(err)
+		if status != 404 or delay is None: break
+		log.debug('Feed fetch http-404 error, retrying after {}s delay...', delay)
+		time.sleep(delay)
 	if (not status and bozo) or (status or 1000) >= 400:
 		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
 	if status == 304: return
@@ -337,6 +341,11 @@ def main(args=None):
 		help='Force-check feeds regardless of timestamps.')
 	group.add_argument('--no-shorts', action='store_true',
 		help='Filter-out and ignore "shorts" videos intended for phones in the feed.')
+	group.add_argument('--retry-404-delays', metavar='n', default='10:20:60:60:60', help=dd('''
+		Colon-separated list of delays (in seconds) before making extra
+			attempt(s) to fetch specific feed if YT returns http-404 error for it.
+		These errors seem to happen quite often at random with YT feeds, and retrying
+			immediately often works. Empty value - no retries. Default: %(default)s'''))
 
 	group = parser.add_argument_group('Debug options')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -349,6 +358,8 @@ def main(args=None):
 	log = get_logger('main')
 
 	feeds_rss = feeds_opml = list()
+	fetch_retries = ( list() if not opts.retry_404_delays else
+		list(max(0, float(d.strip())) for d in opts.retry_404_delays.split(':')) )
 
 	if opts.opml:
 		def _get_outlines(e, feeds=None):
@@ -402,7 +413,8 @@ def main(args=None):
 
 		feed_log = get_logger(f'feed.{feed.chan}')
 		feed_log.debug('Fetching feed: {} [ {} ]', feed.title, feed.url)
-		try: etag, entries = feed_fetch(feed_log, feed.url, feed.etag, **fp_kws)
+		try: etag, entries = feed_fetch(
+			feed_log, feed.url, feed.etag, fetch_retries, **fp_kws )
 		except FeedFetchError as err:
 			feed_log.error('Failed to fetch feed: {}', err)
 			etag = entries = None
