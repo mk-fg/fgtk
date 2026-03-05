@@ -216,8 +216,8 @@ def feed_fetch(log, url, etag, retries, **fp_parse_kws):
 				feed.get(k) for k in ['status', 'bozo', 'bozo_exception'] )
 		except (hc.HTTPException, ue.URLError, TimeoutError) as err:
 			status, bozo, bozo_err = 0, True, err_fmt(err)
-		if status != 404 or delay is None: break
-		log.debug('Feed fetch http-404 error, retrying after {}s delay...', delay)
+		if delay is None or status not in [404, 500]: break
+		log.debug('Feed fetch http-404/500 error, retrying after {}s delay...', delay)
 		time.sleep(delay)
 	if (not status and bozo) or (status or 1000) >= 400:
 		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
@@ -341,11 +341,12 @@ def main(args=None):
 		help='Force-check feeds regardless of timestamps.')
 	group.add_argument('--no-shorts', action='store_true',
 		help='Filter-out and ignore "shorts" videos intended for phones in the feed.')
-	group.add_argument('--retry-404-delays', metavar='n', default='10:20:60:60:60', help=dd('''
-		Colon-separated list of delays (in seconds) before making extra
-			attempt(s) to fetch specific feed if YT returns http-404 error for it.
-		These errors seem to happen quite often at random with YT feeds, and retrying
-			immediately often works. Empty value - no retries. Default: %(default)s'''))
+	group.add_argument('--tempfail-retry-delays',
+		metavar='n', default='10:20:60:60:60', help=dd('''
+			Colon-separated list of delays (in seconds) before making extra attempt(s)
+				to fetch specific feed after YT returns http-404 or 500 errors for it.
+			These errors seem to happen quite often at random with YT feeds, and retrying
+				immediately often works. Empty value - no retries. Default: %(default)s'''))
 
 	group = parser.add_argument_group('Debug options')
 	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -358,8 +359,8 @@ def main(args=None):
 	log = get_logger('main')
 
 	feeds_rss = feeds_opml = list()
-	fetch_retries = ( list() if not opts.retry_404_delays else
-		list(max(0, float(d.strip())) for d in opts.retry_404_delays.split(':')) )
+	fetch_retries = ( list() if not (ds := opts.tempfail_retry_delays)
+		else list(max(0, float(d.strip())) for d in ds.split(':')) )
 
 	if opts.opml:
 		def _get_outlines(e, feeds=None):
