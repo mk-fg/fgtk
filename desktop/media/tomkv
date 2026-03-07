@@ -205,6 +205,14 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	vx, ax = (d.get(k, dict()).get('n', -1) for k in 'va')
 	sxs, tx = d.get('s', [-1]), d.get('atts')
 
+	tags_drop, tsn = dict(), 0
+	for s in p.streams:
+		if not (tags := s.get('tags')): continue
+		tsn += 1
+		for kv in tags.items(): tags_drop.setdefault(kv, 0); tags_drop[kv] += 1
+	tags_drop = set(k for (k, v), n in tags_drop.items() if n == tsn)
+	tags_drop.add('ENCODER')
+
 	vn = an = sn = att_bs = 0
 	for s in p.streams:
 		if not (ct := s.get('codec_type')): continue
@@ -249,12 +257,11 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 			if st := tags.pop('_STATISTICS_TAGS', ''):
 				for k in st.split(): tags.pop(k, '')
 			for k in list(tags):
-				if k.startswith('_STATISTICS_'): tags.pop(k)
+				if k.startswith('_STATISTICS_') or k in tags_drop: tags.pop(k)
 			if tags := list( f'{k}={sh_repr(v)}' for k,v in tags.items()
 					if all(c in string.printable for c in v.replace(' ', '')) ):
-				if len(e := ext[0] + (e and ' :: ') + ' '.join(tags)) < 110: ext[0] = e
-				else: ext.extend(wrap_to_lines(
-					['tags:', *tags], initial_indent=' '*5, subsequent_indent=' '*7 ))
+				if len(e := ext[-1] + (e and ' :: ') + ' '.join(tags)) < 110: ext[-1] = e
+				else: ext = wrap_to_lines([ext[-1] + ' ::', *tags], subsequent_indent=' '*7)
 
 		desc_lines.extend(ext)
 
