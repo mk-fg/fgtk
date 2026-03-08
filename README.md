@@ -30,6 +30,7 @@ Contents - links to doc section for each script here:
         - [lsx](#hdr-lsx)
         - [trunc-filenames](#hdr-trunc-filenames)
         - [rmx.c](#hdr-rmx.c)
+        - [dir-edit](#hdr-dir-edit)
 
     - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
@@ -534,6 +535,18 @@ Written in C, can be built with `gcc -Wall -O2 -o rmx rmx.c && strip rmx` (~15K 
 [rm(1)]: https://man.archlinux.org/man/rm.1
 [Safe rm to restrict file removals]:
   https://blog.fraggod.net/2025/11/02/safe-rm-to-restrict-file-removals-to-be-under-specified-dir.html
+
+<a name=hdr-dir-edit></a>
+##### [dir-edit](dir-edit)
+
+Multi-rename tool to present filenames as a text file, allowing to
+edit those in a regular $EDITOR and apply renames based on changes there.
+
+Always presents a diff of name-changes made before applying those,
+and requires an interactive confirmation via button prompt.
+
+Has recursive mode, runs a bunch of sanity-checks before doing anything,
+allows for file removals as well (by removing lines from a tagged file-list).
 
 
 
