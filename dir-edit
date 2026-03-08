@@ -7,7 +7,7 @@ import errno, termios, fcntl, select, struct, ctypes as ct # for inotify stuff
 
 class DirEditConf:
 	ed, ed_wait = os.environ.get('EDITOR'), True
-	tag = rec = rm = files = symlinks = replace = dry_run = diff_cmd = False
+	tag = rec = rm = files = symlinks = replace = dry_run = diff_cmd = print = False
 
 
 p_out = lambda *a,**kw: print(*a, **kw, flush=True)
@@ -93,9 +93,9 @@ def make_rename_list_dir(conf, pp):
 	for pd, fns_dir, fns_file in pp.walk(follow_symlinks=conf.symlinks):
 		pd = pd.relative_to(pp)
 		if not conf.rec:
-			if not conf.files: pset.update(map(fn_str, fns_dir))
+			if not conf.files: pset.update(fn_str(f'{p}/') for p in fns_dir)
 			fns_dir.clear()
-		elif not conf.files and str(pd) != '.': pset.add(fn_str(pd))
+		elif not conf.files and str(pd) != '.': pset.add(fn_str(f'{pd}/'))
 		pset.update(fn_str(pd / fn) for fn in fns_file)
 	return pset
 
@@ -105,8 +105,9 @@ def make_rename_list(conf, *paths):
 		pset, pd = set(), pl.Path().resolve(strict=True)
 		for p in map(pl.Path, paths):
 			with cl.suppress(ValueError): p = p.resolve(strict=True).relative_to(pd)
-			if not conf.files or not p.is_dir(follow_symlinks=conf.symlinks): pset.add(fn_str(p))
-			if conf.rec: pset.update(fn_str(p / fn) for fn in make_rename_list_dir(conf, p))
+			if not p.is_dir(follow_symlinks=conf.symlinks): pset.add(fn_str(p)); continue
+			if not conf.files: pset.add(fn_str(f'{p}/'))
+			if conf.rec: pset.update(fn_str(f'{p}/{fn}') for fn in make_rename_list_dir(conf, p))
 	if conf.tag:
 		for n in range(100):
 			tags = set()
@@ -174,12 +175,14 @@ def main(args=None, conf=None):
 		Tags in each line are case-insensitive, but should not be
 			changed/removed - script will generate a warning and skip that line.'''))
 	group.add_argument('-R', '--rm', action='store_true', help=dd('''
-		Remove all files which end up not being on the list. Implies -t/--tag.
-		With -r/--recursive option, also removes dirs without files on the list.'''))
+		Remove all files which end up not being on the list.
+		Implies -t/--tag. Never removes directories.'''))
 	group.add_argument('--replace', action='store_true', help=dd('''
 		Replace files when detecting naming conficts instead of aborting operation.'''))
 	group.add_argument('--dry-run', action='store_true', help=dd('''
 		After confirming the diff, print all actions to be taken, but don't do anything.'''))
+	group.add_argument('--print',
+		action='store_true', help='Print file-list to stdout and exit.')
 
 	group = parser.add_argument_group('Commands to use')
 	group.add_argument('-e', '--ed', metavar='editor', help=dd('''
@@ -203,38 +206,38 @@ def main(args=None, conf=None):
 	if opts.recursive: conf.rec = True
 	if opts.dir: os.chdir(opts.dir)
 	if opts.diff: conf.diff_cmd = opts.diff.split()
-	for k in 'tag files symlinks replace dry_run'.split():
+	for k in 'tag files symlinks replace dry_run print'.split():
 		if getattr(opts, k, None): setattr(conf, k, True)
 
-	if not sys.stdin.isatty(): return p_err(
-		'ERROR: stdin is not connected a terminal - required for interactive prompts' )
-	dev_id = lambda f: (os.major(d := os.stat(os.ttyname(f.fileno())).st_dev), os.minor(d))
-	if dev_id(sys.stdin) != dev_id(sys.stdout): return p_err(
-		'ERROR: stdin/stdout are not connected to same tty - can be an issue for prompts' )
-
-	if not conf.diff_cmd:
-		import shutil
-		if shutil.which('delta'):
-			conf.diff_cmd = [ *( 'delta -n --diff-highlight'
-				' --paging=never --file-style=omit --keep-plus-minus-markers' ).split(),
-				'--hunk-label=@@ ', '--hunk-header-decoration-style=blue ul',
-				'--hunk-header-style=line-number' ]
-		elif shutil.which('colordiff'): conf.diff_cmd = ['colordiff', '-uw']
-		else: conf.diff_cmd = ['diff', '-uw']
+	if not conf.print:
+		if not sys.stdin.isatty(): return p_err(
+			'ERROR: stdin is not connected a terminal - required for interactive prompts' )
+		dev_id = lambda f: (os.major(d := os.stat(os.ttyname(f.fileno())).st_dev), os.minor(d))
+		if dev_id(sys.stdin) != dev_id(sys.stdout): return p_err(
+			'ERROR: stdin/stdout are not connected to same tty - can be an issue for prompts' )
+		if not conf.diff_cmd:
+			import shutil
+			if shutil.which('delta'):
+				conf.diff_cmd = [ *( 'delta -n --diff-highlight'
+					' --paging=never --file-style=omit --keep-plus-minus-markers' ).split(),
+					'--hunk-label=@@ ', '--hunk-header-decoration-style=blue ul',
+					'--hunk-header-style=line-number' ]
+			elif shutil.which('colordiff'): conf.diff_cmd = ['colordiff', '-uw']
+			else: conf.diff_cmd = ['diff', '-uw']
 
 	for fn in (plist := make_rename_list(conf, *opts.paths)):
 		if '\n' in fn or fn != fn.strip(): return p_err(
 			f'ERROR: Filename with newline(s) or leading/trailing spaces [ {fn!r} ]' )
+	if not conf.tag: plist_str = ''.join(f'{fn}\n' for fn in plist)
+	else:
+		n = max(len(fn) for fn in plist)
+		plist_str = ''.join(f'{{0:<{n}s}}   #{{0.tag}}\n'.format(fn) for fn in plist)
+	if conf.print: sys.stdout.write(plist_str); return
 
 	tmpfile = ( lambda prefix, suffix: tempfile
 		.NamedTemporaryFile('w', dir='.', prefix=prefix, suffix=suffix) )
 	input_act = enum.Enum('InputAction', 'apply editor reload wait quit')
-
 	with tmpfile('_dir-edit.', '.txt') as plist_file:
-		if not conf.tag: plist_str = ''.join(f'{fn}\n' for fn in plist)
-		else:
-			n = max(len(fn) for fn in plist)
-			plist_str = ''.join(f'{{0:<{n}s}}   #{{0.tag}}\n'.format(fn) for fn in plist)
 		plist_file.write(plist_str); plist_file.flush()
 
 		plist_path_rel = ( plist_path := pl.Path(plist_file.name)
@@ -288,9 +291,10 @@ def main(args=None, conf=None):
 				continue
 			elif act is act.apply:
 				if plist_path.read_text() != plist_str_new:
-					p_out('NOTE: File-list changed since last diff, replaying query...')
+					p_out('NOTE: File-list changed since last diff, repeating query...')
 					continue
 				plist_apply = True; break
+			else: return p_err(f'BUG: Unrecognized action: {act}')
 	if not plist_apply: return p_err('BUG: Wait-for-confirmation loop is broken')
 
 	tag_idx, mvs, rms = dict(), list(), list()
@@ -307,10 +311,10 @@ def main(args=None, conf=None):
 				f' lines for tag #{tag}\n  line-{nn[0]} :: {nn[1]}\n  line-{n} :: {ln}' )
 			fn, ln, tag_idx[tag] = plist[nn], m[1], (n, ln)
 		else: fn = plist[n]
-		if ln != fn: mvs.append((fn, ln))
+		if (fn := fn.rstrip('/')) != (ln := ln.rstrip('/')): mvs.append((fn, ln))
 	if conf.rm:
 		for tag, nn in tag_idx.items():
-			if isinstance(nn, int): rms.append(plist[nn])
+			if isinstance(nn, int): rms.append(plist[nn].rstrip('/'))
 
 	dst_files, errs = set(plist), False
 	for a, b in mvs:
