@@ -546,7 +546,8 @@ Always presents a diff of name-changes made before applying those,
 and requires an interactive confirmation via button prompt.
 
 Has recursive mode, runs a bunch of sanity-checks before doing anything,
-allows for file removals as well (by removing lines from a tagged file-list).
+allows for file removals as well (by removing lines from a tagged file-list),
+detects "delta" or "colordiff" tools for nicer changes' summary.
 
 
 

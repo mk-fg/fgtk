@@ -7,8 +7,7 @@ import errno, termios, fcntl, select, struct, ctypes as ct # for inotify stuff
 
 class DirEditConf:
 	ed, ed_wait = os.environ.get('EDITOR'), True
-	tag = rec = rm = files = symlinks = replace = dry_run = False
-	diff_cmd = 'diff', '-uw'
+	tag = rec = rm = files = symlinks = replace = dry_run = diff_cmd = False
 
 
 p_out = lambda *a,**kw: print(*a, **kw, flush=True)
@@ -190,8 +189,9 @@ def main(args=None, conf=None):
 		Special "++" value (double plus) can be used to not
 			run anything, same as empty EDITOR= env-var will do by default.
 		Name of the file-list is always printed to stdout, can be copied from there.'''))
-	group.add_argument('--diff', metavar='cmd', default=' '.join(conf.diff_cmd),
-		help='Diff command to run to compare pre/post edits file-lists. Default: %(default)s')
+	group.add_argument('--diff', metavar='cmd', help=dd('''
+		Diff command to run to compare pre/post edits file-lists.
+		Default - detect delta/colordiff tools, with "diff -uw" as a fallback.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -211,6 +211,16 @@ def main(args=None, conf=None):
 	dev_id = lambda f: (os.major(d := os.stat(os.ttyname(f.fileno())).st_dev), os.minor(d))
 	if dev_id(sys.stdin) != dev_id(sys.stdout): return p_err(
 		'ERROR: stdin/stdout are not connected to same tty - can be an issue for prompts' )
+
+	if not conf.diff_cmd:
+		import shutil
+		if shutil.which('delta'):
+			conf.diff_cmd = [ *( 'delta -n --diff-highlight'
+				' --paging=never --file-style=omit --keep-plus-minus-markers' ).split(),
+				'--hunk-label=@@ ', '--hunk-header-decoration-style=blue ul',
+				'--hunk-header-style=line-number' ]
+		elif shutil.which('colordiff'): conf.diff_cmd = ['colordiff', '-uw']
+		else: conf.diff_cmd = ['diff', '-uw']
 
 	for fn in (plist := make_rename_list(conf, *opts.paths)):
 		if '\n' in fn or fn != fn.strip(): return p_err(
