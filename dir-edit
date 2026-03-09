@@ -249,7 +249,7 @@ def main(args=None, conf=None):
 		if conf.ed:
 			ed = sp.Popen([conf.ed, plist_path_rel])
 			p_out(f'  -- started editor for it [ {conf.ed} ]')
-			if conf.ed_wait: ed.wait(); wait = False
+			if conf.ed_wait: ed.wait(); wait = plist_str == plist_path.read_text()
 		while True:
 			if wait:
 				plist_iter = wait_ino.watch_dir(plist_path.parent, debounce=0.3)
