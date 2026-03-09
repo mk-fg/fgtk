@@ -549,6 +549,11 @@ Has recursive mode, runs a bunch of sanity-checks before doing anything,
 allows for file removals as well (by removing lines from a tagged file-list),
 detects "delta" or "colordiff" tools for nicer changes' summary.
 
+There's a [short blog post describing this multi-rename idea] in more detail.
+
+[short blog post describing this multi-rename idea]:
+  https://blog.fraggod.net/2026/03/09/best-multi-rename-tool-editing-file-list-in-text-editor.html
+
 
 
 <a name=hdr-various_file-data_processing_tools></a>
