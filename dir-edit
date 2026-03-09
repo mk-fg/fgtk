@@ -245,12 +245,11 @@ def main(args=None, conf=None):
 		plist_apply, plist_fn_base = False, plist_path_rel.name.rsplit('.', 1)[0] + '.'
 		p_out(f'Created file-list to edit [ {len(plist):,d} lines ]: {plist_path_rel}')
 
+		wait, wait_ino = True, INotify()
 		if conf.ed:
 			ed = sp.Popen([conf.ed, plist_path_rel])
 			p_out(f'  -- started editor for it [ {conf.ed} ]')
-			if conf.ed_wait: ed.wait()
-
-		wait, wait_ino = True, INotify()
+			if conf.ed_wait: ed.wait(); wait = False
 		while True:
 			if wait:
 				plist_iter = wait_ino.watch_dir(plist_path.parent, debounce=0.3)
@@ -258,7 +257,8 @@ def main(args=None, conf=None):
 				while True:
 					try: p = plist_iter.send(plist_updated)
 					except StopIteration: break
-					if p == plist_path: plist_updated = True
+					if p != plist_path: continue
+					plist_updated = plist_str != plist_path.read_text()
 				wait = False
 
 			dt_now = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -271,7 +271,7 @@ def main(args=None, conf=None):
 				sp.run([*conf.diff_cmd, a.name, b.name])
 			while True:
 				try: cmd = input( f'QUERY{chk}: [A]pply changes, [R]eload, call'
-					' [E]ditor again, [W]ait for edits, [Q]uit/e[X]it :: ' ).lower().strip()
+					' [E]ditor again, [W]ait for more edits, [Q]uit/e[X]it :: ' ).lower().strip()
 				except EOFError: continue
 				if not cmd: continue
 				for act in 'apply editor reload wait quit xit exit'.split():
@@ -288,6 +288,7 @@ def main(args=None, conf=None):
 					ed = sp.Popen([conf.ed, plist_path_rel])
 					p_out(f'(Re-)Started editor [ {conf.ed} ]')
 					if conf.ed_wait: ed.wait()
+					else: wait = True
 				continue
 			elif act is act.apply:
 				if plist_path.read_text() != plist_str_new:
