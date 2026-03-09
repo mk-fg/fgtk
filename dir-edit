@@ -2,7 +2,7 @@
 
 import pathlib as pl, hashlib as hl, contextlib as cl, subprocess as sp
 import os, sys, re, base64, tempfile, enum, datetime as dt
-import errno, termios, fcntl, select, struct, ctypes as ct # for inotify stuff
+import errno, termios, fcntl, select, struct, time, ctypes as ct # for inotify stuff
 
 
 class DirEditConf:
@@ -27,63 +27,44 @@ def str_hash(s, c=None, key='dir-edit', strip=''):
 
 
 class INotify:
-	watch_dir_flags = 0x02 | 0x80 # modify | moved_to
-	_libc, _ev_struct = None, struct.Struct('iIII')
-
+	_lib = None
 	@classmethod
-	def _get_lib(cls):
-		if cls._libc is None: libc = cls._libc = ct.CDLL('libc.so.6', use_errno=True)
-		return cls._libc
+	def _lib_init(c): c._lib = c._lib or ct.CDLL('libc.so.6', use_errno=True)
 	def _call(self, func, *args, noerrs=False):
 		if isinstance(func, str): func = getattr(self._lib, func)
 		while True:
-			res = func(*args)
-			if res == -1:
-				err = ct.get_errno()
-				if err == errno.EINTR: continue
+			if (res := func(*args)) == -1:
+				if (err := ct.get_errno()) == errno.EINTR: continue
 				elif noerrs: return
 				else: raise OSError(err, os.strerror(err))
 			return res
-	def __init__(self): self._lib = self._get_lib()
+	def __init__(self): self._lib_init()
 
-	def open(self):
-		self.fd = self._call('inotify_init')
-		self.poller = select.epoll()
-		self.poller.register(self.fd)
-		return self
-	def close(self):
-		self.poller = self.poller.close()
-		self.fd = os.close(self.fd)
-
-	def read(self, timeout=None):
-		if not self.poller.poll(timeout): yield; return
-		bs = ct.c_int(); fcntl.ioctl(self.fd, termios.FIONREAD, bs)
+	def read_events(self, fd, _ev=struct.Struct('iIII')):
+		bs = ct.c_int(); fcntl.ioctl(fd, termios.FIONREAD, bs)
 		if bs.value <= 0: return
-		buff = os.read(self.fd, bs.value); n, bs = 0, len(buff)
+		buff = os.read(fd, bs.value); n, bs = 0, len(buff)
 		while n < bs:
-			wd, flags, cookie, name_len = self._ev_struct.unpack_from(buff, n)
-			n += self._ev_struct.size
-			name = ct.c_buffer(buff[n:n + name_len], name_len).value.decode()
-			n += name_len
+			wd, flags, cookie, ns = _ev.unpack_from(buff, n); n += _ev.size
+			name = ct.c_buffer(buff[n:n+ns], ns).value.decode(); n += ns
 			yield name
 		if n != bs: p_err(
 			'WARNING: Unused trailing bytes on inotify-fd [{}]: {}'
 			.format((bs := bs - n), ct.c_buffer(buff[n:], bs).value) )
 
-	def watch_dir(self, p, debounce=None):
-		wd = timeout = None; self.open()
-		try:
-			wd = self._call( 'inotify_add_watch',
-				self.fd, bytes(p), self.watch_dir_flags )
+	def watch_file_and_stdin(self, p, debounce=None):
+		tsx, fd, ep = 0, self._call('inotify_init'), select.epoll()
+		try: # inotify watch-flags: modify=0x02 moved_to=0x80
+			wd = self._call('inotify_add_watch', fd, bytes(p.parent), 0x02 | 0x80)
+			ep.register(fd); ep.register(0, select.EPOLLIN)
 			while True:
-				for name in self.read(timeout):
-					if not name: return
-					if done := (yield p / name):
-						if debounce: timeout = debounce
-						else: return
-		finally:
-			if wd: self._call('inotify_rm_watch', self.fd, wd, noerrs=True)
-			self.close()
+				if (td := tsx and tsx - time.monotonic()) < 0: return
+				if not ((ev := ep.poll(td or None, 1)) and ev[0][0]): return
+				for name in self.read_events(fd):
+					if name != p.name or not (done := (yield)): continue
+					if not debounce: return
+					if not tsx: tsx = time.monotonic() + debounce
+		finally: ep.close(); os.close(fd)
 
 
 class fn_str(str): __slots__ = 'tag',
@@ -139,9 +120,9 @@ def main(args=None, conf=None):
 			Names in the list should not be reordered or removed without -t/--tag option.
 			Reloads file-list after changes or when asked in console,
 				checks that it's still same before applying renames or prompts again.
-			Safe by default - never removes anything,
-				never applies any changes without explicit confirmation.
-			Less safe operations have to be enabled via command-line options.'''))
+			Safe by default - never removes or replaces anything, never applies
+				any changes without explicit confirmation, has some sanity checks.
+			More dangerous operations have to be enabled via command-line options.'''))
 
 	group = parser.add_argument_group('What to include on the file-list')
 	group.add_argument('paths', nargs='*', default=list(), help=dd('''
@@ -166,7 +147,7 @@ def main(args=None, conf=None):
 	group.add_argument('-s', '--symlinks', action='store_true', help=dd('''
 		Traverse dir symlinks if -r/--recursive mode is used (default is to not do that).
 		Can potentially lead to inifinite recursion if symlink points to one of its parent dirs.
-		In non-recursive mode, if -f/--files is used, also ignore symlinks pointing to dirs.'''))
+		In non-recursive mode, if -F/--files is used, also ignore symlinks pointing to dirs.'''))
 
 	group = parser.add_argument_group('Misc other options')
 	group.add_argument('-t', '--tag', action='store_true', help=dd('''
@@ -174,7 +155,7 @@ def main(args=None, conf=None):
 			so that lines in the list can be reordered or removed freely.
 		Tags in each line are case-insensitive, but should not be
 			changed/removed - script will generate a warning and skip that line.'''))
-	group.add_argument('-R', '--rm', action='store_true', help=dd('''
+	group.add_argument('--rm', action='store_true', help=dd('''
 		Remove all files which end up not being on the list.
 		Implies -t/--tag. Never removes directories.'''))
 	group.add_argument('--replace', action='store_true', help=dd('''
@@ -199,7 +180,7 @@ def main(args=None, conf=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if ed := opts.ed:
-		if ed == '++': conf.ed_wait = conf.ed = None
+		if ed == '++': conf.ed_wait = conf.ed = ''
 		elif ed[0] == '+': conf.ed_wait, conf.ed = False, ed[1:] or conf.ed
 		else: conf.ed = ed
 		conf.ed = list(filter(None, conf.ed.split()))
@@ -253,12 +234,11 @@ def main(args=None, conf=None):
 			if conf.ed_wait: ed.wait(); wait = plist_str == plist_path.read_text()
 		while True:
 			if wait:
-				plist_iter = wait_ino.watch_dir(plist_path.parent, debounce=0.3)
-				plist_updated = None
+				plist_updated = p_out('  -- waiting for file-list changes... [Enter to skip]')
+				plist_iter = wait_ino.watch_file_and_stdin(plist_path, debounce=0.3)
 				while True:
-					try: p = plist_iter.send(plist_updated)
+					try: plist_iter.send(plist_updated) # skips metadata-only changes
 					except StopIteration: break
-					if p != plist_path: continue
 					plist_updated = plist_str != plist_path.read_text()
 				wait = False
 
@@ -324,23 +304,25 @@ def main(args=None, conf=None):
 			if b in dst_files or pl.Path(b).exists(follow_symlinks=False):
 				errs = p_err(f'ERROR: Filename conflict detected [ {b} ]')
 			dst_files.add(b)
-		try: dst_dev = pl.Path(b).parent.lstat().st_dev
+		try: bd_st = pl.Path(b).parent.lstat()
 		except FileNotFoundError:
 			errs = p_err(f'ERROR: Destination dir missing for rename [ {a} ] -> [ {b} ]')
 		else:
-			if os.lstat(a).st_dev != dst_dev:
+			if (a_st := os.lstat(a)).st_dev != bd_st.st_dev:
 				errs = p_err(f'ERROR: Cross-device rename [ {a} ] -> [ {b} ]')
+			if a_st.st_ino == bd_st.st_ino:
+				errs = p_err(f'ERROR: Moving dir into itself [ {a} ] -> [ {b} ]')
 	for p in rms:
 		if pl.Path(p).is_dir(follow_symlinks=False):
 			errs = p_err(f'ERROR: Will not remove directory [ {p} ]')
 	if errs: return 1
 
-	pre = f'{chk} '.lstrip(); print()
+	pre = f'{chk} '.lstrip(); p_out()
 	for p in rms:
-		print(f'{pre}Delete: [ {p} ]')
+		p_out(f'{pre}Delete: [ {p} ]')
 		if not conf.dry_run: os.unlink(p)
 	for a, b in mvs:
-		print(f'{pre}Rename: [ {a} ] -> [ {b} ]')
+		p_out(f'{pre}Rename: [ {a} ] -> [ {b} ]')
 		if not conf.dry_run: pl.Path(a).rename(b)
 
 if __name__ == '__main__': sys.exit(main())
