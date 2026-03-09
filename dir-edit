@@ -6,7 +6,7 @@ import errno, termios, fcntl, select, struct, ctypes as ct # for inotify stuff
 
 
 class DirEditConf:
-	ed, ed_wait = os.environ.get('EDITOR'), True
+	ed_wait, ed = True, (ed := os.environ.get('EDITOR')) and [ed]
 	tag = rec = rm = files = symlinks = replace = dry_run = diff_cmd = print = False
 
 
@@ -123,7 +123,7 @@ def make_rename_list(conf, *paths):
 def main(args=None, conf=None):
 	if not conf: conf = DirEditConf()
 	if not conf.ed: ed_info = 'unset'
-	else: ed_info = f'set to {conf.ed}'
+	else: ed_info = f'set to {conf.ed[0]}'
 
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
@@ -186,22 +186,23 @@ def main(args=None, conf=None):
 
 	group = parser.add_argument_group('Commands to use')
 	group.add_argument('-e', '--ed', metavar='editor', help=dd('''
-		Name of the binary to run with file-list argument, and wait for it to exit.
-		Can be prefixed by "+" (plus sign) to not wait for tool to exit,
-			or can be just "+" without name/path to not wait for default $EDITOR to exit.
+		Editor command (split on spaces) to run with file-list argument, and wait for it to exit.
+		Can be prefixed by "+" (plus sign) to not wait for its exit and wait for file
+			changes instead, or can be just "+" without name/path to not wait for default $EDITOR.
 		Special "++" value (double plus) can be used to not
 			run anything, same as empty EDITOR= env-var will do by default.
 		Name of the file-list is always printed to stdout, can be copied from there.'''))
 	group.add_argument('--diff', metavar='cmd', help=dd('''
-		Diff command to run to compare pre/post edits file-lists.
+		Diff command (split on spaces) to run for comparing pre/post edits file-lists.
 		Default - detect delta/colordiff tools, with "diff -uw" as a fallback.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if ed := opts.ed:
-		if ed == '++': conf.ed = conf.ed_wait = None
-		elif ed[0] == '+': conf.ed, conf.ed_wait = ed[1:], False
+		if ed == '++': conf.ed_wait = conf.ed = None
+		elif ed[0] == '+': conf.ed_wait, conf.ed = False, ed[1:] or conf.ed
 		else: conf.ed = ed
+		conf.ed = list(filter(None, conf.ed.split()))
 	if opts.rm: conf.tag = conf.rm = True
 	if opts.recursive: conf.rec = True
 	if opts.dir: os.chdir(opts.dir)
@@ -247,8 +248,8 @@ def main(args=None, conf=None):
 
 		wait, wait_ino = True, INotify()
 		if conf.ed:
-			ed = sp.Popen([conf.ed, plist_path_rel])
-			p_out(f'  -- started editor for it [ {conf.ed} ]')
+			ed = sp.Popen([*conf.ed, plist_path_rel])
+			p_out(f'  -- started editor for it [ {conf.ed[0]} ]')
 			if conf.ed_wait: ed.wait(); wait = plist_str == plist_path.read_text()
 		while True:
 			if wait:
@@ -285,8 +286,8 @@ def main(args=None, conf=None):
 			elif act is act.quit: return
 			elif act is act.editor:
 				if conf.ed:
-					ed = sp.Popen([conf.ed, plist_path_rel])
-					p_out(f'(Re-)Started editor [ {conf.ed} ]')
+					ed = sp.Popen([*conf.ed, plist_path_rel])
+					p_out(f'(Re-)Started editor [ {conf.ed[0]} ]')
 					if conf.ed_wait: ed.wait()
 					else: wait = True
 				continue
