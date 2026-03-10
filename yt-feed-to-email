@@ -220,7 +220,7 @@ def feed_fetch(log, url, etag, retries, **fp_parse_kws):
 		log.debug('Feed fetch http-404/500 error, retrying after {}s delay...', delay)
 		time.sleep(delay)
 	if (not status and bozo) or (status or 1000) >= 400:
-		raise FeedFetchError(f'feedparser error (status={status}): {url} - {bozo_err}')
+		raise FeedFetchError(f'feedparser error (status={status}) - {bozo_err}')
 	if status == 304: return
 	elif status >= 300: raise FeedFetchError(f'Unhandled 3xx response status {status}')
 	return feed.get('etag'), feed.entries
@@ -417,7 +417,7 @@ def main(args=None):
 		try: etag, entries = feed_fetch(
 			feed_log, feed.url, feed.etag, fetch_retries, **fp_kws )
 		except FeedFetchError as err:
-			feed_log.error('Failed to fetch feed: {}', err)
+			feed_log.error('Failed to fetch feed [ {} ]: {}', feed.title, err)
 			etag = entries = None
 		if entries is None: continue
 
