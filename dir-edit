@@ -63,7 +63,7 @@ class INotify:
 				for name in self.read_events(fd):
 					if name != p.name or not (done := (yield)): continue
 					if not debounce: return
-					if not tsx: tsx = time.monotonic() + debounce
+					tsx = time.monotonic() + debounce
 		finally: ep.close(); os.close(fd)
 
 
