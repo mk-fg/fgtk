@@ -158,11 +158,12 @@ def plist_edits_parse(plist, plist_str, tags=False, rm=False):
 	return mvs, rms
 
 def plist_edits_sanity_check(plist, mvs, rms, replace=False):
-	errs, dst_files = False, set(plist).difference(rms)
+	errs, src_moved, dst_files = False, set(), set(plist).difference(rms)
 	for a, b in mvs:
+		dst_files.discard(a); src_moved.add(a)
 		if not replace:
 			if b in dst_files or ( b not in rms
-					and pl.Path(b).exists(follow_symlinks=False) ):
+					and b not in src_moved and pl.Path(b).exists(follow_symlinks=False) ):
 				errs = p_err(f'ERROR: Filename conflict detected [ {b} ]')
 			dst_files.add(b)
 		try: bd_st = pl.Path(b).parent.lstat()
