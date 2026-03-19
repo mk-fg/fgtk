@@ -254,9 +254,10 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 
 		ext = [f' [{six}] {sit} {sin} : ' + (e := ' '.join(filter(None, sil1 + sil2)))]
 		if tags := s.get('tags'):
-			if st := tags.pop('_STATISTICS_TAGS', ''):
-				for k in st.split(): tags.pop(k, '')
-			for k in list(tags):
+			for k, v in list(tags.items()): # check for _STATISTICS_TAGS-eng and such
+				if not (m := re.fullmatch(r'_STATISTICS_TAGS(-\w+)?', k)): continue
+				for k in v.split(): tags.pop(k, ''); m[1] and tags.pop(f'{k}{m[1]}', '')
+			for k in list(tags): # other non-useful stats-tags
 				if k.startswith('_STATISTICS_') or k in tags_drop: tags.pop(k)
 			if tags := list( f'{k}={sh_repr(v)}' for k,v in tags.items()
 					if all(c in string.printable for c in v.replace(' ', '')) ):
