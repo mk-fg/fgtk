@@ -3,24 +3,6 @@
 import os, sys, string
 
 
-def get_terminal_size():
-	def ioctl_GWINSZ(fd):
-		try:
-			import fcntl, termios, struct
-			cr = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
-		except: return
-		return cr
-	cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
-	if not cr:
-		try:
-			fd = os.open(os.ctermid(), os.O_RDONLY)
-			cr = ioctl_GWINSZ(fd)
-			os.close(fd)
-		except: pass
-	if not cr: cr = 0, 0
-	return int(cr[1]), int(cr[0])
-
-
 def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(description='Generate a pseudorandom strings.')
@@ -60,7 +42,7 @@ def main(args=None):
 	if opts.one:
 		return print(getpass(opts.length))
 
-	(w, h), pad = get_terminal_size(), 3
+	(w, h), pad = os.get_terminal_size()[:2], 3
 	for n in range(opts.rows):
 		row_left = w
 		while True:
