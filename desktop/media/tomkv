@@ -275,10 +275,15 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 
 def ffmpeg_extract_atts(src_list, p_dst, replace=False, quiet=False):
 	'Extracts attachments via tmpdir, matching those case-insensitively vs p_dst'
-	import tempfile, hashlib as hl; warn_n = 0
+	import tempfile, hashlib as hl; warn_n, warn_dedup = 0, set()
 	def _warn(src, msg):
 		nonlocal warn_n; warn_n += 1
-		if not quiet: print(f'{src} :: WARNING :: {msg}')
+		if quiet: return
+		if msg in warn_dedup:
+			if ... in warn_dedup: return
+			print(f'{src} :: WARNING :: ...hiding exactly-same repeated warnings')
+			return warn_dedup.add(...)
+		print(f'{src} :: WARNING :: {msg}'); warn_dedup.add(msg)
 	with tempfile.TemporaryDirectory(prefix='.tomkv.extract-atts.') as tmp:
 		(p_last := (p_tmp := pl.Path(tmp)) / 'new').mkdir()
 		csums = dict(( p.name.lower(),
