@@ -77,7 +77,7 @@ def td_parse(td_str):
 				tdx += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
 			td += (24*3600)**(1-n) * tdx
 		return td
-	if m := re.search(r'^\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?\Z', td_str):
+	if m := re.fullmatch(r'\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?', td_str):
 		# [[HH:]MM:]SS where seconds can be fractional
 		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
 	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
