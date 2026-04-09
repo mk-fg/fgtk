@@ -480,6 +480,9 @@ def main(args=None):
 				feed_log.error('Failed to fetch feed [ {} ]{}: {}', feed.title, td, err)
 			elif not feed.ts_err and not opts.dry_run:
 				state_update(state_log, ts, feed, ts_err=ts)
+			if not isinstance(td, str): # debug-log if not reported already
+				if td: td = f' - {td_repr(td)} / {td_repr(fetch_err_td)} of grace-period :'
+				feed_log.debug('Failed to fetch feed [ {} ]{}: {}', feed.title, td or '', err)
 		if entries is None: continue
 
 		ts_since = None
