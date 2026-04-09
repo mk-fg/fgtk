@@ -200,6 +200,8 @@ class YTFeedIndex:
 # Line format: {ts} :: {chan-id} {chan-name!r} :: {update-json}
 state_log_name = 'updates.log'
 state_log_max_size = 3 * 2**20
+state_keys_opt = 'etag seen_entries ts_err'.split()
+state_keys = 'chan ts_last_check delay_ewma'.split() + state_keys_opt
 
 def state_process(state_dir, feeds):
 	if not state_dir: return
@@ -227,10 +229,10 @@ def state_process(state_dir, feeds):
 		state_log_new = state_log.open('a')
 	try:
 		for line, feed, update in state_last.values():
-			for k in 'ts_last_check ts_err etag seen_entries delay_ewma'.split():
+			for k in state_keys:
 				try: setattr(feed, k, update[k])
 				except KeyError:
-					if k not in ['seen_entries', 'ts_err']: raise
+					if k not in state_keys_opt: raise
 			if state_log_new: state_log_new.write(line)
 	finally:
 		if state_log_new: state_log_new.close()
@@ -238,13 +240,17 @@ def state_process(state_dir, feeds):
 	return state_log
 
 def state_update(state_log, ts, feed, update=None, **update_keys):
+	# Doesn't copy ts_err unless set explicitly on errors
 	ts = time.strftime('%Y-%m-%d %H:%M', time.localtime(ts))
-	if not update: update = dict(dict( chan=feed.chan,
-		delay_ewma=feed.delay_ewma, ts_last_check=feed.ts_last_check,
+	update = dict(update or dict( chan=feed.chan,
+		ts_last_check=feed.ts_last_check, delay_ewma=feed.delay_ewma,
 		etag=feed.etag, seen_entries=feed.seen_entries ), **update_keys)
-	update = json.dumps(update)
-	with state_log.open('a') as dst:
-		dst.write(f'{ts} :: {feed.chan} {feed.title!r} :: {update}\n')
+	for k in (sks := state_keys):
+		if (opt := k in state_keys_opt) and not update.get(k): update.pop(k, None)
+		elif not opt and k not in update: raise ValueError(f'Missing state-key: {k}')
+	if k := ' '.join(set(update).difference(sks)): raise ValueError(f'Extra state-keys: {k}')
+	update = f'{ts} :: {feed.chan} {feed.title!r} :: {json.dumps(update)}\n'
+	with state_log.open('a') as dst: dst.write(update)
 
 
 class FeedFetchError(Exception): pass
@@ -479,7 +485,7 @@ def main(args=None):
 				td = f' for {td_repr(td)} :' if td else ''
 				feed_log.error('Failed to fetch feed [ {} ]{}: {}', feed.title, td, err)
 			elif not feed.ts_err and not opts.dry_run:
-				state_update(state_log, ts, feed, ts_err=ts)
+				if not opts.dry_run: state_update(state_log, ts, feed, ts_err=ts)
 			if not isinstance(td, str): # debug-log if not reported already
 				if td: td = f' - {td_repr(td)} / {td_repr(fetch_err_td)} of grace-period :'
 				feed_log.debug('Failed to fetch feed [ {} ]{}: {}', feed.title, td or '', err)
