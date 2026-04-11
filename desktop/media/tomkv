@@ -142,6 +142,8 @@ def parse_rgb10_pixfmts():
 
 def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
+	try: mtime = p.stat().st_mtime
+	except OSError: return adict(t='access', fatal=1, msg='File missing/inaccessible')
 	probe = sp.run( [ 'ffprobe', '-v', 'fatal',
 			'-show_entries', 'stream:format', '-print_format', 'json', str(p) ],
 		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
@@ -191,7 +193,7 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	if not (audio and video):
 		errs.append(adict(t='format', fatal=1, msg='Missing/unmatched A/V streams'))
 	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
-	data = adict( v=video, a=audio, s=subs, atts=atts, errs=errs,
+	data = adict( v=video, a=audio, s=subs, atts=atts, errs=errs, mtime=mtime,
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
 	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
@@ -399,11 +401,9 @@ def main(args=None):
 			+to=<time> - "-to <time>" for ffmpeg - stop time to cut video short at.
 		Filename example: video.tomkv+ss=1:23+to=4:56.mp4'''))
 
-	group = parser.add_argument_group('File naming/paths')
+	group = parser.add_argument_group('File naming/paths/metadata')
 	group.add_argument('-X', '--inplace', action='store_true', help=dd('''
 		Use destination filename directly instead of temporary files for conversion.'''))
-	group.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
-		Existing path to store resulting files in. Defaults to current dir.'''))
 	group.add_argument('--name',
 		metavar='tpl', default='{name}.mkv', help=dd('''
 			Template to rename resulting file(s), instead of default: %(default)s
@@ -411,6 +411,11 @@ def main(args=None):
 				ffmpeg auto-detects it from extension, so it must be something conventional.
 			Names are deduplicated with number-suffix when multiple sources are used.
 			Substituted keys: "name" - source filename without extension.'''))
+	group.add_argument('-T', '--dst-dir', metavar='path', help=dd('''
+		Existing path to store resulting files in. Defaults to current dir.'''))
+	group.add_argument('--copy-mtime', action='store_true', help=dd('''
+		Set same modification time on the converted file after ffmpeg finishes.
+		Only works with -x/--convert flag, does nothing otherwise.'''))
 
 	group = parser.add_argument_group('Make a list of converted files')
 	group.add_argument('-r', '--rm-list', metavar='file[:ratio]', help=dd('''
@@ -613,6 +618,7 @@ def main(args=None):
 
 		sp.run( cmd, check=True,
 			env=dict(os.environ, SVT_LOG='2'), stdin=sp.DEVNULL )
+		if opts.copy_mtime: os.utime(p.tmp, (p.mtime, p.mtime), follow_symlinks=False)
 		if p.tmp != p.dst: os.rename(p.tmp, p.dst)
 
 		# Stats/rm-list for last processed file
