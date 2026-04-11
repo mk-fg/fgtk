@@ -201,7 +201,7 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	td, sz = d.get('td', float(p.format.duration)), d.get('sz', int(p.format.size))
 	desc_lines = list()
 	if (n := float(p.format.get('probe_score', 0))) < 100:
-		desc_lines.append('WARNING: only partial probe success = {round(n)} / 100')
+		desc_lines.append(f'WARNING: only partial probe success = {round(n)} / 100')
 	vx, ax = (d.get(k, dict()).get('n', -1) for k in 'va')
 	sxs, tx = d.get('s', [-1]), d.get('atts')
 
