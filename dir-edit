@@ -334,7 +334,9 @@ def main(args=None, conf=None):
 		p_out(f'{pre}Delete: [ {p} ]')
 		if not conf.dry_run: os.unlink(p)
 	for a, b in mvs:
-		p_out(f'{pre}Rename: [ {a} ] -> [ {b} ]')
+		msg = f'{pre}Rename: [ {a} ]\0-> [ {b} ]'
+		if len(msg) > 99: msg = msg.replace('\0', '\n' + ' '*(len(pre) + 5))
+		p_out(msg.replace(*'\0 '))
 		if not conf.dry_run: pl.Path(a).rename(b)
 
 if __name__ == '__main__':
