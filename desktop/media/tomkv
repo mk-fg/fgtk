@@ -354,6 +354,9 @@ def main(args=None):
 		Skip first N files that'd have been processed otherwise.
 		Can be used to resume a long operation, using number from
 			"wc -l" on -r/--rm-list or printed n/m count between/after ffmpeg runs.'''))
+	group.add_argument('-N', '--skip-existing', action='store_true', help=dd('''
+		Skip any already-existing files that script was meant to create, in the same way
+			as -n/--skip-n option does, counting those as already done for stats purposes.'''))
 	group.add_argument('-p', '--print-probe', action='store_true', help=dd('''
 		Print information about contents of each file relevant to this script.
 		Normally this info is only printed for files with some kind of processing issues.
@@ -474,7 +477,7 @@ def main(args=None):
 		rm_list, rm_list_ratio = ( (rm_list, math.inf)
 			if ':' not in rm_list else rm_list.rsplit(':', 1) )
 		rm_list, rm_list_ratio = open(rm_list, 'w'), float(rm_list_ratio)
-	nx, pxfmts_10b = max(0, opts.skip_n or 0), parse_rgb10_pixfmts()
+	nx, sx, pxfmts_10b = max(0, opts.skip_n or 0), opts.skip_existing, parse_rgb10_pixfmts()
 	vn, atts = bool(opts.use_stream1), opts.copy_attachments
 	an = ( bool(opts.use_stream1) if not opts.audio_n
 		else (None if opts.audio_n.lower() in ['a', 'all'] else int(opts.audio_n)) )
@@ -562,6 +565,7 @@ def main(args=None):
 	sz_src_done = sz_src_proc = sz_dst_done = 0
 	def _skipped_stats_catchup(n):
 		nonlocal sz_src_done, sz_dst_done
+		if not isinstance(n, int): n, src_list = 2, [n] # file instead of path
 		for nc, pc in enumerate(src_list, 1):
 			if nc == n: break
 			try: sz_dst = os.stat(pc.dst).st_size
@@ -611,6 +615,7 @@ def main(args=None):
 		msg = f'\n\n- {dt} --- [ {n} / {m} ] :: {td_repr(p.td)} :: {p.src} -> {p.dst}\n'
 		if n == nx and not dry_run: _skipped_stats_catchup(n+1)
 		if n <= nx: continue
+		if sx and os.path.exists(p.dst): _skipped_stats_catchup(p); continue
 		if dry_run: msg = msg.strip()
 		print(msg); print(' '.join(sh_repr(a) for a in cmd), end='\n\n', flush=True)
 		if opts.print_probe and p.desc: print(tw.indent(p.desc, '  ') + '\n', flush=True)
