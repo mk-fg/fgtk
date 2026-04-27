@@ -6,7 +6,7 @@ import os, sys, argparse, logging, secrets, re, json, shutil
 import inspect, tempfile, enum, socket, signal, heapq, struct
 import asyncio, asyncio.subprocess as sp
 
-import aiohttp
+import aiohttp # https://aio-libs.org/projects/aiohttp/
 
 
 class TVFConfig:
@@ -475,8 +475,13 @@ class TVF:
 		url_base = url_pls.rsplit('/', 1)[0]
 
 		if not (pls := (cf := _cache_file('m3u8')).cached()):
-			self.log.debug('Fetching playlist from URL: %s', url_pls)
-			async with http.get(url_pls, headers=headers) as res: pls = cf.update(await res.text())
+			url, proxy = '', aiohttp.helpers.proxies_from_env() # not for aria2c ws
+			if proxy := proxy.get('https') or proxy.get('http') or dict():
+				if not re.match('https?://', url := str(proxy.proxy)): url = f'http://{url}'
+				url, proxy = f' (proxy={url})', dict(proxy=url, proxy_auth=proxy.proxy_auth)
+			self.log.debug('Fetching playlist from URL%s: %s', url, url_pls)
+			async with http.get(url_pls, headers=headers, **proxy) as res:
+				pls = cf.update(await res.text())
 
 		# Config is always updated between aria2c runs, to account for any cli opts changes
 		key = secrets.token_urlsafe(18)

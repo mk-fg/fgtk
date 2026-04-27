@@ -8,7 +8,7 @@ usage() {
 	echo "  or: $bin [-q] file:line[:ctx_lines]"
 	# [[ $1 -ne 0 ]] || { echo; echo "more help stuff"; }
 	exit ${1:-1}; }
-[[ "$1" != -h && "$1" != --help ]] || usage 0
+[[ "$1" != -h && "$1" != --help && "${@: -1}" != -h && "${@: -1}" != --help ]] || usage 0
 
 q=
 [[ "$1" = -q ]] && { q=t; shift; }
