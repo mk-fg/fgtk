@@ -478,7 +478,7 @@ class TVF:
 			url, proxy = '', aiohttp.helpers.proxies_from_env() # not for aria2c ws
 			if proxy := proxy.get('https') or proxy.get('http') or dict():
 				if not re.match('https?://', url := str(proxy.proxy)): url = f'http://{url}'
-				url, proxy = f' (proxy={url})', dict(proxy=url, proxy_auth=proxy.proxy_auth)
+				url, proxy = f' [proxy: {url} ]', dict(proxy=url, proxy_auth=proxy.proxy_auth)
 			self.log.debug('Fetching playlist from URL%s: %s', url, url_pls)
 			async with http.get(url_pls, headers=headers, **proxy) as res:
 				pls = cf.update(await res.text())
@@ -498,11 +498,11 @@ class TVF:
 		# It is assumed here that such tiny writes will be atomic
 		file_dst_pos = file_dst_seq = 0 # position in dst file, sequential gid int
 
-		file_dst_mark_fmt = '>QI'
+		file_dst_mark_fmt = struct.Struct('>QI')
 		file_dst_mark = ctx.enter_context(file_prefix_ext('pos').open('a+b'))
 		if file_dst_mark.tell() != 0:
-			file_dst_mark.seek(-struct.calcsize(file_dst_mark_fmt), os.SEEK_END)
-			file_dst_pos, file_dst_seq = struct.unpack(file_dst_mark_fmt, file_dst_mark.read())
+			file_dst_mark.seek(-file_dst_mark_fmt.size, os.SEEK_END)
+			file_dst_pos, file_dst_seq = file_dst_mark_fmt.unpack(file_dst_mark.read())
 
 		if not file_dst_path.exists() and file_dst_pos > 0:
 			raise TVFError( f'Missing partial-dst-file'
@@ -590,7 +590,7 @@ class TVF:
 							with p.open('rb') as chunk: shutil.copyfileobj(chunk, file_dst)
 							file_dst_pos = file_dst.tell()
 						file_dst.flush()
-						file_dst_mark.write(struct.pack(file_dst_mark_fmt, file_dst_pos, file_dst_seq))
+						file_dst_mark.write(file_dst_mark_fmt.pack(file_dst_pos, file_dst_seq))
 						file_dst_mark.flush()
 						for p in seq_chunks: os.unlink(p)
 						# self.log.debug('\nExtended partial dst file by %s chunk(s)', len(seq_chunks))
