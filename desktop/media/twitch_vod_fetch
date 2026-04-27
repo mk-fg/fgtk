@@ -2,7 +2,7 @@
 
 import itertools as it, operator as op, functools as ft
 import contextlib as cl, collections as cs, pathlib as pl
-import os, sys, argparse, logging, secrets, re, json, shutil
+import os, sys, argparse, logging, secrets, re, json, shutil, time
 import inspect, tempfile, enum, socket, signal, heapq, struct
 import asyncio, asyncio.subprocess as sp
 
@@ -55,6 +55,7 @@ class TVFConfig:
 	aria2_term_wait = 10, 20 # (clean, term), clean should be >3s
 	aria2_startup_checks = 8, 10.0
 	aria2_queue_batch = 50
+	aria2_err_tbf = None
 	aria2_ws_heartbeat = 20.0
 	aria2_ws_debug = False # very noisy
 	aria2_ws_debug_signals = False
@@ -100,6 +101,28 @@ def retries_within_timeout( tries, timeout,
 		if abs(error := sum(delays) - timeout) < slack: return delays
 		elif error > 0: b = m
 		else: a = m
+
+def token_bucket_rate(spec, negative_tokens=False):
+	'''Token-bucket rate-limit iterator. Spec: { rate: float | float/td }[:burst_float]
+		Examples: 2.5:5 (rate=2.5/s burst=5), 3/5m:10 (rate=3-in-5m burst=10), 5, 9:30.
+		Yields None if there's enough tokens or delay (float). iter.send(N) to use N tokens.
+		Borrows below zero tokens with negative_tokens set.
+		Simple "inf" value means "always None", or "0" for "infinite delays".'''
+	try:
+		if not len(s := spec.rsplit(':', 1)) > 1: rate, burst = s[0], 1.0
+		else: rate, burst = s[0], float(s[1])
+		if not len(s := rate.split('/', 1)) > 1: rate = float(rate)
+		else: rate = float(s[0]) / td_parse(s[1])
+	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
+	if rate == float('inf'):
+		while True: yield None
+	elif rate <= 0:
+		while True: yield 2**31 # safe "infinite delay" value
+	n, ts, d = max(0, burst - 1), time.monotonic(), (yield) or 1
+	while True:
+		n = min(burst, n + rate * (ts - (ts := time.monotonic())))
+		if n >= d: n, d = n - d, (yield) or 1; continue
+		n, d = (n - d if negative_tokens else n), (yield (d - n) / rate) or 1
 
 async def maybe_coro(res):
 	if asyncio.iscoroutine(res): res = await res
@@ -542,9 +565,14 @@ class TVF:
 
 			ev_t = enum.Enum('ev_type', 'complete stop pause error')
 			evq, ev_tuple = asyncio.Queue(), cs.namedtuple('ev', 't data')
-			for t in ev_t:
-				aria2c.expect( f'onDownload{t.name.title()}',
-					lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
+			if tbf_errs := self.conf.aria2_err_tbf:
+				def _err_rate_limit(ev):
+					nonlocal tbf_errs_total; tbf_errs_total += 1
+					if next(tbf_errs): raise TVFError( 'Number of aria2 download errors went'
+						f' over --aria2c-err-tbf rate-limit ({tbf_errs_total:,d} errors in total)' )
+				tbf_errs_total = 0; aria2c.expect('onDownloadError', _err_rate_limit)
+			for t in ev_t: aria2c.expect(
+				f'onDownload{t.name.title()}', lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
 
 			while not chunks.finished:
 
@@ -561,7 +589,6 @@ class TVF:
 							await aria2c.req('removeDownloadResult', e['gid'], sync=False)
 							chunks.mark_done(e['gid'])
 						else: # stop/pause/error - retry immediately
-							# Limit on forced retries (on top of what aria2 does) for same gid can be added here
 							if self.log.isEnabledFor(logging.DEBUG):
 								status = await aria2c.req( 'tellStatus', e['gid'],
 									['status', 'errorCode', 'errorMessage', 'completedLength', 'totalLength'] )
@@ -720,6 +747,15 @@ def main(args=None, conf=None):
 	group.add_argument('--aria2c-opts-print', action='store_true', help=dd('''
 		Print template for aria2c configuration file
 			that will be used, with all options there. Short form: -ap'''))
+	group.add_argument('--aria2c-err-tbf', default='2:50',
+		metavar='{ rate | N / timespan }[:burst]', help=dd('''
+			Token-bucket rate-limit on aria2c errors, to abort if exceeded.
+			General format is "errors_per_second [:burst_errors]" where burst defaults to 1,
+				and errors_per_second can be "N / timespan" (timespan same as in -s/--start-pos).
+			For example "2.5:20" means "<2.5 errors per second, with burst/buffer of 20",
+				to tolerate up to 20 immediate errors, replenishing that limit at 2.5 errs/second,
+				or "3/5m:10" can be used to say "up to 3 errors in 5m, with burst=10".
+			"inf" value disables the limit, "0" aborts on first error. Default: %(default)s'''))
 
 	group = parser.add_argument_group('Misc/debug options')
 	group.add_argument('-p', '--use-part-suffix',
@@ -754,6 +790,7 @@ def main(args=None, conf=None):
 		if len(scatter) != 2: parser.error( 'Invalid value for -x/--scatter'
 			f' option - {opts.scatter!r} - should be in "len/interval" format.' )
 		conf.slice_scatter_len, conf.slice_scatter_interval = map(td_parse, scatter)
+	if opts.aria2c_err_tbf: conf.aria2_err_tbf = token_bucket_rate(opts.aria2c_err_tbf)
 
 	conf.ytdl_opts = opts.ytdl_opts or list()
 	if len(conf.ytdl_opts) == 1: conf.ytdl_opts = conf.ytdl_opts[0].strip().split()
