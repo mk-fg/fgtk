@@ -109,9 +109,9 @@ def token_bucket_rate(spec, negative_tokens=False):
 		Borrows below zero tokens with negative_tokens set.
 		Simple "inf" value means "always None", or "0" for "infinite delays".'''
 	try:
-		if not len(s := spec.rsplit(':', 1)) > 1: rate, burst = s[0], 1.0
+		if len(s := spec.rsplit(':', 1)) == 1: rate, burst = spec, 1.0
 		else: rate, burst = s[0], float(s[1])
-		if not len(s := rate.split('/', 1)) > 1: rate = float(rate)
+		if len(s := rate.split('/', 1)) == 1: rate = float(rate)
 		else: rate = float(s[0]) / td_parse(s[1])
 	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
 	if rate == float('inf'):
@@ -542,18 +542,6 @@ class TVF:
 		async with TVFAria2Proc(
 				self.conf, http, aria2c_conf_path, key, port,
 				lambda gid: file_prefix_ext(f'{gid}.mp4.chunk') ) as aria2c:
-			await aria2c.connect()
-
-			# All chunks from iter(chunks) get queued for download here
-			info = await aria2c.req('getVersion')
-			self.log.debug( 'Starting downloads'
-				' (rpc-port=%s, aria2-version=%s)...', port, info['version'] )
-			count, gid_last = await aria2c.queue_chunks(chunks)
-			if gid_last:
-				self.log.info( '\n\n  ------ Started %s downloads,'
-					' last gid: %s ------  \n', count, gid_pretty(gid_last) )
-			else: self.log.info('No extra downloads were necessary')
-
 			### Main download-control loop ahead
 			# Download control strategy:
 			# - listen for aria2.onDownloadComplete event for each gid
@@ -561,7 +549,10 @@ class TVF:
 			#   - non-sequential gids - just remember and check/append next time
 			#   - if >file_append_max non-sequential-gid chunks downloaded - abort
 			# - for all error/paused/stopped events: prepend to download queue
+			#   - aria2.onDownloadError also has separate err_rate_limit handler/check
 			# - stop on chunks.finished (all chunks marked as "done")
+			await aria2c.connect()
+			aria2c_info = await aria2c.req('getVersion')
 
 			ev_t = enum.Enum('ev_type', 'complete stop pause error')
 			evq, ev_tuple = asyncio.Queue(), cs.namedtuple('ev', 't data')
@@ -573,6 +564,14 @@ class TVF:
 				tbf_errs_total = 0; aria2c.expect('onDownloadError', _err_rate_limit)
 			for t in ev_t: aria2c.expect(
 				f'onDownload{t.name.title()}', lambda e,t=t: evq.put_nowait(ev_tuple(t, e)) )
+
+			# All chunks from iter(chunks) get queued for download here
+			self.log.debug( 'Starting downloads'
+				' (rpc-port=%s, aria2-version=%s)...', port, aria2c_info['version'] )
+			count, gid_last = await aria2c.queue_chunks(chunks)
+			if gid_last: self.log.info( '\n\n  ------ Started %s'
+				' downloads, last gid: %s ------  \n', count, gid_pretty(gid_last) )
+			else: self.log.info('No extra downloads were necessary')
 
 			while not chunks.finished:
 
