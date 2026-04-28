@@ -427,7 +427,7 @@ class TVF:
 
 	async def ytdl_probe_formats(self, url, file_prefix, info_suffix=None):
 		self.log.info( '--- Listing formats available'
-			' for VoD %s (url=%s)%s', file_prefix, url, info_suffix or '' )
+			' for VoD %s [url %s ]%s', file_prefix, url, info_suffix or '' )
 		return await self.ytdl_run('--list-formats', url, check=False)
 
 	async def download(self, url, file_prefix, info_suffix=None):
@@ -459,7 +459,7 @@ class TVF:
 				meta = json.loads(await self.ytdl_run('-sj', *ytdl_fn, url, out=True))
 			ytdl_fn = meta['filename']
 			self.log.debug(
-				'Using youtube-dl output filename (template=%s): %s',
+				'Using youtube-dl output filename [template %s ]: %s',
 				'[default]' if self.conf.ytdl_output_format
 					is True else self.conf.ytdl_output_format, ytdl_fn )
 			file_dst_done = file_dst_path.parent / ytdl_fn
@@ -479,8 +479,8 @@ class TVF:
 		if not meta_cf.cached(): meta_cf.update(json.dumps(meta))
 		http = await ctx.enter_async_context(aiohttp.ClientSession(**self.conf.aiohttp_opts))
 
-		self.log.info( '--- Downloading VoD %s (%surl=%s)%s',
-			file_dst_path, f'final-name={str(file_dst_done)!r}, '
+		self.log.info( '--- Downloading VoD %s %s[url %s ]%s',
+			file_dst_path, f'[final-name {file_dst_done} ] '
 				if file_dst_done != file_dst_path else '', url, info_suffix or '' )
 
 		url_pls, headers = meta['url'], meta['http_headers']
@@ -632,7 +632,7 @@ class TVF:
 
 		if not self.conf.keep_tempfiles:
 			self.log.debug( 'Cleanup for prefix'
-				' (dir=%s): %s', self.conf.use_temp_dirs, file_prefix )
+				' [dir %s ]: %s', self.conf.use_temp_dirs, file_prefix )
 			if self.conf.use_temp_dirs: shutil.rmtree(file_prefix_dir)
 			else:
 				for p in file_prefix.parent.glob(f'{file_prefix.name}.*'):
@@ -832,7 +832,7 @@ def main(args=None, conf=None):
 						f' to be an URL, only first one should be: {url} {prefix}' )
 				prefix, url = url, prefix
 				log.warn( 'Looks like url/prefix args got'
-					' mixed-up, correcting that to prefix=%s url=%s', prefix, url )
+					' mixed-up, correcting that to [prefix %s ] [url %s ]', prefix, url )
 			vod_queue.append((url, prefix))
 	for url, prefix in vod_queue:
 		if re.search(r'^https?://[^/]+/([^/]+/v|videos)/', url): continue
