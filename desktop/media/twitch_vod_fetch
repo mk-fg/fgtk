@@ -120,7 +120,7 @@ def token_bucket_rate(spec, negative_tokens=False):
 		while True: yield 2**31 # safe "infinite delay" value
 	n, ts, d = max(0, burst - 1), time.monotonic(), (yield) or 1
 	while True:
-		n = min(burst, n + rate * (ts - (ts := time.monotonic())))
+		n = min(burst, n - rate * (ts - (ts := time.monotonic())))
 		if n >= d: n, d = n - d, (yield) or 1; continue
 		n, d = (n - d if negative_tokens else n), (yield (d - n) / rate) or 1
 
@@ -249,13 +249,14 @@ class TVFAria2Proc:
 					self.log.error('ws protocol error, aborting: %s', msg)
 					break
 				else: self.log.warning('Unhandled ws msg type %s, ignoring: %s', msg.type, msg)
+		except TVFError as err: self.log.error(str(err)) # expected abort conditions
 		except Exception as err:
 			self.log.exception('Unhandled ws handler failure, aborting: %s', err)
 		await self._ws_close()
 
 	async def _ws_close(self):
-		await self.ws.close()
 		self.ws_closed.set()
+		await self.ws.close()
 
 	def _add_handler(self, func): self.ws_handlers[id(func)] = func
 
@@ -746,7 +747,7 @@ def main(args=None, conf=None):
 	group.add_argument('--aria2c-opts-print', action='store_true', help=dd('''
 		Print template for aria2c configuration file
 			that will be used, with all options there. Short form: -ap'''))
-	group.add_argument('--aria2c-err-tbf', default='2:50',
+	group.add_argument('--aria2c-err-tbf', default='2/1m:30',
 		metavar='{ rate | N / timespan }[:burst]', help=dd('''
 			Token-bucket rate-limit on aria2c errors, to abort if exceeded.
 			General format is "errors_per_second [:burst_errors]" where burst defaults to 1,
