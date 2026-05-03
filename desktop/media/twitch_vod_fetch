@@ -135,9 +135,9 @@ class adict(dict):
 
 
 class TVFError(Exception): pass
-class TVFWSClosed(TVFError): pass
 class TVFReqError(TVFError): pass
 class TVFReqSocketError(TVFReqError): pass
+class TVFWSClosed(TVFReqSocketError): pass
 
 
 class TVFAria2Proc:
@@ -157,7 +157,7 @@ class TVFAria2Proc:
 		self.ws_ctx = cl.AsyncExitStack()
 		return self
 
-	async def __aexit__(self, *err):
+	async def __aexit__(self, err_t, *err):
 		proc_term_delay = 0
 		if self.ws_ctx:
 			if not self.ws_closed.is_set():
@@ -184,6 +184,8 @@ class TVFAria2Proc:
 			exit_code = await self.proc.wait()
 			if exit_code: self.log.warning('aria2c has exited with error code: %s', exit_code)
 			self.proc = None
+		# Actual error should be logged before _ws_close() call
+		return self.ws_closed.is_set() and isinstance(err_t, TVFReqSocketError)
 
 	async def connect(self):
 		loop = asyncio.get_running_loop()
@@ -229,7 +231,7 @@ class TVFAria2Proc:
 		try: yield
 		except asyncio.CancelledError:
 			if not triggered: raise
-			raise TVFWSClosed() from None
+			raise TVFWSClosed from None
 		finally: ev_wait_task.cancel()
 
 	async def _ws_poller(self):
@@ -288,6 +290,7 @@ class TVFAria2Proc:
 		return fut_or_cb
 
 	async def req(self, method, *params, sync=True):
+		if self.ws_closed.is_set(): raise TVFWSClosed
 		if method != 'system.multicall':
 			method, params = f'aria2.{method}', [self.ws_key] + list(params)
 		res = req_uid = next(self.ws_jrpc_uid_iter)
