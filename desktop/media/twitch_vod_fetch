@@ -135,6 +135,7 @@ class adict(dict):
 
 
 class TVFError(Exception): pass
+class TVFFail(TVFError): pass # fatal errors to console
 class TVFReqError(TVFError): pass
 class TVFReqSocketError(TVFReqError): pass
 class TVFWSClosed(TVFReqSocketError): pass
@@ -212,7 +213,7 @@ class TVFAria2Proc:
 				except StopIteration: break
 		if not self.ws:
 			self.ws_closed.set()
-			raise TVFError( 'aria2c connection failed'
+			raise TVFFail( 'aria2c connection failed'
 				' (max_tries={}, timeout={})'.format(*self.conf.aria2_startup_checks) )
 		jrpc_uid_ns = secrets.token_urlsafe(3)
 		self.ws_jrpc_uid_iter = (f'{jrpc_uid_ns}.{n}' for n in range(1, 2**30))
@@ -251,7 +252,7 @@ class TVFAria2Proc:
 					self.log.error('ws protocol error, aborting: %s', msg)
 					break
 				else: self.log.warning('Unhandled ws msg type %s, ignoring: %s', msg.type, msg)
-		except TVFError as err: self.log.error(str(err)) # expected abort conditions
+		except TVFFail as err: self.log.error(str(err)) # expected abort conditions
 		except Exception as err:
 			self.log.exception('Unhandled ws handler failure, aborting: %s', err)
 		await self._ws_close()
@@ -314,7 +315,7 @@ class TVFAria2Proc:
 
 	async def req_ok(self, method, *params):
 		res = await self.req(method, *params)
-		if res != 'OK': raise TVFError(f'aria2c command failed: {method}{params}')
+		if res != 'OK': raise TVFFail(f'aria2c command failed: {method}{params}')
 
 	def _queue_params(self, gid, url, pos=None):
 		return (
@@ -325,7 +326,7 @@ class TVFAria2Proc:
 		res = await self.req('addUri', *self._queue_params(gid, url, pos))
 		if res != gid:
 			self.log.error('addUri error (gid=%s): %s', gid, res)
-			raise TVFError(f'Failed to queue chunk URL to aria2c')
+			raise TVFFail('Failed to queue chunk URL to aria2c')
 
 	async def queue_batch(self, *gid_urls, pos=None):
 		if pos is not None: pos = iter(range(pos, 2**30))
@@ -340,7 +341,7 @@ class TVFAria2Proc:
 				('  expected: %s', ', '.join(str(r[0]) for r in res_chk)),
 				('  returned: %s', ', '.join(( str(r[0])
 					if isinstance(r, list) else repr(r) ) for r in res)) ])
-			raise TVFError(f'Failed to queue {len(gid_urls)} chunk URLs to aria2c')
+			raise TVFFail(f'Failed to queue {len(gid_urls)} chunk URLs to aria2c')
 
 	async def queue_chunks(self, chunks):
 		self.chunks = chunks
@@ -397,7 +398,7 @@ class TVFChunkIter:
 
 	def mark_needed(self, gid, check=True):
 		if check and gid not in self.gids_done:
-			raise TVFError(f'BUG: gid was not marked as done: {gid}')
+			raise TVFFail(f'BUG: gid was not marked as done: {gid}')
 		self.gids_done.discard(gid)
 
 	def mark_done(self, gid):
@@ -426,7 +427,7 @@ class TVF:
 		if out: proc_stdout = (await proc.stdout.read()).strip()
 		exit_code = await proc.wait()
 		if check and exit_code != 0:
-			raise TVFError(f'"youtube-dl {ytdl_op}" command exited with error (code={exit_code})')
+			raise TVFFail(f'"youtube-dl {ytdl_op}" command exited with error (code={exit_code})')
 		return exit_code if not out else proc_stdout.decode()
 
 	async def ytdl_probe_formats(self, url, file_prefix, info_suffix=None):
@@ -522,11 +523,11 @@ class TVF:
 			file_dst_pos, file_dst_seq = file_dst_mark_fmt.unpack(file_dst_mark.read())
 
 		if not file_dst_path.exists() and file_dst_pos > 0:
-			raise TVFError( f'Missing partial-dst-file'
+			raise TVFFail( f'Missing partial-dst-file'
 				f' (expecting bytes={file_dst_pos:,} gid-seq={file_dst_seq}): {file_dst_path}' )
 		file_dst = file_dst_path.open('a+b')
 		if file_dst.tell() < file_dst_pos:
-			raise TVFError( f'Missing chunk of partial-dst-file'
+			raise TVFFail( f'Missing chunk of partial-dst-file'
 				f' (expecting size>={file_dst_pos:,} actual-size={file_dst.tell():,}): {file_dst_path}' )
 		file_dst.seek(file_dst_pos)
 		file_dst.truncate()
@@ -563,7 +564,7 @@ class TVF:
 			if tbf_errs := self.conf.aria2_err_tbf:
 				def _err_rate_limit(ev):
 					nonlocal tbf_errs_total; tbf_errs_total += 1
-					if next(tbf_errs): raise TVFError( 'Number of aria2 download errors went'
+					if next(tbf_errs): raise TVFFail( 'Number of aria2 download errors went'
 						f' over --aria2c-err-tbf rate-limit ({tbf_errs_total:,d} errors in total)' )
 				tbf_errs_total = 0; aria2c.expect('onDownloadError', _err_rate_limit)
 			for t in ev_t: aria2c.expect(
@@ -585,7 +586,7 @@ class TVF:
 						if ev.t == ev_t.complete: # completed chunk goes to seq_heap
 							files = list(map(op.itemgetter('path'), await aria2c.req('getFiles', e['gid'])))
 							if len(files) != 1:
-								raise TVFError( 'Completed aria2 download'
+								raise TVFFail( 'Completed aria2 download'
 									f' should produce single chunk-file, instead has: {files}' )
 							heapq.heappush( seq_heap,
 								seq_chunk(gid_to_seq(e['gid']), pl.Path(files[0])) )
@@ -622,7 +623,7 @@ class TVF:
 					log_lines(self.log.error, [ ('%s:', err_msg),
 						('  expecting gid: %s', seq_to_gid(file_dst_seq)),
 						('  first gid among pending: %s', seq_to_gid(seq_heap[0].seq)) ])
-					raise TVFError(err_msg)
+					raise TVFFail(err_msg)
 
 		### done!
 
