@@ -107,6 +107,7 @@ Contents - links to doc section for each script here:
         - [maildir-cat](#hdr-maildir-cat)
         - [dns-update-proxy](#hdr-dns-update-proxy)
         - [dns-test-daemon](#hdr-dns-test-daemon)
+        - [nginx-auth-rotate](#hdr-nginx-auth-rotate)
         - [nginx-access-log-stat-block](#hdr-nginx-access-log-stat-block)
         - [sys-wait](#hdr-sys-wait)
         - [yt-feed-to-email](#hdr-yt-feed-to-email)
@@ -2378,6 +2379,22 @@ Note `-p 1.1.1.1` ping-option there to avoid restarting the daemon if whole
 network is down, which runs "fping" to check that on detected DNS failures.
 
 [async_dns]: https://github.com/gera2ld/async_dns
+
+<a name=hdr-nginx-auth-rotate></a>
+##### [nginx-auth-rotate](nginx-auth-rotate)
+
+Trivial python script to generate and replace auth credentials in nginx auth
+file and HTML file(s), to rotate those on-schedule.
+
+Intended to use as a trivial anti-bot measure to limit server load, where human
+can easily read and use credentials from some page, while most common content-scraper
+bots plaguing the web presumably won't bother.
+
+Keeps some number of old logins matching same pattern in auth file to not break
+stuff suddenly on rotation, so e.g. running it via crontab/timer 1/day with 5
+old logins will keep any displayed credentials working for ~5 days.
+
+Not supposed to provide any kind of strong auth/security, just a placeholder one.
 
 <a name=hdr-nginx-access-log-stat-block></a>
 ##### [nginx-access-log-stat-block](nginx-access-log-stat-block)
