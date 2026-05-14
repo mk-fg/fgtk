@@ -101,9 +101,12 @@ def main(args=None):
 		At least one replacement for login/pw must be made in every
 			specified HTML file, otherwise error is raised instead of changing anything.
 		Can be used multiple times to process any number of such files.'''))
+	parser.add_argument('-P', '--print', action='store_true', help=dd('''
+		Print single line with space-separated "<login> <password>" to stdout.
+		Intended for using with other scripts which read new credentials from there.'''))
 	parser.add_argument('-v', '--verbose', action='store_true', help=dd('''
 		Print new credentials, new nginx auth file,
-			and number of replacements made in HTML file(s).'''))
+			and number of replacements made in HTML file(s), to stdout.'''))
 	parser.add_argument('--dry-run', action='store_true', help=dd('''
 		Same as -v/--verbose, but also don't change any actual files, only print info.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -135,6 +138,7 @@ def main(args=None):
 		dst_auth.write(''.join(f'{line}\n' for line in auth_lines))
 		dst_auth.commit = not opts.dry_run
 
+	if opts.print: p_out(f'{login} {pw}')
 	if opts.verbose or opts.dry_run:
 		p_out(f'Generated new login=[ {login} ] pw=[ {pw} ]')
 		p_out(f'nginx auth file lines [ {p_auth} ]:')
