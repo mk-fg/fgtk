@@ -276,14 +276,14 @@ class AudioConv:
 		async with cls(*args, **kws) as self: return await self.run()
 
 	def __init__(self, src_list, dst_name_tpl=None,
-			start=None, length=None,
+			start=None, length=None, volume=None,
 			chunks=None, chunks_beep=False, chunks_fn_tpl=None,
 			probe=None, inplace=False, remove_src=False, keep_tmp=False,
 			loudnorm=False, loudnorm_opts=None, ytdl_opts=None, max_parallel=None ):
 		self.loop = asyncio.get_running_loop()
 		self.src_list, self.dst_name_tpl = src_list, dst_name_tpl or ''
-		self.max_parallel = max_parallel or os.cpu_count()
-		self.start, self.length, self.probe = start, length, probe
+		self.probe, self.max_parallel = probe, max_parallel or os.cpu_count()
+		self.start, self.length, self.volume = start, length, volume
 		self.chunks, self.chunks_beep = chunks, chunks_beep
 		self.chunks_fn_tpl = chunks_fn_tpl or '{n:03d}__{name}.ogg'
 		self.inplace, self.remove_src, self.keep_tmp = inplace, remove_src, keep_tmp
@@ -629,9 +629,10 @@ class AudioConv:
 				input_opts += ['-i', str(await self.chunks_beep_path())]
 				offset = job.offset and int(job.offset * 1000)
 				offset = 'acopy' if not offset else f'adelay={offset}|{offset}'
-				coding_opts += [ '-filter_complex',
-					f'[1:a]{offset}[beep];[0:a][beep]amix=inputs=2:duration=longest[out]',
-					'-map', '[out]' ]
+				vol_filter = f'volume={self.volume}[aa];[aa]' if self.volume else ''
+				coding_opts += [ '-filter_complex', f'[1:a]{offset}[beep];'
+					f'[0:a]{vol_filter}[beep]amix=inputs=2:duration=longest[out]', '-map', '[out]' ]
+			elif self.volume: coding_opts += ['-filter:a', f'volume={self.volume}']
 			coding_opts += ['-c:a', 'libvorbis', '-ac:a', '2']
 		await job.ffmpeg('to-ogg', input_opts + coding_opts + ['-f', 'ogg', str(job.dst)]).run()
 
@@ -734,7 +735,7 @@ def main(args=None):
 		Names are deduplicated with number-suffix when multiple sources are used.
 		Substituted keys: "name" - source filename without extension.'''))
 
-	group = parser.add_argument_group('Volume normalization')
+	group = parser.add_argument_group('Volume tweaks/normalization')
 	group.add_argument('-L', '--loudnorm', action='store_true', help=dd('''
 		Use ffmpeg "loudnorm" filter to have sane volume level.
 		It takes quite a while to process longer files with it.
@@ -743,6 +744,8 @@ def main(args=None):
 	group.add_argument('--loudnorm-opts', metavar='ffmpeg-af-opts', help=dd('''
 		String of options to pass to loudnorm filter, same as they
 			would appear on ffmpeg command line. Example: I=-16:TP=-1.5:LRA=11'''))
+	group.add_argument('-v', '--volume', metavar='factor', type=float, help=dd('''
+		Add ffmpeg "volume=<factor>" audio filter to boost/reduce volume level.'''))
 
 	group = parser.add_argument_group('Other ffmpeg options')
 	group.add_argument('-s', '--start', metavar='[[hh:]mm:]ss[.ms]', help=dd('''
@@ -812,7 +815,8 @@ def main(args=None):
 	if len(ytdl_opts) == 1: ytdl_opts = ytdl_opts[0].strip().split()
 
 	success = asyncio.run(AudioConv.run_async(
-		src_list, dst_name_tpl=opts.name, start=start, length=length,
+		src_list, dst_name_tpl=opts.name,
+		start=start, length=length, volume=opts.volume,
 		chunks=chunks, chunks_fn_tpl=opts.chunks_fn,
 		chunks_beep=bool(chunks and opts.chunks_beep),
 		max_parallel=opts.max_parallel, probe=opts.probe, inplace=opts.inplace,
