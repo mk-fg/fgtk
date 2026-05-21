@@ -1,34 +1,26 @@
 #!/usr/bin/env python
 
-import os, sys, re, time, math, enum, heapq, signal, pathlib as pl
+import os, sys, re, time, math, enum, heapq, signal, stat, pathlib as pl
 
 
-_td_days = dict(
-	y=365.2422, yr=365.2422, year=365.2422,
-	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
-_td_s = dict( h=3600, hr=3600, hour=3600,
-	m=60, min=60, minute=60, s=1, sec=1, second=1 )
-_td_usort = lambda d: sorted(
-	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
-_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
-	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '\\Z')
-
-def td_parse(td_str):
-	try: return float(td_str)
-	except: td = 0
-	if (m := _td_re.search(td_str)) and any(m.groups()):
-		# Short time offset like "3d 5h"
-		for n, units in enumerate((_td_days, _td_s)):
-			tdx = 0
-			for k, v in units.items():
-				if not m.group(k): continue
-				tdx += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
-			td += (24*3600)**(1-n) * tdx
-		return td
-	if m := re.fullmatch(r'\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?', td_str):
-		# [[HH:]MM:]SS where seconds can be fractional
-		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
-	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
+def td_parse(td, _tds=dict(
+		y=365.2422, yr=365.2422, year=365.2422, mo=30.5, month=30.5,
+		w=7, week=7, d=1*86400, day=1*86400, h=3600, hr=3600, hour=3600,
+		m=60, min=60, minute=60, s=1, sec=1, second=1, ms=1e-3, us=1e-6 )):
+	'Parse [[HH:]MM:]SS or e.g. 5h30m and such time-deltas to seconds'
+	if td is None: return
+	if isinstance(td, (int, float)): return td
+	delta, td_re = 0, ('(?i)^[-+]?' + ''.join(
+		fr'(?P<{k}>\d+{k}{"s?" if len(k)>2 else ""}\s*)?' for k, v in
+		sorted(_tds.items(), key=lambda kv: (-kv[1], -len(kv[0]))) ) + '$')
+	if not ((m := re.search(td_re, td.strip())) and any(m.groups())):
+		h, m, s = (v.strip(': ') for v in ('::' + td).rsplit(':', 2))
+		try: return float(s or 0) + float(m or 0) * 60 + float(h or 0) * 3600
+		except: raise ValueError(f'Unrecognized timespan value format: {td!r}')
+	for k, v in _tds.items():
+		if not m.group(k): continue
+		delta += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+	return delta
 
 def td_repr(delta, units_max=2, units_res=None, _units=dict(
 		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
@@ -89,24 +81,32 @@ class adict(dict):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
 
+def path_check(spec):
+	if not spec: return lambda: True
+	p, s, flags = spec.partition(':'); flags = flags.lower().strip()
+	if set(flags).difference('nrw'): raise ValueError(f'Unrecognized flag(s) in [ {spec} ]')
+	check = lambda: os.access( p,
+		os.W_OK if 'w' in flags else (os.R_OK if 'r' in flags else os.F_OK) )
+	return check if 'n' not in flags else lambda: not check()
+
 ct = enum.Enum('CheckType', 'la nproc nft_cnt')
 
 
-def run_check_la( ts, caches, t, td, cap, tbf, _p_src=pl.Path('/proc/loadavg'),
+def run_check_la( ts, caches, t, td, cap, tbf, pc, _p_src=pl.Path('/proc/loadavg'),
 		_la_fmt=lambda las: '/'.join(f'{la or 0:.2f}'.rstrip('0').rstrip('.') for la in las) ):
 	if (la := caches.get(_p_src)) and la[0] == ts: la = la[1]
 	else: caches[_p_src] = ts, (la := _p_src.read_text())
 	for c, v in zip(cap, la := list(float(v) for v in la.split(' ', 4)[:3])):
 		if v > c: break
 	else: return
-	if not tbf or not next(tbf): p_load( 'load-averages above'
+	if pc() and not tbf or not next(tbf): p_load( 'load-averages above'
 		f' 1/5/15 {"tbf-" if tbf else ""}caps: {_la_fmt(la)} > {_la_fmt(cap)}' )
 
-def run_check_nproc(ts, caches, t, td, cap, tbf, _p_src=pl.Path('/proc/loadavg')):
+def run_check_nproc(ts, caches, t, td, cap, tbf, pc, _p_src=pl.Path('/proc/loadavg')):
 	if (la := caches.get(_p_src)) and la[0] == ts: la = la[1]
 	else: caches[_p_src] = ts, (la := _p_src.read_text())
 	if (n := int(la.split(' ', 4)[3].split('/', 1)[-1])) <= cap: return
-	if not tbf or not next(tbf): p_load(
+	if pc() and not tbf or not next(tbf): p_load(
 		f'total process-count above {"tbf-" if tbf else ""}cap: {n:,d} > {cap:,d}' )
 
 def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split()):
@@ -121,9 +121,11 @@ def run_check_nft(ts, caches, t, td, counters, _cmd='nft -j list counters'.split
 			if chk.table and chk.table != cnt.table: continue
 			if chk.af and chk.af != cnt.family: continue
 			a = cnt_last.get(chk.id); b = cnt_last[chk.id] = cnt[chk.type]
-			if a and (inc := b - a) > chk.cap and (not chk.tbf or not next(chk.tbf)): p_load(
-				f'nft counter increment within {td_repr(td)} above {"tbf-" if chk.tbf else ""}cap'
-				f' for [ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
+			if ( a and (inc := b - a) > chk.cap
+					and chk.pc() and (not chk.tbf or not next(chk.tbf)) ): p_load(
+				f'nft counter increment within {td_repr(td)}'
+				f' above {"tbf-" if chk.tbf else ""}cap for '
+				f'[ {cnt.table} {cnt.family} {cnt.name} ]: {inc:,d} > {chk.cap:,d} {chk.type}' )
 
 def run_checks(td_checks, iter_timeout=5):
 	signal.signal(signal.SIGALRM, lambda sig,frm: (
@@ -155,32 +157,42 @@ def main(argv=None):
 				using short time-delta notation (e.g. "30s", "10min", "1h 20m", "1d12h5m"),
 				or the usual [[HH:]MM:]SS where seconds can be fractional too.'''))
 
-	group = parser.add_argument_group('Optional thresholds to check')
+	group = parser.add_argument_group('Optional thresholds to check',
+		description=dd('''
+			Threshold options allow for optional suffixes, in this order, unless mentioned:
+
+				:tbf-interval[/rate][:burst] - token-bucket rate-limit for warnings.
+					Warnings are only logged when that rate-limit is exceeded,
+						i.e. warn when values consistently are crossing threshold(s) for some time.
+					Default is to warn on every check that detects erroneous value(s).
+					"tbf-interval[/rate]" should represent an interval (in seconds or as time-delta spec),
+						e.g.: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 1h30m/8:30, etc.
+					Example usage: -p 3m:1000:10m (warn if crossed at least twice within 10m)
+
+				~path=<filename>[:<flags>] - to check file/dir path.
+					Check is "only warn if path exists" by default, ":n" flag can be added to invert that.
+					"r" flag checks whether path is readable, "w" for writable, instead of existance.
+					These flags can be combined, e.g.: -l 3m:9/5/3.5~path=/mnt/bigdata:nw
+
+			These suffixes can be space-separated, to visually split long ones, if needed.'''))
 	group.add_argument('-l', '--loadavg', action='append',
-		metavar='sample-interval:[max1]/[max5]/[max15][:tbf-interval[/rate][:burst]]', help=dd('''
+		metavar='sample-interval:[max1]/[max5]/[max15]', help=dd('''
 			Thresholds for any /proc/loadavg numbers, to be checked for each sample-interval.
-			If token-bucket parameters are specified at the end,
-				load warnings are only logged when that rate-limit is exceeded,
-				i.e. load consistently is above thresholds for some time.
-			"tbf-interval[/rate]" should represent an interval (in seconds or as time-delta spec),
-				e.g.: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 1h30m/8:30, etc.'''))
+			Example usage: --loadavg 1m:8//3.2'''))
 	group.add_argument('-p', '--nproc', action='append',
-		metavar='sample-interval:max-procs[:tbf-interval[/rate][:burst]]', help=dd('''
-			Check count of total pids in /proc/loadavg for each sample-interval.
-			Same optional token-bucket rate-threshold and format as in -l/--loadavg.'''))
+		metavar='sample-interval:max-procs', help=dd('''
+			Check count of total pids in /proc/loadavg for each sample-interval. Example: -p 3m:1000'''))
 	group.add_argument('-n', '--nft-count-inc', action='append',
-		metavar='sample-interval:[table/family/]'
-				'name[=units]:max-count-inc[:tbf-interval[/rate][:burst]]', help=dd('''
+		metavar='sample-interval:[table/family/]name[=units]:max-count-inc', help=dd('''
 			Query named nftables counter increments over
 				specified interval and log if it's more than specified max value.
 			"table/family/" prefix can be something like "filter/inet/",
 				and "=units" suffix is either "=packets" or "=bytes" (default=packets).
-			Example: 10m:cnt.bots:100 (>100 new packets in cnt.bots counter in last 10m)
-			Same optional token-bucket rate-threshold and format as in -l/--loadavg.'''))
+			Example: 10m:cnt.bots:100 (>100 new packets in cnt.bots counter in last 10m)'''))
 
 	group = parser.add_argument_group('General options')
 	group.add_argument('-r', '--max-rate-tbf', metavar='interval[/rate][:burst]', help=dd('''
-		Max rate of emitted notifications, where any ones exceeding it will be dropped.
+		Max rate of all emitted notifications, where any ones exceeding it will be dropped.
 		This is applied across all over-threshold warnings from this script,
 			so is a fairly crude filter, where spammy ones can easily drown-out the rest.
 		Token-bucket filter parameters are same as in various checks, see e.g. -l/--loadavg.'''))
@@ -196,28 +208,31 @@ def main(argv=None):
 
 	for chk in opts.loadavg or list():
 		try:
-			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
-			td, tbf = td_parse(td), tbf and token_bucket(tbf)
+			chk, s, pc = chk.strip().partition('~path=')
+			td, s, cap = chk.strip().partition(':'); cap, s, tbf = cap.strip().partition(':')
+			td, tbf, pc = td_parse(td), tbf and token_bucket(tbf), path_check(pc)
 			cap = list(float(n) if n else 0 for n in cap.split('/'))
 		except Exception as err:
 			parser.error(f'Failed to parse -l/--loadavg check [ {chk!r} ]: {err_fmt(err)}')
-		checks.setdefault(td, list()).append(adict(t=ct.la, td=td, cap=cap, tbf=tbf))
+		checks.setdefault(td, list()).append(adict(t=ct.la, td=td, cap=cap, tbf=tbf, pc=pc))
 
 	for chk in opts.nproc or list():
 		try:
-			td, s, cap = chk.partition(':'); cap, s, tbf = cap.partition(':')
-			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
+			chk, s, pc = chk.strip().partition('~path=')
+			td, s, cap = chk.strip().partition(':'); cap, s, tbf = cap.strip().partition(':')
+			td, cap, tbf, pc = td_parse(td), int(cap), tbf and token_bucket(tbf), path_check(pc)
 		except Exception as err:
 			parser.error(f'Failed to parse -p/--nproc check [ {chk!r} ]: {err_fmt(err)}')
-		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf))
+		checks.setdefault(td, list()).append(adict(t=ct.nproc, td=td, cap=cap, tbf=tbf, pc=pc))
 
 	nft_counters = set()
 	for chk_id, chk in enumerate(opts.nft_count_inc or list()):
 		try:
-			td, cnt, cap = chk.split(':', 2); cap, s, tbf = cap.partition(':')
-			table, s, cnt = cnt.rpartition('/'); cnt, s, cnt_type = cnt.partition('=')
+			chk, s, pc = chk.strip().partition('~path=')
+			td, cnt, cap = chk.strip().split(':', 2); cap, s, tbf = cap.strip().partition(':')
+			table, s, cnt = cnt.strip().rpartition('/'); cnt, s, cnt_type = cnt.strip().partition('=')
 			table, af = table.split('/') if table else ('', '')
-			td, cap, tbf = td_parse(td), int(cap), tbf and token_bucket(tbf)
+			td, cap, tbf, pc = td_parse(td), int(cap), tbf and token_bucket(tbf), path_check(pc)
 			if cnt_type and cnt_type not in ('packets', 'bytes'): raise ValueError(cnt_type)
 		except Exception as err:
 			parser.error(f'Failed to parse -n/--nft-count-inc check [ {chk!r} ]: {err_fmt(err)}')
@@ -225,7 +240,7 @@ def main(argv=None):
 			if chk.t is ct.nft_cnt: break
 		else: checks[td].append(chk := adict(t=ct.nft_cnt, td=td, counters=dict()))
 		chk.counters.setdefault(cnt, list()).append(adict( id=chk_id,
-			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf ))
+			table=table, af=af, type=cnt_type or 'packets', cap=cap, tbf=tbf, pc=pc ))
 		nft_counters.add((table, af, cnt))
 	if nft_counters:
 		p(f'Checking that {len(nft_counters):,d} nftables counter(s) exist...')

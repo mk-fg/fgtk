@@ -73,7 +73,7 @@ def log_lines(log_func, lines, log_func_last=False):
 		if log_func_last and n == len(lines): log_func_last(*line)
 		else: log_func(*line)
 
-def td_parse(td, _tds = dict(
+def td_parse(td, _tds=dict(
 		d=1*86400, day=1*86400, h=3600, hr=3600, hour=3600,
 		m=60, min=60, minute=60, s=1, sec=1, second=1, ms=1e-3, us=1e-6 )):
 	'Parse [[HH:]MM:]SS or e.g. 5h30m and such time-deltas to seconds'
