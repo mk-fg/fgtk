@@ -38,7 +38,6 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 		s -= val * unit_s
 	return ' '.join(res) if res else '<1s'
 
-
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { td: float | float_a/float_b }[:burst_float]
 			Examples: 1/4:5 (td=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
