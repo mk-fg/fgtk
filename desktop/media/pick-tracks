@@ -143,18 +143,16 @@ def pop_path(path_list, order=False):
 def cleanup_run(cleanup, paths, df=None, dry_run=False):
 	if df is None: df = cleanup.df_min
 	elif df <= 0: return
-	if dry_run:
-		return log.debug('Cleanup dry-run (goal: %.0f MiB)', df / MiB)
+	if dry_run: return log.debug('Cleanup dry-run (goal: %.0f MiB)', df / MiB)
 	while paths:
 		if (df := df_get(cleanup.p)) >= df: break
 		p = pop_path(paths)
 		log.debug('Removing file (df: %.1f / %.1f MiB): %s', df / MiB, df / MiB, p)
 		try: p.unlink()
-		except OSError as err:
-			log.warning('Failed to remove file (%s): %s', p, err_fmt(err))
+		except OSError as err: log.warning('Failed to remove file (%s): %s', p, err_fmt(err))
 
 
-def run_copy(copy, cleanup, rename, dry_run):
+def run_copy(copy, cleanup, rename, dry_run, ignore_errors):
 	src_files = build_file_list(copy)
 
 	### Build a list of files for removal, if any cleanup is requested
@@ -165,8 +163,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 			if not (dry_run and cleanup.p == copy.dst):
 				log.info('Cleanup path does not exists: %s', cleanup.p)
 		else:
-			res = sp.run(
-				['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE )
+			res = sp.run(['find', cleanup.p, '-type', 'f'], check=True, stdout=sp.PIPE)
 			cleanup_paths = res.stdout.decode().splitlines()
 			if cleanup.df_pre:
 				log.debug( 'Doing cleanup (up to: %.1f MiB)'
@@ -191,8 +188,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 		#  (due to cached writes and/or other activity) faster.
 		df, ts = free(), time.monotonic()
 		rate_n = (df_last - df) / ((ts - ts_last) or 0.001)
-		rate = ( rate_n if not rate else
-			(rate_a * rate_n + (1 - rate_a) * rate) )
+		rate = rate_n if not rate else (rate_a * rate_n + (1 - rate_a) * rate)
 		df_last, ts_last = df, ts
 
 		if copy.df_min:
@@ -216,7 +212,7 @@ def run_copy(copy, cleanup, rename, dry_run):
 				rsync_opts.extend([src, dst])
 				try: sp.run(['rsync', *rsync_opts], check=True)
 				except sp.CalledProcessError as err:
-					if not opts.ignore_errors: raise
+					if not ignore_errors: raise
 					log.warning('File transfer error: %s', err_fmt(err))
 		except KeyboardInterrupt:
 			return log.info('Aborted: %s', stats()) or 1
@@ -392,9 +388,7 @@ def main(argv=None):
 		rename = RenameConf( opts.name_format,
 			not opts.name_format_raw, opts.name_len_max, tags_check, tags_map, field_proc )
 
-	if copy.dst:
-		return run_copy(copy, cleanup, rename, opts.dry_run)
-	else:
-		return run_rename(copy, rename, opts.dry_run)
+	if copy.dst: return run_copy(copy, cleanup, rename, opts.dry_run, opts.ignore_errors)
+	else: return run_rename(copy, rename, opts.dry_run)
 
 if __name__ == '__main__': sys.exit(main())
