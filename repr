@@ -4,6 +4,12 @@ import itertools as it, operator as op, functools as ft
 import os, sys, io, re, signal
 
 
+def repr_str(line, as_ascii=False):
+	'Same as ascii()/repr() for bytes/strings, but without enclosing quotes'
+	line, a = (ascii if as_ascii else repr)(line), 1 + isinstance(line, bytes)
+	q, line = line[-1], line[a:-1]
+	return line.replace(fr'\{q}', q)
+
 def main(args=None):
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
@@ -79,17 +85,15 @@ def main(args=None):
 						try:
 							line = (pprint.pformat( json.loads(line),
 								indent=1, width=120, compact=True ) + '\n').encode()
-						except: line = (repr(line)[2:-1] + '\n').encode()
+						except: line = (repr_str(line) + '\n').encode()
 					dst = dst_buff or dst_stdout
 					dst.write(line)
 					dst.flush()
 
 				else:
 					if opts.hide_newlines: line = line.rstrip(b'\r\n')
-					if opts.binary: line = repr(line)[2:-1] + '\n'
-					else:
-						line = (ascii if opts.ascii else repr)(
-							line.decode('utf-8-sig', dec_errors) )[1:-1] + '\n'
+					if opts.binary: line = repr_str(line) + '\n'
+					else: line = repr_str(line.decode('utf-8-sig', dec_errors), opts.ascii) + '\n'
 					dst_stdout.write(line.encode())
 					dst_stdout.flush()
 
