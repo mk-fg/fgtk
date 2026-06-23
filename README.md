@@ -3,7 +3,11 @@
 A set of a misc tools to work with files and processes.
 
 Various oldish helper scripts/binaries I wrote to help myself with
-day-to-day tasks.
+day-to-day tasks, and typically use on-and-off for years after that.
+
+Names of the scripts are usually unimaginative and follow their function in
+simple words, i.e. if it says "znc-log-reader" then it probably reads [ZNC] logs,
+and does nothing significant beyond that.
 
 License for all scripts is WTFPL (public domain-ish - [see below](#hdr-license__wtfpl_)),
 feel free to just copy and use these in whatever way you like.
@@ -1128,7 +1132,7 @@ archive, view, search, etc.
 <a name=hdr-znc-log-aggregator></a>
 ##### [znc-log-aggregator](znc-log-aggregator)
 
-Tool to process ZNC chat logs, produced by "log" module (one enabled globally,
+Tool to process [ZNC] chat logs, produced by "log" module (one enabled globally,
 with default wildcards) and store them using following schema under some -d/--log-dir:
 
     <net>/chat/<channel>__<yy>-<mm>.log.xz
@@ -1158,6 +1162,8 @@ usage of uncompressed logs in the long run.
 
 ZNC changed how it stores logs a few times over the years, and this tools
 also helped maintain consistent storage schema across these.
+
+[ZNC]: https://znc.in/
 
 <a name=hdr-znc-log-reader></a>
 ##### [znc-log-reader](znc-log-reader)

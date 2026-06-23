@@ -148,7 +148,7 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 			'-show_entries', 'stream:format', '-print_format', 'json', str(p) ],
 		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
 	vx, ax = vn, an; ac = sc = 0; probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = dict(); errs, subs, multistream = list(), list(), None
+	video = audio = dict(); errs, subs = list(), list(); subs_pick = multistream = None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', fatal=1, msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
@@ -186,14 +186,17 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 
 		if ct == 'subtitle':
 			if s.get('codec_name') in [None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle']:
-				errs.append(adict(t='subs', msg='Has bitmap or unrecognized subtitles'))
+				if not subs_pick: errs.append(adict(
+					t='subs', msg='Has bitmap or unrecognized subtitles' ))
+				subs_pick = True
 			else: subs.append(sc)
 			sc += 1
 
 	if not (audio and video):
 		errs.append(adict(t='format', fatal=1, msg='Missing/unmatched A/V streams'))
 	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
-	data = adict( v=video, a=audio, s=subs, atts=atts, errs=errs, mtime=mtime,
+	data = adict(
+		v=video, a=audio, s=subs, sx=subs_pick, atts=atts, errs=errs, mtime=mtime,
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
 	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
@@ -604,7 +607,7 @@ def main(args=None):
 			fmt.extend(( '-map', f'0:v:{max(p.v.n-1,0)}',
 				'-map', '0:a' if an is None else f'0:a:{max(p.a.n-1,0)}' ))
 			if subs := p.s.copy():
-				if subs == list(range(subs[-1] + 1)): fmt.extend(['-map', '0:s']); subs.clear()
+				if not p.sx: fmt.extend(['-map', '0:s']); subs.clear()
 				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
 			if p.atts: fmt.extend(['-map', '0:t'])
 
