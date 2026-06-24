@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 
 import subprocess as sp, functools as ft, textwrap as tw, contextlib as cl
-import os, sys, re, time, logging, enum, threading, queue
-import json, binascii, struct, socket, signal, atexit
+import os, sys, re, time, logging, enum, threading, queue, json, signal, atexit
 
 import auparse # https://github.com/linux-audit/audit-userspace/
 
@@ -52,18 +51,19 @@ def input_parse_line(proc, line=None):
 		if line[0] == '{': proc.fmt = input_fmt.journal
 		elif line.startswith('type='): proc.fmt = input_fmt.auditd
 		elif line[0].isdigit() and no_exc( # some time-prefixed syslog format
-			dt.datetime.fromisoformat(line.split(None, 1)[0]) ): proc.fmt = input_fmt.syslog
+			dt.datetime.fromisoformat, line.split(None, 1)[0] ): proc.fmt = input_fmt.syslog
 		else: raise ValueError( 'Failed to recognize'
 			' input stream format from first line:\n  {line!r}' )
 	if not proc.init:
-		proc.update( init=True, j=False, evs=list(),
+		proc.update( init=True, j=False, fix_qs=False, evs=list(),
 			ap=auparse.AuParser(auparse.AUSOURCE_FEED), ap_cb=( lambda ap, cbt, evs:
 				cbt == auparse.AUPARSE_CB_EVENT_READY and evs.extend(input_parse_ev_list(ap)) ) )
 		proc.ap.add_callback(proc.ap_cb, proc.evs)
 		if proc.fmt is proc.fmt.journal: proc.update( j=True,
 			id_fields=lambda o,_ks=( '__monotonic_timestamp syslog_facility'
 				' syslog_identifier message'.upper().split() ): tuple(o.get(k) for k in _ks) )
-		elif proc.fmt in [proc.fmt.auditd, proc.fmt.syslog]: pass
+		elif proc.fmt is proc.fmt.auditd: pass
+		elif proc.fmt is proc.fmt.syslog: proc.fix_qs = True
 		else: raise ValueError(f'Unrecognized format: {fmt}')
 
 	if proc.j:
@@ -80,8 +80,29 @@ def input_parse_line(proc, line=None):
 			'Unsupported audit line format%s: %r', st.dec and ' (decoded)' or '', line )
 		else: proc.log.debug('Skipping line: %r', line)
 		return
+	line = m['rec'] or line
 
-	proc.ap.feed((m['rec'] or line) + '\n')
+	if proc.fix_qs: # encode field="stuff with spaces" from syslog for auparse
+		parts = list()
+		while True:
+			line = ls[1] if len(ls := line.split(' ', 1)) > 1 else ''
+			if '="' in ls[0] and ls[0][-1] != '"':
+				k, v = ls[0].split('"', 1)
+				while True:
+					line = vs[1] if len(vs := line.split(' ', 1)) > 1 else ''
+					vs = vs[0]; v += f' {vs}'
+					if v.endswith('"'): break
+					elif not line: v += '"'; break
+				ls[0] = k + v[:-1].encode().hex()
+			if '=' in ls[0] and any(c < 0x21 or c > 0x7e for c in ls[0].encode()):
+				k, v = ls[0].split('=', 1)
+				if v and v[0] == v[-1] == '"': v = v[1:-1]
+				ls[0] = f'{k}={v.encode().hex()}'
+			parts.append(ls[0])
+			if not line: break
+		line = ' '.join(parts)
+
+	proc.ap.feed(f'{line}\n')
 	if evs := proc.evs.copy(): proc.evs.clear(); yield from evs
 
 def input_parse_ev_list(ap):
