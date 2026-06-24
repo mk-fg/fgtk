@@ -2201,21 +2201,24 @@ Misc notes:
 <a name=hdr-audit-follow></a>
 ##### [audit-follow](audit-follow)
 
-Simple py3 script to decode audit messages from "journalctl -af -o json" output,
-i.e. stuff like this:
+Python script to decode audit messages from "journalctl -af -o json" output,
+auditd logs, or syslog with audit records, i.e. stuff like this:
 
-    Jul 24 17:14:01 malediction audit: PROCTITLE
+    Jul 24 17:14:01 myhost audit: PROCTITLE
       proctitle=7368002D630067726570202D652044... (loooong hex-encoded string)
-    Jul 24 17:14:01 malediction audit: SOCKADDR saddr=020000517F0000010000000000000000
+    Jul 24 17:14:01 myhost audit: SOCKADDR saddr=020000517F0000010000000000000000
 
 Into this:
 
     PROCTITLE proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
     SOCKADDR saddr=127.0.0.1:81
 
-Filters for audit messages only, strips long audit-id/time prefixes,
-unless -a/--all specified, puts separators between multi-line audit reports,
-relative and/or differential timestamps (-r/--reltime and -d/--difftime opts).
+Filters for audit messages only in journal, strips long audit-id/time prefixes,
+puts separators between multi-line/record audit events, adds relative and/or
+differential timestamps (-r/--reltime and -d/--difftime opts).
+
+Uses [auditd/auparse python bindings] to split/decode all fields in these messages,
+but mostly ignores any audit-specific type information there.
 
 Audit subsystem can be very useful to understand which process modifies some
 path, what's the command-line of some /bin/bash being run from somewhere
@@ -2239,6 +2242,8 @@ Some useful incantations (cheatsheet):
 
 auditd + ausearch can be used as an offline/advanced alternative to such script.\
 More powerful options for such task on linux can be sysdig and various BPF tools.
+
+[auditd/auparse python bindings]: https://github.com/linux-audit/audit-userspace/
 
 <a name=hdr-tui-binary-conv></a>
 ##### [tui-binary-conv](tui-binary-conv)

@@ -1,84 +1,168 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
-import itertools as it, operator as op, functools as ft
-import os, sys, subprocess, signal, json, re, time
-import binascii, struct, socket, atexit
+import subprocess as sp, functools as ft, textwrap as tw, contextlib as cl
+import os, sys, re, time, logging, enum, threading, queue
+import json, binascii, struct, socket, signal, atexit
+
+import auparse # https://github.com/linux-audit/audit-userspace/
 
 
-def print_sig(*args, **kws):
-	try: print(*args, **kws)
-	except OSError: os.kill(os.getpid(), signal.SIGINT)
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
 
-def print_audit_props(m):
-	aid = m.get('_AUDIT_ID')
-	if not aid:
-		print_sig(
-			'No audit props for msg (mono-ts:',
-			m['__MONOTONIC_TIMESTAMP'], ')' )
+def no_exc(func, *args, exc=ValueError, **kws):
+	try: return func(*args, **kws)
+	except exc: pass
+
+
+class au_str(str): __slots__ = 't', # .t stores unrepresentable key/type str
+input_fmt = enum.Enum('InputFormat', 'journal auditd syslog')
+input_apt = enum.IntEnum('InputAuditTypes', dict(
+	(k[13:].lower(), getattr(auparse, k))
+	for k in dir(auparse) if k.startswith('AUPARSE_TYPE_') ))
+
+def input_parse(stream, fmt=None, flush_timeout=0.1):
+	def _line_q():
+		for line in stream: q.put(line)
+		q.put(None)
+	q, proc = queue.Queue(3), adict(
+		fmt=fmt, init=False, wait=False, log=logging.getLogger('parse') )
+	threading.Thread(target=_line_q, name='lineq', daemon=True).start()
+	while q:
+		try:
+			if (line := q.get(timeout=flush_timeout)) is None: q = None
+			yield from input_parse_line(proc, line)
+		except queue.Empty: yield from input_parse_line(proc)
+
+def input_parse_line(proc, line=None):
+	if not line:
+		if proc.init:
+			proc.ap.flush_feed()
+			if evs := proc.evs.copy(): proc.evs.clear(); yield from evs
 		return
-	print_sig('Audit props for', aid)
-	for k, v in m.items():
-		k = k.lower()
-		if not k.startswith('_audit_'): continue
-		k = k[7:]
-		print_sig(' ', k, v)
 
-def decode_hex_kv(kv):
-	k, v = kv.split('=', 1)
-	if k == 'saddr':
-		if len(v) >= 16 and v.startswith('0200'):
-			port, ipaddr = struct.unpack('>HL', binascii.a2b_hex(v[4:16]))
-			ip_addr = socket.inet_ntoa(struct.pack('>L', ipaddr))
-			v = '{}:{}'.format(ip_addr, str(port))
-	else:
-		try: v = binascii.a2b_hex(v)
-		except ValueError: pass
-		else:
-			try: v = repr(v.decode().replace('\0', ' '))
-			except UnicodeDecodeError: v = '[{}]'.format(repr(v).lstrip('b'))
-	return k, v
+	st = adict(auid=None, dec=False)
+	if isinstance(line, bytes): st.dec, line = True, line.decode(errors='replace')
+	if not line.strip(): return
+
+	if not proc.fmt:
+		import datetime as dt
+		if line[0] == '{': proc.fmt = input_fmt.journal
+		elif line.startswith('type='): proc.fmt = input_fmt.auditd
+		elif line[0].isdigit() and no_exc( # some time-prefixed syslog format
+			dt.datetime.fromisoformat(line.split(None, 1)[0]) ): proc.fmt = input_fmt.syslog
+		else: raise ValueError( 'Failed to recognize'
+			' input stream format from first line:\n  {line!r}' )
+	if not proc.init:
+		proc.update( init=True, j=False, evs=list(),
+			ap=auparse.AuParser(auparse.AUSOURCE_FEED), ap_cb=( lambda ap, cbt, evs:
+				cbt == auparse.AUPARSE_CB_EVENT_READY and evs.extend(input_parse_ev_list(ap)) ) )
+		proc.ap.add_callback(proc.ap_cb, proc.evs)
+		if proc.fmt is proc.fmt.journal: proc.update( j=True,
+			id_fields=lambda o,_ks=( '__monotonic_timestamp syslog_facility'
+				' syslog_identifier message'.upper().split() ): tuple(o.get(k) for k in _ks) )
+		elif proc.fmt in [proc.fmt.auditd, proc.fmt.syslog]: pass
+		else: raise ValueError(f'Unrecognized format: {fmt}')
+
+	if proc.j:
+		ts, log_fac, log_id, line = proc.id_fields(data := json.loads(line))
+		if (log_fac, log_id) == ('0', 'kernel') and line.startswith('audit: type='): st.auid = True
+		elif (log_fac, log_id) == ('4', 'audit'): st.auid = data.get('_AUDIT_ID')
+		else: st.auid = False # skip non-audit line
+	else: line = line.strip()
+
+	if st.auid is False or not (m := re.fullmatch(
+			r'((.*? )?audit: )?(?P<rec>type=\S+'
+			r' (msg=)?audit\((?P<auid>(?P<ts>[\d.]+)(:\d+)?)\):\s+.*)', line )):
+		if st.auid: proc.log.warning(
+			'Unsupported audit line format%s: %r', st.dec and ' (decoded)' or '', line )
+		else: proc.log.debug('Skipping line: %r', line)
+		return
+
+	proc.ap.feed((m['rec'] or line) + '\n')
+	if evs := proc.evs.copy(): proc.evs.clear(); yield from evs
+
+def input_parse_ev_list(ap):
+	evs = list()
+	while True:
+		evs.append(input_parse_ev(ap))
+		if not ap.parse_next_event(): break
+	return evs
+
+def input_parse_ev(ap):
+	auev = ap.get_timestamp()
+	ev = adict(rs=list(), ts=auev.sec + auev.milli / 1000, ts_n=auev.serial)
+	ap.first_record()
+	while True:
+		ev.rs.append(rec := adict())
+		while True:
+			k, t = ap.get_field_name(), no_exc(input_apt, ap.get_field_type())
+			if callable(getattr(rec, k, None)): au_k = au_str(f'au_{k}'); k, au_k.t = au_k, k
+			if t is input_apt.escaped_file: v = ap.interpret_realpath()
+			elif t and t in (t.proctitle, t.escaped, t.escaped_key, t.success):
+				v = ap.interpret_field()
+				if v == '(null)' or v == '(none)': v = None
+			else:
+				try: v = ap.interpret_field()
+				except ValueError: v = ap.get_field_str()
+				if v == '(null)' or v == '(none)': v = None
+				else: (v := au_str(v)).t = t and t.name or None
+			if k == 'key' and v: ev.key = v
+			rec[k] = v
+			if not ap.next_field(): break
+		if not ap.next_record(): break
+	return ev
 
 
 def main(args=None):
 	import argparse
+	dd = lambda text: re.sub(r' \t+', ' ', tw.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Follow and decode audit msgs from journalctl output.')
-	parser.add_argument('-o', '--journalctl-opts',
-		action='append', metavar='opts',
-		help='Additional options/arguments to pass to journalctl.'
-			' Will be split on spaces, unless option is used multiple times.'
-			' Example: -o="--since=-1h SYSLOG_IDENTIFIER=audit"')
-	parser.add_argument('-a', '--all', action='store_true',
-		help='Do not strip prefixes and misc noise from audit msgs.')
-	parser.add_argument('-F', '--grep-str', metavar='string',
-		help='Print only events that contain exact substring that is provided.')
-	parser.add_argument('-s', '--sep', metavar='char ["x" count]',
-		help='Separator char and optional'
-				' count of these to use between multi-line audit msgs.'
-			' Default: -s=-x80, empty or no arg can be used for empty line.')
-	parser.add_argument('-r', '--reltime', action='store_true',
-		help='Print relative monotonic timestamp before every line.')
-	parser.add_argument('-d', '--difftime', action='store_true',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Follow and decode audit messages, either from journalctl output or auditd logs.
+			Default is to run/follow journalctl, pretty-printing audit events, separated
+				by hyphen-line and split over multiple lines if too long, with [<type-id>] prefix.'''))
+
+	group = parser.add_argument_group('Input options')
+	group.add_argument('-o', '--journalctl-opts', action='append', metavar='opts', help=dd('''
+		Additional options/arguments to pass to journalctl.
+		Will be split on spaces, unless option is used multiple times.
+		Example: -o="--since=-1h SYSLOG_IDENTIFIER=audit"'''))
+	group.add_argument('-i', '--stdin', action='store_true', help=dd('''
+		Read from stdin instead of running journalctl, e.g pipe from "tail -F auditd.log".'''))
+	group.add_argument('-t', '--flush-timeout', type=float, metavar='sec', default=0.1, help=dd('''
+		Timeout for waiting on more records of audit event, before using it as it is.
+		Can be relevant when input is a slow connection/pipe. Default: %(default)ss'''))
+
+	group = parser.add_argument_group('Simple output pretty-printing and filtering')
+	group.add_argument('-s', '--sep', metavar='char ["x" count]', help=dd('''
+		Separator char and optional count of these to use between multi-line audit events/msgs.
+		Default: -s=-x80, empty or no arg can be used for empty line.'''))
+	group.add_argument('-r', '--reltime', action='store_true',
+		help='Print monotonic timestamp relative to first event before every line.')
+	group.add_argument('-d', '--difftime', action='store_true',
 		help='Print timestamp since last logged event on each line.')
-	parser.add_argument('-i', '--stdin', action='store_true',
-		help='Read JSON lines from stdin instead of running "journalctl -af -o json".')
-	parser.add_argument('-l', '--line-len',
-		type=int, metavar='n', default=95,
-		help='Max length of individual lines in the output.'
-			' Longer ones will be split. Default: %(default)s')
+	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
+		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
+	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
+		Print only events (can have multiple records/lines) that contain exact substring.'''))
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	journalctl_opts = opts.journalctl_opts or list()
-	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
+	for old, new in dict( DEBUG='debug', INFO='info',
+			WARNING='warn', ERROR='err', CRITICAL='fatal' ).items():
+		logging.addLevelName(getattr(logging, old), new)
+	logging.basicConfig( level=logging.INFO,
+		format='{asctime} {name} {levelname:5} :: {message}', style='{' )
 
-	sys.stdout = open(sys.stdout.fileno(), 'w', 1)
-	signal.signal(signal.SIGINT, signal.SIG_DFL)
+	stream_fmt, journalctl_opts = None, opts.journalctl_opts or list()
+	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
 	if not opts.stdin:
-		proc = subprocess.Popen(
-			['journalctl', '-af', '-o', 'json'] + journalctl_opts,
-			stdout=subprocess.PIPE )
+		proc = sp.Popen('journalctl -af -o json'.split() + journalctl_opts, stdout=sp.PIPE)
 		atexit.register(proc.terminate)
-		stream = proc.stdout
+		stream, stream_fmt = proc.stdout, input_fmt.journal
 	else: stream = sys.stdin
 
 	sep = '-' if opts.sep is None else opts.sep.strip()
@@ -88,72 +172,34 @@ def main(args=None):
 	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
 
-	msg_buff_use = False
-	if opts.grep_str: msg_buff_use = True
+	out = open(sys.stdout.fileno(), 'w', 1) # line-buffered
+	out = ft.partial(print, file=out, flush=True)
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-	line_proc = op.itemgetter(
-		'__MONOTONIC_TIMESTAMP',
-		'SYSLOG_FACILITY', 'SYSLOG_IDENTIFIER', 'MESSAGE' )
-	msg_buff = list()
-	ts0 = ts_prev = audit_id_prev = None
+	ts0 = ts0_ev = sep_collapse = None
+	twx = tw.TextWrapper( width=opts.line_len, tabsize=2, initial_indent='',
+		subsequent_indent='  ', break_long_words=False, break_on_hyphens=False )
+	for ev in input_parse(stream, stream_fmt, flush_timeout=opts.flush_timeout):
+		msg = list()
+		if not sep_collapse: msg.append(sep)
+		if not ts0: ts0 = ev.ts
+		if not ts0_ev: ts0_ev = ev.ts
+		for evr in ev.rs:
+			line = ''
+			if opts.reltime: line = f'[{ev.ts - ts0:>9.3f}] '
+			if opts.difftime: line += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
+			if t := evr.pop('type', None): line += f'[{t}]' if t.isdigit() else t
+			for k, v in evr.items():
+				if v is None or (k == 'seresult' and re.fullmatch(r'audit\(\S+\):', v)): continue
+				if ' ' in v: v = repr(v)
+				line += ' ' + f'{k}={v}'.replace(*' \ue157')
+			msg.append(twx.fill(line.lstrip()).replace(*'\ue157 '))
+		if sep: msg.append(sep)
+		msg = '\n'.join(msg)
+		if not opts.grep_str or opts.grep_str in msg: out(msg); sep_collapse = True
 
-	for line in stream:
-		if isinstance(line, bytes): line = line.decode(errors='replace')
-		line = json.loads(line)
-		ts, log_fac, log_id, msg = line_proc(line)
-		ts = int(ts) / 1000
-		if ts0 is None: ts0 = ts_prev = ts
-
-		if log_fac=='0' and log_id=='kernel' and msg.startswith('audit:'):
-			audit_id = re.search(r'audit\([\d.]+:(\d+)\)', msg)
-			if audit_id: audit_id = int(audit_id.group(1))
-		elif log_fac=='4' and log_id=='audit' and '_AUDIT_ID' in line:
-			audit_id = line['_AUDIT_ID']
-		else: continue
-
-		if not opts.all:
-			msg = re.sub(r'^(?:audit: )?type=(\d+) audit\(.*\):\s+', '[\g<1>] ', msg)
-
-		msg_list = list()
-		for m in re.finditer(
-				r'[\w\d]+=[A-F0-9]{8}[A-F0-9]+', msg.strip() ):
-			a, b = m.span()
-			k, v = decode_hex_kv(m.group())
-			msg_list.extend(msg[:a].split())
-			msg_list.append('{}={}'.format(k, v))
-			msg = msg[b:]
-		if msg: msg_list.extend(msg.split())
-
-		if sep and audit_id != audit_id_prev:
-			if msg_buff:
-				msg_buff_str = '\n'.join(msg_buff)
-				if opts.grep_str:
-					if opts.grep_str not in msg_buff_str: msg_buff_str = ''
-				if msg_buff_str: print_sig(msg_buff_str)
-				msg_buff.clear()
-			if audit_id_prev and (not msg_buff_use or msg_buff_str): print_sig(sep)
-			audit_id_prev = audit_id
-
-		prefix = ''
-		if opts.reltime: ts_prev, prefix = ts, '[{:>7.3f}] '.format(ts - ts_prev)
-		if opts.difftime: prefix = '[{:>9.3f}] '.format(ts - ts0)
-
-		if len(msg_list) <= 2:
-			msg_buff.append(prefix + ' '.join(msg_list))
-			continue
-		while msg_list:
-			msg = msg_list[0]
-			for n, part in enumerate(msg_list[1:], 1):
-				if len(msg) + len(part) < opts.line_len:
-					msg += ' ' + part
-				else:
-					msg_buff.append(prefix + msg)
-					prefix, msg_list = ' '*4, msg_list[n:]
-					break
-			else: break
-
-		if not msg_buff_use:
-			for line in msg_buff: print_sig(line)
-			msg_buff.clear()
-
-if __name__ == '__main__': sys.exit(main())
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
