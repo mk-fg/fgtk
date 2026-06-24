@@ -125,6 +125,8 @@ def main(args=None):
 			Default is to run/follow journalctl, pretty-printing audit events, separated
 				by hyphen-line and split over multiple lines if too long, with [<type-id>] prefix.'''))
 
+	parser.add_argument('--debug', action='store_true', help='Verbose stderr logging.')
+
 	group = parser.add_argument_group('Input options')
 	group.add_argument('-o', '--journalctl-opts', action='append', metavar='opts', help=dd('''
 		Additional options/arguments to pass to journalctl.
@@ -151,11 +153,12 @@ def main(args=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	for old, new in dict( DEBUG='debug', INFO='info',
-			WARNING='warn', ERROR='err', CRITICAL='fatal' ).items():
+	for old, new in dict( DEBUG='DEBUG', INFO='INFO',
+			WARNING='WARN', ERROR='ERR', CRITICAL='FATAL' ).items():
 		logging.addLevelName(getattr(logging, old), new)
-	logging.basicConfig( level=logging.INFO,
-		format='{asctime} {name} {levelname:5} :: {message}', style='{' )
+	logging.basicConfig(
+		level=logging.DEBUG if opts.debug else logging.INFO, style='{',
+		format='{asctime} {name} {levelname:5} :: {message}', datefmt='%Y-%m-%dT%H:%M:%S' )
 
 	stream_fmt, journalctl_opts = None, opts.journalctl_opts or list()
 	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
