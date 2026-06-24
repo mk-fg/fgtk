@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import subprocess as sp, functools as ft, textwrap as tw, contextlib as cl
+import subprocess as sp, functools as ft, textwrap as tw, contextlib as cl, unicodedata as ud
 import os, sys, re, time, logging, enum, threading, queue, json, signal, atexit
 
 import auparse # https://github.com/linux-audit/audit-userspace/
@@ -222,7 +222,8 @@ def main(args=None):
 			if t := evr.pop('type', None): line += f'[{t}]' if t.isdigit() else t
 			for k, v in evr.items():
 				if v is None or (k == 'seresult' and re.fullmatch(r'audit\(\S+\):', v)): continue
-				if re.search(r'[\x00-\x20\x7f]', str(v)): v = json.dumps(v)
+				if re.search(r'[\x00-\x20\x7f]', str(v)) or any(
+					ord(c) > 127 and ud.category(c)[0] in 'CZ' for c in str(v) ): v = json.dumps(v)
 				line += ' ' + f'{k}={v}'.replace(*' \ue157')
 			line = line.lstrip()
 			if not opts.raw: line = twx.fill(line.lstrip())
