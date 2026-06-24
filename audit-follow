@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import subprocess as sp, functools as ft, textwrap as tw, contextlib as cl, unicodedata as ud
+import subprocess as sp, functools as ft, textwrap as tw, unicodedata as ud
 import os, sys, re, time, logging, enum, threading, queue, json, signal, atexit
 
 import auparse # https://github.com/linux-audit/audit-userspace/
@@ -138,12 +138,72 @@ def input_parse_ev(ap):
 	return ev
 
 
+filter_file_info = r'''
+Information on format for audit-follow script's -f/--filter-file option.
+
+This file is a list of blacklist-filtering or match-replace expressions, one per line,
+ applied in same order as specified, with exception for per-record vs per-event expressions.
+#-comments are ignored, where # must either start the line, or be separated by spaces if inline.
+Lines starting with space will continue previous line, with single-space prefix stripped.
+Trailing spaces on lines are always ignored, if any.
+Format for all regexps is PCRE-like, as implemented in python "re" module - see docs for it.
+
+Expression line can be either "<match>" to blacklist-filter (i.e. remove)
+ records/events, or "<match> => <replace>" to replace anything in those.
+
+<match> is read as regexp to filter audit records by default, but also support special formats:
+/<regexp>/ -- wrapped regular expression, with more clear start/end boundaries.
+/<rx1>/ && /<rx2>/ -- combining multiple wrapped regexps using AND logic.
+<flags>/<regexp>/ -- adding single-character flags for wrapped regexps, which can be:
+  Flag: ! - negate regexp match, i.e. only apply replacement(s) or filtering if it doesn't match.
+   Should only be useful for filtering (omitted/empty replacement), or in combination, e.g.:
+   !/ apparmor=ALLOWED / && /.* apparmor=.* class=file.* name="(.*?)" .*/ => aa-file-issue: \1
+  Flag: E - apply regexp over combined records of audit event (as lines), instead of
+   individual records, in the same format/order as they're read/presented with --raw option.
+   Regexps with this flag are applied separately, after per-record regexps.
+  Flag: I - for a case-sensitive lookup, e.g. "I/SAN/", instead of default case-insensitive "i".
+  Flag: M - full-match from beginning to end, as opposed to default "m" search.
+<field>~<match> -- regexp-match for specific record/event field.
+  With "E" flag to match events, this means "match field in any record within event".
+<field>==<value> -- match exact value of a field, instead of regexp-matches.
+  If <value> starts with a quote, ast.literal_eval is used until next (closing) quote.
+<field>=<flags>=<value> -- same flags as for regexps above, but applied for exact-string match.
+  "m" flag can be used to search for substring, instead of default "M" full-match.
+
+Fancy <match> filtering examples:
+  apparmor==DENIED && profile~!/^chromium(-.*)?/
+  auid=E=myuser && uid=E=root && profile~/-ux$/ # records with profile=...-ux in matched event
+
+In "<match> => <replace>" expressions, <replace> part can use regexp captures.
+Can start or end with \ (backslash) to keep leading/trailing spaces: / class=(\S+) / => \ [\1] \
+"<flags>`<replace>" can be used with following single-character <flags>:
+  Flag: any digit - pick regexp out of &&-joined ones to replace
+   (default - last non-negated), e.g. "/rx1/ && /rx2/ = 2`..." to replace rx2 match.
+  Flag: E - apply replacement to potentially-multiline event, after any record replacements.
+
+Examples for match-replacement:
+  profile=(\S+) .*name=(".*"|\S+) => aa-rule [\1]: \2
+  / name=\S+? .*/ && /.* apparmor=.* class=file.*/ && !/ apparmor=ALLOWED / => 1`aa-bug: \1
+'''
+
+def filter_file_parse(p, filters):
+	with open(p) as src: src = src.readlines()
+	lines = list()
+	for line in src:
+		if line.startswith('#'): continue
+		line = line.split(' # ')[0].rstrip()
+		if line.startswith(' ') and lines: lines[-1] += line[1:]; continue
+		lines.append(line)
+	for line in lines: pass # XXX: not implemented
+	raise NotImplementedError
+
+
 def main(args=None):
 	import argparse
 	dd = lambda text: re.sub(r' \t+', ' ', tw.dedent(text).strip('\n') + '\n').replace('\t', '  ')
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
-			Follow and decode audit messages, either from journalctl output or auditd logs.
+			Follow and decode audit messages, either from journalctl output, syslog or auditd logs.
 			Default is to run/follow journalctl, pretty-printing audit events, separated
 				by hyphen-line and split over multiple lines if too long, with [<type-id>] prefix.'''))
 
@@ -160,7 +220,7 @@ def main(args=None):
 		Timeout for waiting on more records of audit event, before using it as it is.
 		Can be relevant when input is a slow connection/pipe. Default: %(default)ss'''))
 
-	group = parser.add_argument_group('Simple output pretty-printing and filtering')
+	group = parser.add_argument_group('Output pretty-printing and filtering')
 	group.add_argument('-s', '--sep', metavar='char ["x" count]', help=dd('''
 		Separator char and optional count of these to use between multi-line audit events/msgs.
 		Default: -s=-x80, empty or no arg can be used for empty line.'''))
@@ -172,10 +232,13 @@ def main(args=None):
 		help='Add audit-id prefix to record lines, after timestamps.')
 	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
 		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
+	group.add_argument('--raw', action='store_true',
+		help='Output single record per line, without splitting, disable/override separators.')
 	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
 		Print only events (can have multiple records/lines) that contain exact substring.'''))
-	group.add_argument( '--raw', action='store_true',
-		help='Output single record per line, disable/override separators.' )
+	group.add_argument('-f', '--filter-file', metavar='file', help=dd('''
+		Config file with a list of key-value/regexp filters and replacements to apply.
+		Run with --filter-file=help to print information about format for this file and exit.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -185,6 +248,14 @@ def main(args=None):
 	logging.basicConfig(
 		level=logging.DEBUG if opts.debug else logging.INFO, style='{',
 		format='{asctime} {name} {levelname:5} :: {message}', datefmt='%Y-%m-%dT%H:%M:%S' )
+
+	filters = adict(rec=None, ev=None)
+	if opts.filter_file == 'help': return print(filter_file_info)
+	elif opts.filter_file:
+		if opts.grep_str: parser.error(
+			'Using -F/--grep-str alongside -f/--filter-file is not supported' )
+		filter_file_parse(opts.filter_file, filters)
+	elif opts.grep_str: filters.ev = lambda msg,_s=opts.grep_str: msg if _s in msg else ''
 
 	stream_fmt, journalctl_opts = None, opts.journalctl_opts or list()
 	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
@@ -225,12 +296,13 @@ def main(args=None):
 				if re.search(r'[\x00-\x20\x7f]', str(v)) or any(
 					ord(c) > 127 and ud.category(c)[0] in 'CZ' for c in str(v) ): v = json.dumps(v)
 				line += ' ' + f'{k}={v}'.replace(*' \ue157')
-			line = line.lstrip()
-			if not opts.raw: line = twx.fill(line.lstrip())
-			msg.append(line.replace(*'\ue157 '))
+			line_raw, line = '', line.lstrip()
+			if filters.rec and not (line_raw := filters.rec(line.replace(*'\ue157 '))): continue
+			msg.append( (line_raw or line.replace(*'\ue157 '))
+				if opts.raw else twx.fill(line).replace(*'\ue157 ') )
 		if sep: msg.append(sep)
 		msg = '\n'.join(msg)
-		if not opts.grep_str or opts.grep_str in msg: out(msg); sep_collapse = True
+		if not filters.ev or (msg := filters.ev(msg)): out(msg); sep_collapse = True
 
 if __name__ == '__main__':
 	try: sys.exit(main())
