@@ -150,6 +150,8 @@ def main(args=None):
 		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
 	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
 		Print only events (can have multiple records/lines) that contain exact substring.'''))
+	group.add_argument('--raw', action='store_true', help=dd('''
+		One record per line, disable all extra formatting. Overrides other formatting options.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -174,6 +176,7 @@ def main(args=None):
 		sep, sep_c = sep.strip(), int(sep_c)
 	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
+	if opts.raw: sep = ''
 
 	out = open(sys.stdout.fileno(), 'w', 1) # line-buffered
 	out = ft.partial(print, file=out, flush=True)
@@ -184,7 +187,7 @@ def main(args=None):
 		subsequent_indent='  ', break_long_words=False, break_on_hyphens=False )
 	for ev in input_parse(stream, stream_fmt, flush_timeout=opts.flush_timeout):
 		msg = list()
-		if not sep_collapse: msg.append(sep)
+		if sep and not sep_collapse: msg.append(sep)
 		if not ts0: ts0 = ev.ts
 		if not ts0_ev: ts0_ev = ev.ts
 		for evr in ev.rs:
@@ -194,9 +197,11 @@ def main(args=None):
 			if t := evr.pop('type', None): line += f'[{t}]' if t.isdigit() else t
 			for k, v in evr.items():
 				if v is None or (k == 'seresult' and re.fullmatch(r'audit\(\S+\):', v)): continue
-				if ' ' in v: v = repr(v)
+				if re.search(r'[\x00-\x20\x7f]', str(v)): v = json.dumps(v)
 				line += ' ' + f'{k}={v}'.replace(*' \ue157')
-			msg.append(twx.fill(line.lstrip()).replace(*'\ue157 '))
+			line = line.lstrip()
+			if not opts.raw: line = twx.fill(line.lstrip())
+			msg.append(line.replace(*'\ue157 '))
 		if sep: msg.append(sep)
 		msg = '\n'.join(msg)
 		if not opts.grep_str or opts.grep_str in msg: out(msg); sep_collapse = True
