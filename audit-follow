@@ -121,7 +121,9 @@ def input_parse_ev(ap):
 		ev.rs.append(rec := adict())
 		while True:
 			k, t = ap.get_field_name(), no_exc(input_apt, ap.get_field_type())
-			if callable(getattr(rec, k, None)): au_k = au_str(f'au_{k}'); k, au_k.t = au_k, k
+			if not k or k[0] == '_' or callable(getattr(rec, k, None)):
+				au_k = k[1:] if k.startswith('_') else k
+				au_k = au_str(f'au_{au_k}'); k, au_k.t = au_k, k # original key in .t
 			if t is input_apt.escaped_file: v = ap.interpret_realpath()
 			elif t and t in (t.proctitle, t.escaped, t.escaped_key, t.success):
 				v = ap.interpret_field()
@@ -137,65 +139,139 @@ def input_parse_ev(ap):
 		if not ap.next_record(): break
 	return ev
 
+def format_record_line(evr, val_esc=''):
+	'Adds evr._line from all record keys except "type" and internal underscored ones'
+	line = ''
+	for k, v in evr.items():
+		if ( k[0] == '_' or v is None or
+			(k == 'seresult' and re.fullmatch(r'audit\(\S+\):', v)) ): continue
+		if re.search(r'[\x00-\x20\x7f]', str(v)) or any(
+			ord(c) > 127 and ud.category(c)[0] in 'CZ' for c in str(v) ): v = json.dumps(v)
+		line += ' ' + (f'{k}={v}'.replace(' ', val_esc) if val_esc else f'{k}={v}')
+	if (line := line.lstrip()) == evr.get('_line_esc'): return # to keep any evr._line tweaks
+	line = evr._line = evr._line_esc = line
+	if val_esc: evr._line = line.replace(val_esc, ' ')
+
+def format_event(evrs, twx=None, val_esc=''):
+	if not (twx and val_esc): return '\n'.join(
+		evr._prefix + evr._line for evr in evrs if evr._line )
+	return '\n'.join(twx.fill( evr._prefix +
+		evr._line_esc ).replace(val_esc, ' ') for evr in evrs if evr._line)
+
 
 filter_file_info = r'''
 Information on format for audit-follow script's -f/--filter-file option.
 
-This file is a list of blacklist-filtering or match-replace expressions, one per line,
- applied in same order as specified, with exception for per-record vs per-event expressions.
-#-comments are ignored, where # must either start the line, or be separated by spaces if inline.
+File is a list of filtering rules, which match against either
+ possibly-multiline auditing event or one of its "audit record" lines,
+ prefixed by either hyphen+space ("- <rule>") to remove event/record, or "+" to keep it.
+All rules are evaluated in the same order as written against audit events,
+ stopping on first record/event match, printing/keeping anything that falls through otherwise.
+It's the same idea with list of allow/drop rules as in firewall or rsync filters.
+
+#-comments are ignored, where # must either start the line, or space-separated if inline.
 Lines starting with space will continue previous line, with single-space prefix stripped.
-Trailing spaces on lines are always ignored, if any.
 Format for all regexps is PCRE-like, as implemented in python "re" module - see docs for it.
+Trailing spaces on lines are always ignored, if any.
 
-Expression line can be either "<match>" to blacklist-filter (i.e. remove)
- records/events, or "<match> => <replace>" to replace anything in those.
-
-<match> is read as regexp to filter audit records by default, but also support special formats:
+Non-comment/empty lines are again, either "- <rule>" or "+ <rule>".
+<rule> is read as regexp to filter audit records by default, but also support special formats:
 /<regexp>/ -- wrapped regular expression, with more clear start/end boundaries.
 /<rx1>/ && /<rx2>/ -- combining multiple wrapped regexps using AND logic.
 <flags>/<regexp>/ -- adding single-character flags for wrapped regexps, which can be:
   Flag: ! - negate regexp match, i.e. only apply replacement(s) or filtering if it doesn't match.
    Should only be useful for filtering (omitted/empty replacement), or in combination, e.g.:
    !/ apparmor=ALLOWED / && /.* apparmor=.* class=file.* name="(.*?)" .*/ => aa-file-issue: \1
-  Flag: E - apply regexp over combined records of audit event (as lines), instead of
-   individual records, in the same format/order as they're read/presented with --raw option.
-   Regexps with this flag are applied separately, after per-record regexps.
+  Flag: E - apply regexp over combined records of audit event (can be multiple lines),
+   instead of individual records, with events formatted as they're printed with --raw option.
+   IMPORTANT: if regexp with E flag is only/last in rule, whole event is printed/dropped.
   Flag: I - for a case-sensitive lookup, e.g. "I/SAN/", instead of default case-insensitive "i".
   Flag: M - full-match from beginning to end, as opposed to default "m" search.
-<field>~<match> -- regexp-match for specific record/event field.
-  With "E" flag to match events, this means "match field in any record within event".
+  Python "re" module supports more regexp modifiers, e.g. "(?.)" for multiline matches.
+<field>~<regexp> -- regexp-match for specific record/event field (or empty string if missing).
+  "E" flag for wrapped regexp will match events, i.e. "match field in any record within event".
 <field>==<value> -- match exact value of a field, instead of regexp-matches.
   If <value> starts with a quote, ast.literal_eval is used until next (closing) quote.
 <field>=<flags>=<value> -- same flags as for regexps above, but applied for exact-string match.
-  "m" flag can be used to search for substring, instead of default "M" full-match.
+  "m" flag can be used to search for substring, instead of default "M" full-match here.
 
-Fancy <match> filtering examples:
-  apparmor==DENIED && profile~!/^chromium(-.*)?/
-  auid=E=myuser && uid=E=root && profile~/-ux$/ # records with profile=...-ux in matched event
+Random filter-rules example:
 
-In "<match> => <replace>" expressions, <replace> part can use regexp captures.
-Can start or end with \ (backslash) to keep leading/trailing spaces: / class=(\S+) / => \ [\1] \
-"<flags>`<replace>" can be used with following single-character <flags>:
-  Flag: any digit - pick regexp out of &&-joined ones to replace
-   (default - last non-negated), e.g. "/rx1/ && /rx2/ = 2`..." to replace rx2 match.
-  Flag: E - apply replacement to potentially-multiline event, after any record replacements.
+- apparmor==DENIED && profile~!/^chromium(-.*)?/
++ uid=E=myuser # all events with that key in any record will be printed
+- auid=E=myuser && uid=E=root && profile~/-ux$/ # drop  profile=...-ux RECORDS in matched events
+- / comm=nft(-\S+)$/ && uid=E=root # drop EVENTS ending with that comm= match
 
-Examples for match-replacement:
-  profile=(\S+) .*name=(".*"|\S+) => aa-rule [\1]: \2
-  / name=\S+? .*/ && /.* apparmor=.* class=file.*/ && !/ apparmor=ALLOWED / => 1`aa-bug: \1
+To understand how these rules work, simply go over them top-to-bottom,
+ stop at the first one that applies, and if it has "-" prefix then record or event
+ (if last/only match in &&-chain has E flag) is dropped/ignored, or printed otherwise.
 '''
 
-def filter_file_parse(p, filters):
+class ARX:
+
+	def __init__(self, s, act):
+		self.arx_list = list()
+		for n, rx in enumerate(s.split(' && ')):
+			e = adict(neg=False, fm=False, ev=False, key='')
+			if not ( (m := re.fullmatch(r'(\w+~)?([!iImME]+)?/(.+)/', rx))
+					or (m := re.fullmatch(r'(\w+)=([!iImME]+)?=(.+)', rx)) ):
+				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
+				self.arx_list.append(adict(e, rx=re.compile(rx, re.I))); continue
+			key, flags, rx = (g or '' for g in m.groups())
+			if not key.endswith('~'):
+				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
+			self.arx_list.append(adict( e, key=key.rstrip('~'),
+				neg='!' in flags, fm='M' in flags, ev='E' in flags,
+				rx=re.compile(rx, re.NOFLAG if 'I' not in flags else re.I) ))
+		self.act, self.ev = bool(act), any(e.ev for e in self.arx_list)
+
+	def __repr__(self):
+		return '<ARX[ ' + '-+'[self.act] + ['', 'E '][self.ev] + ' && '.join(
+			(f'{e.key}~' if e.key else '') + ( ' !'[e.neg] + ' E'[e.ev]
+				+ 'I '[bool(e.rx.flags & re.I)] + ' M'[e.fm] ).replace(' ', '')
+			+ f'/{e.rx.pattern}/' for e in self.arx_list ) + ' ]>'
+
+	def check(self, ev, evr, evrs):
+		'Returns match info, to apply .act to ev/evr as-needed'
+		e = None
+		for e in self.arx_list:
+			e_chk = getattr(e.rx, ['search', 'fullmatch'][e.fm])
+			e_chk = lambda s,_rx=e_chk: e.neg ^ bool(_rx(s))
+			if e.ev:
+				if e.key: # checks all event records, not just current one
+					if not any(e_chk(str(evr.get(e.key, ''))) for evr in evrs if evr._line): return
+				elif not e_chk(ev): return
+				continue
+			if e.key:
+				if not e_chk(str(evr.get(e.key, ''))): return
+			elif not e_chk(evr._line): return
+		if not e: return # empty rule?
+		return adict(rec=False, ev=True) if e.ev else adict(ev=False, rec=True)
+
+def filter_file_parse(p):
 	with open(p) as src: src = src.readlines()
-	lines = list()
+	rules = list()
 	for line in src:
 		if line.startswith('#'): continue
-		line = line.split(' # ')[0].rstrip()
-		if line.startswith(' ') and lines: lines[-1] += line[1:]; continue
-		lines.append(line)
-	for line in lines: pass # XXX: not implemented
-	raise NotImplementedError
+		if not (line := line.split(' # ')[0].rstrip()): continue
+		if line.startswith(' ') and rules: rules[-1] += line[1:]; continue
+		rules.append(line)
+	for n, line in enumerate(rules):
+		if (ls := line.lstrip()).startswith('- '): rules[n] = ARX(line[2:], False)
+		elif ls.startswith('+ '): rules[n] = ARX(line[2:], True)
+		else: raise ValueError( 'All rules in -f/--filter-file'
+			f' must have +/- prefix, it is missing here: {line!r}')
+	def _ev_filter(evrs, ev=None):
+		for evr in evrs:
+			for arx in rules:
+				if ev is None: ev = format_event(evrs)
+				if not (res := arx.check(ev, evr, evrs)): continue # no match
+				if not arx.act:
+					if res.ev: list(evr.update(_line='') for evr in evrs)
+					elif res.rec: evr._line, ev = '', None # combined ev changed too
+				break
+			if not (evrs := list(evr for evr in evrs if evr._line)): break
+	return _ev_filter
 
 
 def main(args=None):
@@ -235,9 +311,10 @@ def main(args=None):
 	group.add_argument('--raw', action='store_true',
 		help='Output single record per line, without splitting, disable/override separators.')
 	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
-		Print only events (can have multiple records/lines) that contain exact substring.'''))
+		Simple filtering - print only events (can have multiple records/lines) with substring.'''))
 	group.add_argument('-f', '--filter-file', metavar='file', help=dd('''
-		Config file with a list of key-value/regexp filters and replacements to apply.
+		Config file with a list of allow/deny rules to filter output records/lines or events by.
+		Implies --raw output mode, as regexps in rules there apply against that.
 		Run with --filter-file=help to print information about format for this file and exit.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -249,13 +326,19 @@ def main(args=None):
 		level=logging.DEBUG if opts.debug else logging.INFO, style='{',
 		format='{asctime} {name} {levelname:5} :: {message}', datefmt='%Y-%m-%dT%H:%M:%S' )
 
-	filters = adict(rec=None, ev=None)
 	if opts.filter_file == 'help': return print(filter_file_info)
 	elif opts.filter_file:
 		if opts.grep_str: parser.error(
 			'Using -F/--grep-str alongside -f/--filter-file is not supported' )
-		filter_file_parse(opts.filter_file, filters)
-	elif opts.grep_str: filters.ev = lambda msg,_s=opts.grep_str: msg if _s in msg else ''
+		ev_filter = filter_file_parse(opts.filter_file)
+	elif gs := opts.grep_str: ev_filter = ( lambda evrs:
+		any(gs not in evr._line for evr in evrs) or list(evr.update(_line='') for evr in evrs) )
+	else: ev_filter = None
+
+	out_raw = opts.raw or opts.filter_file
+	out = open(sys.stdout.fileno(), 'w', 1) # line-buffered
+	out = ft.partial(print, file=out, flush=True)
+	signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 	stream_fmt, journalctl_opts = None, opts.journalctl_opts or list()
 	if len(journalctl_opts) == 1: journalctl_opts = journalctl_opts[0].strip().split()
@@ -271,38 +354,39 @@ def main(args=None):
 		sep, sep_c = sep.strip(), int(sep_c)
 	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
-	if opts.raw: sep = ''
+	if out_raw: sep = ''
 
-	out = open(sys.stdout.fileno(), 'w', 1) # line-buffered
-	out = ft.partial(print, file=out, flush=True)
-	signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-	ts0 = ts0_ev = sep_collapse = None
+	ts0 = ts0_ev = sep_collapse = None; val_esc = '\ue157'
 	twx = tw.TextWrapper( width=opts.line_len, tabsize=2, initial_indent='',
 		subsequent_indent='  ', break_long_words=False, break_on_hyphens=False )
 	for ev in input_parse(stream, stream_fmt, flush_timeout=opts.flush_timeout):
-		msg = list()
-		if sep and not sep_collapse: msg.append(sep)
 		if not ts0: ts0 = ev.ts
 		if not ts0_ev: ts0_ev = ev.ts
+
 		for evr in ev.rs:
-			line = ''
-			if opts.reltime: line = f'[{ev.ts - ts0:>9.3f}] '
-			if opts.difftime: line += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
-			if opts.auid_prefix: line = line.rstrip() + f' audit({ev.auid}): '
-			if t := evr.pop('type', None): line += f'[{t}]' if t.isdigit() else t
-			for k, v in evr.items():
-				if v is None or (k == 'seresult' and re.fullmatch(r'audit\(\S+\):', v)): continue
-				if re.search(r'[\x00-\x20\x7f]', str(v)) or any(
-					ord(c) > 127 and ud.category(c)[0] in 'CZ' for c in str(v) ): v = json.dumps(v)
-				line += ' ' + f'{k}={v}'.replace(*' \ue157')
-			line_raw, line = '', line.lstrip()
-			if filters.rec and not (line_raw := filters.rec(line.replace(*'\ue157 '))): continue
-			msg.append( (line_raw or line.replace(*'\ue157 '))
-				if opts.raw else twx.fill(line).replace(*'\ue157 ') )
-		if sep: msg.append(sep)
-		msg = '\n'.join(msg)
-		if not filters.ev or (msg := filters.ev(msg)): out(msg); sep_collapse = True
+			prefix = ''
+			if opts.reltime: prefix = f'[{ev.ts - ts0:>9.3f}] '
+			if opts.difftime: prefix += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
+			if opts.auid_prefix: prefix += f'audit({ev.auid}): '
+			evr._prefix = prefix; format_record_line(evr, val_esc)
+
+		ev.rs = list(evr for evr in ev.rs if evr._line)
+		if ev_filter:
+			ev_filter(ev.rs)
+			ev.rs = list(evr for evr in ev.rs if evr._line)
+		if not ev.rs: continue # event or all records filtered-out
+
+		if not out_raw: # move type info to nicer prefix
+			for evr in ev.rs:
+				if (t := evr.get('type')): evr._prefix += (f'[{t}]' if t.isdigit() else t) + ' '
+				evr.type = None; format_record_line(evr)
+
+		ev_msg = ( format_event(ev.rs)
+			if out_raw else format_event(ev.rs, twx, val_esc) )
+		if sep:
+			if not sep_collapse: ev_msg = f'{sep}\n{ev_msg}'
+			ev_msg += f'\n{sep}'
+		out(ev_msg); sep_collapse = True
 
 if __name__ == '__main__':
 	try: sys.exit(main())

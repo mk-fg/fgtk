@@ -115,12 +115,12 @@ class RX:
 		self.rx_list = list()
 		for n, rx in enumerate(s.split(' && ')):
 			if not (m := re.fullmatch(r'([!iI]+)?/(.+)/', rx)):
-				if n: raise ValueError('Chained regexps must be /.../-wrapped')
+				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
 				self.rx_list.append((False, re.compile(rx, re.I))); continue
 			self.rx_list.append(( '!' in (m[1] or ''),
 				re.compile(m[2], re.NOFLAG if 'I' not in (m[1] or '') else re.I) ))
 	def __repr__(self): return '<RX[ ' + ' && '.join(
-		(' !'[neg] + ' i'[bool(rx.flags & re.I)]).strip()
+		(' !'[neg] + 'I '[bool(rx.flags & re.I)]).replace(' ', '')
 			+ f'/{rx.pattern}/' for neg, rx in self.rx_list ) + ' ]>'
 	def check(self, s): return all(neg ^ bool(rx.search(s)) for neg, rx in self.rx_list)
 

@@ -2201,7 +2201,7 @@ Misc notes:
 <a name=hdr-audit-follow></a>
 ##### [audit-follow](audit-follow)
 
-Python script to decode audit messages from "journalctl -af -o json" output,
+Python script to decode audit messages from `journalctl -af -o json` output,
 auditd logs, or syslog with audit records, i.e. stuff like this:
 
     Jul 24 17:14:01 myhost audit: PROCTITLE
@@ -2210,21 +2210,21 @@ auditd logs, or syslog with audit records, i.e. stuff like this:
 
 Into this:
 
-    PROCTITLE proctitle='sh -c grep -e Dirty: -e Writeback: /proc/meminfo'
+    PROCTITLE proctitle="sh -c grep -e Dirty: -e Writeback: /proc/meminfo"
     SOCKADDR saddr=127.0.0.1:81
 
 Filters for audit messages only in journal, strips long audit-id/time prefixes,
 puts separators between multi-line/record audit events, adds relative and/or
-differential timestamps (-r/--reltime and -d/--difftime opts).
+differential timestamps (-r/--reltime and -d/--difftime opts) and other stuff.
 
-Uses [auditd/auparse python bindings] to split/decode all fields in these messages,
+Uses [auditd/auparse python bindings] to split/decode fields in these messages,
 but mostly ignores any audit-specific type information there.
 
-Audit subsystem can be very useful to understand which process modifies some
+Audit subsystem can be useful to understand which process modifies some
 path, what's the command-line of some /bin/bash being run from somewhere
-occasionally, or what process/command-line connects to some specific IP and what
-scripts it opens beforehand - all without need for gdb/strace, or where they're
-inapplicable.
+occasionally, or what process/command-line connects to some specific IP and
+what scripts it opens beforehand - all from a system-wide view, without
+hooking into specific pids like gdb/strace does, or knowing about them in advance.
 
 Some useful incantations (cheatsheet):
 
@@ -2240,10 +2240,31 @@ Some useful incantations (cheatsheet):
     # auditctl -e 0
     # auditctl -D
 
-auditd + ausearch can be used as an offline/advanced alternative to such script.\
-More powerful options for such task on linux can be sysdig and various BPF tools.
+Also haven't found auditd filtering to be sufficient for long-term monitoring,
+so script includes somewhat advanced -f/--filter-file system, to filter-out specific
+events or records within those, using a chain of pass/drop rules (like filter rules
+in rsync or firewall), which allow for regexp-matching records/events or specific fields,
+logically combining/negating such checks, etc.
+Run with `-f help` for more information on syntax and how those work.
+
+Where "long-term monitoring" use-case is to forward filtered auditd events
+to some remote/monitored syslog stream, without unasked-for kernel noise,
+but keeping full unfiltered local auditd.log as well (for extra context and backup):
+
+    # tail -F /run/audit/audit.log 2>/dev/null |
+      audit-follow -pif /etc/audit/filters.conf |
+      logger -t audit -p local3.info
+
+More powerful options for such system-wide monitoring/observability/debugging on linux
+can be [sysdig], [dtrace4linux], [bpftrace], [cilium], [sysmon] and other more modern
+eBPF-based tools, but good old audit is simple, built-in and low-maintenance.
 
 [auditd/auparse python bindings]: https://github.com/linux-audit/audit-userspace/
+[sysdig]: https://github.com/draios/sysdig
+[dtrace4linux]: https://github.com/dtrace4linux/linux
+[bpftrace]: https://bpftrace.org/
+[cilium]: https://cilium.io/
+[sysmon]: https://github.com/microsoft/SysmonForLinux
 
 <a name=hdr-tui-binary-conv></a>
 ##### [tui-binary-conv](tui-binary-conv)
