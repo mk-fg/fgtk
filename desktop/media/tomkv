@@ -148,7 +148,7 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 			'-show_entries', 'stream:format', '-print_format', 'json', str(p) ],
 		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
 	vx, ax = vn, an; ac = sc = 0; probe = adict.rec_make(json.loads(probe.stdout))
-	video = audio = dict(); errs, subs = list(), list(); subs_pick = multistream = None
+	video = audio = dict(); errs, subs, multistream = list(), dict(), None
 	if (fmt := probe.format.format_name) in ['ass', 'srt', 'microdvd']:
 		return adict(t='format', fatal=1, msg=f'Subtitle file [{fmt}]')
 	for s in probe.streams:
@@ -185,18 +185,19 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 			audio.enc.append(adict(c=s.codec_name, cn=s.channels))
 
 		if ct == 'subtitle':
-			if s.get('codec_name') in [None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle']:
+			if (cc := s.get('codec_name')) in [
+					None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle' ]:
 				if not subs_pick: errs.append(adict(
-					t='subs', msg='Has bitmap or unrecognized subtitles' ))
-				subs_pick = True
-			else: subs.append(sc)
+					t='subs', msg=f'Has bitmap or unrecognized subtitles [ {cc or "-"} ]' ))
+				subs[sc] = cc and ... # can be left as-is if video is not scaled
+			else: subs[sc] = True
 			sc += 1
 
 	if not (audio and video):
 		errs.append(adict(t='format', fatal=1, msg='Missing/unmatched A/V streams'))
 	if multistream: errs.append(adict(t='format', fatal=1, msg='Multiple A/V streams'))
 	data = adict(
-		v=video, a=audio, s=subs, sx=subs_pick, atts=atts, errs=errs, mtime=mtime,
+		v=video, a=audio, s=subs, atts=atts, errs=errs, mtime=mtime,
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
 	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
@@ -582,9 +583,11 @@ def main(args=None):
 	for n, p in enumerate(src_list, 1):
 		filters = list()
 		if p.v.resample: filters.append('fps=30')
-		if p.v.scale: filters.append(
-			"scale='if(gte(iw,ih),min(1280,iw),-2)"
-			":if(lt(iw,ih),min(1280,ih),-2)',setsar=1:1" )
+		if p.v.scale:
+			if p.v.w >= p.v.h: w = min(1280, p.v.w); h = int(p.v.h * w / p.v.w)
+			else: h = min(1280, p.v.h); w = int(p.v.w * h / p.v.h)
+			for k, v in zip('wh', (w, h)): m, o = divmod(v, 2); p.v[k] = 2 * (m + (o >= 1))
+			filters.append(f'scale={p.v.w}:{p.v.h},setsar=1:1')
 		if filters: filters = ['-filter:v', sh_str_dq(','.join(filters))]
 		if fnopts := p.get('opts'):
 			filters = sum(([f'-{k}', v] for k, v in fnopts.items()), []) + filters
@@ -606,9 +609,11 @@ def main(args=None):
 		if vn or an or at or p.s or p.atts:
 			fmt.extend(( '-map', f'0:v:{max(p.v.n-1,0)}',
 				'-map', '0:a' if an is None else f'0:a:{max(p.a.n-1,0)}' ))
-			if subs := p.s.copy():
-				if not p.sx: fmt.extend(['-map', '0:s']); subs.clear()
-				for sn in subs: fmt.extend(['-map', f'0:s:{sn}'])
+			if any((subs := p.s.copy()).values()):
+				sc_chk = lambda v: v is True or (v is ... and not p.v.scale)
+				if all(sc_chk(v) for v in subs.values()): fmt.extend(['-map', '0:s']); subs.clear()
+				for sn, v in subs.items():
+					if sc_chk(v): fmt.extend(['-map', f'0:s:{sn}'])
 			if p.atts: fmt.extend(['-map', '0:t'])
 
 		cmd = [ 'ffmpeg', '-hide_banner', '-i', str(p.src), *filters,
