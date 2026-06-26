@@ -207,14 +207,15 @@ Non-comment/empty lines are in the form of either "- <rule>", "+ <rule>" or "++ 
 <field>~<regexp> -- regexp-match for specific record/event field (or empty string if missing).
   "E" flag for wrapped regexp will match events, i.e. "match field in any record within event".
 <field>==<value> -- match exact value of a field, instead of regexp-matches.
-  If <value> starts with a quote, ast.literal_eval is used until next (closing) quote.
+  If <value> starts with a double-quote, it'll be read as json string
+   until next (closing) double-quote (escape any " in-between as "" or \u0022).
 <field>=<flags>=<value> -- same flags as for regexps above, but applied for exact-string match.
   "m" flag can be used to search for substring, instead of default "M" full-match here.
 
 Random filter-rules example:
 
 - apparmor==DENIED && profile~!/^chromium(-.*)?/
-+ uid=E=myuser # all events with that key in any record will be printed
++ uid=E=myuser # print events with that key in any record, unless dropped by previous rule
 - auid=E=myuser && uid=E=root && profile~/-ux$/ # drop  profile=...-ux RECORDS in matched events
 - / comm=nft(-\S+)$/ && uid=E=root # drop EVENTS ending with that comm= match
 - E/(?m)^type=LOGIN .* uid=root .* res=yes$/ && proctitle=E=/usr/bin/cron -f
@@ -228,16 +229,24 @@ To understand how these rules work, simply go over them top-to-bottom,
 
 class ARX:
 
-	def __init__(self, s, act=True):
-		self.arx_list = list()
-		for n, rx in enumerate(s.split(' && ')):
+	def __init__(self, line, act=True):
+		arxs = self.arx_list = list()
+		while line.strip():
+			rx, _, line = line.partition(' && ')
+			if not rx: continue
 			e = adict(neg=False, fm=False, ev=False, key='')
 			if not ( (m := re.fullmatch(r'(\w+~)?([!iImME]+)?/(.+)/', rx))
 					or (m := re.fullmatch(r'(\w+)=([!iImME]+)?=(.+)', rx)) ):
-				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
+				if arxs: raise ValueError(f'Chained regexps must be /.../-wrapped: {rx!r}')
 				self.arx_list.append(adict(e, rx=re.compile(rx, re.I))); continue
 			key, flags, rx = (g or '' for g in m.groups())
 			if key and not key.endswith('~'):
+				s = ''; ss = sss = f'{rx} && {line}'
+				while ss and ss[0] == '"': # read json-quoted value
+					try: sx, ss = ss[1:].split('"', 1); s += '"' + sx + '"'
+					except ValueError: raise ValueError(
+						f'Unclosed double-quotes in value: {sss!r}' ) from None
+				if s: line, rx = ss, json.loads(s.replace('""', r'\u0022'))
 				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
 			self.arx_list.append(adict( e, key=key.rstrip('~'),
 				neg='!' in flags, fm='M' in flags, ev='E' in flags,

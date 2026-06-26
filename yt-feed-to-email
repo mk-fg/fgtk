@@ -115,7 +115,7 @@ class RX:
 		self.rx_list = list()
 		for n, rx in enumerate(s.split(' && ')):
 			if not (m := re.fullmatch(r'([!iI]+)?/(.+)/', rx)):
-				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
+				if n: raise ValueError(f'Chained regexps must be /.../-wrapped: {rx!r}')
 				self.rx_list.append((False, re.compile(rx, re.I))); continue
 			self.rx_list.append(( '!' in (m[1] or ''),
 				re.compile(m[2], re.NOFLAG if 'I' in (m[1] or '') else re.I) ))
