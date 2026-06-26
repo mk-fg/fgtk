@@ -2252,7 +2252,7 @@ to some remote/monitored syslog stream, without unasked-for kernel noise,
 but keeping full unfiltered local auditd.log as well (for extra context and backup):
 
     # tail -F /run/audit/audit.log 2>&1 |
-      audit-follow -pif /etc/audit/filters.conf |
+      audit-follow -Pif /etc/audit/filters.conf |
       logger -t audit -p local3.info
 
 More powerful options for such system-wide monitoring/observability/debugging on linux

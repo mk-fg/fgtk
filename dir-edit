@@ -13,9 +13,9 @@ class DirEditConf:
 p_out = lambda *a,**kw: print(*a, **kw, flush=True)
 p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True) or 1
 
-def str_hash(s, c=None, key='dir-edit', strip=''):
+def str_hash(s, c=None, key=b'dir-edit', strip=''):
 	s_raw, s = s, base64.urlsafe_b64encode(
-		hl.blake2s(str(s).encode(), key=key.encode()).digest() ).decode()
+		hl.blake2s(str(s).encode(), key=key).digest() ).decode()
 	if not isinstance(strip, dict): strip = dict.fromkeys(map(ord, strip + '-_='))
 	s = s.translate(strip)
 	if c is None: return s

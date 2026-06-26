@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
-import subprocess as sp, functools as ft, textwrap as tw, unicodedata as ud
-import os, sys, re, time, logging, enum, threading, queue, json, signal, atexit
+import os, sys, re, time, logging, enum, threading, queue
+import json, signal, atexit, base64, unicodedata as ud, hashlib as hl
+import subprocess as sp, functools as ft, textwrap as tw
 
 import auparse # https://github.com/linux-audit/audit-userspace/
 
@@ -14,6 +15,18 @@ class adict(dict):
 def no_exc(func, *args, exc=ValueError, **kws):
 	try: return func(*args, **kws)
 	except exc: pass
+
+def str_hash(s, c=None, key=b'auid-tag', strip=''):
+	s_raw, s = s, base64.urlsafe_b64encode(
+		hl.blake2s(str(s).encode(), key=key).digest() ).decode()
+	if not isinstance(strip, dict): strip = dict.fromkeys(map(ord, strip + '-_='))
+	s = s.translate(strip)
+	if c is None: return s
+	for n in range(30): # limit is to avoid unlikely a -> ... -> a loops
+		if len(s) < c: s = str_hash(s, c, key, strip)
+		if len(s) >= c: break
+	else: raise RuntimeError(f'str_hash() failed on: {s_raw!r} {[c, key, strip]}')
+	return s[:c]
 
 
 class au_str(str): __slots__ = 't', # .t stores unrepresentable key/type str
@@ -312,14 +325,16 @@ def main(args=None):
 	group.add_argument('-s', '--sep', metavar='char ["x" count]', help=dd('''
 		Separator char and optional count of these to use between multi-line audit events/msgs.
 		Default: -s=-x80, empty or no arg can be used for empty line.'''))
+	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
+		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
 	group.add_argument('-r', '--reltime', action='store_true',
 		help='Print monotonic timestamp relative to first event before every line.')
 	group.add_argument('-d', '--difftime', action='store_true',
 		help='Print timestamp since last logged event on each line.')
 	group.add_argument('-p', '--auid-prefix', action='store_true',
 		help='Add audit-id prefix to record lines, after timestamps.')
-	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
-		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
+	group.add_argument('-P', '--auid-prefix-tag', action='store_true',
+		help='Prepend more readable short and distinctive base64 tag, based on audit-id.')
 
 	group = parser.add_argument_group('Output filtering')
 	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
@@ -386,6 +401,7 @@ def main(args=None):
 			if opts.reltime: prefix = f'[{ev.ts - ts0:>9.3f}] '
 			if opts.difftime: prefix += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
 			if opts.auid_prefix: prefix += f'audit({ev.auid}): '
+			if opts.auid_prefix_tag: prefix += f'{str_hash(ev.auid, 4)} '
 			evr._prefix = prefix; format_record_line(evr, val_esc)
 
 		ev.rs = list(evr for evr in ev.rs if evr._line)
