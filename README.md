@@ -2244,22 +2244,23 @@ Also haven't found auditd filtering to be sufficient for long-term monitoring,
 so script includes somewhat advanced -f/--filter-file system, to filter-out specific
 events or records within those, using a chain of pass/drop rules (like filter rules
 in rsync or firewall), which allow for regexp-matching records/events or specific fields,
-logically combining/negating such checks, etc.
+logically combining/negating such checks, keeping other errors from the input, etc.
 Run with `-f help` for more information on syntax and how those work.
 
 Where "long-term monitoring" use-case is to forward filtered auditd events
 to some remote/monitored syslog stream, without unasked-for kernel noise,
 but keeping full unfiltered local auditd.log as well (for extra context and backup):
 
-    # tail -F /run/audit/audit.log 2>/dev/null |
+    # tail -F /run/audit/audit.log 2>&1 |
       audit-follow -pif /etc/audit/filters.conf |
       logger -t audit -p local3.info
 
 More powerful options for such system-wide monitoring/observability/debugging on linux
-can be [sysdig], [dtrace4linux], [bpftrace], [cilium], [sysmon] and other more modern
-eBPF-based tools, but good old audit is simple, built-in and low-maintenance.
+can be [bcc], [sysdig], [dtrace4linux], [bpftrace], [cilium], [sysmon] and other
+more modern eBPF-based tools, but good old audit is simple, built-in and low-maintenance.
 
 [auditd/auparse python bindings]: https://github.com/linux-audit/audit-userspace/
+[bcc]: https://github.com/iovisor/bcc
 [sysdig]: https://github.com/draios/sysdig
 [dtrace4linux]: https://github.com/dtrace4linux/linux
 [bpftrace]: https://bpftrace.org/

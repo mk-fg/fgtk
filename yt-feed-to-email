@@ -118,7 +118,7 @@ class RX:
 				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
 				self.rx_list.append((False, re.compile(rx, re.I))); continue
 			self.rx_list.append(( '!' in (m[1] or ''),
-				re.compile(m[2], re.NOFLAG if 'I' not in (m[1] or '') else re.I) ))
+				re.compile(m[2], re.NOFLAG if 'I' in (m[1] or '') else re.I) ))
 	def __repr__(self): return '<RX[ ' + ' && '.join(
 		(' !'[neg] + 'I '[bool(rx.flags & re.I)]).replace(' ', '')
 			+ f'/{rx.pattern}/' for neg, rx in self.rx_list ) + ' ]>'
