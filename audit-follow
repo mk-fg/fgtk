@@ -166,11 +166,10 @@ def format_record_line(evr, val_esc=''):
 	line = evr._line = evr._line_esc = line
 	if val_esc: evr._line = line.replace(val_esc, ' ')
 
-def format_event(evrs, twx=None, val_esc=''):
-	if not (twx and val_esc): return '\n'.join(
-		evr._prefix + evr._line for evr in evrs if evr._line )
-	return '\n'.join(twx.fill( evr._prefix +
-		evr._line_esc ).replace(val_esc, ' ') for evr in evrs if evr._line)
+def format_event(evrs, twx=None, val_esc='', prefix=False):
+	fmt = ( (lambda evr: (evr._prefix if prefix else '') + evr._line) if not (twx and val_esc)
+		else lambda evr: (evr._prefix if prefix else '') + evr._line_esc.replace(val_esc, ' ') )
+	return '\n'.join(fmt(evr) for evr in evrs if evr._line)
 
 
 filter_file_info = r'''
@@ -218,6 +217,8 @@ Random filter-rules example:
 + uid=E=myuser # all events with that key in any record will be printed
 - auid=E=myuser && uid=E=root && profile~/-ux$/ # drop  profile=...-ux RECORDS in matched events
 - / comm=nft(-\S+)$/ && uid=E=root # drop EVENTS ending with that comm= match
+- E/(?m)^type=LOGIN .* uid=root .* res=yes$/ && proctitle=E=/usr/bin/cron -f
+  && E/(?m)^type=SYSCALL .* auid=root ([esf]*[ug]id=root )+ses=\d+ comm=cron exe=/usr/bin/cron /
 ++ /^tail:/ && !/following new file|has become inaccessible: No such file or directory/
 
 To understand how these rules work, simply go over them top-to-bottom,
@@ -236,7 +237,7 @@ class ARX:
 				if n: raise ValueError('Chained regexps must be /.../-wrapped: {rx!r}')
 				self.arx_list.append(adict(e, rx=re.compile(rx, re.I))); continue
 			key, flags, rx = (g or '' for g in m.groups())
-			if key.endswith('~'):
+			if key and not key.endswith('~'):
 				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
 			self.arx_list.append(adict( e, key=key.rstrip('~'),
 				neg='!' in flags, fm='M' in flags, ev='E' in flags,
@@ -415,8 +416,8 @@ def main(args=None):
 				if (t := evr.get('type')): evr._prefix += (f'[{t}]' if t.isdigit() else t) + ' '
 				evr.type = None; format_record_line(evr)
 
-		ev_msg = ( format_event(ev.rs)
-			if out_raw else format_event(ev.rs, twx, val_esc) )
+		ev_msg = ( format_event(ev.rs, prefix=True)
+			if out_raw else format_event(ev.rs, twx, val_esc, prefix=True) )
 		if sep:
 			if not sep_collapse: ev_msg = f'{sep}\n{ev_msg}'
 			ev_msg += f'\n{sep}'
