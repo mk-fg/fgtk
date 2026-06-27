@@ -238,20 +238,20 @@ class ARX:
 			if not ( (m := re.fullmatch(r'(\w+~)?([!iImME]+)?/(.+)/', rx))
 					or (m := re.fullmatch(r'(\w+)=([!iImME]+)?=(.+)', rx)) ):
 				if arxs: raise ValueError(f'Chained regexps must be /.../-wrapped: {rx!r}')
-				self.arx_list.append(adict(e, rx=re.compile(rx, re.I))); continue
+				arxs.append(adict(e, rx=re.compile(rx, re.I))); continue
 			key, flags, rx = (g or '' for g in m.groups())
 			if key and not key.endswith('~'):
-				s = ''; ss = sss = f'{rx} && {line}'
+				s = ''; ss = sss = rx + (line and f' && {line}')
 				while ss and ss[0] == '"': # read json-quoted value
-					try: sx, ss = ss[1:].split('"', 1); s += '"' + sx + '"'
+					try: sx, ss = ss[1:].split('"', 1); s += f'"{sx}"'
 					except ValueError: raise ValueError(
 						f'Unclosed double-quotes in value: {sss!r}' ) from None
-				if s: line, rx = ss, json.loads(s.replace('""', r'\u0022'))
+				if s: line, rx = ss, json.loads('"' + s[1:-1].replace('""', r'\u0022') + '"')
 				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
-			self.arx_list.append(adict( e, key=key.rstrip('~'),
+			arxs.append(adict( e, key=key.rstrip('~'),
 				neg='!' in flags, fm='M' in flags, ev='E' in flags,
 				rx=re.compile(rx, re.NOFLAG if 'I' in flags else re.I) ))
-		self.act, self.ev = bool(act), any(e.ev for e in self.arx_list)
+		self.act, self.ev = bool(act), any(e.ev for e in arxs)
 
 	def __str__(self): return '-+'[self.act] + ' ' + ' && '.join(
 		(f'{e.key}~' if e.key else '') + ( ' !'[e.neg] + ' E'[e.ev]
