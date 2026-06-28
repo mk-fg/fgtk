@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 import os, sys, re, time, logging, enum, threading, queue
-import json, signal, atexit, base64, unicodedata as ud, hashlib as hl
-import subprocess as sp, functools as ft, textwrap as tw
+import json, signal, atexit, base64, math, unicodedata as ud, hashlib as hl
+import textwrap as tw, subprocess as sp, functools as ft, datetime as dt
 
 import auparse # https://github.com/linux-audit/audit-userspace/
 
@@ -27,6 +27,22 @@ def str_hash(s, c=None, key=b'auid-tag', strip=''):
 		if len(s) >= c: break
 	else: raise RuntimeError(f'str_hash() failed on: {s_raw!r} {[c, key, strip]}')
 	return s[:c]
+
+def td_repr(delta, units_max=2, units_res=None, _units=dict(
+		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
+	res, s, n_last = list(), abs(delta), units_max - 1
+	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
+	for unit, unit_s in units:
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	return ' '.join(res) if res else '<1s'
 
 
 class au_str(str): __slots__ = 't', # .t stores unrepresentable key/type str
@@ -60,7 +76,6 @@ def input_parse_line(proc, line=None, noise_filter=None):
 	if not line.strip(): return
 
 	if not proc.fmt:
-		import datetime as dt
 		if line[0] == '{': proc.fmt = input_fmt.journal
 		elif line.startswith('type='): proc.fmt = input_fmt.auditd
 		elif line[0].isdigit() and no_exc( # some time-prefixed syslog format
@@ -308,7 +323,7 @@ def filter_file_parse(p):
 def main(args=None):
 	import argparse
 	dd = lambda text: re.sub(r' \t+', ' ', tw.dedent(text).strip('\n') + '\n').replace('\t', '  ')
-	parser = argparse.ArgumentParser(
+	parser = argparse.ArgumentParser( usage='%(prog)s [options]',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			Follow and decode audit messages, either from journalctl output, syslog or auditd logs.
 			Default is to run/follow journalctl, pretty-printing audit events, separated
@@ -329,6 +344,23 @@ def main(args=None):
 		Timeout for waiting on more records of audit event, before using it as it is.
 		Can be relevant when input is a slow connection/pipe. Default: %(default)ss'''))
 
+	group = parser.add_argument_group('Output prefix(es) to add',
+		description='These get added at the start of the line in same order as listed here.')
+	group.add_argument('-r', '--reltime', action='store_true',
+		help='Monotonic seconds relative to first event before every line.')
+	group.add_argument('-R', '--reltime-human', action='store_true',
+		help='Same as -r/--reltime, but in a readable 2-unit time-delta format (e.g. "1h 20m").')
+	group.add_argument('-S', '--reltime-start', action='store_true', help=dd('''
+		Same as -R/--reltime-human, but "real time" (as in wall clock)
+			offset from when script started, not first log entry. Can be in the past or future.'''))
+	group.add_argument('-d', '--difftime', action='store_true',
+		help='Seconds since last logged event on each line.')
+	group.add_argument('-T', '--timestamp', action='store_true', help='Long ISO 8601 timestamp.')
+	group.add_argument('-p', '--auid-prefix', action='store_true',
+		help='Add audit-id prefix to record lines, after timestamps.')
+	group.add_argument('-P', '--auid-prefix-tag', action='store_true',
+		help='Prepend more readable short and distinctive base64 tag, based on audit-id.')
+
 	group = parser.add_argument_group('Output format and pretty-printing')
 	group.add_argument('--raw', action='store_true',
 		help='Output single record per line, without splitting, disable/override separators.')
@@ -337,14 +369,6 @@ def main(args=None):
 		Default: -s=-x80, empty or no arg can be used for empty line.'''))
 	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
 		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
-	group.add_argument('-r', '--reltime', action='store_true',
-		help='Print monotonic timestamp relative to first event before every line.')
-	group.add_argument('-d', '--difftime', action='store_true',
-		help='Print timestamp since last logged event on each line.')
-	group.add_argument('-p', '--auid-prefix', action='store_true',
-		help='Add audit-id prefix to record lines, after timestamps.')
-	group.add_argument('-P', '--auid-prefix-tag', action='store_true',
-		help='Prepend more readable short and distinctive base64 tag, based on audit-id.')
 
 	group = parser.add_argument_group('Output filtering')
 	group.add_argument('-F', '--grep-str', metavar='string', help=dd('''
@@ -397,7 +421,8 @@ def main(args=None):
 	if sep: sep *= sep_c
 	if out_raw: sep = ''
 
-	ts0 = ts0_ev = sep_collapse = None; val_esc = '\ue157'
+	ts_now, val_esc = time.time(), '\ue157'
+	ts0 = ts0_ev = sep_collapse = None
 	twx = tw.TextWrapper( width=opts.line_len, tabsize=2, initial_indent='',
 		subsequent_indent='  ', break_long_words=False, break_on_hyphens=False )
 	for ev in input_parse( stream, stream_fmt,
@@ -409,7 +434,11 @@ def main(args=None):
 		for evr in ev.rs:
 			prefix = ''
 			if opts.reltime: prefix = f'[{ev.ts - ts0:>9.3f}] '
+			if opts.reltime_human: prefix += f'[ {td_repr(ev.ts - ts0)} ] '
+			if opts.reltime_start: prefix += f'[ {td_repr(abs(ts_now - ev.ts))} ] '
 			if opts.difftime: prefix += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
+			if opts.timestamp:
+				prefix += f'[ {dt.datetime.fromtimestamp(ev.ts).isoformat(" ")[:-3]} ] '
 			if opts.auid_prefix: prefix += f'audit({ev.auid}): '
 			if opts.auid_prefix_tag: prefix += f'{str_hash(ev.auid, 4)} '
 			evr._prefix = prefix; format_record_line(evr, val_esc)
