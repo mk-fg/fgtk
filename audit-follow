@@ -263,9 +263,12 @@ class ARX:
 						f'Unclosed double-quotes in value: {sss!r}' ) from None
 				if s: line, rx = ss, json.loads('"' + s[1:-1].replace('""', r'\u0022') + '"')
 				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
-			arxs.append(adict( e, key=key.rstrip('~'),
+			try: arxs.append(adict( e, key=key.rstrip('~'),
 				neg='!' in flags, fm='M' in flags, ev='E' in flags,
 				rx=re.compile(rx, re.NOFLAG if 'I' in flags else re.I) ))
+			except re.PatternError as err:
+				pos = ''.join(str(n)[-1] if n%10 else chr(0x2080 + (n//10)%10) for n in range(len(rx)))
+				raise ValueError(f'Failed to parse regexp:\n  {rx}\n  {pos}\n  Regexp error: {err}')
 		self.act, self.ev = bool(act), any(e.ev for e in arxs)
 
 	def __str__(self): return '-+'[self.act] + ' ' + ' && '.join(
@@ -300,11 +303,12 @@ def filter_file_parse(p):
 		if line.startswith(' ') and lines: lines[-1] += line[1:]; continue
 		lines.append(line)
 	for line in lines:
-		if (ls := line.lstrip()).startswith('- '): ev_rules.append(ARX(line[2:], False))
-		elif ls.startswith('+ '): ev_rules.append(ARX(line[2:], True))
-		elif ls.startswith('++ '): noise_rules.append(ARX(line[3:]))
-		else: raise ValueError( 'All rules in -f/--filter-file'
-			f' must have +/- or ++ prefix, it is missing here: {line!r}')
+		try:
+			if (ls := line.lstrip()).startswith('- '): ev_rules.append(ARX(line[2:], False))
+			elif ls.startswith('+ '): ev_rules.append(ARX(line[2:], True))
+			elif ls.startswith('++ '): noise_rules.append(ARX(line[3:]))
+			else: raise ValueError('All rules in -f/--filter-file must have +/- or ++ prefix')
+		except Exception as err: raise ValueError(f'Failed to parse line: {line!r}\nERROR: {err}')
 	if not (ev_rules or noise_rules): logging.getLogger('parse.filter') \
 		.warning('Filter-file appears to have no valid rules in it')
 	def _ev_filter(evrs, ev=None):
