@@ -7,14 +7,16 @@ import textwrap as tw, subprocess as sp, functools as ft, datetime as dt
 import auparse # https://github.com/linux-audit/audit-userspace/
 
 
-class adict(dict):
-	def __init__(self, *args, **kws):
-		super().__init__(*args, **kws)
-		self.__dict__ = self
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
 def no_exc(func, *args, exc=ValueError, **kws):
 	try: return func(*args, **kws)
 	except exc: pass
+
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
 
 def str_hash(s, c=None, key=b'auid-tag', strip=''):
 	s_raw, s = s, base64.urlsafe_b64encode(
@@ -144,7 +146,7 @@ def input_parse_ev_list(ap):
 
 def input_parse_ev(ap):
 	auev = ap.get_timestamp(); ev = adict( rs=list(),
-		auid=f'{auev.sec}.{auev.milli}:{auev.serial}',
+		auid=f'{auev.sec}.{auev.milli:03d}:{auev.serial}',
 		ts=auev.sec + auev.milli / 1000, ts_n=auev.serial )
 	ap.first_record()
 	while True:
@@ -183,8 +185,9 @@ def format_record_line(evr, val_esc=''):
 	if val_esc: evr._line = line.replace(val_esc, ' ')
 
 def format_event(evrs, twx=None, val_esc='', prefix=False):
-	fmt = ( (lambda evr: (evr._prefix if prefix else '') + evr._line) if not (twx and val_esc)
-		else lambda evr: (evr._prefix if prefix else '') + evr._line_esc.replace(val_esc, ' ') )
+	fmt_pre = lambda pre, line: (pre if prefix else '').lstrip() + line
+	if not (twx and val_esc): fmt = lambda evr: fmt_pre(evr._prefix, evr._line)
+	else: fmt = lambda evr: fmt_pre(evr._prefix, evr._line_esc.replace(val_esc, ' '))
 	return '\n'.join(fmt(evr) for evr in evrs if evr._line)
 
 
@@ -217,8 +220,9 @@ Non-comment/empty lines are in the form of either "- <rule>", "+ <rule>" or "++ 
   Flag: E - apply regexp over combined records of audit event (can be multiple lines),
    instead of individual records, with events formatted as they're printed with --raw option.
    IMPORTANT: if regexp with E flag is only/last in rule, whole event is printed/dropped.
+  Flag: e - same as E, but match regexp against any line in audit event, similar to (?m) mode.
   Flag: I - for a case-sensitive lookup, e.g. "I/SAN/", instead of default case-insensitive "i".
-  Flag: M - full-match from beginning to end, as opposed to default "m" search.
+  Flag: s - match/search substring (as in re.search), instead of default full-match.
   Python "re" module supports more regexp modifiers, e.g. "(?.)" for multiline matches.
 <field>~<regexp> -- regexp-match for specific record/event field (or empty string if missing).
   "E" flag for wrapped regexp will match events, i.e. "match field in any record within event".
@@ -226,16 +230,15 @@ Non-comment/empty lines are in the form of either "- <rule>", "+ <rule>" or "++ 
   If <value> starts with a double-quote, it'll be read as json string
    until next (closing) double-quote (escape any " in-between as "" or \u0022).
 <field>=<flags>=<value> -- same flags as for regexps above, but applied for exact-string match.
-  "m" flag can be used to search for substring, instead of default "M" full-match here.
 
 Random filter-rules example:
 
 - apparmor==DENIED && profile~!/^chromium(-.*)?/
 + uid=E=myuser # print events with that key in any record, unless dropped by previous rule
-- auid=E=myuser && uid=E=root && profile~/-ux$/ # drop  profile=...-ux RECORDS in matched events
-- / comm=nft(-\S+)$/ && uid=E=root # drop EVENTS ending with that comm= match
-- E/(?m)^type=LOGIN .* uid=root .* res=yes$/ && proctitle=E=/usr/bin/cron -f
-  && E/(?m)^type=SYSCALL .* auid=root ([esf]*[ug]id=root )+ses=\d+ comm=cron exe=/usr/bin/cron /
+- auid=E=myuser && uid=E=root && profile~s/-ux$/ # drop  profile=...-ux RECORDS in matched events
+- /.* comm=nft(-\S+)$/ && uid=E=root # drop EVENTS ending with that comm= match
+- E/type=LOGIN .* uid=root .* res=yes/ && proctitle=E=/usr/bin/cron -f
+  && e/^type=SYSCALL .* auid=root ([esf]*[ug]id=root )+ses=\d+ comm=cron exe=/usr/bin/cron /
 ++ /^tail:/ && !/following new file|has become inaccessible: No such file or directory/
 
 To understand how these rules work, simply go over them top-to-bottom,
@@ -250,9 +253,9 @@ class ARX:
 		while line.strip():
 			rx, _, line = line.partition(' && ')
 			if not rx: continue
-			e = adict(neg=False, fm=False, ev=False, key='')
-			if not ( (m := re.fullmatch(r'(\w+~)?([!iImME]+)?/(.+)/', rx))
-					or (m := re.fullmatch(r'(\w+)=([!iImME]+)?=(.+)', rx)) ):
+			e = adict(neg=False, s=False, ev=False, key='')
+			if not ( (m := re.fullmatch(r'(\w+~)?([!iIsEe]+)?/(.+)/', rx))
+					or (m := re.fullmatch(r'(\w+)=([!iIsEe]+)?=(.+)', rx)) ):
 				if arxs: raise ValueError(f'Chained regexps must be /.../-wrapped: {rx!r}')
 				arxs.append(adict(e, rx=re.compile(rx, re.I))); continue
 			key, flags, rx = (g or '' for g in m.groups())
@@ -264,9 +267,11 @@ class ARX:
 						f'Unclosed double-quotes in value: {sss!r}' ) from None
 				if s: line, rx = ss, json.loads('"' + s[1:-1].replace('""', r'\u0022') + '"')
 				rx = re.escape(rx)
-				if 'm' not in flags: flags += 'M'
+			if 'e' in flags:
+				if 's' not in flags: rx = fr'(?m)^{rx}$'
+				flags = flags.replace(*'eE') + 's'
 			try: arxs.append(adict( e, key=key.rstrip('~'),
-				neg='!' in flags, fm='M' in flags, ev='E' in flags,
+				neg='!' in flags, s='s' in flags, ev='E' in flags,
 				rx=re.compile(rx, re.NOFLAG if 'I' in flags else re.I) ))
 			except re.PatternError as err:
 				pos = ''.join(str(n)[-1] if n%10 else chr(0x2080 + (n//10)%10) for n in range(len(rx)))
@@ -275,17 +280,17 @@ class ARX:
 
 	def __str__(self): return '-+'[self.act] + ' ' + ' && '.join(
 		(f'{e.key}~' if e.key else '') + ( '!'*e.neg + 'E'*e.ev
-		+ 'I'*(not e.rx.flags & re.I) + 'M'*e.fm ) + f'/{e.rx.pattern}/' for e in self.arx_list )
+		+ 'I'*(not e.rx.flags & re.I) + 's'*e.s ) + f'/{e.rx.pattern}/' for e in self.arx_list )
 	def __repr__(self): return f'<ARX[ {self} ]>'
 
 	def check(self, ev, evr=None, evrs=list(), log=None):
 		'Returns match info, to apply .act to ev/evr as-needed'
 		e, evr = None, evr or adict(_line=ev)
 		for e in self.arx_list:
-			e_chk = getattr(e.rx, ['search', 'fullmatch'][e.fm])
+			e_chk = getattr(e.rx, ['fullmatch', 'search'][e.s])
 			if log and len(self.arx_list) > 1: log.debug(
 				'  %s-check: %s%s', ['rec', 'ev'][e.ev],
-				f'{"!"*e.neg}{"M"*e.fm}/{e.rx.pattern}/', e.key and f' -- in {e.key}' )
+				f'{"!"*e.neg}{"s"*e.s}/{e.rx.pattern}/', e.key and f' -- in {e.key}' )
 			e_chk = lambda s,_rx=e_chk: e.neg ^ bool(_rx(s))
 			if e.ev:
 				if e.key: # checks all event records, not just current one
@@ -319,7 +324,8 @@ def filter_file_parse(p):
 			elif ls.startswith('+ '): ev_rules.append(ARX(line[2:], True))
 			elif ls.startswith('++ '): noise_rules.append(ARX(line[3:]))
 			else: raise ValueError('All rules in -f/--filter-file must have +/- or ++ prefix')
-		except Exception as err: raise ValueError(f'Failed to parse line: {line!r}\nERROR: {err}')
+		except Exception as err: raise ValueError(
+			f'Failed to parse line: {line!r}\nERROR: {err_fmt(err)}' )
 	if not (ev_rules or noise_rules): logging.getLogger('parse.filter') \
 		.warning('Filter-file appears to have no valid rules in it')
 	def _ev_filter(evrs, ev=None, log=None):
@@ -460,8 +466,8 @@ def main(args=None):
 		if not ts0_ev: ts0_ev = ev.ts
 
 		for evr in ev.rs:
-			prefix = ''
-			if opts.reltime: prefix = f'[{ev.ts - ts0:>9.3f}] '
+			prefix = ' '
+			if opts.reltime: prefix += f'[{ev.ts - ts0:>9.3f}] '
 			if opts.reltime_human: prefix += f'[ {td_repr(ev.ts - ts0)} ] '
 			if opts.reltime_start: prefix += f'[ {td_repr(abs(ts_now - ev.ts))} ] '
 			if opts.difftime: prefix += f'[{ev.ts - ts0_ev:>7.3f}] '; ts0_ev = ev.ts
