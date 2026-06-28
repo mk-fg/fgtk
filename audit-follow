@@ -51,12 +51,12 @@ input_apt = enum.IntEnum('InputAuditTypes', dict(
 	(k[13:].lower(), getattr(auparse, k))
 	for k in dir(auparse) if k.startswith('AUPARSE_TYPE_') ))
 
-def input_parse(stream, fmt=None, noise_filter=None, flush_timeout=0.1):
+def input_parse( stream, fmt=None,
+		noise_filter=None, log=None, flush_timeout=0.1 ):
 	def _line_q():
 		for line in stream: q.put(line)
 		q.put(None)
-	q, proc = queue.Queue(3), adict(
-		fmt=fmt, init=False, wait=False, log=logging.getLogger('parse') )
+	q, proc = queue.Queue(3), adict(fmt=fmt, init=False, wait=False, log=log)
 	threading.Thread(target=_line_q, name='lineq', daemon=True).start()
 	while q:
 		try:
@@ -82,6 +82,7 @@ def input_parse_line(proc, line=None, noise_filter=None):
 			dt.datetime.fromisoformat, line.split(None, 1)[0] ): proc.fmt = input_fmt.syslog
 		else: raise ValueError( 'Failed to recognize'
 			' input stream format from first line:\n  {line!r}' )
+		proc.log.debug('Auto-detected input format: %s', proc.fmt.name)
 	if not proc.init:
 		proc.update( init=True, j=False, fix_qs=False, evs=list(),
 			ap=auparse.AuParser(auparse.AUSOURCE_FEED), ap_cb=( lambda ap, cbt, evs:
@@ -107,7 +108,7 @@ def input_parse_line(proc, line=None, noise_filter=None):
 		if st.auid: proc.log.warning(
 			'Unsupported audit line format%s: %r', st.dec and ' (decoded)' or '', line )
 		elif noise_filter and noise_filter(line): yield line
-		else: proc.log.debug('Skipping line: %r', line)
+		else: proc.log.debug('Skipping non-audit line: %r', line)
 		return
 	line = m['rec'] or line
 
@@ -262,7 +263,8 @@ class ARX:
 					except ValueError: raise ValueError(
 						f'Unclosed double-quotes in value: {sss!r}' ) from None
 				if s: line, rx = ss, json.loads('"' + s[1:-1].replace('""', r'\u0022') + '"')
-				rx, flags = re.escape(rx), flags.translate(dict(zip(b'mM', 'Mm')))
+				rx = re.escape(rx)
+				if 'm' not in flags: flags += 'M'
 			try: arxs.append(adict( e, key=key.rstrip('~'),
 				neg='!' in flags, fm='M' in flags, ev='E' in flags,
 				rx=re.compile(rx, re.NOFLAG if 'I' in flags else re.I) ))
@@ -272,25 +274,34 @@ class ARX:
 		self.act, self.ev = bool(act), any(e.ev for e in arxs)
 
 	def __str__(self): return '-+'[self.act] + ' ' + ' && '.join(
-		(f'{e.key}~' if e.key else '') + ( ' !'[e.neg] + ' E'[e.ev]
-			+ 'I '[bool(e.rx.flags & re.I)] + ' M'[e.fm] ).replace(' ', '')
-		+ f'/{e.rx.pattern}/' for e in self.arx_list )
+		(f'{e.key}~' if e.key else '') + ( '!'*e.neg + 'E'*e.ev
+		+ 'I'*(not e.rx.flags & re.I) + 'M'*e.fm ) + f'/{e.rx.pattern}/' for e in self.arx_list )
 	def __repr__(self): return f'<ARX[ {self} ]>'
 
-	def check(self, ev, evr=None, evrs=list()):
+	def check(self, ev, evr=None, evrs=list(), log=None):
 		'Returns match info, to apply .act to ev/evr as-needed'
 		e, evr = None, evr or adict(_line=ev)
 		for e in self.arx_list:
 			e_chk = getattr(e.rx, ['search', 'fullmatch'][e.fm])
+			if log and len(self.arx_list) > 1: log.debug(
+				'  %s-check: %s%s', ['rec', 'ev'][e.ev],
+				f'{"!"*e.neg}{"M"*e.fm}/{e.rx.pattern}/', e.key and f' -- in {e.key}' )
 			e_chk = lambda s,_rx=e_chk: e.neg ^ bool(_rx(s))
 			if e.ev:
 				if e.key: # checks all event records, not just current one
-					if not any(e_chk(str(evr.get(e.key, ''))) for evr in evrs if evr._line): return
-				elif not e_chk(ev): return
+					log_keys = log and list()
+					for evr in evrs:
+						if not evr._line: continue
+						if e_chk(v := str(evr.get(e.key, ''))): break
+						log and log_keys.append(v)
+					else: return log and log.debug(
+						'  !ev-key [%s]: %r', e.key, ' '.join(repr(v) for v in log_keys) )
+				elif not e_chk(ev): return log and log.debug('  !ev: %r', ev)
 				continue
 			if e.key:
-				if not e_chk(str(evr.get(e.key, ''))): return
-			elif not e_chk(evr._line): return
+				if not e_chk(v := str(evr.get(e.key, ''))):
+					return log and log.debug('  !rec-key [%s]: %r', e.key, v)
+			elif not e_chk(evr._line): return log and log.debug('  !rec: %r', evr._line)
 		if not e: return # empty rule?
 		return adict(rec=False, ev=True) if e.ev else adict(ev=False, rec=True)
 
@@ -311,16 +322,18 @@ def filter_file_parse(p):
 		except Exception as err: raise ValueError(f'Failed to parse line: {line!r}\nERROR: {err}')
 	if not (ev_rules or noise_rules): logging.getLogger('parse.filter') \
 		.warning('Filter-file appears to have no valid rules in it')
-	def _ev_filter(evrs, ev=None):
+	def _ev_filter(evrs, ev=None, log=None):
 		for evr in evrs:
 			for arx in ev_rules:
+				log and (log.debug('') or log.debug('%s%s', evrs[0]._prefix, arx))
 				if ev is None: ev = format_event(evrs)
-				if not (res := arx.check(ev, evr, evrs)): continue # no match
+				if not (res := arx.check(ev, evr, evrs, log)): continue # no match
 				if not arx.act:
 					if res.ev: list(evr.update(_line='') for evr in evrs)
 					elif res.rec: evr._line, ev = '', None # combined ev changed too
 				break
 			if not (evrs := list(evr for evr in evrs if evr._line)): break
+		log and log.debug('')
 	return _ev_filter, lambda line: any(arx.check(line) for arx in noise_rules)
 
 
@@ -334,6 +347,12 @@ def main(args=None):
 				by hyphen-line and split over multiple lines if too long, with [<type-id>] prefix.'''))
 
 	parser.add_argument('--debug', action='store_true', help='Verbose stderr logging.')
+	parser.add_argument('-x', '--debug-filter',
+		action='store_true', help='Print filtering rule mismatches for each event prefix.')
+	parser.add_argument('-X', '--debug-filter-prefix', metavar='match',
+		help='Log filter checks for event(s) where prefix has specified substring in it.')
+	parser.add_argument('--log-time', action='store_true',
+		help='Add ISO 8601 timestamps to debug/warning stderr logging.')
 
 	group = parser.add_argument_group('Input options')
 	group.add_argument('-o', '--journalctl-opts', action='append', metavar='opts', help=dd('''
@@ -388,9 +407,14 @@ def main(args=None):
 	for old, new in dict( DEBUG='DEBUG', INFO='INFO',
 			WARNING='WARN', ERROR='ERR', CRITICAL='FATAL' ).items():
 		logging.addLevelName(getattr(logging, old), new)
-	logging.basicConfig(
-		level=logging.DEBUG if opts.debug else logging.INFO, style='{',
-		format='{asctime} {name} {levelname:5} :: {message}', datefmt='%Y-%m-%dT%H:%M:%S' )
+	logs = adict( level=logging.DEBUG, style='{',
+		format='{levelname:5} {name} :: {message}', datefmt='%Y-%m-%dT%H:%M:%S' )
+	if opts.log_time: logs.format = f'{{asctime}} {logs.format}'
+	logging.basicConfig(**logs)
+	log_parser, log_filter = logs = logging.getLogger('parse'), logging.getLogger('filter')
+	if not opts.debug: list(log.setLevel(logging.INFO) for log in logs)
+	if ( ev_filter_debug := opts.debug_filter_prefix
+		or (opts.debug_filter and ' ') ): log_filter.setLevel(logging.DEBUG)
 
 	noise_filter = None
 	if opts.filter_file == 'help': return print(filter_file_info)
@@ -398,7 +422,7 @@ def main(args=None):
 		if opts.grep_str: parser.error(
 			'Using -F/--grep-str alongside -f/--filter-file is not supported' )
 		ev_filter, noise_filter = filter_file_parse(opts.filter_file)
-	elif gs := opts.grep_str: ev_filter = ( lambda evrs:
+	elif gs := opts.grep_str: ev_filter = ( lambda evrs,*a,**k:
 		any(gs not in evr._line for evr in evrs) or list(evr.update(_line='') for evr in evrs) )
 	else: ev_filter = None
 
@@ -430,7 +454,7 @@ def main(args=None):
 	twx = tw.TextWrapper( width=opts.line_len, tabsize=2, initial_indent='',
 		subsequent_indent='  ', break_long_words=False, break_on_hyphens=False )
 	for ev in input_parse( stream, stream_fmt,
-			noise_filter=noise_filter, flush_timeout=opts.flush_timeout ):
+			noise_filter=noise_filter, flush_timeout=opts.flush_timeout, log=log_parser ):
 		if isinstance(ev, str): out(ev); continue # lines passed through noise_filter
 		if not ts0: ts0 = ev.ts
 		if not ts0_ev: ts0_ev = ev.ts
@@ -449,7 +473,7 @@ def main(args=None):
 
 		ev.rs = list(evr for evr in ev.rs if evr._line)
 		if ev_filter:
-			ev_filter(ev.rs)
+			ev_filter(ev.rs, log=ev_filter_debug and (ev_filter_debug in evr._prefix) and log_filter)
 			ev.rs = list(evr for evr in ev.rs if evr._line)
 		if not ev.rs: continue # event or all records filtered-out
 
