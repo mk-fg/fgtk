@@ -220,7 +220,7 @@ Non-comment/empty lines are in the form of either "- <rule>", "+ <rule>" or "++ 
   Flag: E - apply regexp over combined records of audit event (can be multiple lines),
    instead of individual records, with events formatted as they're printed with --raw option.
    IMPORTANT: if regexp with E flag is only/last in rule, whole event is printed/dropped.
-  Flag: e - same as E, but match regexp against any line in audit event, similar to (?m) mode.
+  Flag: e - same as E, but match against any line in event - shorthand for E/(?m).../ regexp.
   Flag: I - for a case-sensitive lookup, e.g. "I/SAN/", instead of default case-insensitive "i".
   Flag: s - match/search substring (as in re.search), instead of default full-match.
   Python "re" module supports more regexp modifiers, e.g. "(?.)" for multiline matches.
@@ -276,7 +276,11 @@ class ARX:
 			except re.PatternError as err:
 				pos = ''.join(str(n)[-1] if n%10 else chr(0x2080 + (n//10)%10) for n in range(len(rx)))
 				raise ValueError(f'Failed to parse regexp:\n  {rx}\n  {pos}\n  Regexp error: {err}')
-		self.act, self.ev = bool(act), any(e.ev for e in arxs)
+		self.act, self.ev = bool(act), arxs[-1].ev
+		if any(ev_flags := list(e.ev for e in arxs)) and not all(ev_flags):
+			log = logging.getLogger('filter.parse')
+			log.debug('Filter rule with a mix of record+event regexps (might be an oversight):')
+			log.debug('  %s', self)
 
 	def __str__(self): return '-+'[self.act] + ' ' + ' && '.join(
 		(f'{e.key}~' if e.key else '') + ( '!'*e.neg + 'E'*e.ev
@@ -323,7 +327,8 @@ def filter_file_parse(p):
 			if (ls := line.lstrip()).startswith('- '): ev_rules.append(ARX(line[2:], False))
 			elif ls.startswith('+ '): ev_rules.append(ARX(line[2:], True))
 			elif ls.startswith('++ '): noise_rules.append(ARX(line[3:]))
-			else: raise ValueError('All rules in -f/--filter-file must have +/- or ++ prefix')
+			else: raise ValueError(
+				'All rules in -f/--filter-file must be non-empty with +/- or ++ prefix' )
 		except Exception as err: raise ValueError(
 			f'Failed to parse line: {line!r}\nERROR: {err_fmt(err)}' )
 	if not (ev_rules or noise_rules): logging.getLogger('parse.filter') \
