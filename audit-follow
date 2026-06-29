@@ -220,6 +220,7 @@ Non-comment/empty lines are in the form of either "- <rule>", "+ <rule>" or "++ 
   Flag: E - apply regexp over combined records of audit event (can be multiple lines),
    instead of individual records, with events formatted as they're printed with --raw option.
    IMPORTANT: if regexp with E flag is only/last in rule, whole event is printed/dropped.
+    Regexps without E/e flag in event-filtering rule have "all records must match" meaning.
   Flag: e - same as E, but match against any line in event - shorthand for E/(?m).../ regexp.
   Flag: I - for a case-sensitive lookup, e.g. "I/SAN/", instead of default case-insensitive "i".
   Flag: s - match/search substring (as in re.search), instead of default full-match.
@@ -278,7 +279,7 @@ class ARX:
 				raise ValueError(f'Failed to parse regexp:\n  {rx}\n  {pos}\n  Regexp error: {err}')
 		self.act, self.ev = bool(act), arxs[-1].ev
 		if any(ev_flags := list(e.ev for e in arxs)) and not all(ev_flags):
-			log = logging.getLogger('filter.parse')
+			log = logging.getLogger('filter.init')
 			log.debug('Filter rule with a mix of record+event regexps (might be an oversight):')
 			log.debug('  %s', self)
 
@@ -297,7 +298,7 @@ class ARX:
 				f'{"!"*e.neg}{"s"*e.s}/{e.rx.pattern}/', e.key and f' -- in {e.key}' )
 			e_chk = lambda s,_rx=e_chk: e.neg ^ bool(_rx(s))
 			if e.ev:
-				if e.key: # checks all event records, not just current one
+				if e.key: # checks all event records with "match any" logic
 					log_keys = log and list()
 					for evr in evrs:
 						if not evr._line: continue
@@ -307,10 +308,12 @@ class ARX:
 						'  !ev-key [%s]: %r', e.key, ' '.join(repr(v) for v in log_keys) )
 				elif not e_chk(ev): return log and log.debug('  !ev: %r', ev)
 				continue
-			if e.key:
-				if not e_chk(v := str(evr.get(e.key, ''))):
-					return log and log.debug('  !rec-key [%s]: %r', e.key, v)
-			elif not e_chk(evr._line): return log and log.debug('  !rec: %r', evr._line)
+			evrs_chk, evx = ([evr], '') if not self.ev else (evrs, 'ev-')
+			for evrx in evrs_chk: # rec-regexp in ev-rule has "match all" logic
+				if e.key:
+					if not e_chk(v := str(evrx.get(e.key, ''))):
+						return log and log.debug('  !%srec-key [%s]: %r', evx, e.key, v)
+				elif not e_chk(evrx._line): return log and log.debug('  !%srec: %r', evx, evrx._line)
 		if not e: return # empty rule?
 		return adict(rec=False, ev=True) if e.ev else adict(ev=False, rec=True)
 
@@ -331,7 +334,7 @@ def filter_file_parse(p):
 				'All rules in -f/--filter-file must be non-empty with +/- or ++ prefix' )
 		except Exception as err: raise ValueError(
 			f'Failed to parse line: {line!r}\nERROR: {err_fmt(err)}' )
-	if not (ev_rules or noise_rules): logging.getLogger('parse.filter') \
+	if not (ev_rules or noise_rules): logging.getLogger('filter.init') \
 		.warning('Filter-file appears to have no valid rules in it')
 	def _ev_filter(evrs, ev=None, log=None):
 		for evr in evrs:
