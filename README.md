@@ -39,6 +39,7 @@ Contents - links to doc section for each script here:
     - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
         - [repr](#hdr-repr)
+        - [rate-limit](#hdr-rate-limit)
         - [color](#hdr-color)
         - [resolve-hostnames](#hdr-resolve-hostnames)
         - [resolve-conf](#hdr-resolve-conf)
@@ -587,6 +588,25 @@ Can also do encoding/newline conversion via -c option, as iconv can't do BOM or
 newlines, and sometimes you just want "MS utf-8 mode" (`repr -c utf-8-sig+r`).
 Using that with +i flag as e.g. `repr -c utf-8-sig+ri file1 file2 ...`
 converts encoding+newlines+BOM for files in-place at no extra hassle.
+
+<a name=hdr-rate-limit></a>
+##### [rate-limit](rate-limit)
+
+Python script to pass through or drop lines piped from stdin to stdout,
+depending on a simple [token bucket] rate-limiting algorithm,
+also indicating when dropping starts.
+
+Somewhat similar to `pv --quiet --line-mode --rate-limit <n>`,
+but without delaying/buffering anything in-between ([pv] delays output),
+with more useful algorithm (to pass through a burst of lines before drop),
+plus necessary indication that something will be missing (and for how long).
+
+Intended for low line-traffic sources like logging, where occasional
+massive spam/noise is highly undesirable, rarely useful, and usually
+redundant and/or a bug (e.g. stuck loop with logging call in it).
+
+[pv]: https://www.ivarch.com/programs/pv.shtml
+[token bucket]: https://en.wikipedia.org/wiki/Token_bucket
 
 <a name=hdr-color></a>
 ##### [color](color)
