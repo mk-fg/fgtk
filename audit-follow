@@ -337,14 +337,17 @@ def filter_file_parse(p):
 	if not (ev_rules or noise_rules): logging.getLogger('filter.init') \
 		.warning('Filter-file appears to have no valid rules in it')
 	def _ev_filter(evrs, ev=None, log=None):
+		if ev is None: ev = format_event(evrs)
 		for evr in evrs:
 			for arx in ev_rules:
 				log and (log.debug('') or log.debug('%s%s', evrs[0]._prefix, arx))
-				if ev is None: ev = format_event(evrs)
 				if not (res := arx.check(ev, evr, evrs, log)): continue # no match
 				if not arx.act:
 					if res.ev: list(evr.update(_line='') for evr in evrs)
-					elif res.rec: evr._line, ev = '', None # combined ev changed too
+					# Record filtering changes combined ev too, but it's not re-formatted
+					#  to avoid same E/.../ regexps no longer matching for other records.
+					# E.g. e/type=SYSCALL .*/ && !/type=PROCTITLE .*/ - syscall needed for all evrs
+					elif res.rec: evr._line = ''
 				break
 			if not (evrs := list(evr for evr in evrs if evr._line)): break
 		log and log.debug('')
