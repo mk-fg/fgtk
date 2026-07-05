@@ -2233,51 +2233,34 @@ Into this:
     PROCTITLE proctitle="sh -c grep -e Dirty: -e Writeback: /proc/meminfo"
     SOCKADDR saddr=127.0.0.1:81
 
-Filters for audit messages only in journal, strips long audit-id/time prefixes,
-puts separators between multi-line/record audit events, adds relative and/or
-differential timestamps (-r/--reltime and -d/--difftime opts) and other stuff.
+Filters for audit messages when using journal/syslog inputs, strips long
+audit-id/time prefixes (optionally replacing by short/distinctive tags),
+puts separators between multi-line/record audit events, has many options for
+various timestamp/time-offset prefixes, can do complex filtering and other stuff.
 
-Uses [auditd/auparse python bindings] to split/decode fields in these messages,
-but mostly ignores any audit-specific type information there.
+Uses [auditd/auparse python bindings] to split/decode fields in input messages,
+but mostly ignores any audit-specific type information there, focusing on readable
+string output.
 
-Audit subsystem can be useful to understand which process modifies some
-path, what's the command-line of some /bin/bash being run from somewhere
-occasionally, or what process/command-line connects to some specific IP and
-what scripts it opens beforehand - all from a system-wide view, without
-hooking into specific pids like gdb/strace does, or knowing about them in advance.
-
-Some useful incantations (cheatsheet):
-
-    # auditctl -e 1
-    # auditctl -a exit,always -S execve -F path=/bin/bash
-    # auditctl -a exit,always -F auid=1001 -S open -S openat
-    # auditctl -w /some/important/path/ -p rwxa
-    # auditctl -a exit,always -F arch=b64 -S connect
-
-    # audit-follow -ro='--since=-30min SYSLOG_IDENTIFIER=audit' |
-      grep --line-buffered -B1000 -F some-interesting-stuff | tee -a audit.log
-
-    # auditctl -e 0
-    # auditctl -D
-
-Also haven't found auditd filtering to be sufficient for long-term monitoring,
+Haven't found filtering in auditd to be sufficient for long-term monitoring,
 so script includes somewhat advanced -f/--filter-file system, to filter-out specific
 events or records within those, using a chain of pass/drop rules (like filter rules
 in rsync or firewall), which allow for regexp-matching records/events or specific fields,
-logically combining/negating such checks, keeping other errors from the input, etc.
+logically combining/negating such checks, filtering non-audit errors in input pipe, etc.
 Run with `-f help` for more information on syntax and how those work.
 
 Where "long-term monitoring" use-case is to forward filtered auditd events
 to some remote/monitored syslog stream, without unasked-for kernel noise,
 but keeping full unfiltered local auditd.log as well (for extra context and backup):
 
-    # tail -F /run/audit/audit.log 2>&1 |
+    # tail -qn0 -F /run/audit/audit.log 2>&1 |
       audit-follow -Pif /etc/audit/filters.conf |
-      logger -t audit -p local3.info
+      rate-limit 10/10m:100 | logger -t audit -p local3.info
 
 More powerful options for such system-wide monitoring/observability/debugging on linux
-can be [bcc], [sysdig], [dtrace4linux], [bpftrace], [cilium], [sysmon] and other
-more modern eBPF-based tools, but good old audit is simple, built-in and low-maintenance.
+can be [bcc], [sysdig], [dtrace4linux], [bpftrace], [fanotify] (e.g. [fatrace]), [cilium],
+[sysmon] and other more modern eBPF-based tools, but good old audit can still work
+for LSM monitoring, simple debug checks or anomaly detection.
 
 [auditd/auparse python bindings]: https://github.com/linux-audit/audit-userspace/
 [bcc]: https://github.com/iovisor/bcc
