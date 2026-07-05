@@ -66,6 +66,34 @@ def input_parse( stream, fmt=None,
 			yield from input_parse_line(proc, line, noise_filter)
 		except queue.Empty: yield from input_parse_line(proc)
 
+def input_parse_line_fix_quoted_strings(line_src):
+	'''Readable double-quoted strings like field="stuff with spaces"
+		appear in all outputs, incl. auditd, instead of hex-escaped strings.
+		auparse misparses that to field=" ", so hex-escape them for it here.'''
+	# Easy way to trigger - info= field on same apparmor profile reload
+	parts, ext, line = list(), '', line_src
+	if len(ls := line.split('\x1d', 1)) > 1: line, ext = ls # skip auditd annotations
+	for n in range(1000):
+		line = ls[1] if len(ls := line.split(' ', 1)) > 1 else ''
+		if '="' in (ls := ls[0]) and ls[-1] != '"':
+			k, v = ls.split('"', 1)
+			while True:
+				line = vs[1] if len(vs := line.split(' ', 1)) > 1 else ''
+				vs = vs[0]; v += f' {vs}'
+				if v.endswith('"'): break
+				elif not line: v += '"'; break
+			ls = k + v[:-1].encode().hex().upper()
+		if '=' in ls and any(c < 0x21 or c > 0x7e for c in ls.encode()):
+			k, v = ls.split('=', 1)
+			if v and v[0] == v[-1] == '"': v = v[1:-1]
+			ls = f'{k}={v.encode().hex().upper()}'
+		parts.append(ls)
+		if not line: break
+	else: raise RuntimeError(f'BUG - fix-qs hack failed for line: {line_src!r}')
+	line = ' '.join(parts)
+	if ext: line += '\x1d' + ext
+	return line
+
 def input_parse_line(proc, line=None, noise_filter=None):
 	if not line:
 		if proc.init:
@@ -86,15 +114,14 @@ def input_parse_line(proc, line=None, noise_filter=None):
 			' input stream format from first line:\n  {line!r}' )
 		proc.log.debug('Auto-detected input format: %s', proc.fmt.name)
 	if not proc.init:
-		proc.update( init=True, j=False, fix_qs=False, evs=list(),
+		proc.update( init=True, j=False, fix_qs=True, evs=list(),
 			ap=auparse.AuParser(auparse.AUSOURCE_FEED), ap_cb=( lambda ap, cbt, evs:
 				cbt == auparse.AUPARSE_CB_EVENT_READY and evs.extend(input_parse_ev_list(ap)) ) )
 		proc.ap.add_callback(proc.ap_cb, proc.evs)
 		if proc.fmt is proc.fmt.journal: proc.update( j=True,
 			id_fields=lambda o,_ks=( '__monotonic_timestamp syslog_facility'
 				' syslog_identifier message'.upper().split() ): tuple(o.get(k) for k in _ks) )
-		elif proc.fmt is proc.fmt.auditd: pass
-		elif proc.fmt is proc.fmt.syslog: proc.fix_qs = True
+		elif proc.fmt in [proc.fmt.auditd, proc.fmt.syslog]: pass
 		else: raise ValueError(f'Unrecognized format: {fmt}')
 
 	if proc.j:
@@ -114,26 +141,7 @@ def input_parse_line(proc, line=None, noise_filter=None):
 		return
 	line = m['rec'] or line
 
-	if proc.fix_qs: # encode field="stuff with spaces" from syslog for auparse
-		parts = list()
-		while True:
-			line = ls[1] if len(ls := line.split(' ', 1)) > 1 else ''
-			if '="' in ls[0] and ls[0][-1] != '"':
-				k, v = ls[0].split('"', 1)
-				while True:
-					line = vs[1] if len(vs := line.split(' ', 1)) > 1 else ''
-					vs = vs[0]; v += f' {vs}'
-					if v.endswith('"'): break
-					elif not line: v += '"'; break
-				ls[0] = k + v[:-1].encode().hex()
-			if '=' in ls[0] and any(c < 0x21 or c > 0x7e for c in ls[0].encode()):
-				k, v = ls[0].split('=', 1)
-				if v and v[0] == v[-1] == '"': v = v[1:-1]
-				ls[0] = f'{k}={v.encode().hex()}'
-			parts.append(ls[0])
-			if not line: break
-		line = ' '.join(parts)
-
+	if proc.fix_qs: line = input_parse_line_fix_quoted_strings(line)
 	proc.ap.feed(f'{line}\n')
 	if evs := proc.evs.copy(): proc.evs.clear(); yield from evs
 
