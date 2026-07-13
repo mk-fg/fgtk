@@ -412,9 +412,12 @@ def main(args=None):
 	group = parser.add_argument_group('Output format and pretty-printing')
 	group.add_argument('--raw', action='store_true',
 		help='Output single record per line, without splitting, disable/override separators.')
-	group.add_argument('-s', '--sep', metavar='char ["x" count]', help=dd('''
+	group.add_argument('--sep', metavar='char ["x" count]', help=dd('''
 		Separator char and optional count of these to use between multi-line audit events/msgs.
 		Default: -s=-x80, empty or no arg can be used for empty line.'''))
+	group.add_argument('-s', '--sep-raw', action='store_true', help=dd('''
+		Add separators between different events with --raw output mode,
+			incl. when it's enabled implicitly (e.g. with -f/--filter-file used).'''))
 	group.add_argument('-l', '--line-len', type=int, metavar='n', default=95, help=dd('''
 		Max length of individual lines in the output, to split longer ones. Default: %(default)s'''))
 
@@ -472,7 +475,7 @@ def main(args=None):
 		sep, sep_c = sep.strip(), int(sep_c)
 	else: sep_c = min(80, opts.line_len)
 	if sep: sep *= sep_c
-	if out_raw: sep = ''
+	if out_raw and not opts.sep_raw: sep = ''
 
 	ts_now, val_esc = time.time(), '\ue157'
 	ts0 = ts0_ev = sep_collapse = None
