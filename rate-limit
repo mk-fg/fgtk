@@ -14,7 +14,7 @@ def td_parse(td, _tds=dict(
 	if not ((m := re.search(td_re, td.strip())) and any(m.groups())):
 		h, m, s = (v.strip(': ') for v in ('::' + td).rsplit(':', 2))
 		try: return float(s or 0) + float(m or 0) * 60 + float(h or 0) * 3600
-		except: raise ValueError(f'Unrecognized timespan value format: {td!r}')
+		except Exception: raise ValueError(f'Unrecognized timespan value format: {td!r}')
 	for k, v in _tds.items():
 		if not m.group(k): continue
 		delta += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
