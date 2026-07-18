@@ -507,7 +507,7 @@ def main(args=None):
 	## Extract-attachments mode
 	if dst_dir := opts.extract_attachments:
 		if not (p_dst := pl.Path(dst_dir)).is_dir():
-			return err_func(f'Missing directory for -E/--extract-attachments [ {dst_dir} ]')
+			return parser.error(f'Missing directory for -E/--extract-attachments [ {dst_dir} ]')
 		return ffmpeg_extract_atts(src_list, p_dst, opts.force, opts.quiet)
 
 	## ffprobe checks
