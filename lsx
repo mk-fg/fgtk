@@ -97,7 +97,7 @@ def mtime_parse(mtimes, err_func):
 		no_ts = lambda: ts in [None, False]
 		if no_ts():
 			try: ts = dt.timedelta(seconds=float(ts_str))
-			except: pass
+			except Exception: pass
 		if no_ts() and ( # short time offset like "3d 5h"
 				(m := _td_re.search(ts_str)) and any(m.groups()) ):
 			delta = list()
