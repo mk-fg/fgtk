@@ -586,7 +586,7 @@ def main(args=None):
 		if p.v.scale:
 			if p.v.w >= p.v.h: w = min(1280, p.v.w); h = int(p.v.h * w / p.v.w)
 			else: h = min(1280, p.v.h); w = int(p.v.w * h / p.v.h)
-			for k, v in zip('wh', (w, h)): m, o = divmod(v, 2); p.v[k] = 2 * (m + (o >= 1))
+			for k, v in zip('wh', (w, h)): x, o = divmod(v, 2); p.v[k] = 2 * (x + (o >= 1))
 			filters.append(f'scale={p.v.w}:{p.v.h},setsar=1:1')
 		if filters: filters = ['-filter:v', sh_str_dq(','.join(filters))]
 		if fnopts := p.get('opts'):
