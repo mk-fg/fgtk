@@ -210,18 +210,16 @@ class FileTreeTagger:
 		return type('TagMap', (object,), tag_map)
 
 	def process_path(self, p):
-		p, ts0 = str(p.resolve()), time.monotonic()
-		p_len = len(p)
-		for root, dirs, files in os.walk(p):
-			if not root.startswith(p): raise RuntimeError(p, root)
-			fn_root, root = root[p_len:] + '/', pl.Path(root)
-			for n, fn in enumerate(dirs):
-				fn = fn_root + fn + '/'
-				if self.p_filter.check(fn): continue
+		p, ts0 = p.resolve(), time.monotonic()
+		for root, dirs, files in p.walk():
+			fn_root = f'{root.relative_to(p)}/'.removeprefix('.')
+			for n, fn in reversed(list(enumerate(dirs))):
+				if self.p_filter.check(f'{fn_root}{fn}/'): continue
 				del dirs[n] # will skip going into dir
 			for fn in files:
-				fn, p_file = fn_root + fn, root / fn
+				fn, p_file = f'{fn_root}{fn}', root / fn
 				if not self.p_filter.check(fn): continue
+				if p_file.is_symlink(): continue # includes dir symlinks for Path.walk()
 				tagset = self.tag_file(p_file)
 				if self.verbose: print(f'{time.monotonic()-ts0:.3f} {len(tagset)} {fn.lstrip("/")}')
 
