@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+
+import os, sys, re, unicodedata, base64, hashlib, pathlib as pl
+
+try: from unidecode import unidecode # https://pypi.org/project/Unidecode/
+except ImportError: unidecode = print( 'WARNING: "unidecode" module'
+	' cannot be imported, will use simple ascii-decode for filenames\n', file=sys.stderr )
+
+_name_subs = { r'[\\/\?\*;]': '_', r'^\.+': '_', r':': '-_',
+	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', '#': 'N',
+	'[\'’,\x00-\x1f]': '', r'\.+\Z': '_', r'\s+\Z': '', r'\s': '_' }
+def name_for_fs( name, fallback=...,
+		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
+	if not name and fallback is not ...: return fallback
+	for sub_re, sub in _name_subs: name = sub_re.sub(sub, name)
+	if len(name) > 100:
+		name, _, ext = name.rpartition('.')
+		tag = base64.urlsafe_b64encode(
+				hashlib.blake2s( name.encode(), key=b'fn-simple').digest()
+			).decode().translate(dict.fromkeys(map(ord, '-_=')))[:4]
+		name = '.'.join([name[:90], tag, ext])
+	return name
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		usage='%(prog)s [options] file...',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Give specified files simplified name, that'd work on any OS/filesystem.
+			Replaces any odd characters like :, ?, *, and such,
+				transliterates unicode to ascii in unidecode module can be imported
+				(or strips it otherwise), shortens long names (adding hash-tag at the end).
+			Such replacements are lossy/irreversible, as often
+				different characters are removed or replaced to same ascii ones.
+			Renames specified files/dirs where they are, not moving anything beyond that.'''))
+	parser.add_argument('paths', nargs='+', help=dd('''
+		Paths to rename. Changes only last filename part of each within same dir, if needed.'''))
+	parser.add_argument('-v', '--verbose', action='store_true',
+		help='Print files renames as they are done.')
+	parser.add_argument('-n', '--dry-run', action='store_true',
+		help='Only print file renames that will be done, do not actually change anything.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	mvs = list()
+	for p in map(pl.Path, opts.paths):
+		name = name_for_fs( unidecode(p.name) if unidecode else
+			unicodedata.normalize('NFKD', p.name).encode('ascii', 'ignore').decode() )
+		if name == p.name: continue
+		mvs.append((p, p.parent / name))
+
+	p_out = lambda *a,**kw: None
+	if opts.verbose or opts.dry_run: p_out = (lambda *a,**kw: print(*a, **kw, flush=True))
+	p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True) or 1
+
+	for a, b in mvs:
+		msg = f'Rename: [ {a.name} ]\0-> [ {b.name} ]'
+		if len(msg) > 99: msg = msg.replace('\0', '\n' + ' '*5)
+		p_out(msg.replace(*'\0 '))
+		if b.exists(): return p_err( 'ERROR: File at rename-'
+			f'destination path already exists, aborting\n  Conflicting path: {b}' )
+		if not opts.dry_run: a.rename(b)
+
+if __name__ == '__main__': sys.exit(main())
