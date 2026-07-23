@@ -33,9 +33,9 @@ Contents - links to doc section for each script here:
         - [fast-disk-wipe](#hdr-fast-disk-wipe)
         - [lsx](#hdr-lsx)
         - [rnm-trunc](#hdr-rnm-trunc)
+        - [rnm-simple](#hdr-rnm-simple)
         - [rmx.c](#hdr-rmx.c)
         - [dir-edit](#hdr-dir-edit)
-        - [rnm-simple](#hdr-rnm-simple)
 
     - [Various file-data processing tools](#hdr-various_file-data_processing_tools)
 
@@ -515,6 +515,21 @@ inserts unicode-ellipsis (…) character to indicate where truncation was made.
 
 Defaults to dry-run mode for safety, only printing all renames to be made.
 
+<a name=hdr-rnm-simple></a>
+##### [rnm-simple](rnm-simple)
+
+Python script to "simplify" filenames, to easily use those with different/simpler
+operating- and filesystems, e.g. on fat32 partition of embedded firmwares,
+which often can't handle spaces, long filenames, characters like `:`, `?` or `*`,
+or any non-ascii encodings in general.
+
+All renames are one-way lossy, often replacing different characters by same ascii ones,
+or just removing them entirely, so aside from visual similarity, no way to revert those.
+
+Uses [unidecode] module for unicode transliteration, if it's available, otherwise
+just strips any non-ascii (with a warning). Detects/aborts on filename conflicts,
+has `-v/--verbose` and `-n/--dry-run` modes.
+
 <a name=hdr-rmx.c></a>
 ##### [rmx.c](rmx.c)
 
@@ -560,21 +575,6 @@ There's a [short blog post describing this multi-rename idea] in more detail.
 
 [short blog post describing this multi-rename idea]:
   https://blog.fraggod.net/2026/03/09/best-multi-rename-tool-editing-file-list-in-text-editor.html
-
-<a name=hdr-rnm-simple></a>
-##### [rnm-simple](rnm-simple)
-
-Python script to "simplify" filenames, to easily use those with different/simpler
-operating- and filesystems, e.g. on fat32 partition of embedded firmwares,
-which often can't handle spaces, long filenames, characters like `:`, `?` or `*`,
-or any non-ascii encodings in general.
-
-All renames are one-way lossy, often replacing different characters by same ascii ones,
-or just removing them entirely, so aside from visual similarity, no way to revert those.
-
-Uses [unidecode] module for unicode transliteration, if it's available, otherwise
-just strips any non-ascii (with a warning). Detects/aborts on filename conflicts,
-has `-v/--verbose` and `-n/--dry-run` modes.
 
 
 
