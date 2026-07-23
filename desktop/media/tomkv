@@ -187,8 +187,7 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 		if ct == 'subtitle':
 			if (cc := s.get('codec_name')) in [
 					None, 'dvb_subtitle', 'dvd_subtitle', 'hdmv_pgs_subtitle' ]:
-				if not subs_pick: errs.append(adict(
-					t='subs', msg=f'Has bitmap or unrecognized subtitles [ {cc or "-"} ]' ))
+				if not cc: errs.append(adict(t='subs', msg='Has unrecognized subtitles'))
 				subs[sc] = cc and ... # can be left as-is if video is not scaled
 			else: subs[sc] = True
 			sc += 1
@@ -539,6 +538,8 @@ def main(args=None):
 		for a in p.a.enc: a.clone = a.c == 'opus' and a.cn <= 2
 		if all(a.clone for a in p.a.enc): errs.append(adict(
 			t='audio', warn=1, msg='Already encoded to ~2ch opus, will copy it as-is' ))
+		if p.v.scale and any(s is ... for s in p.s.values()): errs.append(adict(
+			t='subs', msg='Has bitmap subtitles that this script does not auto-scale' ))
 		# Last check for non-fatal errors
 		if _err_fail(errs, opts.print_probe and p.desc, opts.force, opts.quiet): continue
 		src_list[n], p.src = p, srcx
