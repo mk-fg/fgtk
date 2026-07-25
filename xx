@@ -1,0 +1,53 @@
+#!/bin/bash
+
+usage() {
+	local bin=${0##*/}
+	[[ $1 -eq 0 ]] || exec 1>&2
+	echo "Usage: $bin [opts] [--] <archives>..."
+	[[ $1 -ne 0 ]] || { echo
+		echo 'Extract all specified archive(s) to basename-derived subdirs under current dir.'
+		echo 'Directories are named same as archive, but without extension at the end, if any.'
+		echo 'If any dir(s) already exist, or conflict, operation is aborted.'
+		echo 'Errors during unpack leave any successful-unpack dirs around, use -R to cleanup.'
+		echo 'Options:'
+		echo ' -r - replace - do "rm -rf" on any destination dirs, replacing them with archive contents.'
+		echo ' -R - cleanup - only do "rm -rf" on destination dirs, to remove ones named after archives.'
+		echo ' -x - debug script via "set -x" mode.'; }
+	exit ${1:-1}; }
+[[ -n "$1" && "$1" != -h && "$1" != --help \
+	&& "${@: -1}" != -h && "${@: -1}" != --help ]] || usage 0
+set -eo pipefail
+
+m_repl= m_rm=
+while getopts 'hrRx?' a; do case $a in
+	r) m_repl=t ;; R) m_rm=t ;;
+	x) set -x ;; h) usage ;; '?') usage ;;
+	esac
+done
+shift $(($OPTIND - 1))
+[[ -z "$m_repl" || -z "$m_rm" ]] || {
+	echo >&2 "ERROR: -r/-R options cannot be used together"; exit 1; }
+
+# Make dst dir names, check for conflicts
+declare -A dirs
+for p in "$@"; do
+	n=$(basename "$p") dir=${n%.*}
+	[[ -z "${dirs[$dir]}" ]] || {
+		echo >&2 "ERROR: Conflicting dirname for paths [ $dir ]"
+		echo >&2 "  ${dirs[$dir]}"; echo >&2 "  $p"; exit 1; }
+	[[ -n "$m_repl" || -n "$m_rm" ]] || {
+		[[ ! -e "$dir" ]] || { echo >&2 "ERROR: dst-dir exists [ $dir ]"; exit 1; } }
+	dirs[$dir]=$p
+done
+
+# Unpack/remove/etc
+for dir in "${!dirs[@]}"; do
+	[[ -z "$m_rm" ]] || { rm -rf -- "$dir"; continue; }
+	if [[ -z "$m_repl" ]]; then dir_tmp=$dir; mkdir -- "$dir"
+		else dir_tmp=$(mktemp -d -- "$dir".XXXXXX); fi
+	trap 'rm -rf -- "$dir_tmp"' EXIT
+	bsdtar -C "$dir_tmp" -xf "${dirs[$dir]}"
+	[[ -z "$m_repl" ]] || rm -rf -- "$dir"
+	trap - EXIT
+	[[ -z "$m_repl" ]] || mv -- "$dir_tmp" "$dir"
+done

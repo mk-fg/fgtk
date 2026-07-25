@@ -56,6 +56,7 @@ Contents - links to doc section for each script here:
         - [hashname](#hdr-hashname)
         - [hhash](#hdr-hhash)
         - [crypt](#hdr-crypt)
+        - [xx](#hdr-xx)
 
     - [Kernel sources/build/version management](#hdr-kernel_sources_build_version_management)
 
@@ -1071,6 +1072,22 @@ be bad if there's a flipped bit anywhere in the encrypted data - decryption will
 stop and throw error at that point.
 
 [PyNaCl's]: https://pynacl.readthedocs.io/
+
+<a name=hdr-xx></a>
+##### [xx](xx)
+
+Wrapper around [bsdtar] to one-command extract any archive(s) to own subdir(s).\
+E.g. `xx data.2026-07-25.zip` to extract it to `data.2026-07-25`,
+or `xx *.zip` to easily turn a bunch of archives into dirs.
+
+Always extracts archives into subdirs under cwd, which isn't necessarily
+where source archives are.
+Has `-r` mode to replace unpacked dirs, e.g. to start over after some failed
+file-mangling there, and `-R` mode to cleanup via otherwise-same command.
+
+bsdtar/libarchive used in the tool should support all common archive formats.
+
+[bsdtar]: https://libarchive.org/
 
 
 
