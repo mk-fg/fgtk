@@ -32,6 +32,8 @@ Contents - links to doc section for each script here:
         - [docker-ln](#hdr-docker-ln)
         - [fast-disk-wipe](#hdr-fast-disk-wipe)
         - [lsx](#hdr-lsx)
+        - [hash-dedup](#hdr-hash-dedup)
+        - [rnm-hash](#hdr-rnm-hash)
         - [rnm-trunc](#hdr-rnm-trunc)
         - [rnm-simple](#hdr-rnm-simple)
         - [rmx.c](#hdr-rmx.c)
@@ -53,7 +55,6 @@ Contents - links to doc section for each script here:
         - [liac](#hdr-liac)
         - [html-embed](#hdr-html-embed)
         - [someml-indent](#hdr-someml-indent)
-        - [hashname](#hdr-hashname)
         - [hhash](#hdr-hhash)
         - [crypt](#hdr-crypt)
         - [xx](#hdr-xx)
@@ -496,6 +497,47 @@ Or files within `-t/--mtime` vicinity/ranges:
 ```
 
 Simple python script with no extra dependencies.
+
+<a name=hdr-hash-dedup></a>
+##### [hash-dedup](hash-dedup)
+
+Py script to check hashes of all files in a dir and either print (default),
+or do something with files that have matching contents, e.g. symlink all
+duplicates to one "original" file, or remove those - i.e. deduplicate files in a dir.
+
+Has somewhat complicated options for which file to keep, like `-S/--pick-sort`
+to order duplicates by some attribute (like name, name length, some name component,
+mtime, uid, etc) and pick first/last or Nth file from that list.\
+Or `-R/--pick-re` can be used to resolve conflicts by regexp-match,
+e.g. `-lR '!/_\d+\./'` to symlink all same-content `file_1.bin`, `file_2.bin`,
+etc to `file.bin`, using negative regexp-match to filter-out files with number-suffix.
+
+Only prints all duplicates and resulting `--pick-*` choices by default,
+when run without any action-related options.
+
+<a name=hdr-rnm-hash></a>
+##### [rnm-hash](rnm-hash)
+
+Script to add simple/distinctive base32-encoded content hash to filenames.
+
+For example:
+
+``` console
+% rnm-hash -p *.jpg
+
+wallpaper001.jpg -> wallpaper001.kw30e7cqytmmw.jpg
+wallpaper893.jpg -> wallpaper893.vbf0t0qht4dd0.jpg
+wallpaper895.jpg -> wallpaper895.q5mp0j95bxbdr.jpg
+wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
+```
+
+For collecting files with commonly-repeated names into some dir,
+like random "wallpaper.jpg" or "image.jpg" images above from the internets.
+
+Can also be used with `-t/--tag` option to update names for changed files,
+which is handy in web-accessible dirs for changing URLs to invalidate caches.
+
+Use `-h/--help` for info on more useful options.
 
 <a name=hdr-rnm-trunc></a>
 ##### [rnm-trunc](rnm-trunc)
@@ -984,30 +1026,6 @@ Kinda like BeautifulSoup, except not limited to html and trivial enough so that
 it can be trusted not to do anything unnecessary like stuff mentioned above.
 
 For cases when `xmllint --format` fail and/or break such kinda-ML-but-not-XML files.
-
-<a name=hdr-hashname></a>
-##### [hashname](hashname)
-
-Script to add simple/distinctive base32-encoded content hash to filenames.
-
-For example:
-
-``` console
-% hashnames -p *.jpg
-
-wallpaper001.jpg -> wallpaper001.kw30e7cqytmmw.jpg
-wallpaper893.jpg -> wallpaper893.vbf0t0qht4dd0.jpg
-wallpaper895.jpg -> wallpaper895.q5mp0j95bxbdr.jpg
-wallpaper898.jpg -> wallpaper898.c9g9yeb06pdbj.jpg
-```
-
-For collecting files with commonly-repeated names into some dir,
-like random "wallpaper.jpg" or "image.jpg" images above from the internets.
-
-Can also be used with -t/--tag option to update names for changed files,
-which is handy in web-accessible dirs for changing URLs to invalidate caches.
-
-Use -h/--help for info on more useful options.
 
 <a name=hdr-hhash></a>
 ##### [hhash](hhash.ml)

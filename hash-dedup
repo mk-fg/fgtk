@@ -1,0 +1,155 @@
+#!/usr/bin/env python
+
+import os, sys, re, stat, base64, hashlib as hl, pathlib as pl
+
+
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+	def __call__(self, **kws): self.update(kws); return self
+
+class RX:
+	'''Either python "re" regexp or one or more /.../-wrapped regexps,
+		with optional !-negation and " && " AND-logic connectors, e.g. /rx1/ && !/rx2/'''
+	def __init__(self, s):
+		self.rx_list = list()
+		for n, rx in enumerate(s.split(' && ')):
+			if not (m := re.fullmatch(r'(!)?/(.+)/', rx)):
+				if n: raise ValueError(f'&&-chained regexps must be /.../-wrapped: {rx!r}')
+				self.rx_list.append((False, re.compile(rx, re.I))); continue
+			self.rx_list.append(('!' in (m[1] or ''), re.compile(m[2])))
+	def __repr__(self): return '<RX[ ' + ' && '.join(
+		'!'*neg + f'/{rx.pattern}/' for neg, rx in self.rx_list ) + ' ]>'
+	def check(self, s): return all(neg ^ bool(rx.search(s)) for neg, rx in self.rx_list)
+
+def print_dups(dups, dups_all, p_out=None):
+	if not p_out: p_out = print
+	dn = 1
+	for ph, ls in dups.items():
+		n, dn, lsp = len(ls), dn + 1, set()
+		ph_b64 = base64.urlsafe_b64encode(ph).decode().rstrip('=')
+		p_out(f'Duplicate-set #{dn:,} [ {n:,} file(s) ] : {ph_b64} :')
+		for a in ls: p_out(f'  {a.p.name}'); lsp.add(a.p)
+		if len(ls_orig := dups_all[ph]) != len(ls):
+			for a in ls_orig:
+				if a.p not in lsp: p_out(f'  -- {a.p.name}')
+		p_out()
+
+
+def main(args=None):
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	parser = argparse.ArgumentParser(
+		formatter_class=argparse.RawTextHelpFormatter, description=dd(f'''
+			Detect/deduplicate files in a dir by hash of their contents.
+			Just prints detected duplicate files by default, filtered by any --pick-* opts.
+			Ignores symlinks.'''))
+	parser.add_argument('files_or_dir', nargs='*', help=dd('''
+		Directory to operate on (default=cwd) or a list of filenames in current dir.'''))
+
+	group = parser.add_argument_group('How to deduplicate (default = just print duplicates)')
+	group.add_argument('-l', '--symlink', action='store_true', help=dd('''
+		Replace duplicate files with a symlink to one file, picked by --pick-* option(s).'''))
+	group.add_argument('-r', '--rm', action='store_true', help=dd('''
+		Remove duplicate files, with one to leave picked by --pick-* option(s).'''))
+
+	group = parser.add_argument_group('Picking "original" file for deduplication',
+		description='Can be combined, in case one of the picks still leaves multiple results')
+	group.add_argument('-S', '--pick-sort', metavar='attr[:flags][:n]', action='append', help=dd('''
+		Which file to leave as-is (or pick as origin) with -l/--symlink option,
+			by sorting them using some filename attribute (case-insensitive by default)
+			and picking Nth one (default=first) from resulting list.
+		Should be "<attr>[:<flags>][:<n>]",
+			where <attr> is one of: name, name_len, stem, ext, mtime, ctime, btime, uid, gid
+			Example: name=file_123.jpg name_len=12 stem=file_123 ext=jpg mtime=...
+		Optional <n> suffix is sequential number to pick in resulting list (1=first).
+			<n> can be negative, e.g. -1 to pick last file, or -2 for second-to-last.
+		<flags> modify soring algorithm: I = case-sensitive.
+		Can be specified multiple times to further sort files with matching attributes.'''))
+	group.add_argument('-R', '--pick-re', metavar='rx', action='append', help=dd('''
+		Which file to leave as-is (or pick as origin) with -l/--symlink option,
+			picking one by regexp-match(es) (python re syntax) against filename.
+		Can be used multiple times to match any of specified expressions.
+		Expressions that don't match any files from a specific set of duplicates are ignored.
+		Regexp is case-sensitive by default, and can be one or more /.../-wrapped regexps,
+			like "/<regexp>/ [&& ...]" with optional !-negation and " && " AND-connectors.
+		Example: /rx1/ && !/rx2/ && /rx3/'''))
+
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.symlink and opts.rm:
+		parser.error('Only one deduplication action can be specified')
+	dd = adict(sym=False, rm=False)
+	if opts.symlink: dd.sym = True
+	elif opts.rm: dd.rm = True
+
+	rxs = list(RX(rx) for rx in (opts.pick_re or list()))
+	sorts = opts.pick_sort
+
+	if (chdir := len(opts.files_or_dir or list())) <= 1:
+		if chdir: os.chdir(opts.files_or_dir[0])
+		ps = pl.Path('.').iterdir()
+	else:
+		if any('/' in p for p in opts.files_or_dir): parser.error(
+			'Multiple arguments must be filenames in current dir, not paths of any kind' )
+		ps = list(map(pl.Path, opts.files_or_dir))
+
+	dups = dict()
+	for p in sorted(ps):
+		st = p.stat(follow_symlinks=False)
+		if not stat.S_ISREG(st.st_mode): continue
+		with p.open('rb') as src: ph = hl.file_digest(src, hl.blake2b).digest()
+		attrs = adict( p=p, ph=ph, uid=st.st_uid, gid=st.st_gid,
+			name=p.name, name_len=len(p.name), stem=p.stem, ext=p.suffix.lstrip('.'),
+			mtime=st.st_mtime, ctime=st.st_ctime, btime=getattr(st, 'st_btime', 0) )
+		dups.setdefault(ph, list()).append(attrs)
+
+	for ph, ls in list(dups.items()):
+		if len(ls) == 1: del dups[ph]
+	if not dups: return
+
+	dups_all = dict((ph, ls.copy()) for ph, ls in dups.items())
+
+	if rxs:
+		for ph, ls in dups.items():
+			for rx in rxs:
+				if not any(lss := list(a for a in ls if rx.check(a.name))): continue
+				ls[:] = lss
+
+	if sorts:
+		sort_chain = list()
+		for c in sorts:
+			k, _, n = c.partition(':'); flags, _, n = n.rpartition(':')
+			n = int(n or 0)
+			if n > 0: n -= 1
+			if set(flags).difference('I'): parser.error(f'Unrecognized flags in --pick-sort: {c}')
+			sort_lc = lambda a: a.lower() if isinstance(a, str) else a
+			if 'I' in flags: sort_lc = lambda a: a
+			sort_chain.append((n, lambda a,_k=k,_lc=sort_lc: _lc(a[_k])))
+		for ph, ls in dups.items():
+			if len(ls) == 1: continue
+			for n, sk in sort_chain:
+				key = (lsk := sorted(zip(map(sk, ls), range(len(ls)), ls)))[n][0]
+				ls[:] = (a for k, lsn, a in lsk if k == key)
+
+	if not any(dd.values()): return print_dups(dups, dups_all)
+
+	if dups_err := dict((ph, ls) for ph, ls in dups.items() if len(ls) != 1):
+		p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr)
+		p_err('ERROR: --pick-* options still result in duplicate files')
+		print_dups(dups, dups_all, p_err)
+		return 1
+
+	for ph, ls in dups.items():
+		ak = ls[0]; ax = list(a for a in dups_all[ph] if a.p != ak.p)
+		for a in ax:
+			if dd.sym:
+				for n in range(9999):
+					if not (p := a.p.with_name(a.p.name + f'.{n}.tmp')).exists(): break
+				else: raise OSError(f'Failed to make nx temp-name for {a.p}')
+				p.symlink_to(ak.p); p.rename(a.p)
+			if dd.rm: a.p.unlink()
+
+if __name__ == '__main__': sys.exit(main())
