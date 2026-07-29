@@ -144,8 +144,8 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
 	try: mtime = p.stat().st_mtime
 	except OSError: return adict(t='access', fatal=1, msg='File missing/inaccessible')
-	probe = sp.run( [ 'ffprobe', '-v', 'fatal',
-			'-show_entries', 'stream:format', '-print_format', 'json', str(p) ],
+	probe = sp.run( [ *( 'ffprobe -v fatal'
+			' -show_entries stream:format -print_format json' ).split(), str(p) ],
 		check=True, stdin=sp.DEVNULL, stdout=sp.PIPE )
 	vx, ax = vn, an; ac = sc = 0; probe = adict.rec_make(json.loads(probe.stdout))
 	video = audio = dict(); errs, subs, multistream = list(), dict(), None
@@ -164,7 +164,8 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 			if fps := s.get('avg_frame_rate') or 0:
 				if '/' not in fps: fps = float(fps)
 				else: a, b = map(float, fps.split('/')); fps = a and b and a/b
-			video = adict( n=vx, c=s.codec_name, fps=fps,
+			if dar := s.get('display_aspect_ratio'): dar = tuple(map(int, dar.split(':')))
+			video = adict( n=vx, c=s.codec_name, fps=fps, dar=dar,
 				w=s.width, h=s.height, pxf=s.pix_fmt, br=int(s.get('bit_rate') or 0) )
 
 		if ct == 'audio':
@@ -227,12 +228,14 @@ def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 
 		if ct == 'video':
 			is_10b = pxfmts_10b and s.pix_fmt in pxfmts_10b
-			if all(wh := [s.get('width'), s.get('height')]):
-				sil1.append(wh := 'x'.join(map(str, wh)))
+			if all(wh_ints := [s.get('width'), s.get('height')]):
+				sil1.append(wh := 'x'.join(map(str, wh_ints)))
 				if is_10b: sil1[-1] += '.10b'
 				if ar := s.get('display_aspect_ratio'):
-					if (ars := s.get('sample_aspect_ratio')) != '1:1': ar += f'.{ars}'
-					if ar != wh.replace('x', ':'): sil1.append(f'[ {ar} ]')
+					(w, h), (dw, dh) = wh_ints, map(int, ar.split(':'))
+					if ar != wh.replace('x', ':') and not math.isclose(w/h, dw/dh, rel_tol=0.01):
+						if (ars := s.get('sample_aspect_ratio')) != '1:1': ar = f'{ars}>{ar}'
+						sil1.append(f'[ {ar} ]')
 			elif is_10b: sil1.append('10b')
 			if fps := s.get('avg_frame_rate'):
 				if '/' not in fps: fps = float(fps)
@@ -585,8 +588,9 @@ def main(args=None):
 		filters = list()
 		if p.v.resample: filters.append('fps=30')
 		if p.v.scale:
-			if p.v.w >= p.v.h: w = min(1280, p.v.w); h = int(p.v.h * w / p.v.w)
-			else: h = min(1280, p.v.h); w = int(p.v.w * h / p.v.h)
+			dw, dh = p.v.dar or (p.v.w, p.v.h)
+			if p.v.w >= p.v.h: w = min(1280, p.v.w); h = int(w * dh / dw)
+			else: h = min(1280, p.v.h); w = int(h * dw / dh)
 			for k, v in zip('wh', (w, h)): x, o = divmod(v, 2); p.v[k] = 2 * (x + (o >= 1))
 			filters.append(f'scale={p.v.w}:{p.v.h},setsar=1:1')
 		if filters: filters = ['-filter:v', sh_str_dq(','.join(filters))]
