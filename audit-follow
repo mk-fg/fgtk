@@ -451,7 +451,7 @@ def main(args=None):
 			'Using -F/--grep-str alongside -f/--filter-file is not supported' )
 		ev_filter, noise_filter = filter_file_parse(opts.filter_file)
 	elif gs := opts.grep_str: ev_filter = ( lambda evrs,*a,**k:
-		any(gs not in evr._line for evr in evrs) or list(evr.update(_line='') for evr in evrs) )
+		any(gs in evr._line for evr in evrs) or list(evr.update(_line='') for evr in evrs) )
 	else: ev_filter = None
 
 	out_raw = opts.raw or opts.filter_file
