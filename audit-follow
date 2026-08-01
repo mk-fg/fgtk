@@ -47,6 +47,75 @@ def td_repr(delta, units_max=2, units_res=None, _units=dict(
 	return ' '.join(res) if res else '<1s'
 
 
+_td_days = dict(
+	y=365.2422, yr=365.2422, year=365.2422,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '\\Z')
+
+def ts_parse(ts_str, ts_now=None, direction=-1): # used with --from/--until options
+	# direction= should be either -1 (past) or 1 (future) for day and timedelta offset
+	if ts_now is None: ts_now = dt.datetime.now()
+	ts = (ts_str := ts_str.strip()).lower() == 'now' and dt.timedelta(0)
+	no_ts = lambda: ts in [None, False]
+	if no_ts():
+		try: ts = dt.timedelta(seconds=float(ts_str))
+		except: pass
+	if no_ts() and ( # short time offset like "3d 5h"
+			(m := _td_re.search(ts_str)) and any(m.groups()) ):
+		delta = list()
+		for units in _td_days, _td_s:
+			val = 0
+			for k, v in units.items():
+				if not m.group(k): continue
+				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
+			delta.append(val)
+		ts = dt.timedelta(*delta)
+	if no_ts() and (m := re.fullmatch( # common BE format
+			r'(?P<date>(?:\d{2}|(?P<Y>\d{4}))-\d{2}-\d{2})'
+			r'(?:[ T](?P<time>\d{2}(?::\d{2}(?::\d{2})?)?)?)?', ts_str )):
+		tpl = 'y' if not m.group('Y') else 'Y'
+		tpl, tss = f'%{tpl}-%m-%d', m.group('date')
+		if m.group('time'):
+			tpl_time = ['%H', '%M', '%S']
+			tss += ' ' + ':'.join(tss_time := m.group('time').split(':'))
+			tpl += ' ' + ':'.join(tpl_time[:len(tss_time)])
+		try: ts = dt.datetime.strptime(tss, tpl)
+		except ValueError: pass
+	if no_ts() and (m := re.fullmatch( # just time without AM/PM - treat as 24h format
+			r'\d{1,2}:\d{2}(?::\d{2}(?P<us>\.\d+)?)?', ts_str )):
+		us, tpl = 0, ':'.join(['%H', '%M', '%S'][:len(ts_str.split(':'))])
+		if m.group('us'):
+			ts_str, us = ts_str.rsplit('.', 1)
+			us = us[:6] + '0'*max(0, 6 - len(us))
+		try: ts = dt.datetime.strptime(ts_str, tpl)
+		except ValueError: pass
+		else:
+			ts = ts_now.replace( hour=ts.hour,
+				minute=ts.minute, second=ts.second, microsecond=int(us) )
+			if ts > ts_now: ts += direction * dt.timedelta(1)
+	if no_ts(): # coreutils' "date" parses everything, but is more expensive to use
+		import subprocess as sp
+		while True:
+			res = sp.run( ['date', '+%s', '-d', ts_str],
+				stdout=sp.PIPE, stderr=sp.DEVNULL )
+			if res.returncode:
+				if ',' in ts_str: ts_str = ts_str.replace(',', ' '); continue
+			else:
+				ts = dt.datetime.fromtimestamp(int(res.stdout.strip()))
+				if 0 < (ts - ts_now).total_seconds() <= 24*3600 and re.fullmatch(
+						r'(?i)[\d:]+\s*(am|pm)?\s*([-+][\d:]+|\w+|\w+[-+][\d:]+)?', ts_str.strip() ):
+					ts += direction * dt.timedelta(1)
+			break
+	if no_ts(): err_func(f'Failed to parse date/time/offset spec: {ts_str}')
+	if isinstance(ts, dt.timedelta): ts = ts_now + (direction * ts)
+	return ts
+
+
 class au_str(str): __slots__ = 't', # .t stores unrepresentable key/type str
 input_fmt = enum.Enum('InputFormat', 'journal auditd syslog')
 input_apt = enum.IntEnum('InputAuditTypes', dict(
@@ -429,6 +498,13 @@ def main(args=None):
 			rules to filter audit records, events or other lines by, before output.
 		Implies --raw output mode, as regexps in rules there apply against that.
 		Run with --filter-file=help to print information about format for this file and exit.'''))
+	group.add_argument('--ts-from', metavar='time', help=dd('''
+		Only include events after specific (absolute or relative) time.
+		Parses timestamps as relative short times (e.g. "30s", "10min", "1h 20m", etc),
+			iso8601-ish times/dates or falls back to just using "date" binary,
+			which parses a lot of different other absolute/relative formats.'''))
+	group.add_argument('--ts-until', metavar='time', help=dd('''
+		Only include events before specific (absolute or relative) time.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -453,6 +529,12 @@ def main(args=None):
 	elif gs := opts.grep_str: ev_filter = ( lambda evrs,*a,**k:
 		any(gs in evr._line for evr in evrs) or list(evr.update(_line='') for evr in evrs) )
 	else: ev_filter = None
+
+	ts_a, ts_b = 0, 2**32
+	if opts.ts_from or opts.ts_until:
+		ts_now = dt.datetime.now().replace(microsecond=0)
+		if ts := opts.ts_from: ts_a = ts_parse(ts, ts_now).timestamp()
+		if ts := opts.ts_until: ts_b = ts_parse(ts, ts_now).timestamp()
 
 	out_raw = opts.raw or opts.filter_file
 	out = open(sys.stdout.fileno(), 'w', 1) # line-buffered
@@ -486,6 +568,7 @@ def main(args=None):
 		if isinstance(ev, str): out(ev); continue # lines passed through noise_filter
 		if not ts0: ts0 = ev.ts
 		if not ts0_ev: ts0_ev = ev.ts
+		if ev.ts < ts_a or ev.ts > ts_b: continue
 
 		for evr in ev.rs:
 			prefix = ' '
