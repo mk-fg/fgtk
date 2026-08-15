@@ -136,52 +136,58 @@ def ts_diff_str( ts, ts0=None, ext=None, sep='',
 
 
 def main(args=None):
-	import argparse
+	import argparse, textwrap
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		description='Parse feed at the URL and print/download enclosure links from it.'
-			' Prints item info by default, unless -n/--num and/or -p/--print-urls opts are specified.'
-			' Downloads to temp dir by default, passing filelist to aria2c'
-				' with some parallelization options, then moves all files to the current dir.')
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [options] [-n...] url', description=dd('''
+			Parse feed at the URL and print/download enclosure links from it.
+			Prints item info by default, unless -n/--num and/or -p/--print-urls opts are specified.
+			Downloads to temp dir by default, passing filelist to aria2c
+				with some parallelization options, then moves all files to the current dir.'''))
 
 	group = parser.add_argument_group('Feed fetch/load options')
 	group.add_argument('url', help='URL or file path to grab the feed from.')
 	group.add_argument('--file', action='store_true',
 		help='Do not try to append https:// prefix to non-URL and non-existent paths.')
-	group.add_argument('-o', '--out', metavar='file',
-		help='Cache fetched feed to specified file and parse from there.'
-			' If file already exists (cached), it will be used instead of fetching URL.')
+	group.add_argument('-o', '--out', metavar='file', help=dd('''
+		Cache fetched feed to specified file and parse from there.
+		If file already exists (cached), it will be used instead of fetching URL.'''))
 
 	group = parser.add_argument_group('File selection/download opts')
-	group.add_argument('-n', '--num', metavar='n[-m]', action='append',
-		help='Item(s) to print/download. Downloads them by default.'
-			' Can be either an integer item number (1 is latest), or N-M for first-last (inclusive).'
-			' Can be specified multiple times for multiple items/ranges.')
-	group.add_argument('-f', '--file-type', metavar='ext',
-		help='Enclosure file extension or content-type to match in case-insensitive manner.'
-			' Extension gets picked from last slug of the enclosure URLs.'
-			' Examples: audio/mp3, audio/mpeg, mp3, ogg')
+	group.add_argument('-n', '--num', metavar='n[-m]', action='append', help=dd('''
+		Item(s) to print/download. Downloads them by default.
+		Can be either an integer item number (1 is latest), or N-M for first-last (inclusive).
+		Can be specified multiple times for multiple items/ranges.'''))
+	group.add_argument('-f', '--file-type', metavar='ext', help=dd('''
+		Enclosure file extension or content-type to match in case-insensitive manner.
+		Extension gets picked from last slug of the enclosure URLs.
+		Examples: audio/mp3, audio/mpeg, mp3, ogg'''))
 	group.add_argument('-t', '--ts-names', action='store_true',
 		help='Use timestamp-derived "YY-mm-dd.HHMM.N.ext" filename, if possible.')
-	group.add_argument('-v', '--headline-names', action='store_true',
-		help='Derive enclosure filename from item headline, if possible.'
-			' Can be used together with -t/--ts-names to get timestamp + headline filename.')
+	group.add_argument('-v', '--headline-names', action='store_true', help=dd('''
+		Derive enclosure filename from item headline, if possible.
+		Can be used together with -t/--ts-names to get timestamp + headline filename.'''))
 	group.add_argument('-p', '--name-prefix', metavar='prefix',
 		help='Prefix to put at the start of every downloaded filename, auto-separated by a dot.')
-	group.add_argument('--max-filename-len', type=int, metavar='n', default=90,
-		help='Maximum length for filenames produced by -t and/or -v opts (in characters, not bytes).'
-			' Anything beyond that will be cut and replaced by "--" before dot-extension suffix.'
-			' Default: %(default)s')
+	group.add_argument('--max-filename-len', type=int, metavar='n', default=90, help=dd('''
+		Maximum length for filenames produced by -t and/or -v opts (in characters, not bytes).
+		Anything beyond that will be cut and replaced by "--" before dot-extension suffix.
+		Default: %(default)s'''))
 	group.add_argument('-i', '--inplace', action='store_true',
 		help='Download files in-place, instead of using tmpdir and then moving them all on success.')
 
 	group = parser.add_argument_group('Listing and output modes')
 	group.add_argument('-l', '--list', action='store_true',
-		help='List feed item titles only, one per line.')
-	group.add_argument('-m', '--list-meta', metavar='fields', default='{e.title}',
-		help='Only with --list - specify output format for each item/line.'
-			' Python str formatting is used, with "e" being feed entry object from feedparser module.'
-			' See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.'
-			' Default: %(default)s')
+		help='List feed item titles. Can be used to with -n/--num option to list and download.')
+	group.add_argument('-N', '--n-last', metavar='n', type=int, default=99, help=dd('''
+		When listing all items from feed, limit to number of last items. Default: %(default)s'''))
+	group.add_argument('-m', '--list-meta', metavar='fields', help=dd('''
+		When listing items - output format for each item/line, instead of default format.
+		Python str formatting is used, with "e" being feed entry object from feedparser module.
+		See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.
+		Example: -m "{e.title}"'''))
 	group.add_argument('-L', '--list-urls', action='store_true',
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	group.add_argument('-C', '--list-curl', action='store_true',
@@ -225,7 +231,9 @@ def main(args=None):
 		ts_str, ts = feed_entry_ts(e, raw=opts.print_raw_ts)
 
 		if opts.list or not ranges:
-			if not opts.list:
+			if not ranges and n > opts.n_last: continue
+			if opts.list_meta: print(opts.list_meta.format(e=e))
+			else:
 				ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
 				ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
 				print(f'--- [{n: >2d}] {e.title}')
@@ -233,24 +241,21 @@ def main(args=None):
 				if url := e.get('link'): print(f'    {url}')
 				for url in enc_urls: print(f'    {url}')
 				print()
-			else: print(opts.list_meta.format(e=e))
-			continue
+		if not ranges: continue
 
-		elif ranges:
-			for a, b in ranges:
-				if n < a: continue
-				if b:
-					if n > b: continue
-				elif n != a: continue
-				break # n in range
-			else: continue
-			if not enc_urls: continue # only care about enclosures here
+		for a, b in ranges:
+			if n < a: continue
+			if b:
+				if n > b: continue
+			elif n != a: continue
+			break # n in range
+		else: continue
+		if not enc_urls: continue
 
 		url = enc_urls[0]
 		if opts.list_urls: print(url)
 		else: file_urls[url] = adict(title=e.title.strip(), ts=ts, n=n)
-
-	if not file_urls: return
+	if not file_urls: return # list/download selected stuff only after this
 
 	file_map, name_set = dict(), set()
 	for url, meta in file_urls.items():
@@ -283,10 +288,9 @@ def main(args=None):
 	file_list = ''.join(file_list)
 	if opts.list_aria2: return print(file_list.strip())
 
-	if opts.inplace:
-		return sp.run(
-			[*conf.aria2c_cmd, '--input-file', '-'],
-			input=file_list.encode(), check=True ) and None
+	if opts.inplace: return sp.run(
+		[*conf.aria2c_cmd, '--input-file', '-'],
+		input=file_list.encode(), check=True ) and None
 
 	import shutil, tempfile
 	p_dst_dir = pl.Path.cwd()

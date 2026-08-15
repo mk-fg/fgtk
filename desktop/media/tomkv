@@ -82,21 +82,22 @@ def td_parse(td_str):
 		return sum(n*float(m) for n,m in zip((3600, 60, 1), td_str.split(':')))
 	raise ValueError(f'Failed to parse time-delta spec: {td_str}')
 
-def td_repr(delta, units_max=2, units_res=None, _units=dict(
+def td_repr(delta, units_max=2, units_res=None, now='<1s', _units=dict(
 		h=3600, m=60, s=1, y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 )):
 	res, s, n_last = list(), abs(delta), units_max - 1
 	units = sorted(_units.items(), key=lambda v: v[1], reverse=True)
 	for unit, unit_s in units:
-		val = math.floor(s / unit_s)
-		if not val:
+		if not (val := math.floor(val_raw := s / unit_s)):
 			if units_res == unit: break
 			continue
+		elif val_raw - val > 0.98: val += 1
 		if len(res) == n_last or units_res == unit:
 			val, n_last = round(s / unit_s), True
 		res.append(f'{val:.0f}{unit}')
 		if n_last is True: break
-		s -= val * unit_s
-	return ' '.join(res) if res else '<1s'
+		if (s := s - val * unit_s) < 1: break
+	return ' '.join(res) if res else now
+
 
 def retries_within_timeout(tries, timeout, delay_min=0, slack=None, e=10):
 	'Return list of delays to make exactly n retries within timeout'
