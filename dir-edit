@@ -119,12 +119,13 @@ def plist_edits_prompt( plist_path, plist_str, diff_cmd, prompt_ext='',
 		_act=enum.Enum('InputAction', 'apply editor reload wait quit'),
 		_tmp=lambda pre,suff: tempfile.NamedTemporaryFile('w', prefix=pre, suffix=suff) ):
 	dt_now = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-	p_out(f'\n[ {dt_now} ] Diff for file-list update{prompt_ext}:')
 	plist_fn_base = plist_path.name.rsplit('.', 1)[0] + '.'
 	plist_str_new = plist_path.read_text()
-	with _tmp(plist_fn_base, '.txt.old') as a, _tmp(plist_fn_base, '.txt.new') as b:
-		a.write(plist_str); b.write(plist_str_new); a.flush(); b.flush()
-		sp.run([*diff_cmd, a.name, b.name])
+	if diff_cmd:
+		p_out(f'\n[ {dt_now} ] Diff for file-list update{prompt_ext}:')
+		with _tmp(plist_fn_base, '.txt.old') as a, _tmp(plist_fn_base, '.txt.new') as b:
+			a.write(plist_str); b.write(plist_str_new); a.flush(); b.flush()
+			sp.run([*diff_cmd, a.name, b.name])
 	while True:
 		try: cmd = input( f'QUERY{prompt_ext}: [A]pply changes, [R]eload, call'
 			' [E]ditor again, [W]ait for more edits, [Q]uit/e[X]it :: ' ).lower().strip() or '-'
@@ -146,7 +147,7 @@ def plist_edits_parse(plist, plist_str, tags=False, rm=False):
 		if tags:
 			if ( not (m := re.fullmatch(r'(.*?)\s+#(\S+)', ln))
 					or (nn := tag_idx.get(tag := m[2].lower())) is None ):
-				p_err(f'SKIP: Failed to match line-{n} as "name #tag": {ln!r}'); continue
+				p_out(f'SKIP: Failed to match line-{n} as "name #tag": {ln!r}'); continue
 			if not isinstance(nn, int): raise RuntimeError( 'Duplicate lines'
 				f' for tag #{tag}\n  line-{nn[0]} :: {nn[1]}\n  line-{n} :: {ln}' )
 			fn, ln, tag_idx[tag] = plist[nn], m[1], (n, ln)
@@ -158,26 +159,26 @@ def plist_edits_parse(plist, plist_str, tags=False, rm=False):
 	return mvs, rms
 
 def plist_edits_sanity_check(plist, mvs, rms, replace=False):
-	errs, src_moved, dst_files = False, set(), set(plist).difference(rms)
+	ack, src_moved, dst_files = True, set(), set(plist).difference(rms)
 	for a, b in mvs:
 		dst_files.discard(a); src_moved.add(a)
 		if not replace:
 			if b in dst_files or ( b not in rms
 					and b not in src_moved and pl.Path(b).exists(follow_symlinks=False) ):
-				errs = p_err(f'ERROR: Filename conflict detected [ {b} ]')
+				ack = p_out(f'ERROR: Filename conflict detected [ {b} ]')
 			dst_files.add(b)
 		try: bd_st = pl.Path(b).parent.lstat()
 		except FileNotFoundError:
-			errs = p_err(f'ERROR: Destination dir missing for rename [ {a} ] -> [ {b} ]')
+			ack = p_out(f'ERROR: Destination dir missing for rename [ {a} ] -> [ {b} ]')
 		else:
 			if (a_st := os.lstat(a)).st_dev != bd_st.st_dev:
-				errs = p_err(f'ERROR: Cross-device rename [ {a} ] -> [ {b} ]')
+				ack = p_out(f'ERROR: Cross-device rename [ {a} ] -> [ {b} ]')
 			if a_st.st_ino == bd_st.st_ino:
-				errs = p_err(f'ERROR: Moving dir into itself [ {a} ] -> [ {b} ]')
+				ack = p_out(f'ERROR: Moving dir into itself [ {a} ] -> [ {b} ]')
 	for p in rms:
 		if pl.Path(p).is_dir(follow_symlinks=False):
-			errs = p_err(f'ERROR: Will not remove directory [ {p} ]')
-	if not errs: return True
+			ack = p_out(f'ERROR: Will not remove directory [ {p} ]')
+	return ack
 
 
 def main(args=None, conf=None):
@@ -296,7 +297,7 @@ def main(args=None, conf=None):
 	if conf.print: sys.stdout.write(plist_str); return
 
 	## Create file-list, wait for editor/edits, confirm via prompt
-	ack, prompt_ext = False, '' if not conf.dry_run else ' [DRY-RUN]'
+	ack = skip_diff = False; prompt_ext = '' if not conf.dry_run else ' [DRY-RUN]'
 	with tempfile.NamedTemporaryFile(
 			mode='w', dir='.', prefix='_dir-edit.', suffix='.txt' ) as plist_file:
 		plist_file.write(plist_str); plist_file.flush()
@@ -307,7 +308,9 @@ def main(args=None, conf=None):
 			conf.ed, conf.ed_wait, f'  -- started editor for it [ {conf.ed[0]} ]' )
 		while True:
 			if wait: wait = plist_wait_for_edits(plist_path, plist_str)
-			act = plist_edits_prompt(plist_path, plist_str, conf.diff_cmd, prompt_ext)
+			skip_diff, act = False, plist_edits_prompt( plist_path,
+				plist_str, not skip_diff and conf.diff_cmd, prompt_ext )
+
 			if act is act.wait: wait = True; continue
 			elif act is act.reload: continue
 			elif act is act.quit: return
@@ -315,18 +318,21 @@ def main(args=None, conf=None):
 				wait = plist_edit( plist_path_rel, plist_str,
 					conf.ed, conf.ed_wait, f'(Re-)Started editor [ {conf.ed[0]} ]' )
 				continue
+
 			elif act is act.apply:
 				if plist_path.read_text() != act.plist_str:
 					p_out('NOTE: File-list changed since last diff, repeating query...')
 					continue
+				## Parse and sanity-check all edits before ack
+				try: mvs, rms = plist_edits_parse(plist, act.plist_str, tags=conf.tag, rm=conf.rm)
+				except RuntimeError as err:
+					p_out(f'NEEDS-FIX: File-list ERROR :: {err}\n'); skip_diff = 1; continue
+				if not plist_edits_sanity_check(plist, mvs, rms, replace=conf.replace):
+					p_out('NEEDS-FIX: File-list has conflicts (listed above)\n'); skip_diff = 1; continue
 				ack = True; break
+
 			else: return p_err(f'BUG: Unrecognized action: {act}')
 	if not ack: return p_err('BUG: Wait-for-confirmation loop is broken')
-
-	## Parse and sanity-check all edits
-	try: mvs, rms = plist_edits_parse(plist, act.plist_str, tags=conf.tag, rm=conf.rm)
-	except RuntimeError as err: return p_err(f'ERROR: {err}')
-	if not plist_edits_sanity_check(plist, mvs, rms, replace=conf.replace): return 1
 
 	## Print/apply final changes
 	pre = f'{prompt_ext} '.lstrip(); p_out()
