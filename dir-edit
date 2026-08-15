@@ -10,8 +10,8 @@ class DirEditConf:
 	tag = rec = rm = files = symlinks = replace = dry_run = diff_cmd = print = False
 
 
-p_out = lambda *a,**kw: print(*a, **kw, flush=True)
-p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True) or 1
+pr_out = lambda *a,**kw: print(*a, **kw, flush=True)
+pr_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True) or 1
 
 def str_hash(s, c=None, key=b'dir-edit', strip=''):
 	s_raw, s = s, base64.urlsafe_b64encode(
@@ -48,7 +48,7 @@ class INotify:
 			wd, flags, cookie, ns = _ev.unpack_from(buff, n); n += _ev.size
 			name = ct.c_buffer(buff[n:n+ns], ns).value.decode(); n += ns
 			yield name
-		if n != bs: p_err(
+		if n != bs: pr_err(
 			'WARNING: Unused trailing bytes on inotify-fd [{}]: {}'
 			.format((bs := bs - n), ct.c_buffer(buff[n:], bs).value) )
 
@@ -103,12 +103,12 @@ def plist_make(conf, *paths):
 
 def plist_edit(plist_path, plist_str, ed, ed_wait, info=''):
 	if ed:
-		ed = sp.Popen([*ed, plist_path]); info and p_out(info)
+		ed = sp.Popen([*ed, plist_path]); info and pr_out(info)
 		if ed_wait: ed.wait(); return plist_str == plist_path.read_text()
 	return True
 
 def plist_wait_for_edits(plist_path, plist_str):
-	plist_updated = p_out('  -- waiting for file-list changes... [Enter to skip]')
+	plist_updated = pr_out('  -- waiting for file-list changes... [Enter to skip]')
 	plist_iter = INotify().watch_file_and_stdin(plist_path, debounce=0.3)
 	while True:
 		try: plist_iter.send(plist_updated) # skips metadata-only changes
@@ -122,7 +122,7 @@ def plist_edits_prompt( plist_path, plist_str, diff_cmd, prompt_ext='',
 	plist_fn_base = plist_path.name.rsplit('.', 1)[0] + '.'
 	plist_str_new = plist_path.read_text()
 	if diff_cmd:
-		p_out(f'\n[ {dt_now} ] Diff for file-list update{prompt_ext}:')
+		pr_out(f'\n[ {dt_now} ] Diff for file-list update{prompt_ext}:')
 		with _tmp(plist_fn_base, '.txt.old') as a, _tmp(plist_fn_base, '.txt.new') as b:
 			a.write(plist_str); b.write(plist_str_new); a.flush(); b.flush()
 			sp.run([*diff_cmd, a.name, b.name])
@@ -147,7 +147,7 @@ def plist_edits_parse(plist, plist_str, tags=False, rm=False):
 		if tags:
 			if ( not (m := re.fullmatch(r'(.*?)\s+#(\S+)', ln))
 					or (nn := tag_idx.get(tag := m[2].lower())) is None ):
-				p_out(f'SKIP: Failed to match line-{n} as "name #tag": {ln!r}'); continue
+				pr_out(f'SKIP: Failed to match line-{n} as "name #tag": {ln!r}'); continue
 			if not isinstance(nn, int): raise RuntimeError( 'Duplicate lines'
 				f' for tag #{tag}\n  line-{nn[0]} :: {nn[1]}\n  line-{n} :: {ln}' )
 			fn, ln, tag_idx[tag] = plist[nn], m[1], (n, ln)
@@ -165,19 +165,19 @@ def plist_edits_sanity_check(plist, mvs, rms, replace=False):
 		if not replace:
 			if b in dst_files or ( b not in rms
 					and b not in src_moved and pl.Path(b).exists(follow_symlinks=False) ):
-				ack = p_out(f'ERROR: Filename conflict detected [ {b} ]')
+				ack = pr_out(f'ERROR: Filename conflict detected [ {b} ]')
 			dst_files.add(b)
 		try: bd_st = pl.Path(b).parent.lstat()
 		except FileNotFoundError:
-			ack = p_out(f'ERROR: Destination dir missing for rename [ {a} ] -> [ {b} ]')
+			ack = pr_out(f'ERROR: Destination dir missing for rename [ {a} ] -> [ {b} ]')
 		else:
 			if (a_st := os.lstat(a)).st_dev != bd_st.st_dev:
-				ack = p_out(f'ERROR: Cross-device rename [ {a} ] -> [ {b} ]')
+				ack = pr_out(f'ERROR: Cross-device rename [ {a} ] -> [ {b} ]')
 			if a_st.st_ino == bd_st.st_ino:
-				ack = p_out(f'ERROR: Moving dir into itself [ {a} ] -> [ {b} ]')
+				ack = pr_out(f'ERROR: Moving dir into itself [ {a} ] -> [ {b} ]')
 	for p in rms:
 		if pl.Path(p).is_dir(follow_symlinks=False):
-			ack = p_out(f'ERROR: Will not remove directory [ {p} ]')
+			ack = pr_out(f'ERROR: Will not remove directory [ {p} ]')
 	return ack
 
 
@@ -272,10 +272,10 @@ def main(args=None, conf=None):
 		if getattr(opts, k, None): setattr(conf, k, True)
 
 	if not conf.print:
-		if not sys.stdin.isatty(): return p_err(
+		if not sys.stdin.isatty(): return pr_err(
 			'ERROR: stdin is not connected a terminal - required for interactive prompts' )
 		dev_id = lambda f: (os.major(d := os.stat(os.ttyname(f.fileno())).st_dev), os.minor(d))
-		if dev_id(sys.stdin) != dev_id(sys.stdout): return p_err(
+		if dev_id(sys.stdin) != dev_id(sys.stdout): return pr_err(
 			'ERROR: stdin/stdout are not connected to same tty - can be an issue for prompts' )
 		if not conf.diff_cmd:
 			import shutil
@@ -288,7 +288,7 @@ def main(args=None, conf=None):
 			else: conf.diff_cmd = ['diff', '-uw']
 
 	for fn in (plist := plist_make(conf, *opts.paths)):
-		if '\n' in fn or fn != fn.strip(): return p_err(
+		if '\n' in fn or fn != fn.strip(): return pr_err(
 			f'ERROR: Filename with newline(s) or leading/trailing spaces [ {fn!r} ]' )
 	if not conf.tag: plist_str = ''.join(f'{fn}\n' for fn in plist)
 	else:
@@ -303,7 +303,7 @@ def main(args=None, conf=None):
 		plist_file.write(plist_str); plist_file.flush()
 		plist_path_rel = ( plist_path := pl.Path(plist_file.name)
 			.resolve(strict=True) ).relative_to(pl.Path().resolve(strict=True))
-		p_out(f'Created file-list to edit [ {len(plist):,d} lines ]: {plist_path_rel}')
+		pr_out(f'Created file-list to edit [ {len(plist):,d} lines ]: {plist_path_rel}')
 		wait = plist_edit( plist_path_rel, plist_str,
 			conf.ed, conf.ed_wait, f'  -- started editor for it [ {conf.ed[0]} ]' )
 		while True:
@@ -321,28 +321,28 @@ def main(args=None, conf=None):
 
 			elif act is act.apply:
 				if plist_path.read_text() != act.plist_str:
-					p_out('NOTE: File-list changed since last diff, repeating query...')
+					pr_out('NOTE: File-list changed since last diff, repeating query...')
 					continue
 				## Parse and sanity-check all edits before ack
 				try: mvs, rms = plist_edits_parse(plist, act.plist_str, tags=conf.tag, rm=conf.rm)
 				except RuntimeError as err:
-					p_out(f'NEEDS-FIX: File-list ERROR :: {err}\n'); skip_diff = 1; continue
+					pr_out(f'NEEDS-FIX: File-list ERROR :: {err}\n'); skip_diff = 1; continue
 				if not plist_edits_sanity_check(plist, mvs, rms, replace=conf.replace):
-					p_out('NEEDS-FIX: File-list has conflicts (listed above)\n'); skip_diff = 1; continue
+					pr_out('NEEDS-FIX: File-list has conflicts (listed above)\n'); skip_diff = 1; continue
 				ack = True; break
 
-			else: return p_err(f'BUG: Unrecognized action: {act}')
-	if not ack: return p_err('BUG: Wait-for-confirmation loop is broken')
+			else: return pr_err(f'BUG: Unrecognized action: {act}')
+	if not ack: return pr_err('BUG: Wait-for-confirmation loop is broken')
 
 	## Print/apply final changes
-	pre = f'{prompt_ext} '.lstrip(); p_out()
+	pre = f'{prompt_ext} '.lstrip(); pr_out()
 	for p in rms:
-		p_out(f'{pre}Delete: [ {p} ]')
+		pr_out(f'{pre}Delete: [ {p} ]')
 		if not conf.dry_run: os.unlink(p)
 	for a, b in mvs:
 		msg = f'{pre}Rename: [ {a} ]\0-> [ {b} ]'
 		if len(msg) > 99: msg = msg.replace('\0', '\n' + ' '*(len(pre) + 5))
-		p_out(msg.replace(*'\0 '))
+		pr_out(msg.replace(*'\0 '))
 		if not conf.dry_run: pl.Path(a).rename(b)
 
 if __name__ == '__main__':
