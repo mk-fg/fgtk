@@ -2,7 +2,7 @@
 
 import urllib.request as ul, urllib.error as ule, urllib.parse as ulp
 import pathlib as pl, datetime as dt, subprocess as sp
-import os, sys, socket, re, unicodedata, math, calendar
+import os, sys, socket, re, unicodedata, math, calendar, types
 
 import feedparser as fp
 
@@ -89,11 +89,29 @@ def feed_entry_ts(entry, raw=False):
 	for k in 'published created modified'.split():
 		if not entry.get(k): continue
 		ts, ts_str = entry[f'{k}_parsed'], entry[k]
-		if ts: ts = dt.datetime.fromtimestamp(calendar.timegm(ts))
-		if not raw: ts_str = ts.strftime(' %Y-%m-%d %H:%M %a ')
+		if ts:
+			ts = dt.datetime.fromtimestamp(calendar.timegm(ts))
+			if not raw: ts_str = ts.strftime('%Y-%m-%d %H:%M %a')
 		break
 	else: ts = ts_str = None
 	return ts_str, ts
+
+class FeedEntryTpl:
+	def __init__(self, e, **extras): self.e, self.extras = e, extras
+	def __getattr__(self, key):
+		e = dict(self.extras, **self.e)
+		while flat := True:
+			for k, v in list(e.items()):
+				if isinstance(v, list):
+					for n, vv in enumerate(v): e[f'{k}_{n}'] = vv
+				elif isinstance(v, dict):
+					for kk, vv in v.items(): e[f'{k}_{kk}'] = vv
+				elif v in (None, False, ''): pass # removes empty items
+				else: continue
+				del e[k]; flat = False
+			if flat: break
+		if key == 'dict': return e
+		return e.get(key, '')
 
 
 _name_subs = {
@@ -182,12 +200,16 @@ def main(args=None):
 	group.add_argument('-l', '--list', action='store_true',
 		help='List feed item titles. Can be used to with -n/--num option to list and download.')
 	group.add_argument('-N', '--n-last', metavar='n', type=int, default=99, help=dd('''
-		When listing all items from feed, limit to number of last items. Default: %(default)s'''))
+		When listing items from feed, limit to number of last items. Default: %(default)s'''))
 	group.add_argument('-m', '--list-meta', metavar='fields', help=dd('''
 		When listing items - output format for each item/line, instead of default format.
-		Python str formatting is used, with "e" being feed entry object from feedparser module.
-		See https://pythonhosted.org/feedparser/ for info on available RSS/Atom Elements.
-		Example: -m "{e.title}"'''))
+		Python str formatting is used, with "e" being feed entry
+			object from feedparser module, with flattened lists/mappings.
+		See https://pythonhosted.org/feedparser/reference.html
+			for various entries' attributes, which are resolved to empty string if missing for entry.
+		Special extra attrs: e.dict (to print all of entry attrs, e.g. with -N1 -m "{e.dict}" ),
+			n (same as -n/--num), ts (date/time), td (time since last entry), td_now (td from now).
+		Example: -m "[{e.n:3d}] {e.ts} :: {e.title} :: {e.links_0_href}"'''))
 	group.add_argument('-L', '--list-urls', action='store_true',
 		help='Print all or selected (by -n/--num) item URLs (one per line) instead of downloading.')
 	group.add_argument('-C', '--list-curl', action='store_true',
@@ -230,14 +252,14 @@ def main(args=None):
 		enc_urls = feed_entry_enclosures(e, opts.file_type)
 		ts_str, ts = feed_entry_ts(e, raw=opts.print_raw_ts)
 
-		if opts.list or not ranges:
-			if not ranges and n > opts.n_last: continue
-			if opts.list_meta: print(opts.list_meta.format(e=e))
+		if (opts.list or not ranges) and n <= opts.n_last:
+			ts0, td = ts, f'+{ts_diff_str(ts - ts0)}' if ts0 else ''
+			td_now = f'-{ts_diff_str(ts)}' if ts and n == n0 else ''
+			if opts.list_meta: print(opts.list_meta.format(
+				e=FeedEntryTpl(e, n=n, ts=ts_str or '', td=td, td_now=td_now) ))
 			else:
-				ts0, ts_diff = ts, f' +{ts_diff_str(ts - ts0)}' if ts0 else None
-				ts_diff_last = f' -{ts_diff_str(ts)}' if n == n0 else None
 				print(f'--- [{n: >2d}] {e.title}')
-				print(f'    [{ts_str}]{ts_diff or ""}{ts_diff_last or ""}')
+				print(f'    [ {ts_str} ]{td and (" " + td)}{td_now and (" " + td_now)}')
 				if url := e.get('link'): print(f'    {url}')
 				for url in enc_urls: print(f'    {url}')
 				print()
