@@ -3862,6 +3862,8 @@ notifications for just one user, e.g.:
       FileOwner="root" FileGroup="someuser"
       File="/var/log/processing/mail.deliver.someuser.log" )
 
+(syslog-ng python processor/dst can write json {ts, msg_id, path} lines instead)
+
 Remote notifications are delivered to desktop machines via robust zeromq pub/sub
 sockets [as implemented in notification-thing daemon] (one that I'm using),
 but script can easily be tweaked to use some other mechanism.
