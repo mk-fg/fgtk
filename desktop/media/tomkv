@@ -45,14 +45,15 @@ def wrap_to_lines(chunks, w=80, w_max=110, s=' ', s_chunks='', split=None, **wra
 class sh_str_raw(str): __slots__ = () # str for sh_repr to skip quoting
 class sh_str_dq(str): __slots__ = () # str for sh_repr to double-quote without other changes
 def sh_repr(s): # same idea as in shlex.quote, likely unsafe anyway
+	q, repl = "'", "'\\''"
 	if not s: return "''"
 	elif isinstance(s, sh_str_raw): return str(s)
-	elif isinstance(s, sh_str_dq): return f'"{s}"'
+	elif isinstance(s, sh_str_dq): q, repl = '"', '\\"'
 	elif not isinstance(s, str): s = str(s)
 	if s.isascii() and not s.encode().translate(
 		None, delete=b'%+,-./0123456789:=@ABCDEFGHIJKLMN'
 		b'OPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz' ): return s
-	return "'" + s.replace("'", "'\\''") + "'"
+	return q + s.replace(q, repl) + q
 
 
 _td_days = dict(
