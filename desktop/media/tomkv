@@ -142,6 +142,7 @@ def parse_rgb10_pixfmts():
 	if not parse: raise RuntimeError('Failed to decode "ffmpeg -pix_fmts" output')
 	return pxfmt_set
 
+
 def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 	'Return info on relevant streams in input file, filtered by vn/an options'
 	try: mtime = p.stat().st_mtime
@@ -203,6 +204,7 @@ def src_probe(p, vn=0, an=0, at=None, atts=False, pxfmts_10b=None):
 		td=float(probe.format.duration), sz=int(probe.format.size), desc=None )
 	data.desc = src_probe_desc(probe, data, pxfmts_10b)
 	return data
+
 
 def src_probe_desc(p, d=dict(), pxfmts_10b=None):
 	'Return multiline description of file contents - container, streams, formats, etc'
@@ -296,21 +298,49 @@ def ffmpeg_extract_atts(src_list, p_dst, replace=False, quiet=False):
 		print(f'{src} :: WARNING :: {msg}'); warn_dedup.add(msg)
 	with tempfile.TemporaryDirectory(prefix='.tomkv.extract-atts.') as tmp:
 		(p_last := (p_tmp := pl.Path(tmp)) / 'new').mkdir()
-		csums = dict(( p.name.lower(),
+		found, csums = set(), dict(( p.name.lower(),
 			adict(h=None, p=p )) for p in p_dst.iterdir() if p.is_file())
-		for src, srcx in src_list:
-			for p in p_last.iterdir(): p.unlink()
-			out = sp.run( ['ffmpeg', '-v', 'error', '-dump_attachment:t', '', '-i', srcx],
+		def _ffmpeg_extract(n=None, fn=''):
+			proc = sp.run( [ 'ffmpeg', '-v', 'error',
+					'-dump_attachment:t' + ('' if n is None else f':{n}'), fn, '-i', srcx ],
 				env=dict(AV_LOG_FORCE_NOCOLOR='1'), cwd=p_last,
 				stdin=sp.DEVNULL, stdout=sp.PIPE, stderr=sp.STDOUT )
-			out = out.stdout.decode().strip().splitlines()
-			try: out.remove('At least one output file must be specified')
+			errs = proc.stdout.decode().strip().splitlines()
+			try: errs.remove('At least one output file must be specified')
 			except ValueError: pass
-			if out := '\n'.join(out).strip(): _warn(src.name, (
+			return errs
+
+		for src, srcx in src_list:
+			for p in p_last.iterdir(): p.unlink()
+			if errs := _ffmpeg_extract(): # ffmpeg often fails to auto-extract files
+				# Common errors are "Filename ... is unsafe" due to spaces, or duplicate fn,
+				#  which abort operation and fail to extract rest of attachments from file.
+				errs, errs_dedup = list(), dict()
+				for n, s in enumerate(s for s in adict.rec_make(json.loads(sp.run( [ *(
+						'ffprobe -v fatal -show_entries stream:format -print_format json' ).split(),
+						srcx ], check=True, stdin=sp.DEVNULL, stdout=sp.PIPE ).stdout)).streams
+						if s.get('codec_type') == 'attachment'):
+					fn_tmp, fn, mime = ( f'font.{n}',
+						(tags := s.get('tags', dict())).get('filename'), tags.get('mimetype') )
+					if not ( 'font' in s.tags.mimetype.lower()
+						or re.fullmatch(r'(?i).*\.(ttf|tte|dfont|otf|otc|ttc)', fn) ): continue
+					if not re.fullmatch(r'[\x20-7e\w]+\.\w+', fn): errx = ['Bad filename']
+					else: errx = _ffmpeg_extract(n, fn_tmp)
+					if (p := (p_last / fn_tmp)) and (errx or not p.is_file()):
+						p.remove(missing_ok=True)
+						for err in errx or ['Failed to extract file']:
+							if not err or err == 'At least one output file must be specified': continue
+							elif (en := errs_dedup.setdefault(err, em := len(errs))) != em:
+								errs[en] = re.sub(r'^(att #\d+)\+*', r'\1+++', errs[en])
+							else: errs.append(f'att #{s.index} [ {fn} ] :: {err}'); errs_dedup[err] = em
+					else: p.rename(p.with_name(fn))
+			if errs := '\n'.join(errs).strip(): _warn(src.name, (
 				f'ffmpeg had issues processing path: {srcx.name}\n'
-				+ tw.indent(out, '  [ffmpeg] ') ).strip()); continue
+				+ tw.indent(errs, '  [ffmpeg] ') ).strip()); continue
+
 			for p in p_last.iterdir():
-				if not (csum := csums.get(fn := p.name.lower())):
+				found.add(fn := p.name.lower())
+				if not (csum := csums.get(fn)):
 					p.rename(p_new := p_tmp / p.name)
 					csums[fn] = adict(h=None, p=p_new); continue
 				if not csum.h:
@@ -324,16 +354,18 @@ def ffmpeg_extract_atts(src_list, p_dst, replace=False, quiet=False):
 					f' {act} it [ {p.name} ]: {sz_repr(sz_a)} -> {sz_repr(sz_b)}' )
 				if not replace: continue
 				csum.p.unlink(); p.rename(p_new := p_tmp / p.name); csum.update(h=h2, p=p_new)
+
 		new_sz = list()
 		for p in p_tmp.iterdir():
 			if not p.is_file(): continue
 			with p.open('rb') as a, (p_dst / p.name).open('xb') as b:
 				b.write(data := a.read()); new_sz.append(len(data))
+
 	ext = list()
-	if new_sz: ext.append(f' [ {sz_repr(sum(new_sz))} ]')
+	if new_sz: ext.append(f' [ +{sz_repr(sum(new_sz))} ]')
 	if warn_n: ext.append(f', {warn_n:,d} WARNING(s)')
-	print( f'Extracted/collected {len(new_sz):,d} / {len(csums):,d} new'
-		f' attachment(s) from {len(src_list):,d} source file(s){"".join(ext)}' )
+	print( f'Found/added {len(found):,d} / {len(new_sz):,d} font(s),'
+		f' {len(csums):,d} in dir total, from {len(src_list):,d} source file(s){"".join(ext)}' )
 	return bool(warn_n and not quiet)
 
 
