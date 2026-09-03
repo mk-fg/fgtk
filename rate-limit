@@ -120,14 +120,15 @@ def main(args=None):
 			if not any(rx.search(ln) for rx in re_filters): pw_line(line); continue
 
 		if not (n := next(drop_filter)): continue
-		elif n > 1: pres.append(f'drop-timespan {df_spec} skipped {n} lines')
+		elif n is not True: pres.append(f'drop-timespan {df_spec} skipped {n} line'+'s'*(n>1))
 
 		if not ((td := next(tbf)) is None) ^ tbf_pass:
 			if not (tbf_active or tbf_pass or opts.quiet):
 				pw_line(f'[ rate-limit {tbf_rl} active for {td_repr(td)} ]\n')
 			elif tbf_pass: tbf_n += 1
 			tbf_active = True; continue
-		if tbf_pass and tbf_n > 1: pres.append(f'rate-limit {tbf_rl} skipped {tbf_n} lines')
+		if tbf_pass and tbf_n: pres.append(
+			f'rate-limit {tbf_rl} skipped {tbf_n} line'+'s'*(tbf_n>1) )
 		tbf_active = tbf_n = False
 
 		if pres: pw_line(' '.join(f'[ {n} ]' for n in pres) + '\n'); pres.clear()
