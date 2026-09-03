@@ -664,6 +664,10 @@ Intended for low line-traffic sources like logging, where occasional
 massive spam/noise is highly undesirable, rarely useful, and usually
 redundant and/or a bug (e.g. stuck loop with logging call in it).
 
+Has other filtering options as well, e.g. `-e/--regexp` to only match/rate-limit
+known noise, or `-t/--drop-timespan` to only start logging stuff after some grace
+period (to e.g. drop errors on brief net hiccups but start logging if they persist).
+
 [pv]: https://www.ivarch.com/programs/pv.shtml
 [token bucket]: https://en.wikipedia.org/wiki/Token_bucket
 

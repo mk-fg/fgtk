@@ -49,7 +49,7 @@ def token_bucket_rate(spec, negative_tokens=False):
 		else: rate = float(s[0]) / td_parse(s[1])
 	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
 	if rate == float('inf'):
-		while True: yield None
+		while True: yield
 	elif rate <= 0:
 		while True: yield 2**31 # safe "infinite delay" value
 	n, ts, d = max(0, burst - 1), time.monotonic(), (yield) or 1
@@ -58,33 +58,80 @@ def token_bucket_rate(spec, negative_tokens=False):
 		if n >= d: n, d = n - d, (yield) or 1; continue
 		n, d = (n - d if negative_tokens else n), (yield (d - n) / rate) or 1
 
+def drop_within_timespan(spec):
+	'''"timespan[/reset-after]" iterator to return drop-count or True after timespan,
+		until logic resets after timespan or separate .../reset-after time-delta.'''
+	td, _, td_reset = (spec or '0').partition('/'); td = td_parse(td)
+	ts = ts0 = n = n0 = 0; td_reset = td_parse(td_reset) if td_reset else td
+	if (res := td <= 0) or td == float('inf'):
+		while True: yield res
+	while True:
+		ts_last, ts = ts, time.monotonic()
+		if ts - (ts0 := ts0 or ts) <= td: n += 1; yield
+		elif ts - ts_last >= td_reset: ts0 = ts; n = n0 = 0; yield
+		else: yield (n if not n0 and (n0 := True) else True)
+
 def main(args=None):
 	import argparse, textwrap
 	dd = lambda text: re.sub( r' \t+', ' ',
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
-	parser = argparse.ArgumentParser(
-		usage='%(prog)s [options]', formatter_class=argparse.RawTextHelpFormatter,
-		description='Rate-limit passing stdin lines through, indicating when rate-limit-drop starts.')
-	parser.add_argument('rate_limit', help=dd('''
+	parser = argparse.ArgumentParser( usage='%(prog)s [options] [tbf-rate-limit]',
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
+			Rate-limit passing stdin lines through, indicating when any rate-limit-drop happens.
+			Never buffers/delays lines, only makes immediate pass/drop decision.'''))
+	parser.add_argument('rate_limit', nargs='?', help=dd('''
 		Token bucket rate-limiting paramters for passing
 			stdin lines through to stdout, in <rate>[/<time-delta>][:<burst>] format.
-		Default logic is: each stdin line takes a "token", dropping it if there're none at the moment.
+		Can be thought of as: each stdin line takes a "token", dropping it if there're none atm.
+		If not specified, same as "inf" - no rate limit (of this type, other options still apply).
 		Examples: 2.5:5 (rate=2.5/s burst=5), 3/5m:10 (rate=3-in-5m burst=10), 9:30, 5 (5:1).'''))
 	parser.add_argument('-q', '--quiet', action='store_true',
 		help='Do not print extra messages when rate-limits get triggered.')
 	parser.add_argument('-p', '--pass-over-limit', action='store_true',
 		help='Invert rate-limiting logic to only pass lines through when over the limit.')
+	parser.add_argument('-t', '--drop-timespan', metavar='<timespan>[/<reset-after>]', help=dd('''
+		Drop messages within specified timespan after the first one, and pass any later ones.
+		Filtering resets after same timespan (or separate reset-after value) without any msgs.
+		Applied before main rate-limiting logic, i.e. lines dropped without timespan don't count there.
+		For example, with "-t 1m" if you get flurry of messages for 40s, they'll all get dropped,
+			but if they persist after a minute, they'll start getting through, and once a minute
+			passes without messages, this logic resets to initial state, i.e. to skip 1m-span again.
+		With separate "-t 1m/30m" timespan/reset values, same logic applies,
+			but filtering resets only after 30m pass without any messages (instead of same 1m).'''))
+	parser.add_argument('-e', '--regexp', action='append', metavar='re', help=dd('''
+		Regexp to match in lines to apply all rate-limiting to, passing others through.
+		Can be used multiple times, to only rate-limit lines that match any of them.'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	tbf = token_bucket_rate(tbf_rl := opts.rate_limit)
-	tbf_pass, tbf_active = opts.pass_over_limit, False
+	tbf = token_bucket_rate(tbf_rl := opts.rate_limit or 'inf')
+	tbf_pass, tbf_active, tbf_n = opts.pass_over_limit, False, 0
+	drop_filter = drop_within_timespan(df_spec := opts.drop_timespan)
+	re_filters = list(re.compile(rx) for rx in opts.regexp or list())
+
 	pr, pw = sys.stdin.buffer, sys.stdout.buffer
+	def pw_line(line):
+		if isinstance(line, str): line = line.encode()
+		pw.write(line); pw.flush()
+
+	pres = list()
 	for line in pr:
+		if re_filters:
+			ln = line.decode(errors='replace')
+			if not any(rx.search(ln) for rx in re_filters): pw_line(line); continue
+
+		if not (n := next(drop_filter)): continue
+		elif n > 1: pres.append(f'drop-timespan {df_spec} skipped {n} lines')
+
 		if not ((td := next(tbf)) is None) ^ tbf_pass:
 			if not (tbf_active or tbf_pass or opts.quiet):
-				pw.write(f'[ rate-limit {tbf_rl} active for {td_repr(td)} ]\n'.encode()); pw.flush()
+				pw_line(f'[ rate-limit {tbf_rl} active for {td_repr(td)} ]\n')
+			elif tbf_pass: tbf_n += 1
 			tbf_active = True; continue
-		pw.write(line); pw.flush(); tbf_active = False
+		if tbf_pass and tbf_n > 1: pres.append(f'rate-limit {tbf_rl} skipped {tbf_n} lines')
+		tbf_active = tbf_n = False
+
+		if pres: pw_line(' '.join(f'[ {n} ]' for n in pres) + '\n'); pres.clear()
+		pw_line(line)
 
 if __name__ == '__main__':
 	try: sys.exit(main())
