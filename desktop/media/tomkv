@@ -556,12 +556,13 @@ def main(args=None):
 			fn = (opts.name or '{name}.mkv').format(name=src.name.rsplit('.', 1)[0])
 			p.fn, p.ext = fn.rsplit('.', 1) if '.' in fn else (fn, '')
 			if opts.fn_opts and (m := re.search(r'\.tomkv(\+\S+)?\Z', p.fn)):
-				p.fn, fnopts = fn[:m.start()], m[1] or ''
+				p.fn, fnopts = fn[:m.start()], (m[1] or '').replace('++', '\uf20a')
 				try:
 					p.opts = dict(opt.split('=', 1) for opt in fnopts.split('+') if opt)
 					if set(p.opts) - {'ss', 'to'}: raise ValueError
 				except: p.errs.append(adict( t='file', fatal=1,
 					msg=f'Failed to parse -F/--fn-opts: {fnopts!r}' ))
+				p.opts.update((k, v.replace('\uf20a', '+')) for k, v in p.opts.items())
 		# Last check for unfixable file/format issues
 		if (errs := p.get('errs', [p])) and _err_fail(
 			list(err for err in errs if err.get('fatal')),
