@@ -44,9 +44,9 @@ def main(args=None):
 	parser.add_argument('--re', metavar='regexp', action='append', help=dd('''
 		Regexp for extra characters to to strip/replace in filename stem, after all built-in changes.
 		Matches are removed, unless end in #..., in which case replaced by stuff after hashmark.
-		Only applied to "stem" of filename, i.e. part before \.[\w-]{1,13}$ at the end, if any.
+		Only applied to "stem" of filename, i.e. part before \\.[\\w-]{1,13}$ at the end, if any.
 		Can be used multiple times. Syntax is from python "re" module (incl. in replacements).
-		Examples: [^\w] (strip all non-alphanum/underscores), \.#_ (dots to underscores).'''))
+		Examples: [^\\w] (strip all non-alphanum/underscores), \\.#_ (dots to underscores).'''))
 	parser.add_argument('-n', '--dry-run', action='store_true',
 		help='Only print file renames that will be done, do not actually change anything.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -60,7 +60,7 @@ def main(args=None):
 			rx, _, rr = rx.partition('#')
 			rx_list[n] = lambda s,_rx=re.compile(rx),_rr=rr or '': _rx.sub(_rr, s)
 
-	mvs = list()
+	mvs, names = list(), dict()
 	for p in map(pl.Path, opts.paths):
 		name = name_for_fs( unidecode(p.name) if unidecode else
 				unicodedata.normalize('NFKD', p.name).encode('ascii', 'ignore').decode(),
@@ -71,8 +71,9 @@ def main(args=None):
 			if ext: name += ext
 		if name == p.name: continue
 		mvs.append((p, p.parent / name))
-	if len(set(str(b) for a, b in mvs)) < len(mvs):
-		return p_err('ERROR: Detected naming conflict between simplified names')
+		if name in names: return p_err( 'ERROR: Detected conflict'
+			f' between simplified names for [ {p.name} ] and [ {names[name]} ]' )
+		names[name] = p.name
 
 	for a, b in mvs:
 		msg = f'Rename: [ {a.name} ]\0-> [ {b.name} ]'
