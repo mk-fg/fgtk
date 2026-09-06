@@ -7,7 +7,7 @@ except ImportError: unidecode = print( 'WARNING: "unidecode" module'
 	' cannot be imported, will use simple ascii-decode for filenames\n', file=sys.stderr )
 
 _name_subs = { r'[\\/\?\*;]': '_', r'^\.+': '_', r':': '-_',
-	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', '#': 'N',
+	r'<': '(', r'>': ')', r'[*&]': '+', r'[|!"]': '-', '#': 'N',
 	'[\'’,\x00-\x1f]': '', r'\.+\Z': '_', r'\s+\Z': '', r'\s': '_' }
 def name_for_fs( name, name_len=100, fallback=...,
 		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
@@ -28,7 +28,8 @@ def main(args=None):
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [options] file...',
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
-			Give specified files simplified name, that'd work on any OS/filesystem.
+			Give specified files simplified name, that'd work
+				on any OS/filesystem or in shell prompt without quotes.
 			Replaces any odd characters like :, ?, *, and such,
 				transliterates unicode to ascii in unidecode module can be imported
 				(or strips it otherwise), shortens long names (adding hash-tag at the end).
