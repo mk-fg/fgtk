@@ -571,7 +571,7 @@ or just removing them entirely, so aside from visual similarity, no way to rever
 
 Uses [unidecode] module for unicode transliteration, if it's available, otherwise
 just strips any non-ascii (with a warning). Detects/aborts on filename conflicts,
-has `-v/--verbose` and `-n/--dry-run` modes.
+has `-v/--verbose` / `-n/--dry-run` modes and options to tweak replacement/truncation.
 
 <a name=hdr-rmx.c></a>
 ##### [rmx.c](rmx.c)
