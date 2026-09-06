@@ -9,16 +9,16 @@ except ImportError: unidecode = print( 'WARNING: "unidecode" module'
 _name_subs = { r'[\\/\?\*;]': '_', r'^\.+': '_', r':': '-_',
 	r'<': '(', r'>': ')', r'\*': '+', r'[|!"]': '-', '#': 'N',
 	'[\'’,\x00-\x1f]': '', r'\.+\Z': '_', r'\s+\Z': '', r'\s': '_' }
-def name_for_fs( name, fallback=...,
+def name_for_fs( name, name_len=100, fallback=...,
 		_name_subs=list((re.compile(k), v) for k,v in _name_subs.items()) ):
 	if not name and fallback is not ...: return fallback
 	for sub_re, sub in _name_subs: name = sub_re.sub(sub, name)
-	if len(name) > 100:
+	if len(name) > name_len:
 		name, _, ext = name.rpartition('.')
 		tag = base64.urlsafe_b64encode(
 				hashlib.blake2s( name.encode(), key=b'fn-simple').digest()
 			).decode().translate(dict.fromkeys(map(ord, '-_=')))[:4]
-		name = '.'.join([name[:90], tag, ext])
+		name = '.'.join([name[:name_len - 5], tag, ext])
 	return name
 
 def main(args=None):
@@ -39,20 +39,25 @@ def main(args=None):
 		Paths to rename. Changes only last filename part of each within same dir, if needed.'''))
 	parser.add_argument('-v', '--verbose', action='store_true',
 		help='Print files renames as they are done.')
+	parser.add_argument('--name-len-max', metavar='n', type=int, default=100, help=dd('''
+		Max name length, past which it gets truncated and hash-tag added. Default: %(default)s'''))
 	parser.add_argument('-n', '--dry-run', action='store_true',
 		help='Only print file renames that will be done, do not actually change anything.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	mvs = list()
-	for p in map(pl.Path, opts.paths):
-		name = name_for_fs( unidecode(p.name) if unidecode else
-			unicodedata.normalize('NFKD', p.name).encode('ascii', 'ignore').decode() )
-		if name == p.name: continue
-		mvs.append((p, p.parent / name))
-
 	p_out = lambda *a,**kw: None
 	if opts.verbose or opts.dry_run: p_out = lambda *a,**kw: print(*a, **kw, flush=True)
 	p_err = lambda *a,**kw: print(*a, **kw, file=sys.stderr, flush=True) or 1
+
+	mvs = list()
+	for p in map(pl.Path, opts.paths):
+		name = name_for_fs( unidecode(p.name) if unidecode else
+				unicodedata.normalize('NFKD', p.name).encode('ascii', 'ignore').decode(),
+			name_len=opts.name_len_max )
+		if name == p.name: continue
+		mvs.append((p, p.parent / name))
+	if len(set(str(b) for a, b in mvs)) < len(mvs):
+		return p_err('ERROR: Detected naming conflict between simplified names')
 
 	for a, b in mvs:
 		msg = f'Rename: [ {a.name} ]\0-> [ {b.name} ]'
