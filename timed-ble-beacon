@@ -4,7 +4,7 @@ import datetime as dt, hashlib as hl, traceback as tb, pathlib as pl, contextlib
 import os, sys, re, signal, fcntl, hmac, struct, base64, math, time
 
 import dbus, dbus.service, dbus.exceptions, dbus.mainloop.glib # python-dbus
-from gi.repository import GLib # python-gobject
+from gi.repository import GLib, GLibUnix # python-gobject
 
 
 _td_days = dict(
@@ -161,7 +161,7 @@ def run_ad(mid, secret, td_updates, td_total, td_beacon):
 		f' update-interval=[ {ts_repr(td_updates)} ] beacon_ms={td_beacon}' )
 	loop = GLib.MainLoop()
 	for sig in signal.SIGTERM, signal.SIGINT:
-		GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, loop.quit)
+		GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, sig, loop.quit)
 	_ad_update()
 	GLib.timeout_add(round(td_updates * 1000), _ad_update)
 	p('loop: Starting BLE advertisement loop...')
