@@ -99,7 +99,7 @@ def main(args=None):
 
 			if opts.convert:
 				if 't' in enc_opts and line_end_final is False:
-					(dst_buff or dst_stdout).write(b'\n')
+					(dst_buff or dst_stdout).write(b'\r\n' if 'r' in enc_opts else b'\n')
 				if dst_buff:
 					with open(p, 'wb') as dst: dst.write(dst_buff.getvalue())
 
