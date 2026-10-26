@@ -80,6 +80,7 @@ def main(args=None):
 						line_end_final = line.endswith(b'\n')
 						line = b'\n'.join(it.chain(
 							(line.rstrip() for line in line.rstrip().split(b'\n')) ))
+						if line_end_final: line += b'\n'
 					if 'r' in enc_opts: line = line.replace(b'\n', b'\r\n')
 					if 'j' in enc_opts:
 						try:
@@ -99,7 +100,7 @@ def main(args=None):
 
 			if opts.convert:
 				if 't' in enc_opts and line_end_final is False:
-					(dst_buff or dst_stdout).write(b'\n')
+					(dst_buff or dst_stdout).write(b'\r\n' if 'r' in enc_opts else b'\n')
 				if dst_buff:
 					with open(p, 'wb') as dst: dst.write(dst_buff.getvalue())
 
