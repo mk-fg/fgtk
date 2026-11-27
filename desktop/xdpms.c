@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
 			"  '0' means that monitor is already off.\n"
 			"  Dash ('-') is printed if there's no such timeout, e.g. dpms-off is disabled.\n"
 			"  Does not print anything to stdout and exits with error in case of any issues.\n"
-			"\ncheck - exit with 0 if seconds to dpms-off is >0, 1 otherwise.\n"
+			"\ncheck - exit with 0 if seconds to dpms-off >0, 1 otherwise, 2 for disabled dpms.\n"
 			"\nwait - wait-until-idle mode:\n"
 			"  Sleeps until system is idle, making checks proportional to dpms timeouts.\n"
 			"  Exits with status=0 upon detecting dpms-off state.\n"
@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
 		err_unless(DPMSGetTimeouts(dpy, &delay_standby, &delay_suspend, &delay_off));
 		err_unless(DPMSInfo(dpy, &state, &dpms_enabled));
 		if (!dpms_enabled) delay_off = 0;
-		if (state == DPMSModeOff || delay_off <= 0) seconds = 0;
+		if (state == DPMSModeOff || delay_off <= 0) seconds = -99999;
 		else seconds = delay_off - ssi->idle / 1000;
 
 		if (mode_print) {
@@ -76,7 +76,8 @@ int main(int argc, char *argv[]) {
 			break; }
 
 		if (mode_check) {
-			if (seconds <= 0) ret = 1;
+			if (seconds == -99999) ret = 2;
+			else if (seconds <= 0) ret = 1;
 			break; }
 
 		if (mode_wait) {
